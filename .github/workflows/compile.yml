@@ -38,6 +38,8 @@ jobs:
           choco install mingw -y
           choco install winflexbison3 -y
           echo "C:\ProgramData\chocolatey\bin" >> $GITHUB_PATH
+          mklink C:\ProgramData\chocolatey\lib\winflexbison3\tools\bison.exe C:\ProgramData\chocolatey\lib\winflexbison3\tools\win_bison.exe
+          mklink C:\ProgramData\chocolatey\lib\winflexbison3\tools\flex.exe C:\ProgramData\chocolatey\lib\winflexbison3\tools\win_flex.exe
       - name: Verify compiler
         run: |
           gcc --version
@@ -63,6 +65,14 @@ jobs:
         run: |
           brew update
           brew install cmake bison flex
+          echo "/opt/homebrew/opt/bison/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/flex/bin" >> $GITHUB_PATH
+      - name: Verify versions
+        run: |
+          which bison
+          bison --version
+          which flex
+          flex --version
       - name: Configure
         run: cmake -B build -S .
       - name: Build
