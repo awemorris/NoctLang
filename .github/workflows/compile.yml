@@ -37,9 +37,11 @@ jobs:
         run: |
           choco install mingw -y
           choco install winflexbison3 -y
+          echo @echo off > C:\ProgramData\chocolatey\bin\bison.bat
+          echo win_bison.exe %%* >> C:\ProgramData\chocolatey\bin\bison.bat
+          echo @echo off > C:\ProgramData\chocolatey\bin\flex.bat
+          echo win_flex.exe %%* >> C:\ProgramData\chocolatey\bin\flex.bat
           echo "C:\ProgramData\chocolatey\bin" >> $GITHUB_PATH
-          mklink C:\ProgramData\chocolatey\lib\winflexbison3\tools\bison.exe C:\ProgramData\chocolatey\lib\winflexbison3\tools\win_bison.exe
-          mklink C:\ProgramData\chocolatey\lib\winflexbison3\tools\flex.exe C:\ProgramData\chocolatey\lib\winflexbison3\tools\win_flex.exe
       - name: Verify compiler
         run: |
           gcc --version
