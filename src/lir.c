@@ -929,7 +929,7 @@ lir_visit_stmt(
 
 			lir_decrement_tmpvar(obj_tmpvar);
 		} else {
-			lir_fatal(_("LHS is not a symbol or an array element."));
+			lir_fatal(_("LHS is not a term or an array element."));
 			return false;
 		}
 	}

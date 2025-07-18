@@ -121,6 +121,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 
 static void show_usage(void)
 {
+	wide_printf(_("Noct Programming Language "));
+	wide_printf(_("Version %s\n"), VERSION);
+	wide_printf("\n");
 	wide_printf(_("Usage\n"));
 	wide_printf(_("  noct <file>                        ... run a program\n"));
 	wide_printf(_("  noct --compile <files>             ... convert to bytecode files\n"));
@@ -686,7 +689,7 @@ int command_run(int argc, char *argv[])
 
 	/* Compile a source file. */
 	if (!noct_register_source(rt, argv[i], data)) {
-		wide_printf(_("%s:%d: error: %s\n"),
+		wide_printf(_("%s:%d: Error: %s\n"),
 			    noct_get_error_file(rt),
 			    noct_get_error_line(rt),
 			    noct_get_error_message(rt));
@@ -709,7 +712,7 @@ int command_run(int argc, char *argv[])
 
 	/* Run the "main()" function. */
 	if (!noct_call_with_name(rt, "main", NULL, arg_count, arg_value, &ret)) {
-		wide_printf(_("%s:%d: error: %s\n"),
+		wide_printf(_("%s:%d: Error: %s\n"),
 			      noct_get_error_file(rt),
 			      noct_get_error_line(rt),
 			      noct_get_error_message(rt));
@@ -749,7 +752,7 @@ int command_repl(void)
 	wide_printf(_("Version %s\n"), VERSION);
 #ifdef USE_JIT
 	if (noct_conf_use_jit)
-		wide_printf(_("JIT compilation is enabled.\n"));
+		wide_printf(_("JIT compilation is enabled. Starting the fast VM...\n"));
 #endif
 	wide_printf(_("Entering REPL mode.\n"));
 	wide_printf("\n");
@@ -776,7 +779,7 @@ int command_repl(void)
 
 			/* Compile the source. */
 			if (!noct_register_source(rt, "REPL", entire)) {
-				wide_printf(_("%s:%d: error: %s\n"),
+				wide_printf(_("%s:%d: Error: %s\n"),
 					    noct_get_error_file(rt),
 					    noct_get_error_line(rt),
 					    noct_get_error_message(rt));
@@ -785,7 +788,7 @@ int command_repl(void)
 
 			/* Run the "repl()" function. */
 			if (!noct_call_with_name(rt, "repl", NULL, 0, NULL, &ret)) {
-				wide_printf(_("%s:%d: error: %s\n"),
+				wide_printf(_("%s:%d: Error: %s\n"),
 					    noct_get_error_file(rt),
 					    noct_get_error_line(rt),
 					    noct_get_error_message(rt));
@@ -812,7 +815,7 @@ int command_repl(void)
 
 			/* Compile the source. */
 			if (!noct_register_source(rt, "REPL", entire)) {
-				wide_printf(_("%s:%d: error: %s\n"),
+				wide_printf(_("%s:%d: Error: %s\n"),
 					    noct_get_error_file(rt),
 					    noct_get_error_line(rt),
 					    noct_get_error_message(rt));
@@ -822,7 +825,7 @@ int command_repl(void)
 			if (!is_func) {
 				/* Run the "repl()" function. */
 				if (!noct_call_with_name(rt, "repl", NULL, 0, NULL, &ret)) {
-					wide_printf(_("%s:%d: error: %s\n"),
+					wide_printf(_("%s:%d: Error: %s\n"),
 						    noct_get_error_file(rt),
 						    noct_get_error_line(rt),
 						    noct_get_error_message(rt));
@@ -1030,7 +1033,7 @@ cfunc_import(
 
 	/* Compile a source file. */
 	if (!noct_register_source(rt, file, data)) {
-		wide_printf("%s:%d: error: %s\n",
+		wide_printf("%s:%d: Error: %s\n",
 			    noct_get_error_file(rt),
 			    noct_get_error_line(rt),
 			    noct_get_error_message(rt));

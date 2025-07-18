@@ -1662,7 +1662,7 @@ noct_get_dict_elem_float(
 	if (!noct_get_dict_elem(rt, dict, key, &elem))
 		return false;
 	if (elem.type != NOCT_VALUE_FLOAT) {
-		noct_error(rt, _("Value for key %s is not an float."), key);
+		noct_error(rt, _("Value for key %s is not a float."), key);
 		return false;
 	}
 
@@ -2083,7 +2083,7 @@ noct_get_arg_int(
 	arg = &rt->frame->tmpvar[index];
 
 	if (arg->type != NOCT_VALUE_INT) {
-		noct_error(rt, _("Argument (%d: %s) not an integer.\n"),
+		noct_error(rt, _("Argument (%d: %s) not an integer."),
 			 index,
 			 rt->frame->func->param_name[index]);
 		return false;
@@ -2111,7 +2111,7 @@ noct_get_arg_float(
 	arg = &rt->frame->tmpvar[index];
 
 	if (arg->type != NOCT_VALUE_FLOAT) {
-		noct_error(rt, _("Argument (%d: %s) not a float.\n"),
+		noct_error(rt, _("Argument (%d: %s) not a float."),
 			 index,
 			 rt->frame->func->param_name[index]);
 		return false;
@@ -2139,7 +2139,7 @@ noct_get_arg_string(
 	arg = &rt->frame->tmpvar[index];
 
 	if (arg->type != NOCT_VALUE_STRING) {
-		noct_error(rt, _("Argument (%d: %s) not a string.\n"),
+		noct_error(rt, _("Argument (%d: %s) not a string."),
 			 index,
 			 rt->frame->func->param_name[index]);
 		return false;
@@ -2165,7 +2165,7 @@ noct_get_arg_array(
 	arg = &rt->frame->tmpvar[index];
 
 	if (arg->type != NOCT_VALUE_ARRAY) {
-		noct_error(rt, _("Argument (%d: %s) is not an array.\n"),
+		noct_error(rt, _("Argument (%d: %s) is not an array."),
 			 index,
 			 rt->frame->func->param_name[index]);
 		return false;
@@ -2191,7 +2191,7 @@ noct_get_arg_dict(
 	arg = &rt->frame->tmpvar[index];
 
 	if (arg->type != NOCT_VALUE_DICT) {
-		noct_error(rt, _("Argument (%d: %s) is not a dictionary.\n"),
+		noct_error(rt, _("Argument (%d: %s) is not a dictionary."),
 			 index,
 			 rt->frame->func->param_name[index]);
 		return false;
@@ -2217,7 +2217,7 @@ noct_get_arg_func(
 	arg = &rt->frame->tmpvar[index];
 
 	if (arg->type != NOCT_VALUE_DICT) {
-		noct_error(rt, _("Argument (%d: %s) is not a dictionary.\n"),
+		noct_error(rt, _("Argument (%d: %s) is not a dictionary."),
 			 index,
 			 rt->frame->func->param_name[index]);
 		return false;
