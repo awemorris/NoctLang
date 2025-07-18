@@ -1,7 +1,7 @@
 NoctLang
 ========
 
-**Noct** is a lightweight, modern, embeddable scripting language
+`Noct` is a lightweight, modern, embeddable programming language
 designed for portability, simplicity, and freedom — and for being
 *learnable*.
 
@@ -341,3 +341,17 @@ documentation, or proposing new features.
 
 Please feel free to open issues or submit pull requests on GitHub.  
 Together, we can make Noct better for everyone.
+
+## Join Us
+
+The `NoctVM` family is still in their early stages.  We're building a
+game engine with care, hoping it will inspire and empower creators
+around the world.
+
+If you're interested in contributing — whether it's code,
+documentation, testing, or ideas — we'd be happy to have you with us.
+
+Every small step helps shape what `NoctVM` can become.  You're welcome
+to join us on this journey.
+
+[Join us on Discord](https://discord.gg/ybHWSqDVEX)

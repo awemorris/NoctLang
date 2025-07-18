@@ -12,7 +12,7 @@ set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
 
 option(USE_SHARED      "Enable shared libraries" OFF)
 option(USE_JIT         "Enable JIT"              ON)
-option(USE_TRANSLATION "Enable translation"      OFF)
+option(USE_TRANSLATION "Enable translation"      ON)
 
 #
 # Dependency
