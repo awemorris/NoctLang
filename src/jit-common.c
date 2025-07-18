@@ -96,7 +96,7 @@ jit_map_writable(
 	void *region,
 	size_t size)
 {
-#if defined(TARGET_WINDOWS)
+#if defined(_WIN32)
 	DWORD dwOldProt;
 	VirtualProtect(region, size, PAGE_READWRITE, &dwOldProt);
 #else
@@ -112,7 +112,7 @@ jit_map_executable(
 	void *region,
 	size_t size)
 {
-#if defined(TARGET_WINDOWS)
+#if defined(_WIN32)
 	DWORD dwOldProt;
 	VirtualProtect(region, size, PAGE_EXECUTE_READ, &dwOldProt);
 	FlushInstructionCache(GetCurrentProcess(), region, size);
