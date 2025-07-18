@@ -25,6 +25,11 @@
 #include <unistd.h>
 #endif
 
+/* Version */
+#ifndef VERSION
+#define VERSION		"0.1.0"
+#endif
+
 /* Runtime's configuration. */
 extern bool noct_conf_use_jit;
 
@@ -137,6 +142,7 @@ const char *get_system_language(void)
 
 /* Initialized the locale. */
 #if defined(USE_GETTEXT_COMPAT)
+#if !defined(_WIN32)
 static void init_locale(void)
 {
 	const char *locale;
@@ -170,6 +176,47 @@ static void init_locale(void)
 
 	setlocale(LC_ALL, "C");
 }
+#else
+static void init_locale(void)
+{
+	DWORD dwLang = GetUserDefaultLCID() & 0x3ff;
+	switch (dwLang) {
+	case LANG_ENGLISH:
+		lang_code = "en";
+		break;
+	case LANG_FRENCH:
+		lang_code = "fr";
+		break;
+	case LANG_GERMAN:
+		lang_code = "de";
+		break;
+	case LANG_SPANISH:
+		lang_code = "es";
+		break;
+	case LANG_ITALIAN:
+		lang_code = "it";
+		break;
+	case LANG_GREEK:
+		lang_code = "el";
+		break;
+	case LANG_RUSSIAN:
+		lang_code = "ru";
+		break;
+	case LANG_CHINESE_SIMPLIFIED:
+		lang_code = "zh";
+		break;
+	case LANG_CHINESE_TRADITIONAL:
+		lang_code = "tw";
+		break;
+	case LANG_JAPANESE:
+		lang_code = "ja";
+		break;
+	default:
+		lang_code = "en";
+		break;
+	}
+}
+#endif
 #endif
 
 /*
@@ -687,8 +734,8 @@ int command_repl(void)
 	/* Will make variables global. */
 	noct_conf_repl_mode = true;
 
-	/* No JIT. */
-	noct_conf_use_jit = false;
+	/* Turn off JIT. */
+	/* noct_conf_use_jit = false; */
 
 	/* Create a runtime. */
 	if (!noct_create(&rt))
@@ -698,8 +745,14 @@ int command_repl(void)
 	if (!register_ffi(rt))
 		return 1;
 
-	wide_printf(_("Noct Programming Language version 0.1\n"));
-	wide_printf(_("REPL mode enabled.\n"));
+	wide_printf(_("Noct Programming Language "));
+	wide_printf(_("Version %s\n"), VERSION);
+#ifdef USE_JIT
+	if (noct_conf_use_jit)
+		wide_printf(_("JIT compilation is enabled.\n"));
+#endif
+	wide_printf(_("Entering REPL mode.\n"));
+	wide_printf("\n");
 
 	while (1) {
 		char line[4096];
@@ -711,7 +764,7 @@ int command_repl(void)
 		memset(line, 0, sizeof(line));
 		memset(entire, 0, sizeof(entire));
 
-		printf("> ");
+		wide_printf("> ");
 		if (fgets(line, sizeof(line) - 1, stdin) == NULL)
 			break;
 
@@ -748,7 +801,7 @@ int command_repl(void)
 			/* Multiple lines. */
 			strncat(entire, line, sizeof(entire) - 1);
 			while (!accept_func(start)) {
-				printf(". ");
+				wide_printf(". ");
 				if (fgets(line, sizeof(line) - 1, stdin) == NULL)
 					break;
 				strncat(entire, line, sizeof(entire) - 1);
@@ -892,16 +945,19 @@ static int wide_printf(const char *format, ...)
 {
 	static char buf[4096];
 	va_list ap;
+	int size;
 
 	va_start(ap, format);
-	vsnprintf(buf, sizeof(buf), format, ap);
+	size = vsnprintf(buf, sizeof(buf), format, ap);
 	va_end(ap);
 
 #if defined(_WIN32)
 	/* Use wprintf() and wide-string. (Otherwise, we'll see garbages.) */
 	static wchar_t wbuf[4096];
-	MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, sizeof(wbuf));
-	return wprintf(L"%ls", wbuf);
+	DWORD dwWritten;
+	MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, sizeof(wbuf) / sizeof(wchar_t));
+	WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), wbuf, lstrlenW(wbuf), &dwWritten, NULL);
+	return size;
 #else
 	return printf("%s", buf);
 #endif

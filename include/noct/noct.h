@@ -62,6 +62,13 @@ typedef unsigned long long uint64_t;
 #define NOCT_INLINE
 #endif
 
+/* SYSV ABI */
+#if defined(__GNUC__) && defined(_WIN32) && defined(__x86_64__)
+#define SYSVABI __attribute__((sysv_abi))
+#else
+#define SYSVABI
+#endif
+
 /* Maximum arguments of a call. */
 #define NOCT_ARG_MAX	32
 
@@ -221,6 +228,7 @@ static NOCT_INLINE struct rt_value noct_float(float f)
 }
 
 /* Make a string value. */
+SYSVABI
 bool
 noct_make_string(
 	NoctEnv *rt,
@@ -236,23 +244,18 @@ noct_make_string_format(
 	...);
 
 /* Make an empty array value. */
+SYSVABI
 bool
 noct_make_empty_array(
 	NoctEnv *rt,
 	NoctValue *val);
 
 /* Make an empty dictionary value */
+SYSVABI
 bool
 noct_make_empty_dict(
 	NoctEnv *rt,
 	NoctValue *val);
-
-/* Clone a value. */
-bool
-noct_copy_value(
-	NoctEnv *rt,
-	NoctValue *dst,
-	NoctValue *src);
 
 /* Get a value type. */
 bool

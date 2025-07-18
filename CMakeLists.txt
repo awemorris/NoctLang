@@ -138,3 +138,11 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -O0 -g3")
 # Release Configuration.
 set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -O3 -g0")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g0")
+
+if(NOT MSVC)
+  target_compile_options(noctlang PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+  target_compile_options(noct PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+else()
+  target_compile_options(noctlang PRIVATE /utf-8)
+  target_compile_options(noct PRIVATE /utf-8)
+endif()

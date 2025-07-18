@@ -811,6 +811,7 @@ noct_make_float(
 /*
  * Make a string value.
  */
+SYSVABI
 bool
 noct_make_string(
 	struct rt_env *rt,
@@ -883,6 +884,7 @@ noct_make_string_format(
 /*
  * Make an empty array value.
  */
+SYSVABI
 bool
 noct_make_empty_array(struct rt_env *rt, struct rt_value *val)
 {
@@ -934,6 +936,7 @@ noct_make_empty_array(struct rt_env *rt, struct rt_value *val)
 /*
  * Make an empty dictionary value.
  */
+SYSVABI
 bool
 noct_make_empty_dict(struct rt_env *rt, struct rt_value *val)
 {

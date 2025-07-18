@@ -368,23 +368,23 @@ ja:メモリが確保できません。\n
 ID:shell(): Parameter not a string.\n
 ja:shell(): 引数が文字列ではありません。\n
 ---
-ID:Noct Programming Language version 0.1\n
-ja:Noct プログラミング言語 バージョン 0.1\n
+ID:Noct Programming Language 
+ja:Noct プログラミング言語 
 ---
-ID:REPL mode enabled.\n
-ja:REPL モード 有効\n
+ID:Version %s\n
+ja:バージョン %s\n
 ---
-ID:Noct Programming Language version 0.1\n
-ja:Noct プログラミング言語 バージョン 0.1\n
+ID:JIT compilation is enabled.\n
+ja:JITコンパイルが有効 ... 高速実行を開始します。\n
 ---
-ID:REPL mode enabled.\n
-ja:REPLモード有効\n
+ID:Entering REPL mode.\n
+ja:REPLモードに入ります。\n
 ---
 ID:Usage\n
 ja:使い方\n
 ---
 ID:  noct <file>                        ... run a program\n
-ja:  noct <ファイル>                    ... プログラムを実行します
+ja:  noct <ファイル>                    ... プログラムを実行します\n
 ---
 ID:  noct --compile <files>             ... convert to bytecode files\n
 ja:  noct --compile <ファイル...>       ... バイトコードに変換します\n

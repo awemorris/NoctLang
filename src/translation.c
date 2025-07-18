@@ -446,28 +446,28 @@ const char *noct_gettext(const char *msg)
         if (strcmp(lang_code, "ja") == 0) return "shell(): 引数が文字列ではありません。\n";
         return "shell(): Parameter not a string.\n";
     }
-    if (strcmp(msg, "Noct Programming Language version 0.1\n") == 0) {
-        if (strcmp(lang_code, "ja") == 0) return "Noct プログラミング言語 バージョン 0.1\n";
-        return "Noct Programming Language version 0.1\n";
+    if (strcmp(msg, "Noct Programming Language ") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "Noct プログラミング言語 ";
+        return "Noct Programming Language ";
     }
-    if (strcmp(msg, "REPL mode enabled.\n") == 0) {
-        if (strcmp(lang_code, "ja") == 0) return "REPL モード 有効\n";
-        return "REPL mode enabled.\n";
+    if (strcmp(msg, "Version %s\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "バージョン %s\n";
+        return "Version %s\n";
     }
-    if (strcmp(msg, "Noct Programming Language version 0.1\n") == 0) {
-        if (strcmp(lang_code, "ja") == 0) return "Noct プログラミング言語 バージョン 0.1\n";
-        return "Noct Programming Language version 0.1\n";
+    if (strcmp(msg, "JIT compilation is enabled.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "JITコンパイルが有効 ... 高速実行を開始します。\n";
+        return "JIT compilation is enabled.\n";
     }
-    if (strcmp(msg, "REPL mode enabled.\n") == 0) {
-        if (strcmp(lang_code, "ja") == 0) return "REPLモード有効\n";
-        return "REPL mode enabled.\n";
+    if (strcmp(msg, "Entering REPL mode.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "REPLモードに入ります。\n";
+        return "Entering REPL mode.\n";
     }
     if (strcmp(msg, "Usage\n") == 0) {
         if (strcmp(lang_code, "ja") == 0) return "使い方\n";
         return "Usage\n";
     }
     if (strcmp(msg, "  noct <file>                        ... run a program\n") == 0) {
-        if (strcmp(lang_code, "ja") == 0) return "  noct <ファイル>                    ... プログラムを実行します";
+        if (strcmp(lang_code, "ja") == 0) return "  noct <ファイル>                    ... プログラムを実行します\n";
         return "  noct <file>                        ... run a program\n";
     }
     if (strcmp(msg, "  noct --compile <files>             ... convert to bytecode files\n") == 0) {

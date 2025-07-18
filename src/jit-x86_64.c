@@ -92,7 +92,7 @@ jit_build(
 	/* Make code executable and non-writable. */
 	jit_map_executable(jit_code_region, JIT_CODE_MAX);
 
-	func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
+	func->jit_code = (SYSVABI bool (*)(struct rt_env *))ctx.code_top;
 
 	return true;
 }

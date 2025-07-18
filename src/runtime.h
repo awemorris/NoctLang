@@ -204,7 +204,7 @@ struct rt_func {
 	int tmpvar_size;
 
 	/* JIT-generated code. */
-	bool (*jit_code)(struct rt_env *env);
+	SYSVABI bool (*jit_code)(struct rt_env *env);
 
 	/* Function pointer. (if a cfunc) */
 	bool (*cfunc)(struct rt_env *env);
