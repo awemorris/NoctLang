@@ -67,7 +67,6 @@ set(LIB_SOURCES
 )
 
 set(CLI_SOURCES
-  ${LANG_SOURCES}
   src/cli.c
 )
 
@@ -86,28 +85,32 @@ endif()
 add_library(noctlang STATIC ${LIB_SOURCES} ${I18N_SOURCES})
 
 # CLI
-add_executable(noct ${CLI_SOURCES} ${I18N_SOURCES})
+add_executable(noct ${CLI_SOURCES})
 target_link_libraries(noct PRIVATE noctlang)
 
 #
 # CPPFLAGS
 #
 
+# -Iinclude
 target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(noctlang PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(noct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# -Isrc
 target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(noct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# -DUSE_JIT
 if(USE_JIT)
-target_compile_definitions(noctlang PRIVATE USE_JIT)
-target_compile_definitions(noct PRIVATE USE_JIT)
+  target_compile_definitions(noctlang PRIVATE USE_JIT)
+  target_compile_definitions(noct PRIVATE USE_JIT)
 endif()
 
+# -DUSE_GETTEXT_COMPAT
 if(USE_TRANSLATION)
-target_compile_definitions(noctlang PRIVATE USE_GETTEXT_COMPAT)
-target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
+  target_compile_definitions(noctlang PRIVATE USE_GETTEXT_COMPAT)
+  target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
 endif()  
 
 #
@@ -124,13 +127,16 @@ set(CMAKE_C_FLAGS_DEBUG   "${CMAKE_C_FLAGS_RELEASE}   -O0 -g3")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -O0 -g3")
 
 # Release Configuration.
-set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -O3 -g0")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g0")
+set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -O2 -g0")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -g0")
 
-if(NOT MSVC)
-  target_compile_options(noctlang PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
-  target_compile_options(noct PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
-else()
-  target_compile_options(noctlang PRIVATE /utf-8)
-  target_compile_options(noct PRIVATE /utf-8)
+# Unicode options.
+if(WIN32)
+  if(NOT MSVC)
+    target_compile_options(noctlang PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+    target_compile_options(noct PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+  else()
+    target_compile_options(noctlang PRIVATE /utf-8)
+    target_compile_options(noct PRIVATE /utf-8)
+  endif()
 endif()
