@@ -15,12 +15,49 @@ option(USE_JIT         "Enable JIT"              ON)
 option(USE_TRANSLATION "Enable translation"      ON)
 
 #
+# FLEX
+#
+
+find_package(FLEX REQUIRED)
+
+FLEX_TARGET(Lexer
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/lexer.l
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/lexer.yy.c
+  COMPILE_FLAGS "--prefix=ast_yy"
+)
+
+if(USE_TRANSLATION)
+  set_source_files_properties(${FLEX_Lexer_OUTPUTS}
+    PROPERTIES COMPILE_DEFINITIONS "USE_GETTEXT_COMPAT"
+  )
+endif()
+
+#
+# BISON
+#
+
+find_package(BISON REQUIRED)
+
+BISON_TARGET(Parser
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.y
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.tab.c
+  DEFINES_FILE ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.tab.h
+  COMPILE_FLAGS "-p ast_yy"
+)
+
+if(USE_TRANSLATION)
+  set_source_files_properties(${BISON_Parser_OUTPUT_SOURCE}
+    PROPERTIES COMPILE_DEFINITIONS "USE_GETTEXT_COMPAT"
+  )
+endif()
+
+#
 # Source Files
 #
 
 set(LIB_SOURCES
-  src/lexer.yy.c
-  src/parser.tab.c
+  ${FLEX_Lexer_OUTPUTS}
+  ${BISON_Parser_OUTPUT_SOURCE}
   src/ast.c
   src/hir.c
   src/lir.c
@@ -46,18 +83,21 @@ set(CLI_SOURCES
   src/cli.c
 )
 
-if(USE_TRANSLATION AND NOT UNIX)
+if(USE_TRANSLATION)
   set(I18N_SOURCES
     src/translation.c
   )
 endif()
 
+# Library
 if(USE_SHARED)
-  add_library(noctlang SHARED ${LIB_SOURCES})
+  set(LIB_TYPE SHARED)
 else()
-  add_library(noctlang STATIC ${LIB_SOURCES})
+  set(LIB_TYPE STATIC)
 endif()
+add_library(noctlang STATIC ${LIB_SOURCES} ${I18N_SOURCES})
 
+# CLI
 add_executable(noct ${CLI_SOURCES} ${I18N_SOURCES})
 target_link_libraries(noct PRIVATE noctlang)
 
@@ -73,12 +113,13 @@ target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(noct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 if(USE_JIT)
-  target_compile_definitions(noctlang PRIVATE USE_JIT)
-  target_compile_definitions(noct PRIVATE USE_JIT)
+target_compile_definitions(noctlang PRIVATE USE_JIT)
+target_compile_definitions(noct PRIVATE USE_JIT)
 endif()
 
 if(USE_TRANSLATION)
-  target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
+target_compile_definitions(noctlang PRIVATE USE_GETTEXT_COMPAT)
+target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
 endif()  
 
 #
@@ -87,7 +128,7 @@ endif()
 
 # Use "Release" build type by default.
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug or Release)" FORCE)
+set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug or Release)" FORCE)
 endif()
 
 # Debug Configuration.

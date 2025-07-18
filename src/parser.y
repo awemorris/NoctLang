@@ -2,6 +2,7 @@
 /*
  * Copyright (c) 2025, Awe Morris. All rights reserved.
  */
+#include "c89compat.h"
 #include "ast.h"
 
 #include <stdio.h>
@@ -266,12 +267,12 @@ expr_stmt	: expr TOKEN_SEMICOLON
 		;
 assign_stmt	: expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
-			$$ = ast_accept_assign_stmt(@1.first_line + 1, $1, $3, false, false);
+			$$ = ast_accept_assign_stmt(@1.first_line + 1, $1, $3, false);
 			debug("assign_stmt");
 		}
 		| TOKEN_VAR expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
-			$$ = ast_accept_assign_stmt(@1.first_line + 1, $2, $4, true, false);
+			$$ = ast_accept_assign_stmt(@1.first_line + 1, $2, $4, true);
 			debug("var assign_stmt");
 		}
 		;
@@ -587,12 +588,14 @@ void ast_yyerror(void *scanner, char *s)
 	extern int ast_error_line;
 	extern int ast_error_column;
 	extern char ast_error_message[65536];
+	extern const char *noct_gettext(const char *msg);
 
 	(void)scanner;
 	(void)s;
 
 	ast_error_line = ast_yylloc.first_line + 1;
 	ast_error_column = ast_yylloc.first_column + 1;
+	
 	if (s != NULL)
 		strcpy(ast_error_message, _(s));
 	else

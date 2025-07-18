@@ -619,18 +619,4 @@ rt_get_heap_usage(
 	NoctEnv *rt,
 	size_t *ret);
 
-/*
- * Message Translation
- */
-#if defined(USE_GETTEXT)
-#include <libintl.h>
-#include <locale.h>
-#define _(s)		gettext(s)
-#elif defined(USE_GETTEXT_COMPAT)
-#define _(s)		noct_gettext(s)
-const char *noct_gettext(const char *msg);
-#else
-#define _(s)		(s)
-#endif
-
 #endif

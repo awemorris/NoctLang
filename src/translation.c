@@ -102,13 +102,13 @@ const char *noct_gettext(const char *msg)
         if (strcmp(lang_code, "it") == 0) return "LHS non è un simbolo né un elemento di un array.";
         return "LHS is not a symbol or an array element.";
     }
-    if (strcmp(msg, "Too much local variables.") == 0) {
+    if (strcmp(msg, "Too many local variables.") == 0) {
         if (strcmp(lang_code, "ja") == 0) return "ローカル変数が多すぎます。";
         if (strcmp(lang_code, "ca") == 0) return "Hi ha massa variables locals.";
         if (strcmp(lang_code, "es") == 0) return "Hay demasiadas variables locales.";
         if (strcmp(lang_code, "de") == 0) return "Zu viele lokale Variablen.";
         if (strcmp(lang_code, "it") == 0) return "Ci sono troppe variabili locali.";
-        return "Too much local variables.";
+        return "Too many local variables.";
     }
     if (strcmp(msg, "Too many jumps.") == 0) {
         if (strcmp(lang_code, "ja") == 0) return "ジャンプが多すぎます。";
@@ -306,6 +306,74 @@ const char *noct_gettext(const char *msg)
         if (strcmp(lang_code, "ja") == 0) return "関数の引数が一致しません。";
         return "Function arguments not match.";
     }
+    if (strcmp(msg, "Element %d is not an integer.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "%d 番目の要素が整数ではありません。";
+        return "Element %d is not an integer.";
+    }
+    if (strcmp(msg, "Element %d is not a float.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "%d 番目の要素が浮動小数点数ではありません。";
+        return "Element %d is not a float.";
+    }
+    if (strcmp(msg, "Element %d is not a string.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "%d 番目の要素が文字列ではありません。";
+        return "Element %d is not a string.";
+    }
+    if (strcmp(msg, "Element %d is not an array.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "%d 番目の要素が配列ではありません。";
+        return "Element %d is not an array.";
+    }
+    if (strcmp(msg, "Element %d is not a dictionary.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "%d 番目の要素が辞書ではありません。";
+        return "Element %d is not a dictionary.";
+    }
+    if (strcmp(msg, "Element %d is not a function.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "%d 番目の要素が関数ではありません。";
+        return "Element %d is not a function.";
+    }
+    if (strcmp(msg, "Value for key %s is not an integer.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "キー %s に対応する値が整数ではありません。";
+        return "Value for key %s is not an integer.";
+    }
+    if (strcmp(msg, "Value for key %s is not an float.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "キー %s に対応する値が浮動小数点数ではありません。";
+        return "Value for key %s is not an float.";
+    }
+    if (strcmp(msg, "Value for key %s is not a string.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "キー %s に対応する値が文字列ではありません。";
+        return "Value for key %s is not a string.";
+    }
+    if (strcmp(msg, "Value for key %s is not an array.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "キー %s に対応する値が配列ではありません。";
+        return "Value for key %s is not an array.";
+    }
+    if (strcmp(msg, "Value for key %s is not a dictionary.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "キー %s に対応する値が辞書ではありません。";
+        return "Value for key %s is not a dictionary.";
+    }
+    if (strcmp(msg, "Value for key %s is not a function.") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "キー %s に対応する値が関数ではありません。";
+        return "Value for key %s is not a function.";
+    }
+    if (strcmp(msg, "Argument (%d: %s) not an integer.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "引数 (%d: %s) が整数ではありません。\n";
+        return "Argument (%d: %s) not an integer.\n";
+    }
+    if (strcmp(msg, "Argument (%d: %s) not a float.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "引数 (%d: %s) が浮動小数点数ではありません。\n";
+        return "Argument (%d: %s) not a float.\n";
+    }
+    if (strcmp(msg, "Argument (%d: %s) not a string.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "引数 (%d: %s) が文字列ではありません。\n";
+        return "Argument (%d: %s) not a string.\n";
+    }
+    if (strcmp(msg, "Argument (%d: %s) is not an array.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "引数 (%d: %s) が配列ではありません。\n";
+        return "Argument (%d: %s) is not an array.\n";
+    }
+    if (strcmp(msg, "Argument (%d: %s) is not a dictionary.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "引数 (%d: %s) が辞書ではありません。\n";
+        return "Argument (%d: %s) is not a dictionary.\n";
+    }
     if (strcmp(msg, "Not a function.") == 0) {
         if (strcmp(lang_code, "ja") == 0) return "関数ではありません。";
         if (strcmp(lang_code, "ca") == 0) return "No és una funció.";
@@ -377,6 +445,40 @@ const char *noct_gettext(const char *msg)
     if (strcmp(msg, "shell(): Parameter not a string.\n") == 0) {
         if (strcmp(lang_code, "ja") == 0) return "shell(): 引数が文字列ではありません。\n";
         return "shell(): Parameter not a string.\n";
+    }
+    if (strcmp(msg, "Noct Programming Language version 0.1\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "Noct プログラミング言語 バージョン 0.1\n";
+        return "Noct Programming Language version 0.1\n";
+    }
+    if (strcmp(msg, "REPL mode enabled.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "REPL モード 有効\n";
+        return "REPL mode enabled.\n";
+    }
+    if (strcmp(msg, "Noct Programming Language version 0.1\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "Noct プログラミング言語 バージョン 0.1\n";
+        return "Noct Programming Language version 0.1\n";
+    }
+    if (strcmp(msg, "REPL mode enabled.\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "REPLモード有効\n";
+        return "REPL mode enabled.\n";
+    }
+    if (strcmp(msg, "Usage\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "使い方\n";
+        return "Usage\n";
+    }
+    if (strcmp(msg, "  noct <file>                        ... run a program\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "  noct <ファイル>                    ... プログラムを実行します";
+        return "  noct <file>                        ... run a program\n";
+    }
+    if (strcmp(msg, "  noct --compile <files>             ... convert to bytecode files\n") == 0) {
+        if (strcmp(lang_code, "ja") == 0) return "  noct --compile <ファイル...>       ... バイトコードに変換します\n";
+        return "  noct --compile <files>             ... convert to bytecode files\n";
+    }
+    if (strcmp(msg, "  noct --ansic <出力> <入力...>      ... Cソースに変換します\n") == 0) {
+        return "  noct --ansic <出力> <入力...>      ... Cソースに変換します\n";
+    }
+    if (strcmp(msg, "  noct --elisp <出力> <入力...>      ... Emacs Lispソースに変換します\n") == 0) {
+        return "  noct --elisp <出力> <入力...>      ... Emacs Lispソースに変換します\n";
     }
     return msg;
 }

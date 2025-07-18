@@ -368,3 +368,28 @@ ja:メモリが確保できません。\n
 ID:shell(): Parameter not a string.\n
 ja:shell(): 引数が文字列ではありません。\n
 ---
+ID:Noct Programming Language version 0.1\n
+ja:Noct プログラミング言語 バージョン 0.1\n
+---
+ID:REPL mode enabled.\n
+ja:REPL モード 有効\n
+---
+ID:Noct Programming Language version 0.1\n
+ja:Noct プログラミング言語 バージョン 0.1\n
+---
+ID:REPL mode enabled.\n
+ja:REPLモード有効\n
+---
+ID:Usage\n
+ja:使い方\n
+---
+ID:  noct <file>                        ... run a program\n
+ja:  noct <ファイル>                    ... プログラムを実行します
+---
+ID:  noct --compile <files>             ... convert to bytecode files\n
+ja:  noct --compile <ファイル...>       ... バイトコードに変換します\n
+---
+ID:  noct --ansic <出力> <入力...>      ... Cソースに変換します\n
+---
+ID:  noct --elisp <出力> <入力...>      ... Emacs Lispソースに変換します\n
+---

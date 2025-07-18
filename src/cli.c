@@ -25,13 +25,6 @@
 #include <unistd.h>
 #endif
 
-const char usage[] =
-	"Usage\n"
-	"  noct <file>                        ... run a script\n"
-	"  noct --compile <files>             ... convert to bytecode files\n"
-	"  noct --ansic <out file> <in files> ... convert to a C source file\n"
-	"  noct --elisp <out file> <in files> ... convert to an Emacs Lisp source file\n";
-
 /* Runtime's configuration. */
 extern bool noct_conf_use_jit;
 
@@ -47,9 +40,10 @@ const char *lang_code = "en";
 static struct rt_env *rt;
 
 /* Forward declaration. */
-#if defined(USE_GETTEXT) || defined(USE_GETTEXT_COMPAT)
+#if defined(USE_GETTEXT_COMPAT)
 static void init_locale(void);
 #endif
+static void show_usage(void);
 static int command_compile(int argc, char *argv[]);
 static int command_transpile_c(int argc, char *argv[]);
 static int command_transpile_elisp(int argc, char *argv[]);
@@ -75,12 +69,12 @@ int main(int argc, char *argv[])
 {
 	char *first_arg;
 
-#if defined(USE_GETTEXT) || defined(USE_GETTEXT_COMPAT)
+#if defined(USE_GETTEXT_COMPAT)
 	init_locale();
 #endif
 
-	if (argc >= 2 && strcmp(argv[1], "help") == 0) {
-		wide_printf(usage);
+	if (argc >= 2 && strcmp(argv[1], "--help") == 0 ) {
+		show_usage();
 		return 1;
 	}
 
@@ -120,6 +114,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 }
 #endif
 
+static void show_usage(void)
+{
+	wide_printf(_("Usage\n"));
+	wide_printf(_("  noct <file>                        ... run a program\n"));
+	wide_printf(_("  noct --compile <files>             ... convert to bytecode files\n"));
+	wide_printf(_("  noct --ansic <out file> <in files> ... convert to a C source file\n"));
+	wide_printf(_("  noct --elisp <out file> <in files> ... convert to an Emacs Lisp source file\n"));
+}
+
 /*
  * Translation
  */
@@ -133,14 +136,7 @@ const char *get_system_language(void)
 #endif
 
 /* Initialized the locale. */
-#if defined(USE_GETTEXT)
-static void init_locale(void)
-{
-	setlocale(LC_ALL, "");
-	bindtextdomain("noct", "locale");
-	textdomain("noct");
-}
-#elif defined(USE_GETTEXT_COMPAT)
+#if defined(USE_GETTEXT_COMPAT)
 static void init_locale(void)
 {
 	const char *locale;
@@ -296,7 +292,7 @@ static bool compile_source(const char *file_name)
 static int command_transpile_c(int argc, char *argv[])
 {
 	if (argc < 4) {
-		wide_printf(usage);
+		show_usage();
 		return 1;
 	}
 
@@ -392,7 +388,7 @@ static bool add_file_hook_c(const char *fname)
 static int command_transpile_elisp(int argc, char *argv[])
 {
 	if (argc < 4) {
-		wide_printf(usage);
+		show_usage();
 		return 1;
 	}
 
@@ -702,6 +698,9 @@ int command_repl(void)
 	if (!register_ffi(rt))
 		return 1;
 
+	wide_printf(_("Noct Programming Language version 0.1\n"));
+	wide_printf(_("REPL mode enabled.\n"));
+
 	while (1) {
 		char line[4096];
 		char entire[32768];
@@ -749,7 +748,7 @@ int command_repl(void)
 			/* Multiple lines. */
 			strncat(entire, line, sizeof(entire) - 1);
 			while (!accept_func(start)) {
-				printf(">> ");
+				printf(". ");
 				if (fgets(line, sizeof(line) - 1, stdin) == NULL)
 					break;
 				strncat(entire, line, sizeof(entire) - 1);

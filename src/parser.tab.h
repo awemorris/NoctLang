@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_AST_YY_SRC_LANG_PARSER_TAB_H_INCLUDED
-# define YY_AST_YY_SRC_LANG_PARSER_TAB_H_INCLUDED
+#ifndef YY_AST_YY_USERS_TABATA_SRC_NOCTLANG_SRC_PARSER_TAB_H_INCLUDED
+# define YY_AST_YY_USERS_TABATA_SRC_NOCTLANG_SRC_PARSER_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -105,7 +105,7 @@ extern int ast_yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 90 "../../src/lang/parser.y"
+#line 90 "/Users/tabata/src/NoctLang/src/parser.y"
 
 	int ival;
 	double fval;
@@ -122,7 +122,7 @@ union YYSTYPE
 	struct ast_kv_list *kv_list;
 	struct ast_kv *kv;
 
-#line 126 "../../src/lang/parser.tab.h"
+#line 126 "/Users/tabata/src/NoctLang/src/parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -151,10 +151,10 @@ extern YYLTYPE ast_yylloc;
 int ast_yyparse (void *scanner);
 
 /* "%code provides" blocks.  */
-#line 86 "../../src/lang/parser.y"
+#line 86 "/Users/tabata/src/NoctLang/src/parser.y"
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 
-#line 159 "../../src/lang/parser.tab.h"
+#line 159 "/Users/tabata/src/NoctLang/src/parser.tab.h"
 
-#endif /* !YY_AST_YY_SRC_LANG_PARSER_TAB_H_INCLUDED  */
+#endif /* !YY_AST_YY_USERS_TABATA_SRC_NOCTLANG_SRC_PARSER_TAB_H_INCLUDED  */
