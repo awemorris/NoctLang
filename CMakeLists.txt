@@ -15,14 +15,6 @@ option(USE_JIT         "Enable JIT"              ON)
 option(USE_TRANSLATION "Enable translation"      ON)
 
 #
-# Dependency
-#
-
-if(USE_TRANSLATION AND UNIX)
-  find_package(Gettext REQUIRED)
-endif()
-
-#
 # Source Files
 #
 
@@ -86,13 +78,7 @@ if(USE_JIT)
 endif()
 
 if(USE_TRANSLATION)
-  if(UNIX)
-    target_compile_definitions(noct PRIVATE USE_GETTEXT)
-    target_include_directories(noct PRIVATE ${GETTEXT_INCLUDE_DIR})
-  endif()
-  if(WIN32)
-    target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
-  endif()
+  target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
 endif()  
 
 #
@@ -111,11 +97,3 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -O0 -g3")
 # Release Configuration.
 set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -O3 -g0")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g0")
-
-#
-# LDFLAGS
-#
-
-if(USE_TRANSLATION AND UNIX)
-  target_link_libraries(noct PRIVATE ${GETTEXT_LIBRARIES})
-endif()  
