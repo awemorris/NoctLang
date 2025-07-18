@@ -53,11 +53,11 @@
 #define U32C(literal, unicode)		U##literal
 
 /* Secure strcpy() */
-#if defined(TARGET_WINDOWS)
+#if defined(_WIN32)
 #define strlcpy(d, s, l)		strcpy_s(d, l, s)
 #define strlcat(d, s, l)		strcat_s(d, l, s)
 #endif
-#if defined(TARGET_LINUX) && !(defined(__GLIBC__) && (__GLIBC__ >= 2 && __GLIBC_MINOR__ >= 38))
+#if defined(__linux) && !(defined(__GLIBC__) && (__GLIBC__ >= 2 && __GLIBC_MINOR__ >= 38))
 #include <stdio.h>
 #include <string.h>
 inline void strlcpy(char *d, const char *s, size_t len)

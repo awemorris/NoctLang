@@ -17,7 +17,7 @@
 #include <locale.h>
 #include <assert.h>
 
-#ifdef TARGET_WINDOWS
+#ifdef _WIN32
 #include <windows.h>
 #else
 #include <sys/stat.h>
@@ -473,7 +473,7 @@ static bool add_file_hook_elisp(const char *fname)
 /*
  * For Windows:
  */
-#if defined(TARGET_WINDOWS)
+#if defined(_WIN32)
 
 #define BUF_SIZE	1024
 
