@@ -1,47 +1,48 @@
 NoctLang
 ========
 
-`Noct` is a lightweight, modern, embeddable programming language
-designed for portability, simplicity, and freedom — and for being
-*learnable*.
+`Noct` is a lightweight, embeddable scripting language — designed for
+clarity, control, and above all, *learnability*.
 
-Noct is implemented in standard C89, with no external dependencies,
-and can be compiled with almost any ANSI C compiler.  It is free
-software, respecting your freedom to run, study, modify, and share it.
+It offers a shared space in a world of increasingly complex languages:
+a language small enough to learn in a single session, yet rich enough
+to express real-world structure.
 
-Try writing your first Noct program. It might take less time than you
-think.
+Noct is written in standard ANSI C with no external dependencies, and
+compiles on virtually any ANSI C compiler.  As open-source software,
+it respects your freedom to run, study, modify, and share.
 
-**Status**: Noct is currently in active development. The language
-syntax and bytecode design may change before the first stable release.
+Try it now — launch the REPL or write your first script.  It might
+take less time than you think.
+
+**Status**: Actively developed and constantly evolving.
 
 ---
 
 ## Why Noct?
 
-_"If a programming language were learnable in a single classroom
+_"If a programming language could be learned in a single classroom
 session, how would the world change?"_
 
-Noct was born from this question — a desire to create a language that
-is both minimal and meaningful.
+Noct was born from this question — a desire to create a language
+that’s minimal, meaningful, and truly accessible.
 
-It is a scripting language designed not just for portability and
-performance, but for clarity — so that even a beginner can understand
-its core in a single session, and an expert can trust it in a system
-where correctness matters.
-
-Noct is not just a tool. It is a statement: that programming languages
-can be simple, teachable, and still powerful.
+If learners can grasp a language in under an hour, they can start
+building right away.  And when more people start building, more ideas
+come to life.  We believe this kind of accessibility can spark a
+global wave of creativity — accelerating the evolution of computing,
+and opening up its possibilities to everyone.
 
 ---
 
 ## Key Features
 
-- **C-like Syntax** — Familiar to most programmers.
-- **Arrays and Dictionaries** — Native, expressive data structures.
-- **Lambda Functions** — First-class functions with explicit environments, without closures.
-- **Efficient Execution** — A built-in JIT compiler for improved performance.
-- **Explicit Environments** — Avoids closures by passing environment explicitly via `with`
+
+- **C-like Syntax** — Clean and familiar to most programmers.
+- **Arrays & Dictionaries** — Built-in, expressive data structures.
+- **Lambda Functions** — First-class, with explicit environments.
+- **Efficient Execution** — Powered by a lightweight JIT compiler.
+- **Translation Backend** — Translates to both C and Emacs Lisp.
 
 ---
 
@@ -49,30 +50,39 @@ can be simple, teachable, and still powerful.
 
 ### Your First Program
 
-Noct is simple enough to try immediately.
+Noct is simple enough to try right now — no setup, no hassle.
 
-Save the following code as `script.noct`:
+Just run the `noct` command and type:
 
 ```
-func main() {
-    for (i in 0..10) {
-        print("Hello, World!");
-    }
+for (i in 0..10) {
+    print("Hello, World!");
 }
 ```
 
+That’s it. You’ve written your first Noct program.
+
 ### Installation
+
+## Download Prebuild Binaries
+
+Visit [the release
+page](https://github.com/awemorris/NoctLang/releases) to obtain the
+latest prebuilt binaries.
+
+## Or Manually Build from Source
+
+Clone the repository, build it with CMake, and you’re ready to go:
 
 ```
 git clone https://github.com/awemorris/NoctLang.git noct
 cd noct
-mkdir build
-cd build
-cmake ..
-make
+cmake -B build .
+cmake --build build
+./build/noct
 ```
 
-### Usage
+## Run
 
 To run a script:
 
@@ -84,102 +94,72 @@ To run a script:
 
 ## Technical Motivations
 
-To design a scripting language that balances clarity and performance,
-Noct sets out with three concrete goals:
 
-1. **Understandability** — Easy to learn for C programmers
-2. **Analyzability** — Suitable for AOT/JIT with predictable semantics
-3. **Portability** — No runtime dependencies, works in restricted systems
+Noct was designed to strike a balance between clarity and performance,
+with three core goals:
 
-Most existing scripting languages fail at one or more of these goals,
-due to design choices that favor dynamic power over static clarity:
+1. **Understandability** — Easy to learn and reason about
+2. **Analyzability** — Friendly to AOT/JIT with predictable semantics
+3. **Portability** — No dependencies, runs anywhere C can
 
-- Their syntax and semantics often depart significantly from C,  
-  making them unintuitive to systems programmers.
-- Many rely on implicit features like closures or dynamic scoping,  
-  which complicate reasoning and static analysis.
-- Some depend on heavyweight runtimes or require JIT compilation,  
-  making them unsuitable for embedded or security-restricted platforms.
+Most scripting languages fall short on at least one of these.  They
+drift from C-style semantics, rely on hidden state, or demand heavy
+runtimes.
 
-Noct addresses these issues with a design that is:
+Noct stays lean and explicit:
 
-- **Familiar** — C-like syntax, minimal and readable
-- **Predictable** — No implicit closures; all environments are passed explicitly
-- **Embeddable** — Written in C89, with no dependencies
-- **Portable** — Supports both just-in-time (JIT) and ahead-of-time (AOT) compilation
+- **C-like and Minimal** — Syntax that feels familiar and readable
+- **No Hidden State** — Closures are explicit, not magical
+- **Pure ANSI C** — Embeddable and dependency-free
+- **Flexible Execution** — JIT by default, AOT when needed
 
-While Noct is primarily designed for JIT execution, it also supports
-interpretation and AOT compilation via C translation. This makes it
-suitable for platforms where JIT is restricted or disallowed — such
-as embedded systems or smartphone app marketplaces.
+Whether you’re targeting embedded systems or locked-down
+environments, Noct’s design keeps you in control — without giving up
+power.
 
 ---
 
 ## Philosophy and Intent
 
-The goal of Noct is not novelty, but **clarity and control** —
-clarity in what code does, and control over how it is executed.
+Noct isn’t a showcase of novelty — it’s a reinvention through
+rethinking.  A language distilled from decades of experience, reshaped
+for clarity and control.
 
-The language was designed with a practical mindset: to be simple,
-analyzable, and embeddable—not as an experiment in language theory,
-but as a tool that is easy to reason about, implement, and extend.
+It reexamines familiar ideas across languages, and rebuilds them with
+a fresh, structural lens — favoring simplicity, explicitness, and
+analyzability.
 
-Rather than pursuing cutting-edge type systems or advanced language
-abstractions, Noct aims to:
+This isn’t minimalism as limitation, but as intent: a belief that
+precision beats complexity.
 
-- Be **simple enough** to support analysis and optimization of JIT compilation
-- Avoid implicit behavior (such as closures)
-- Make **data dependencies explicit** for future auto-parallelization
-- Enable **ahead-of-time compilation** (AOT) to plain C
-
-This philosophy reflects the author's background as a systems
-programmer, not a language theorist. It is a language for system-level
-developers who prioritize structure, analyzability, and practical
-performance — and for educators who value clarity and teachability.
-
-In addition, Noct is being experimentally used in elementary programming
-education to validate whether the language specification is intuitive
-and understandable for young learners. Feedback from this experience is
-being incorporated into the language design and implementation.
-
-By eliminating implicit state and enforcing explicit data flow, Noct
-invites the programmer to think clearly — not just about what code
-does, but how and why it does so.
+Noct stands for the idea that rethinking is invention — and that real
+progress begins by rediscovering what truly matters.  This reflects
+the author’s systems programming background.
 
 ---
 
 ## Educational Vision
 
-Noct is not just a scripting language — it is also a teaching tool.
-Its syntax was shaped with the intention that it could be introduced,
-understood, and used in practical programming within a single
-classroom session.
+Even young learners have used Noct successfully in classroom trials.
 
-By eliminating implicit behaviors and enforcing explicit structure,
-Noct helps learners build correct mental models from the start. It
-aims to serve both as a practical tool for systems programming and a
-bridge for beginners into the world of structured code.
+Its syntax was designed to be introduced, understood, and applied
+within a single classroom session — even by complete beginners.
 
-Noct is not just a language for writing programs —  
-it is a language for teaching *what programming is*.
+By removing implicit behaviors and enforcing explicit structure, Noct
+helps learners form accurate mental models from day one.
 
----
+It serves both as a practical system language and as a clear,
+approachable path into the world of structured programming.
 
-## Common Ground
-
-In a world of increasingly complex programming languages, Noct offers
-a small, shared space — a language small enough to be learned
-quickly, and rich enough to express real-world structure.
-
-It is a language of clarity, not complexity.  A tool of thought, not
-just of code.
+Noct doesn't just teach you how to write code — it teaches what code
+*is*.
 
 ---
 
 ## Examples
 
 Noct scripts consist of functions, expressions, and control structures
-similar to C. The `main` function is the entry point.
+similar to C and JavaScript. The `main` function is the entry point.
 
 ### Arrays
 
@@ -284,34 +264,28 @@ application, giving full control over integration.
 
 ## Intermediate Representations
 
-Noct internally uses two distinct intermediate representations (IRs):
-**HIR** and **LIR**.
+Noct uses two intermediate representations:
 
 - **HIR (High-level Intermediate Representation)**  
-  Represents code structure and control flow.
-  It is designed to support future advanced optimizations, including
-  SSA-based transformations and flow-sensitive analysis.
+  Structured control flow graph (CFG) for flow-sensitive optimizations.
 
 - **LIR (Low-level Intermediate Representation)**  
-  Represents execution-level instructions.  
-  This form corresponds closely to the VM's bytecode, and is used
-  directly for interpretation and code generation.
+  VM bytecode, used for execution or code generation.
 
-By separating these two layers, Noct enables a lightweight,
-template-based JIT code generation pipeline, while keeping the
-language architecture analyzable and portable.
+Their separation enables a lightweight JIT pipeline with a clear,
+analyzable architecture.
 
 ---
 
 ## Roadmap
 
-The following features are planned or currently under development.
-These focus on improving performance, portability, and expressiveness
-of the language.
+Ongoing work focuses on performance, portability, and expressiveness.
 
 **Language Internals**
-- Adding data-structure-related intrinsics.
-- Adding more file I/O FFI functions.
+- Binary operations
+- File I/O FFI extensions
+
+**JIT Architecture Support**
 
 **Status of JIT Support for Architectures**
 
@@ -333,25 +307,49 @@ of the language.
 
 ---
 
+## IDE
+
+[NoctScript IDE](https://github.com/awemorris/NoctScriptIDE) is a
+lightweight editor for writing and running Noct scripts. It supports
+syntax highlighting, REPL integration, and runs on Windows, macOS, and
+Linux.
+
+Designed for classroom use, it works out of the box — no installation
+needed, just unzip and start coding.
+
+---
+
+## Test and CI
+
+Noct is tested on Windows, macOS, and Linux.  It also supports
+FreeBSD, NetBSD, OpenBSD, and Haiku.
+
+Continuous integration is powered by GitHub Actions.  Each push to the
+main branch triggers builds and binary releases, ensuring stability
+across supported platforms.
+
+---
+
+## License
+
+Noct is open source, released under the MIT license.
+
+This means you can use it freely — for personal, educational, or
+commercial purposes.  You’re also free to modify, redistribute, and
+build upon it, with minimal restrictions.
+
+---
+
 ## Contributing
 
-Noct is currently in active development. We welcome contributions of
-all kinds — whether it's fixing bugs, adding examples, improving
-documentation, or proposing new features.
+Noct is under active development, and we welcome all kinds of
+contributions — bug fixes, examples, documentation, ideas, or new
+features.
 
-Please feel free to open issues or submit pull requests on GitHub.  
-Together, we can make Noct better for everyone.
+We're also building the broader `NoctVM` family, including a game
+engine designed to empower creators.
 
-## Join Us
+Whether you're here to code, teach, test, or explore — we’d love to
+have you with us.
 
-The `NoctVM` family is still in their early stages.  We're building a
-game engine with care, hoping it will inspire and empower creators
-around the world.
-
-If you're interested in contributing — whether it's code,
-documentation, testing, or ideas — we'd be happy to have you with us.
-
-Every small step helps shape what `NoctVM` can become.  You're welcome
-to join us on this journey.
-
-[Join us on Discord](https://discord.gg/ybHWSqDVEX)
+[Join the community on Discord](https://discord.gg/ybHWSqDVEX)
