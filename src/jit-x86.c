@@ -59,7 +59,7 @@ jit_build(
 	/* If the first call, map a memory region for the generated code. */
 	if (jit_code_region == NULL) {
 		if (!jit_map_memory_region((void **)&jit_code_region, JIT_CODE_MAX)) {
-			rt_error(rt, "Memory mapping failed.");
+			noct_error(rt, "Memory mapping failed.");
 			return false;
 		}
 		jit_code_region_cur = jit_code_region;
@@ -120,13 +120,13 @@ jit_free(
 
 /* Put a instruction byte. */
 #define IB(b)			if (!jit_put_byte(ctx, b)) return false
-static INLINE bool
+static NOCT_INLINE bool
 jit_put_byte(
 	struct jit_context *ctx,
 	uint8_t b)
 {
 	if ((uint8_t *)ctx->code + 1 > (uint8_t *)ctx->code_end) {
-		rt_error(ctx->rt, "Code too big.");
+		noct_error(ctx->rt, "Code too big.");
 		return false;
 	}
 
@@ -137,13 +137,13 @@ jit_put_byte(
 
 /* Put a instruction word. */
 #define IW(b)			if (!jit_put_word(ctx, w)) return false
-static INLINE bool
+static NOCT_INLINE bool
 jit_put_word(
 	struct jit_context *ctx,
 	uint16_t w)
 {
 	if ((uint8_t *)ctx->code + 2 > (uint8_t *)ctx->code_end) {
-		rt_error(ctx->rt, "Code too big.");
+		noct_error(ctx->rt, "Code too big.");
 		return false;
 	}
 
@@ -158,13 +158,13 @@ jit_put_word(
 
 /* Put a instruction double word. */
 #define ID(d)			if (!jit_put_dword(ctx, d)) return false
-static INLINE bool
+static NOCT_INLINE bool
 jit_put_dword(
 	struct jit_context *ctx,
 	uint32_t dw)
 {
 	if ((uint8_t *)ctx->code + 4 > (uint8_t *)ctx->code_end) {
-		rt_error(ctx->rt, "Code too big.");
+		noct_error(ctx->rt, "Code too big.");
 		return false;
 	}
 
@@ -247,7 +247,7 @@ jit_put_dword(
  */
 
 /* Visit a ROP_LINEINFO instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_lineinfo_op(
 	struct jit_context *ctx)
 {
@@ -270,7 +270,7 @@ jit_visit_lineinfo_op(
 }
 
 /* Visit a ROP_ASSIGN instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_assign_op(
 	struct jit_context *ctx)
 {
@@ -303,7 +303,7 @@ jit_visit_assign_op(
 }
 
 /* Visit a ROP_ICONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_iconst_op(
 	struct jit_context *ctx)
 {
@@ -332,7 +332,7 @@ jit_visit_iconst_op(
 }
 
 /* Visit a ROP_FCONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_fconst_op(
 	struct jit_context *ctx)
 {
@@ -361,7 +361,7 @@ jit_visit_fconst_op(
 }
 
 /* Visit a ROP_SCONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_sconst_op(
 	struct jit_context *ctx)
 {
@@ -386,7 +386,7 @@ jit_visit_sconst_op(
 		/* pushl %eax */			IB(0x50);
 		/* movl -8(%ebp), %eax */		IB(0x8b); IB(0x45); IB(0xf8);
 		/* pushl %eax */			IB(0x50);
-		/* movl $rt_make_string, %eax */	IB(0xb8); ID((uint32_t)rt_make_string);
+		/* movl $noct_make_string, %eax */	IB(0xb8); ID((uint32_t)noct_make_string);
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $12, %esp */			IB(0x83); IB(0xc4); IB(12);
 
@@ -400,7 +400,7 @@ jit_visit_sconst_op(
 }
 
 /* Visit a ROP_ACONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_aconst_op(
 	struct jit_context *ctx)
 {
@@ -421,7 +421,7 @@ jit_visit_aconst_op(
 		/* pushl %eax */			IB(0x50);
 		/* movl -8(%ebp), %eax */		IB(0x8b); IB(0x45); IB(0xf8);
 		/* pushl %eax */			IB(0x50);
-		/* movl $rt_make_empty_array, %eax */	IB(0xb8); ID((uint32_t)rt_make_empty_array);
+		/* movl $noct_make_empty_array, %eax */	IB(0xb8); ID((uint32_t)noct_make_empty_array);
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $8, %esp */			IB(0x83); IB(0xc4); IB(8);
 
@@ -436,7 +436,7 @@ jit_visit_aconst_op(
 }
 
 /* Visit a ROP_DCONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_dconst_op(
 	struct jit_context *ctx)
 {
@@ -457,7 +457,7 @@ jit_visit_dconst_op(
 		/* pushl %eax */			IB(0x50);
 		/* movl -8(%ebp), %eax */		IB(0x8b); IB(0x45); IB(0xf8);
 		/* pushl %eax */			IB(0x50);
-		/* movl $rt_make_empty_dict, %eax */	IB(0xb8); ID((uint32_t)rt_make_empty_dict);
+		/* movl $noct_make_empty_dict, %eax */	IB(0xb8); ID((uint32_t)noct_make_empty_dict);
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $8, %esp */			IB(0x83); IB(0xc4); IB(8);
 
@@ -472,7 +472,7 @@ jit_visit_dconst_op(
 }
 
 /* Visit a ROP_INC instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_inc_op(
 	struct jit_context *ctx)
 {
@@ -497,7 +497,7 @@ jit_visit_inc_op(
 }
 
 /* Visit a ROP_ADD instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_add_op(
 	struct jit_context *ctx)
 {
@@ -516,7 +516,7 @@ jit_visit_add_op(
 }
 
 /* Visit a ROP_SUB instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_sub_op(
 	struct jit_context *ctx)
 {
@@ -535,7 +535,7 @@ jit_visit_sub_op(
 }
 
 /* Visit a ROP_MUL instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_mul_op(
 	struct jit_context *ctx)
 {
@@ -554,7 +554,7 @@ jit_visit_mul_op(
 }
 
 /* Visit a ROP_DIV instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_div_op(
 	struct jit_context *ctx)
 {
@@ -573,7 +573,7 @@ jit_visit_div_op(
 }
 
 /* Visit a ROP_MOD instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_mod_op(
 	struct jit_context *ctx)
 {
@@ -592,7 +592,7 @@ jit_visit_mod_op(
 }
 
 /* Visit a ROP_AND instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_and_op(
 	struct jit_context *ctx)
 {
@@ -611,7 +611,7 @@ jit_visit_and_op(
 }
 
 /* Visit a ROP_OR instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_or_op(
 	struct jit_context *ctx)
 {
@@ -630,7 +630,7 @@ jit_visit_or_op(
 }
 
 /* Visit a ROP_XOR instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_xor_op(
 	struct jit_context *ctx)
 {
@@ -649,7 +649,7 @@ jit_visit_xor_op(
 }
 
 /* Visit a ROP_XOR instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_neg_op(
 	struct jit_context *ctx)
 {
@@ -666,7 +666,7 @@ jit_visit_neg_op(
 }
 
 /* Visit a ROP_LT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_lt_op(
 	struct jit_context *ctx)
 {
@@ -685,7 +685,7 @@ jit_visit_lt_op(
 }
 
 /* Visit a ROP_LTE instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_lte_op(
 	struct jit_context *ctx)
 {
@@ -704,7 +704,7 @@ jit_visit_lte_op(
 }
 
 /* Visit a ROP_EQ instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_eq_op(
 	struct jit_context *ctx)
 {
@@ -723,7 +723,7 @@ jit_visit_eq_op(
 }
 
 /* Visit a ROP_NEQ instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_neq_op(
 	struct jit_context *ctx)
 {
@@ -742,7 +742,7 @@ jit_visit_neq_op(
 }
 
 /* Visit a ROP_GTE instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_gte_op(
 	struct jit_context *ctx)
 {
@@ -761,7 +761,7 @@ jit_visit_gte_op(
 }
 
 /* Visit a ROP_EQI instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_eqi_op(
 	struct jit_context *ctx)
 {
@@ -797,7 +797,7 @@ jit_visit_eqi_op(
 }
 
 /* Visit a ROP_GT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_gt_op(
 	struct jit_context *ctx)
 {
@@ -816,7 +816,7 @@ jit_visit_gt_op(
 }
 
 /* Visit a ROP_LOADARRAY instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_loadarray_op(
 	struct jit_context *ctx)
 {
@@ -835,7 +835,7 @@ jit_visit_loadarray_op(
 }
 
 /* Visit a ROP_STOREARRAY instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_storearray_op(
 	struct jit_context *ctx)
 {
@@ -854,7 +854,7 @@ jit_visit_storearray_op(
 }
 
 /* Visit a ROP_LEN instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_len_op(
 	struct jit_context *ctx)
 {
@@ -871,7 +871,7 @@ jit_visit_len_op(
 }
 
 /* Visit a ROP_GETDICTKEYBYINDEX instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_getdictkeybyindex_op(
 	struct jit_context *ctx)
 {
@@ -890,7 +890,7 @@ jit_visit_getdictkeybyindex_op(
 }
 
 /* Visit a ROP_GETDICTVALBYINDEX instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_getdictvalbyindex_op(
 	struct jit_context *ctx)
 {
@@ -909,7 +909,7 @@ jit_visit_getdictvalbyindex_op(
 }
 
 /* Visit a ROP_LOADSYMBOL instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_loadsymbol_op(
 	struct jit_context *ctx)
 {
@@ -945,7 +945,7 @@ jit_visit_loadsymbol_op(
 }
 
 /* Visit a ROP_STORESYMBOL instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_storesymbol_op(
 	struct jit_context *ctx)
 {
@@ -981,7 +981,7 @@ jit_visit_storesymbol_op(
 }
 
 /* Visit a ROP_LOADDOT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_loaddot_op(
 	struct jit_context *ctx)
 {
@@ -1021,7 +1021,7 @@ jit_visit_loaddot_op(
 }
 
 /* Visit a ROP_STOREDOT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_storedot_op(
 	struct jit_context *ctx)
 {
@@ -1069,7 +1069,7 @@ jit_visit_call_op(
 	int func;
 	int arg_count;
 	int arg_tmp;
-	int arg[RT_ARG_MAX];
+	int arg[NOCT_ARG_MAX];
 	uint32_t arg_addr;
 	int i;
 
@@ -1136,7 +1136,7 @@ jit_visit_thiscall_op(
 	const char *symbol;
 	int arg_count;
 	int arg_tmp;
-	int arg[RT_ARG_MAX];
+	int arg[NOCT_ARG_MAX];
 	uint32_t arg_addr;
 	int i;
 
@@ -1201,7 +1201,7 @@ jit_visit_jmp_op(
 
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1230,7 +1230,7 @@ jit_visit_jmpiftrue_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1273,7 +1273,7 @@ jit_visit_jmpiffalse_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1316,7 +1316,7 @@ jit_visit_jmpifeq_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1391,7 +1391,7 @@ jit_visit_bytecode(
 	while (ctx->lpc < ctx->func->bytecode_size) {
 		/* Save LPC and addr. */
 		if (ctx->pc_entry_count >= PC_ENTRY_MAX) {
-			rt_error(ctx->rt, "Too big code.");
+			noct_error(ctx->rt, "Too big code.");
 			return false;
 		}
 		ctx->pc_entry[ctx->pc_entry_count].lpc = (uint32_t)ctx->lpc;
@@ -1604,7 +1604,7 @@ jit_patch_branch(
 			
 	}
 	if (target_code == NULL) {
-		rt_error(ctx->rt, "Branch target not found.");
+		noct_error(ctx->rt, "Branch target not found.");
 		return false;
 	}
 

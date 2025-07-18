@@ -59,7 +59,7 @@ jit_build(
 	/* If the first call, map a memory region for the generated code. */
 	if (jit_code_region == NULL) {
 		if (!jit_map_memory_region((void **)&jit_code_region, JIT_CODE_MAX)) {
-			rt_error(rt, _("Memory mapping failed."));
+			noct_error(rt, _("Memory mapping failed."));
 			return false;
 		}
 		jit_code_region_cur = jit_code_region;
@@ -162,7 +162,7 @@ jit_put_word(
 	uint32_t tmp;
 
 	if ((uint32_t *)ctx->code >= (uint32_t *)ctx->code_end) {
-		rt_error(ctx->rt, "Code too big.");
+		noct_error(ctx->rt, "Code too big.");
 		return false;
 	}
 
@@ -1257,7 +1257,7 @@ jit_visit_call_op(
 	int func;
 	int arg_count;
 	int arg_tmp;
-	int arg[RT_ARG_MAX];
+	int arg[NOCT_ARG_MAX];
 	uint32_t tmp;
 	uint64_t arg_addr;
 	int i;
@@ -1343,7 +1343,7 @@ jit_visit_thiscall_op(
 	const char *symbol;
 	int arg_count;
 	int arg_tmp;
-	int arg[RT_ARG_MAX];
+	int arg[NOCT_ARG_MAX];
 	uint32_t tmp;
 	uint64_t arg_addr;
 	int i;
@@ -1436,7 +1436,7 @@ jit_visit_jmp_op(
 
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1465,7 +1465,7 @@ jit_visit_jmpiftrue_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1510,7 +1510,7 @@ jit_visit_jmpiffalse_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1555,7 +1555,7 @@ jit_visit_jmpifeq_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		rt_error(ctx->rt, BROKEN_BYTECODE);
+		noct_error(ctx->rt, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1619,7 +1619,7 @@ jit_visit_bytecode(
 	while (ctx->lpc < ctx->func->bytecode_size) {
 		/* Save LPC and addr. */
 		if (ctx->pc_entry_count >= PC_ENTRY_MAX) {
-			rt_error(ctx->rt, _("Code too big."));
+			noct_error(ctx->rt, _("Code too big."));
 			return false;
 		}
 		ctx->pc_entry[ctx->pc_entry_count].lpc = (uint32_t)ctx->lpc;
@@ -1832,7 +1832,7 @@ jit_patch_branch(
 			
 	}
 	if (target_code == NULL) {
-		rt_error(ctx->rt, _("Branch target not found."));
+		noct_error(ctx->rt, _("Branch target not found."));
 		return false;
 	}
 
