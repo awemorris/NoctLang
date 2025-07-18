@@ -50,7 +50,7 @@ jit_free(
 #include <string.h>
 #include <assert.h>
 
-#if defined(TARGET_WINDOWS)
+#if defined(_WIN32)
 #include <windows.h>		/* VirtualAlloc(), VirtualProtect(), VirtualFree() */
 #else
 #include <sys/mman.h>		/* mmap(), mprotect(), munmap() */
