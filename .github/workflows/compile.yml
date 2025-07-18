@@ -15,7 +15,7 @@ jobs:
       - name: Set up dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake
+          sudo apt-get install -y build-essential cmake bison flex
       - name: Configure
         run: cmake -B build -S .
       - name: Build
@@ -36,11 +36,14 @@ jobs:
       - name: Install MinGW
         run: |
           choco install mingw -y
+          choco install winflexbison3 -y
           echo "C:\ProgramData\chocolatey\bin" >> $GITHUB_PATH
       - name: Verify compiler
         run: |
           gcc --version
           g++ --version
+          bison --version
+          flex --version
       - name: Configure
         run: cmake -B build -S . -G "MinGW Makefiles"
       - name: Build
@@ -59,7 +62,7 @@ jobs:
       - name: Set up dependencies
         run: |
           brew update
-          brew install cmake
+          brew install cmake bison flex
       - name: Configure
         run: cmake -B build -S .
       - name: Build
