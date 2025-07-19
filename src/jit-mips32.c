@@ -154,7 +154,7 @@ jit_free(
 
 /* Put a instruction word. */
 #define IW(w)				if (!jit_put_word(ctx, w)) return false
-static INLINE bool
+static NOCT_INLINE bool
 jit_put_word(
 	struct jit_context *ctx,
 	uint32_t word)
@@ -174,23 +174,23 @@ jit_put_word(
  * Templates
  */
 
-static INLINE uint32_t hi16(uint32_t d)
+static NOCT_INLINE uint32_t hi16(uint32_t d)
 {
 	return (d >> 16) & 0xffff;
 }
 
-static INLINE uint32_t lo16(uint32_t d)
+static NOCT_INLINE uint32_t lo16(uint32_t d)
 {
 	return d & 0xffff;
 }
 
-static INLINE uint32_t tvar16(int d)
+static NOCT_INLINE uint32_t tvar16(int d)
 {
 	return (uint32_t)d & 0xffff;
 }
 
 #define EXC()	exc((uint32_t)ctx->exception_code, (uint32_t)ctx->code)
-static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
+static NOCT_INLINE uint32_t exc(uint32_t handler, uint32_t cur)
 {
 	return ((handler - cur - 4) / 4) & 0xffff;
 }
@@ -257,7 +257,7 @@ static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
  */
 
 /* Visit a ROP_LINEINFO instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_lineinfo_op(
 	struct jit_context *ctx)
 {
@@ -278,7 +278,7 @@ jit_visit_lineinfo_op(
 }
 
 /* Visit a ROP_ASSIGN instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_assign_op(
 	struct jit_context *ctx)
 {
@@ -315,7 +315,7 @@ jit_visit_assign_op(
 }
 
 /* Visit a ROP_ICONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_iconst_op(
 	struct jit_context *ctx)
 {
@@ -350,7 +350,7 @@ jit_visit_iconst_op(
 }
 
 /* Visit a ROP_FCONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_fconst_op(
 	struct jit_context *ctx)
 {
@@ -385,7 +385,7 @@ jit_visit_fconst_op(
 }
 
 /* Visit a ROP_SCONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_sconst_op(
 	struct jit_context *ctx)
 {
@@ -396,7 +396,7 @@ jit_visit_sconst_op(
 	CONSUME_TMPVAR(dst);
 	CONSUME_STRING(val);
 
-	f = (uint32_t)rt_make_string;
+	f = (uint32_t)noct_make_string;
 	dst *= (int)sizeof(struct rt_value);
 
 	/* rt_make_string(rt, &rt->frame->tmpvar[dst], val); */
@@ -415,7 +415,7 @@ jit_visit_sconst_op(
 		/* lui $a2, val@h */		IW(0x3c060000 | hi16((uint32_t)val));
 		/* ori $a2, $a2, val@l */	IW(0x34c60000 | lo16((uint32_t)val));
 
-		/* Call rt_make_string(). */
+		/* Call noct_make_string(). */
 		/* lui  $t0, f@h */		IW(0x3c080000 | hi16(f));
 		/* ori  $t0, $t0, f@l */	IW(0x35080000 | lo16(f));
 		/* move $s2, $ra */		IW(0x03e09025);
@@ -432,7 +432,7 @@ jit_visit_sconst_op(
 }
 
 /* Visit a ROP_ACONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_aconst_op(
 	struct jit_context *ctx)
 {
@@ -441,7 +441,7 @@ jit_visit_aconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint32_t)rt_make_empty_array;
+	f = (uint32_t)noct_make_empty_array;
 	dst *= (int)sizeof(struct rt_value);
 
 	/* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
@@ -456,7 +456,7 @@ jit_visit_aconst_op(
 		/* li $a1, dst */		IW(0x24050000 | lo16((uint32_t)dst));
 		/* addu $a1, $a1, $s1 */	IW(0x00b12821);
 
-		/* Call rt_make_empty_array(). */
+		/* Call noct_make_empty_array(). */
 		/* lui  $t0, f@h */		IW(0x3c080000 | hi16(f));
 		/* ori  $t0, $t0, f@l */	IW(0x35080000 | lo16(f));
 		/* move $s2, $ra */		IW(0x03e09025);
@@ -473,7 +473,7 @@ jit_visit_aconst_op(
 }
 
 /* Visit a ROP_DCONST instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_dconst_op(
 	struct jit_context *ctx)
 {
@@ -482,10 +482,10 @@ jit_visit_dconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint32_t)rt_make_empty_dict;
+	f = (uint32_t)noct_make_empty_dict;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+	/* noct_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
 	ASM {
 		/* $s0: rt */
 		/* $s1: &rt->frame->tmpvar[0] */
@@ -497,7 +497,7 @@ jit_visit_dconst_op(
 		/* li $a1, dst */		IW(0x24050000 | lo16((uint32_t)dst));
 		/* addu $a1, $a1, $s1 */	IW(0x00b12821);
 
-		/* Call rt_make_empty_dict(). */
+		/* Call noct_make_empty_dict(). */
 		/* lui  $t0, f@h */		IW(0x3c080000 | hi16(f));
 		/* ori  $t0, $t0, f@l */	IW(0x35080000 | lo16(f));
 		/* move $s2, $ra */		IW(0x03e09025);
@@ -514,7 +514,7 @@ jit_visit_dconst_op(
 }
 
 /* Visit a ROP_INC instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_inc_op(
 	struct jit_context *ctx)
 {
@@ -543,7 +543,7 @@ jit_visit_inc_op(
 }
 
 /* Visit a ROP_ADD instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_add_op(
 	struct jit_context *ctx)
 {
@@ -562,7 +562,7 @@ jit_visit_add_op(
 }
 
 /* Visit a ROP_SUB instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_sub_op(
 	struct jit_context *ctx)
 {
@@ -581,7 +581,7 @@ jit_visit_sub_op(
 }
 
 /* Visit a ROP_MUL instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_mul_op(
 	struct jit_context *ctx)
 {
@@ -600,7 +600,7 @@ jit_visit_mul_op(
 }
 
 /* Visit a ROP_DIV instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_div_op(
 	struct jit_context *ctx)
 {
@@ -619,7 +619,7 @@ jit_visit_div_op(
 }
 
 /* Visit a ROP_MOD instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_mod_op(
 	struct jit_context *ctx)
 {
@@ -638,7 +638,7 @@ jit_visit_mod_op(
 }
 
 /* Visit a ROP_AND instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_and_op(
 	struct jit_context *ctx)
 {
@@ -657,7 +657,7 @@ jit_visit_and_op(
 }
 
 /* Visit a ROP_OR instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_or_op(
 	struct jit_context *ctx)
 {
@@ -676,7 +676,7 @@ jit_visit_or_op(
 }
 
 /* Visit a ROP_XOR instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_xor_op(
 	struct jit_context *ctx)
 {
@@ -695,7 +695,7 @@ jit_visit_xor_op(
 }
 
 /* Visit a ROP_NEG instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_neg_op(
 	struct jit_context *ctx)
 {
@@ -712,7 +712,7 @@ jit_visit_neg_op(
 }
 
 /* Visit a ROP_NOT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_not_op(
 	struct jit_context *ctx)
 {
@@ -729,7 +729,7 @@ jit_visit_not_op(
 }
 
 /* Visit a ROP_LT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_lt_op(
 	struct jit_context *ctx)
 {
@@ -748,7 +748,7 @@ jit_visit_lt_op(
 }
 
 /* Visit a ROP_LTE instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_lte_op(
 	struct jit_context *ctx)
 {
@@ -767,7 +767,7 @@ jit_visit_lte_op(
 }
 
 /* Visit a ROP_EQ instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_eq_op(
 	struct jit_context *ctx)
 {
@@ -786,7 +786,7 @@ jit_visit_eq_op(
 }
 
 /* Visit a ROP_NEQ instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_neq_op(
 	struct jit_context *ctx)
 {
@@ -805,7 +805,7 @@ jit_visit_neq_op(
 }
 
 /* Visit a ROP_GTE instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_gte_op(
 	struct jit_context *ctx)
 {
@@ -824,7 +824,7 @@ jit_visit_gte_op(
 }
 
 /* Visit a ROP_GT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_gt_op(
 	struct jit_context *ctx)
 {
@@ -843,7 +843,7 @@ jit_visit_gt_op(
 }
 
 /* Visit a ROP_EQI instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_eqi_op(
 	struct jit_context *ctx)
 {
@@ -882,7 +882,7 @@ jit_visit_eqi_op(
 }
 
 /* Visit a ROP_LOADARRAY instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_loadarray_op(
 	struct jit_context *ctx)
 {
@@ -901,7 +901,7 @@ jit_visit_loadarray_op(
 }
 
 /* Visit a ROP_STOREARRAY instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_storearray_op(
 	struct jit_context *ctx)
 {
@@ -920,7 +920,7 @@ jit_visit_storearray_op(
 }
 
 /* Visit a ROP_LEN instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_len_op(
 	struct jit_context *ctx)
 {
@@ -937,7 +937,7 @@ jit_visit_len_op(
 }
 
 /* Visit a ROP_GETDICTKEYBYINDEX instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_getdictkeybyindex_op(
 	struct jit_context *ctx)
 {
@@ -956,7 +956,7 @@ jit_visit_getdictkeybyindex_op(
 }
 
 /* Visit a ROP_GETDICTVALBYINDEX instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_getdictvalbyindex_op(
 	struct jit_context *ctx)
 {
@@ -975,7 +975,7 @@ jit_visit_getdictvalbyindex_op(
 }
 
 /* Visit a ROP_LOADSYMBOL instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_loadsymbol_op(
 	struct jit_context *ctx)
 {
@@ -1022,7 +1022,7 @@ jit_visit_loadsymbol_op(
 }
 
 /* Visit a ROP_STORESYMBOL instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_storesymbol_op(
 	struct jit_context *ctx)
 {
@@ -1069,7 +1069,7 @@ jit_visit_storesymbol_op(
 }
 
 /* Visit a ROP_LOADDOT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_loaddot_op(
 	struct jit_context *ctx)
 {
@@ -1121,7 +1121,7 @@ jit_visit_loaddot_op(
 }
 
 /* Visit a ROP_STOREDOT instruction. */
-static INLINE bool
+static NOCT_INLINE bool
 jit_visit_storedot_op(
 	struct jit_context *ctx)
 {
@@ -1280,7 +1280,7 @@ jit_visit_thiscall_op(
 
 	if (arg_count > 0) {
 		/* Embed arguments to the code. */
-		tmp = (uint32_t)((4 + 4 * arg_count + 4) / 4);
+		tmp = (uint32_t)((8 + 4 * arg_count - 4) / 4);
 		ASM {
 			/* b */		IW(0x10000000 | tmp);
 			/* nop */	IW(0x00000000);
@@ -1301,24 +1301,33 @@ jit_visit_thiscall_op(
 		/* $s0: rt */
 		/* $s1: &rt->frame->tmpvar[0] */
 
+		/* addiu $sp, $sp, -32 */	IW(0x27bdffe0);
+
 		/* Arg1 $a0 = rt */
 		/* move $a0, $s0 */		IW(0x02002025);
+		/* sw $a0, 0($sp) */		IW(0xafa40000);
 
 		/* Arg2 $a1 = dst */
 		/* li $a1, dst */		IW(0x24050000 | tvar16(dst));
+		/* sw $a1, 4($sp) */		IW(0xafa50004);
 
 		/* Arg3 $a2 = obj */
 		/* li $a2, obj */		IW(0x24060000 | tvar16(obj));
+		/* sw $a2, 8($sp) */		IW(0xafa60008);
 
-		/* Arg4 $a3 = arg_count */
+		/* Arg4 $a3 = symbol */
 		/* lui $a3, symbol@h */		IW(0x3c070000 | hi16((uint32_t)symbol));
 		/* ori $a3, $a3, symbol@l */	IW(0x34e70000 | lo16((uint32_t)symbol));
+		/* sw $a3, 12($sp) */		IW(0xafa7000c);
 
-		/* Arg5 arg */
+		/* Arg5 argc_count */
+		/* li  $t0, arg_count */	IW(0x24080000 | lo16(arg_count));
+		/* sw $t0, 16($sp) */		IW(0xafa80010);
+
+		/* Arg6 arg */
 		/* lui $t0, arg@h */		IW(0x3c080000 | hi16(arg_addr));
 		/* ori $t0, $t0, arg@l */	IW(0x35080000 | lo16(arg_addr));
-		/* addiu $sp, $sp, -20 */	IW(0x27bdffec);
-		/* sw $t0, 16($sp) */		IW(0xafa80010);
+		/* sw $t0, 20($sp) */		IW(0xafa80014);
 
 		/* Call rt_thiscall_helper(). */
 		/* lui  $t0, f@h */		IW(0x3c080000 | hi16(f));
@@ -1327,7 +1336,7 @@ jit_visit_thiscall_op(
 		/* jalr $t0 */			IW(0x0100f809);
 		/* nop */			IW(0x00000000);
 		/* move $ra, $s2 */		IW(0x0240f825);
-		/* addiu $sp, $sp, 20 */	IW(0x27bd0014);
+		/* addiu $sp, $sp, 32 */	IW(0x27bd0020);
 
 		/* If failed: */
 		/* beqz $v0, $zero, exc */	IW(0x10400000 | EXC());
@@ -1614,6 +1623,10 @@ jit_visit_bytecode(
 			break;
 		case ROP_NEG:
 			if (!jit_visit_neg_op(ctx))
+				return false;
+			break;
+		case ROP_NOT:
+			if (!jit_visit_not_op(ctx))
 				return false;
 			break;
 		case ROP_LT:

@@ -2227,10 +2227,7 @@ noct_set_return(
 {
 	int ret_index;
 
-	ret_index = rt->frame->func->param_count;
-	assert(ret_index < rt->frame->tmpvar_size);
-
-	rt->frame->tmpvar[ret_index] = *val;
+	rt->frame->tmpvar[0] = *val;
 
 	return true;
 }

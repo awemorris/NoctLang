@@ -27,6 +27,10 @@
 #define ARCH_ARM64
 #elif defined(__arm__)
 #define ARCH_ARM32
+#elif defined(__mips64) || defined(__mips64__)
+#define ARCH_MIPS64
+#elif defined(__mips__)
+#define ARCH_MIPS32
 #elif defined(_ARCH_PPC64)
 #define ARCH_PPC64
 #elif defined(_ARCH_PPC)
@@ -117,7 +121,7 @@ inline void strlcat(char *d, const char *s, size_t len)
 #define ARCH_X86_64
 #endif
 
-#define INLINE				__inline
+#define NOCT_INLINE				__inline
 #define RESTRICT			__restrict
 #define UNUSED_PARAMETER(x)		(void)(x)
 #define U8(s)				u8##s

@@ -161,6 +161,10 @@ lir_build(
 	/* Initialize the tmpvars. */
 	tmpvar_top = lir_count_local(hir_func);
 	tmpvar_count = tmpvar_top;
+	if (tmpvar_count == 0) {
+		/* For the return value. */
+		tmpvar_count = 1;
+	}
 
 	/* Initialize the relocation table. */
 	loc_count = 0;

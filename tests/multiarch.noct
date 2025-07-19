@@ -25,25 +25,20 @@ func main() {
     return 0;
 }
 
-func arch_test(name, tool, qemu) {
+func arch_test(name, toolchain, qemu) {
     // Print a header.
     print("[" + name + "]");
 
     // Build a binary for a specified architecture.
-    if (shell(
-            "cd .. && " +
-            "cmake -B build-" + name + " .  && " +
-            "cmake --build build-" + name)
-        != 0) {
-        print("xxBuild failed.");
-	return 0;
+    if (shell("cd .. && " +
+              "cmake -B build-" + name + " .  -DCMAKE_TOOLCHAIN_FILE=cmake/" + toolchain + " && " +
+              "cmake --build build-" + name) != 0) {
+        print("Build failed.");
+        return 0;
     }
-    print("xxBuild2 failed.");
 
     // Copy a binary.
-    if (shell(
-            "cp ../build-" + name + "/noct ./noct-arch")
-        != 0) {
+    if (shell("cp ../build-" + name + "/noct ./noct-arch") != 0) {
         print("Copy failed.");
         return 0;
     }
