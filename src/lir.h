@@ -69,8 +69,8 @@ enum bytecode {
 
 	/* branch */
 	LOP_JMP,		/* 0x24: PC = src */
-	LOP_JMPIFTRUE,		/* 0x25: PC = src1 if src2 == 1 */
-	LOP_JMPIFFALSE,		/* 0x26: PC = src1 if src2 != 1 */
+	LOP_JMPIFTRUE,		/* 0x25: PC = src1 if src2 != 0 */
+	LOP_JMPIFFALSE,		/* 0x26: PC = src1 if src2 == 0 */
 	LOP_JMPIFEQ,		/* 0x27: PC = src1 if src2 indicates eq */
 
 	/* line number */

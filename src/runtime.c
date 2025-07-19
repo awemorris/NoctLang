@@ -454,7 +454,7 @@ rt_register_bytecode_function(
 		if (i != lfunc.param_count)
 			break;
 
-		/* Check "Local Size". */
+		/* Check "Temporary Size". */
 		line = rt_read_bytecode_line(data, size, pos);
 		if (line == NULL || strcmp(line, "Local Size") != 0)
 			break;
@@ -2297,10 +2297,9 @@ rt_get_return(
 {
 	int ret_index;
 
-	ret_index = rt->frame->func->param_count;
 	assert(ret_index < rt->frame->tmpvar_size);
 
-	*val = rt->frame->tmpvar[ret_index];
+	*val = rt->frame->tmpvar[0];
 
 	return true;
 }

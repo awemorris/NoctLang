@@ -55,8 +55,8 @@ enum rt_bytecode {
 	ROP_CALL,		/* 0x22: func(arg1, ...) */
 	ROP_THISCALL,		/* 0x23: obj->func(arg1, ...) */
 	ROP_JMP,		/* 0x24: PC = src */
-	ROP_JMPIFTRUE,		/* 0x25: PC = src1 if src2 == 1 */
-	ROP_JMPIFFALSE,		/* 0x26: PC = src1 if src2 != 1 */
+	ROP_JMPIFTRUE,		/* 0x25: PC = src1 if src2 != 0 */
+	ROP_JMPIFFALSE,		/* 0x26: PC = src1 if src2 == 0 */
 	ROP_JMPIFEQ,		/* 0x27: PC = src1 if src2 indicates eq */
 	ROP_LINEINFO,		/* 0x28: line = src */
 };

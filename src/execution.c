@@ -473,6 +473,35 @@ rt_neg_helper(
 		dst_val->val.f = -src_val->val.f;
 		break;
 	default:
+		noct_error(rt, _("Value is not a number."));
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * NEG helper.
+ */
+SYSVABI
+bool
+rt_not_helper(
+	struct rt_env *rt,
+	int dst,
+	int src)
+{
+	struct rt_value *dst_val;
+	struct rt_value *src_val;
+
+	dst_val = &rt->frame->tmpvar[dst];
+	src_val = &rt->frame->tmpvar[src];
+
+	switch (src_val->type) {
+	case NOCT_VALUE_INT:
+		dst_val->type = NOCT_VALUE_INT;
+		dst_val->val.i = src_val->val.i == 0 ? 1 : 0;
+		break;
+	default:
 		noct_error(rt, _("Value is not an integer."));
 		return false;
 	}
@@ -1015,7 +1044,7 @@ rt_loadarray_helper(
 }
 
 /*
- * len helper.
+ * LEN helper.
  */
 SYSVABI
 bool

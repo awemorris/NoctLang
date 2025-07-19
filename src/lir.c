@@ -962,6 +962,12 @@ lir_check_lhs_local(
 	/* Get a symbol. */
 	symbol = lhs->val.term.term->val.symbol;
 
+	/* Check for a return value. */
+	if (strcmp(symbol, "$return") == 0) {
+		*rhs_tmpvar = 0;
+		return true;
+	}
+
 	/* Get a root func block. */
 	func = block->parent;
 	while (func->type != HIR_BLOCK_FUNC)

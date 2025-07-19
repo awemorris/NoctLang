@@ -316,7 +316,7 @@ static bool compile_source(const char *file_name)
 		fprintf(fp, "%d\n", lfunc->param_count);
 		for (j = 0; j < lfunc->param_count; j++)
 			fprintf(fp, "%s\n", lfunc->param_name[j]);
-		fprintf(fp, "Local Size\n");
+		fprintf(fp, "Temporary Size\n");
 		fprintf(fp, "%d\n", lfunc->tmpvar_size);
 		fprintf(fp, "Bytecode Size\n");
 		fprintf(fp, "%d\n", lfunc->bytecode_size);

@@ -93,6 +93,13 @@ rt_neg_helper(
 
 SYSVABI
 bool
+rt_not_helper(
+	struct rt_env *rt,
+	int dst,
+	int src);
+
+SYSVABI
+bool
 rt_lt_helper(
 	struct rt_env *rt,
 	int dst,
