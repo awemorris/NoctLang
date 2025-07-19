@@ -931,7 +931,7 @@ jit_visit_xor_op(
 	return true;
 }
 
-/* Visit a ROP_XOR instruction. */
+/* Visit a ROP_NEG instruction. */
 static NOCT_INLINE bool
 jit_visit_neg_op(
 	struct jit_context *ctx)
@@ -943,7 +943,24 @@ jit_visit_neg_op(
 	CONSUME_TMPVAR(src);
 
 	/* if (!rt_neg_helper(rt, dst, src)) return false; */
-	ASM_UNARY_OP(rt_xor_helper);
+	ASM_UNARY_OP(rt_neg_helper);
+
+	return true;
+}
+
+/* Visit a ROP_NOT instruction. */
+static NOCT_INLINE bool
+jit_visit_not_op(
+	struct jit_context *ctx)
+{
+	int dst;
+	int src;
+
+	CONSUME_TMPVAR(dst);
+	CONSUME_TMPVAR(src);
+
+	/* if (!rt_not_helper(rt, dst, src)) return false; */
+	ASM_UNARY_OP(rt_not_helper);
 
 	return true;
 }
@@ -1811,6 +1828,10 @@ jit_visit_bytecode(
 			break;
 		case ROP_NEG:
 			if (!jit_visit_neg_op(ctx))
+				return false;
+			break;
+		case ROP_NOT:
+			if (!jit_visit_not_op(ctx))
 				return false;
 			break;
 		case ROP_LT:
