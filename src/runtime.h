@@ -26,38 +26,39 @@ enum rt_bytecode {
 	ROP_ACONST,		/* 0x05: dst = empty array */
 	ROP_DCONST,		/* 0x06: dst = empty dictionary */
 	ROP_INC,		/* 0x07: dst = src + 1 */
-	ROP_NEG,		/* 0x08: dst = ~src */
-	ROP_ADD,		/* 0x09: dst = src1 + src2 */
-	ROP_SUB,		/* 0x0a: dst = src1 - src2 */
-	ROP_MUL,		/* 0x0b: dst = src1 * src2 */
-	ROP_DIV,		/* 0x0c: dst = src1 / src2 */
-	ROP_MOD,		/* 0x0d: dst = src1 % src2 */
-	ROP_AND,		/* 0x0e: dst = src1 & src2 */
-	ROP_OR,			/* 0x0f: dst = src1 | src2 */
-	ROP_XOR,		/* 0x10: dst = src1 ^ src2 */
-	ROP_LT,			/* 0x11: dst = src1 <  src2 [0 or 1] */
-	ROP_LTE,		/* 0x12: dst = src1 <= src2 [0 or 1] */
-	ROP_GT,			/* 0x13: dst = src1 >  src2 [0 or 1] */
-	ROP_GTE,		/* 0x14: dst = src1 >= src2 [0 or 1] */
-	ROP_EQ,			/* 0x15: dst = src1 == src2 [0 or 1] */
-	ROP_NEQ,		/* 0x16: dst = src1 != src2 [0 or 1] */
-	ROP_EQI,		/* 0x17: dst = src1 == src2 [0 or 1], integers */
-	ROP_LOADARRAY,		/* 0x18: dst = src1[src2] */
-	ROP_STOREARRAY,		/* 0x19: opr1[opr2] = op3 */
-	ROP_LEN,		/* 0x1a: dst = len(src) */
-	ROP_GETDICTKEYBYINDEX,	/* 0x1b: dst = src1.keyAt(src2) */
-	ROP_GETDICTVALBYINDEX,	/* 0x1c: dst = src1.valAt(src2) */
-	ROP_STOREDOT,		/* 0x1d: obj.access = src */
-	ROP_LOADDOT,		/* 0x1e: dst = obj.access */
-	ROP_STORESYMBOL,	/* 0x1f: setSymbol(dst, src) */
-	ROP_LOADSYMBOL,		/* 0x20: dst = getSymbol(src) */
-	ROP_CALL,		/* 0x21: func(arg1, ...) */
-	ROP_THISCALL,		/* 0x22: obj->func(arg1, ...) */
-	ROP_JMP,		/* 0x23: PC = src */
-	ROP_JMPIFTRUE,		/* 0x24: PC = src1 if src2 == 1 */
-	ROP_JMPIFFALSE,		/* 0x25: PC = src1 if src2 != 1 */
-	ROP_JMPIFEQ,		/* 0x25: PC = src1 if src2 indicates eq */
-	ROP_LINEINFO,		/* 0x26: line = src */
+	ROP_NEG,		/* 0x08: dst = -src */
+	ROP_NOT,		/* 0x09: dst = !src */
+	ROP_ADD,		/* 0x0a: dst = src1 + src2 */
+	ROP_SUB,		/* 0x0b: dst = src1 - src2 */
+	ROP_MUL,		/* 0x0c: dst = src1 * src2 */
+	ROP_DIV,		/* 0x0d: dst = src1 / src2 */
+	ROP_MOD,		/* 0x0e: dst = src1 % src2 */
+	ROP_AND,		/* 0x0f: dst = src1 & src2 */
+	ROP_OR,			/* 0x10: dst = src1 | src2 */
+	ROP_XOR,		/* 0x11: dst = src1 ^ src2 */
+	ROP_LT,			/* 0x12: dst = src1 <  src2 [0 or 1] */
+	ROP_LTE,		/* 0x13: dst = src1 <= src2 [0 or 1] */
+	ROP_GT,			/* 0x14: dst = src1 >  src2 [0 or 1] */
+	ROP_GTE,		/* 0x15: dst = src1 >= src2 [0 or 1] */
+	ROP_EQ,			/* 0x16: dst = src1 == src2 [0 or 1] */
+	ROP_NEQ,		/* 0x17: dst = src1 != src2 [0 or 1] */
+	ROP_EQI,		/* 0x18: dst = src1 == src2 [0 or 1], integers */
+	ROP_LOADARRAY,		/* 0x19: dst = src1[src2] */
+	ROP_STOREARRAY,		/* 0x1a: opr1[opr2] = opr3 */
+	ROP_LEN,		/* 0x1b: dst = len(src) */
+	ROP_GETDICTKEYBYINDEX,	/* 0x1c: dst = src1.keyAt(src2) */
+	ROP_GETDICTVALBYINDEX,	/* 0x1d: dst = src1.valAt(src2) */
+	ROP_STOREDOT,		/* 0x1e: obj.access = src */
+	ROP_LOADDOT,		/* 0x1f: dst = obj.access */
+	ROP_STORESYMBOL,	/* 0x20: setSymbol(dst, src) */
+	ROP_LOADSYMBOL,		/* 0x21: dst = getSymbol(src) */
+	ROP_CALL,		/* 0x22: func(arg1, ...) */
+	ROP_THISCALL,		/* 0x23: obj->func(arg1, ...) */
+	ROP_JMP,		/* 0x24: PC = src */
+	ROP_JMPIFTRUE,		/* 0x25: PC = src1 if src2 == 1 */
+	ROP_JMPIFFALSE,		/* 0x26: PC = src1 if src2 != 1 */
+	ROP_JMPIFEQ,		/* 0x27: PC = src1 if src2 indicates eq */
+	ROP_LINEINFO,		/* 0x28: line = src */
 };
 
 /*
@@ -121,9 +122,6 @@ struct rt_frame {
 
 	/* function */
 	struct rt_func *func;
-
-	/* bindlocal. */
-	struct rt_bindlocal *local;
 
 	/* Shallow string list. */
 	struct rt_string *shallow_str_list;
@@ -225,17 +223,6 @@ struct rt_bindglobal {
 };
 
 /*
- * Local variable entry.
- */
-struct rt_bindlocal {
-	char *name;
-	struct rt_value val;
-
-	/* XXX: */
-	struct rt_bindlocal *next;
-};
-
-/*
  * Runtime Internal Functions
  */
 
@@ -255,26 +242,12 @@ void
 rt_leave_frame(
 	struct rt_env *rt);
 
-/* Add a local bariable. */
-bool
-rt_add_local(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindlocal **local);
-
 /* Add a global variable. */
 bool
 rt_add_global(
 	struct rt_env *rt,
 	const char *name,
 	struct rt_bindglobal **global);
-
-/* Find a local variable. */
-bool
-rt_find_local(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindlocal **local);
 
 /* Find a global variable. */
 bool

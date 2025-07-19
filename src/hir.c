@@ -2051,6 +2051,7 @@ hir_free_expr(
 		break;
 	/* Unary OPs */
 	case HIR_EXPR_NEG:
+	case HIR_EXPR_NOT:
 	case HIR_EXPR_PAR:
 		if (e->val.unary.expr != NULL) {
 			hir_free_expr(e->val.unary.expr);

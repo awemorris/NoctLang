@@ -221,7 +221,7 @@ lir_build(
 	return true;
 }
 
-/* Count the number of explicit local variables of a func. */
+/* Count the number of the local variables in a func. */
 static int
 lir_count_local(
 	struct hir_block *func)
@@ -854,7 +854,7 @@ lir_visit_stmt(
 			return false;
 	}
 
-	/* Check whether LHS is an explicit local variable. */
+	/* Check whether LHS is a local variable. */
 	is_lhs_local = lir_check_lhs_local(parent, stmt->lhs, &rhs_tmpvar);
 
 	/* Prepare a tmpvar for RHS if LHS is not an explicit local variable. */
@@ -940,7 +940,7 @@ lir_visit_stmt(
 	return true;
 }
 
-/* Check whether LHS is local. */
+/* Check whether LHS is local variable. */
 static bool
 lir_check_lhs_local(
 	struct hir_block *block,
@@ -967,7 +967,7 @@ lir_check_lhs_local(
 	while (func->type != HIR_BLOCK_FUNC)
 		func = func->parent;
 
-	/* Search in an explicit local variable list. */
+	/* Search in the local variable list. */
 	local = func->val.func.local;
 	while (local != NULL) {
 		if (strcmp(local->symbol, symbol) == 0)
@@ -977,7 +977,7 @@ lir_check_lhs_local(
 	if (local == NULL)
 		return false;
 
-	/* Use a tmpvar index for the explicit local variable. */
+	/* Use a tmpvar index for the local variable. */
 	*rhs_tmpvar = local->index;
 
 	return true;
@@ -1003,7 +1003,8 @@ lir_visit_expr(
 			return false;
 		break;
 	case HIR_EXPR_NEG:
-		/* For the unary operator. (Currently NEG only) */
+	case HIR_EXPR_NOT:
+		/* For the unary operators. */
 		if (!lir_visit_unary_expr(dst_tmpvar, expr, block))
 			return false;
 		break;
@@ -1080,6 +1081,14 @@ lir_visit_unary_expr(
 	switch (expr->type) {
 	case HIR_EXPR_NEG:
 		if (!lir_put_opcode(LOP_NEG))
+			return false;
+		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+			return false;
+		if (!lir_put_tmpvar((uint16_t)opr_tmpvar))
+			return false;
+		break;
+	case HIR_EXPR_NOT:
+		if (!lir_put_opcode(LOP_NOT))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 			return false;

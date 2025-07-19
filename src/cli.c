@@ -711,7 +711,7 @@ int command_run(int argc, char *argv[])
 	}
 
 	/* Run the "main()" function. */
-	if (!noct_call_with_name(rt, "main", NULL, arg_count, arg_value, &ret)) {
+	if (!noct_call_with_name(rt, "main", arg_count, arg_value, &ret)) {
 		wide_printf(_("%s:%d: Error: %s\n"),
 			      noct_get_error_file(rt),
 			      noct_get_error_line(rt),
@@ -787,7 +787,7 @@ int command_repl(void)
 			}
 
 			/* Run the "repl()" function. */
-			if (!noct_call_with_name(rt, "repl", NULL, 0, NULL, &ret)) {
+			if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
 				wide_printf(_("%s:%d: Error: %s\n"),
 					    noct_get_error_file(rt),
 					    noct_get_error_line(rt),
@@ -824,7 +824,7 @@ int command_repl(void)
 
 			if (!is_func) {
 				/* Run the "repl()" function. */
-				if (!noct_call_with_name(rt, "repl", NULL, 0, NULL, &ret)) {
+				if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
 					wide_printf(_("%s:%d: Error: %s\n"),
 						    noct_get_error_file(rt),
 						    noct_get_error_line(rt),

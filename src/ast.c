@@ -845,6 +845,25 @@ ast_accept_neg_expr(
 	return expr;
 }
 
+/* Called from the parser when it accepted a expr with a ! operator. */
+struct ast_expr *
+ast_accept_not_expr(
+	struct ast_expr *e)
+{
+	struct ast_expr *expr;
+
+	expr = malloc(sizeof(struct ast_expr));
+	if (expr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(expr, 0, sizeof(struct ast_expr));
+	expr->type = AST_EXPR_NOT;
+	expr->val.binary.expr[0] = e;
+
+	return expr;
+}
+
 /* Called from the parser when it accepted a expr with a () syntax. */
 struct ast_expr *
 ast_accept_par_expr(

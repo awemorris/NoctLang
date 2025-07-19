@@ -132,6 +132,12 @@ extern YYLTYPE yylloc;
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_OR;
 		}
+"!"		{
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_NOT;
+		}
 ";"		{
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;

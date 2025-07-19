@@ -595,7 +595,6 @@ bool
 noct_call_with_name(
 	struct rt_env *rt,
 	const char *func_name,
-	struct rt_value *thisptr,
 	int arg_count,
 	struct rt_value *arg,
 	struct rt_value *ret)
@@ -620,7 +619,7 @@ noct_call_with_name(
 	func = global->val.val.func;
 
 	/* Call. */
-	if (!noct_call(rt, func, thisptr, arg_count, arg, ret))
+	if (!noct_call(rt, func, arg_count, arg, ret))
 		return false;
 
 	return true;
@@ -633,24 +632,15 @@ bool
 noct_call(
 	struct rt_env *rt,
 	struct rt_func *func,
-	struct rt_value *thisptr,
 	int arg_count,
 	struct rt_value *arg,
 	struct rt_value *ret)
 {
-	struct rt_bindlocal *local;
 	int i;
 
 	/* Allocate a frame for this call. */
 	if (!rt_enter_frame(rt, func))
 		return false;
-
-	/* Push this-pointer. */
-	if (thisptr != NULL) {
-		if (!rt_add_local(rt, "this", &local))
-			return false;
-		local->val = *thisptr;
-	}
 
 	/* Pass args. */
 	if (arg_count != func->param_count) {
@@ -2313,58 +2303,6 @@ rt_get_return(
 	*val = rt->frame->tmpvar[ret_index];
 
 	return true;
-}
-
-/*
- * Add a local variable.
- */
-bool
-rt_add_local(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindlocal **local)
-{
-	*local = malloc(sizeof(struct rt_bindlocal));
-	if (*local == NULL) {
-		rt_out_of_memory(rt);
-		return false;
-	}
-
-	(*local)->name = strdup(name);
-	if ((*local)->name == NULL) {
-		rt_out_of_memory(rt);
-		return false;
-	}
-
-	(*local)->next = rt->frame->local;
-	rt->frame->local = (*local);
-
-	return true;
-}
-
-/*
- * Find a local variable.
- */
-bool
-rt_find_local(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindlocal **local)
-{
-	struct rt_bindlocal *l;
-
-	l = rt->frame->local;
-	while (l != NULL) {
-		if (strcmp(l->name, name) == 0) {
-			*local = l;
-			return true;
-		}
-		l = l->next;
-	}
-
-	*local = NULL;
-
-	return false;
 }
 
 /*

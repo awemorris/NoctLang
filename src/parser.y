@@ -55,6 +55,7 @@ struct ast_expr *ast_accept_mod_expr(struct ast_expr *expr1, struct ast_expr *ex
 struct ast_expr *ast_accept_and_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_or_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_neg_expr(struct ast_expr *expr);
+struct ast_expr *ast_accept_not_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_par_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_subscr_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_dot_expr(struct ast_expr *obj, char *symbol);
@@ -136,6 +137,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <arg_list> arg_list;
 
 %left UNARYMINUS
+%left TOKEN_NOT
 %left TOKEN_OR
 %left TOKEN_AND
 %left TOKEN_LT
@@ -453,6 +455,11 @@ expr		: term
 		{
 			$$ = ast_accept_neg_expr($2);
 			debug("expr: neg expr");
+		}
+		| TOKEN_NOT expr
+		{
+			$$ = ast_accept_not_expr($2);
+			debug("expr: not expr");
 		}
 		| expr TOKEN_DOT TOKEN_SYMBOL
 		{

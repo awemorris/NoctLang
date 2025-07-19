@@ -184,7 +184,6 @@ bool
 noct_call(
 	NoctEnv *rt,
 	NoctFunc *func,
-	NoctValue *thisptr,
 	int arg_count,
 	NoctValue *arg,
 	NoctValue *ret);
@@ -194,7 +193,6 @@ bool
 noct_call_with_name(
 	NoctEnv *rt,
 	const char *func_name,
-	NoctValue *thisptr,
 	int arg_count,
 	NoctValue *arg,
 	NoctValue *ret);

@@ -16,8 +16,6 @@
 #include <string.h>
 #include <assert.h>
 
-extern bool noct_conf_repl_mode;
-
 /*
  * Add helper.
  */
@@ -1138,20 +1136,14 @@ rt_loadsymbol_helper(
 	int dst,
 	const char *symbol)
 {
-	struct rt_bindlocal *local;
 	struct rt_bindglobal *global;
 
-	/* Search local. */
-	if (rt_find_local(rt, symbol, &local)) {
-		rt->frame->tmpvar[dst] = local->val;
+	/* Search a global variable. */
+	if (rt_find_global(rt, symbol, &global)) {
+		rt->frame->tmpvar[dst] = global->val;
 	} else {
-		/* Search global. */
-		if (rt_find_global(rt, symbol, &global)) {
-			rt->frame->tmpvar[dst] = global->val;
-		} else {
-			noct_error(rt, _("Symbol \"%s\" not found."), symbol);
-			return false;
-		}
+		noct_error(rt, _("Symbol \"%s\" not found."), symbol);
+		return false;
 	}
 
 	return true;
@@ -1170,32 +1162,18 @@ rt_storesymbol_helper(
 	struct rt_bindlocal *local;
 	struct rt_bindglobal *global;
 
-	/* Search local. */
-	if (rt_find_local(rt, symbol, &local)) {
+	/* Search a global variable. */
+	if (rt_find_global(rt, symbol, &global)) {
 		/* Found. */
-		local->val = rt->frame->tmpvar[src];
+		global->val = rt->frame->tmpvar[src];
+		rt_make_deep_reference(rt, &global->val);
 	} else {
-		/* Not found. Search global. */
-		if (rt_find_global(rt, symbol, &global)) {
-			/* Found. */
-			global->val = rt->frame->tmpvar[src];
-			rt_make_deep_reference(rt, &global->val);
-		} else {
-			/* Not found. Bind a variable. */
-			assert(local == NULL);
-			assert(global == NULL);
-			if (!noct_conf_repl_mode) {
-				/* Make a local variable. */
-				if (!rt_add_local(rt, symbol, &local))
-					return false;
-				local->val = rt->frame->tmpvar[src];
-			} else {
-				/* Make a global variable. */
-				if (!rt_add_global(rt, symbol, &global))
-					return false;
-				global->val = rt->frame->tmpvar[src];
-			}
-		}
+		/* Not found. Bind a global variable. */
+		assert(local == NULL);
+		assert(global == NULL);
+		if (!rt_add_global(rt, symbol, &global))
+			return false;
+		global->val = rt->frame->tmpvar[src];
 	}
 
 	return true;
@@ -1302,7 +1280,7 @@ rt_call_helper(
 		return false;
 
 	/* Do call. */
-	if (!noct_call(rt, callee, NULL, arg_count, &arg_val[0], &ret))
+	if (!noct_call(rt, callee, arg_count, &arg_val[0], &ret))
 		return false;
 
 	/* Destroy a callframe. */
@@ -1368,7 +1346,7 @@ rt_thiscall_helper(
 		return false;
 
 	/* Do call. */
-	if (!noct_call(rt, callee, obj_val, arg_count, &arg_val[0], &ret))
+	if (!noct_call(rt, callee, arg_count, &arg_val[0], &ret))
 		return false;
 
 	/* Destroy a callframe. */

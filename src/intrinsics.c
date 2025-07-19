@@ -34,7 +34,6 @@ struct intrin_item {
 	bool is_thiscall;
 	struct rt_func *func;
 } intrin_items[] = {
-	{"global",    "__global",    2, {"this", "name"        }, rt_intrin_global,    true, NULL},
 	{"push",      "__push",      2, {"this", "val"         }, rt_intrin_push,      true, NULL},
 	{"pop",       "__pop",       1, {"this"                }, rt_intrin_pop,       true, NULL},
 	{"unset",     "__unset",     2, {"this", "key"         }, rt_intrin_unset,     true, NULL},
@@ -82,24 +81,6 @@ rt_get_intrin_thiscall_func(
 
 	/* Not found/ */
 	*func = NULL;
-	return true;
-}
-
-/* global() */
-static bool
-rt_intrin_global(
-	struct rt_env *rt)
-{
-	struct rt_value val;
-	const char *name;
-
-	if (!noct_get_arg(rt, 0, &val))
-		return false;
-	if (!noct_get_arg_string(rt, 1, &name))
-		return false;
-	if (!noct_set_global(rt, name, &val))
-		return false;
-
 	return true;
 }
 
