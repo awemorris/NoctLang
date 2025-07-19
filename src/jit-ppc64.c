@@ -758,7 +758,7 @@ jit_visit_xor_op(
 	return true;
 }
 
-/* Visit a ROP_XOR instruction. */
+/* Visit a ROP_NEG instruction. */
 static NOCT_INLINE bool
 jit_visit_neg_op(
 	struct jit_context *ctx)
@@ -770,7 +770,7 @@ jit_visit_neg_op(
 	CONSUME_TMPVAR(src);
 
 	/* if (!rt_neg_helper(rt, dst, src)) return false; */
-	ASM_UNARY_OP(rt_xor_helper);
+	ASM_UNARY_OP(rt_neg_helper);
 
 	return true;
 }
@@ -787,7 +787,7 @@ jit_visit_not_op(
 	CONSUME_TMPVAR(src);
 
 	/* if (!rt_not_helper(rt, dst, src)) return false; */
-	ASM_UNARY_OP(rt_xor_helper);
+	ASM_UNARY_OP(rt_not_helper);
 
 	return true;
 }
@@ -1498,7 +1498,7 @@ jit_visit_jmpiftrue_op(
 		/* add r3, r3, r15 */		IW(0x147a637c);
 		/* lwz r3, 8(r3) */		IW(0x08006380);
 
-		/* Compare: rt->frame->tmpvar[dst].val.i == 1 */
+		/* Compare: rt->frame->tmpvar[dst].val.i == 0 */
 		/* cmpwi r3, 0 */		IW(0x0000032c);
 	}
 
@@ -1543,11 +1543,11 @@ jit_visit_jmpiffalse_op(
 		/* add r3, r3, r15 */		IW(0x147a637c);
 		/* lwz r3, 8(r3) */		IW(0x08006380);
 
-		/* Compare: rt->frame->tmpvar[dst].val.i == 1 */
+		/* Compare: rt->frame->tmpvar[dst].val.i == 0 */
 		/* cmpwi r3, 0 */		IW(0x0000032c);
 	}
-	
-	/* Patch later. */
+
+	/* Patch Later. */
 	ctx->branch_patch[ctx->branch_patch_count].code = ctx->code;
 	ctx->branch_patch[ctx->branch_patch_count].lpc = target_lpc;
 	ctx->branch_patch[ctx->branch_patch_count].type = PATCH_BEQ;
