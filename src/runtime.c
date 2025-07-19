@@ -2297,8 +2297,6 @@ rt_get_return(
 {
 	int ret_index;
 
-	assert(ret_index < rt->frame->tmpvar_size);
-
 	*val = rt->frame->tmpvar[0];
 
 	return true;

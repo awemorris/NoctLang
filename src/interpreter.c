@@ -520,6 +520,18 @@ rt_visit_neg_op(
 	UNARY_OP(rt_neg_helper);
 }
 
+/* Visit a ROP_NOT instruction. */
+static inline bool
+rt_visit_not_op(
+	struct rt_env *rt,
+	struct rt_func *func,
+	int *pc)
+{
+	DEBUG_TRACE(*pc, "NOT");
+
+	UNARY_OP(rt_not_helper);
+}
+
 /* Visit a ROP_LT instruction. */
 static inline bool
 rt_visit_lt_op(
@@ -1114,6 +1126,10 @@ rt_visit_op(
 		break;
 	case ROP_NEG:
 		if (!rt_visit_neg_op(rt, func, pc))
+			return false;
+		break;
+	case ROP_NOT:
+		if (!rt_visit_not_op(rt, func, pc))
 			return false;
 		break;
 	case ROP_LT:

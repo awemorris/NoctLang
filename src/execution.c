@@ -1188,7 +1188,6 @@ rt_storesymbol_helper(
 	const char *symbol,
 	int src)
 {
-	struct rt_bindlocal *local;
 	struct rt_bindglobal *global;
 
 	/* Search a global variable. */
@@ -1198,7 +1197,6 @@ rt_storesymbol_helper(
 		rt_make_deep_reference(rt, &global->val);
 	} else {
 		/* Not found. Bind a global variable. */
-		assert(local == NULL);
 		assert(global == NULL);
 		if (!rt_add_global(rt, symbol, &global))
 			return false;

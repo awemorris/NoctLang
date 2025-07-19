@@ -1,16 +1,16 @@
 func main() {
-    var a = 0;
+    var a = 1;
     if (!a) {
-        print("OK");
-    } else {
         print("BAD");
+    } else {
+        print("OK");
     }
 
-    a = 1;
+    a = 0;
     if (!a) {
-        print("BAD");
-    } else {
         print("OK");
+    } else {
+        print("BAD");
     }
 
     a = 123;
@@ -20,5 +20,4 @@ func main() {
     } else {
         print("BAD");
     }
-
 }

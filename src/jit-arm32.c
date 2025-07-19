@@ -1558,9 +1558,9 @@ jit_visit_thiscall_op(
 		MOVT		(REG_R4, (arg_addr >> 16) & 0xffff);
 		STR		(REG_R4, REG_SP, 0);
 
-		/* Call rt_call_helper(). */
-		MOVW		(REG_R5, (uint32_t)rt_call_helper & 0xffff);
-		MOVT		(REG_R5, ((uint32_t)rt_call_helper >> 16) & 0xffff);
+		/* Call rt_thiscall_helper(). */
+		MOVW		(REG_R5, (uint32_t)rt_thiscall_helper & 0xffff);
+		MOVT		(REG_R5, ((uint32_t)rt_thiscall_helper >> 16) & 0xffff);
 		BLX		(REG_R5);
 
 		/* If failed: */

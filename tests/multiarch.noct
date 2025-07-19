@@ -4,21 +4,21 @@
 
 func main() {
     // Define an architecture list.
-    arch_list = [
-        {name: "Arm64",  tool: "aarch64-linux-gnu-",     qemu: "qemu-aarch64-static"},
-	{name: "Arm32",  tool: "arm-linux-gnueabihf-",   qemu: "qemu-armhf-static"},
-        {name: "MIPS64", tool: "mips64-linux-gnuabi64-", qemu: "qemu-mips64-static"},
-        {name: "MIPS32", tool: "mips-linux-gnu-",        qemu: "qemu-mips-static"},
-        {name: "PPC64",  tool: "powerpc64le-linux-gnu-", qemu: "qemu-ppc64el-static"},
-        {name: "PPC32",  tool: "powerpc-linux-gnu-",     qemu: "qemu-ppc-static"},
-        {name: "i386",   tool: "i686-linux-gnu-",        qemu: "qemu-i386-static"},
-        {name: "x86_64", tool: "x86_64-linux-gnu-",      qemu: "qemu-x86_64-static"}
+    var arch_list = [
+        {name: "arm64",  toolchain: "qemu-arm64-toolchain.cmake",  qemu: "qemu-aarch64-static"},
+	{name: "arm32",  toolchain: "qemu-arm32-toolchain.cmake",  qemu: "qemu-armhf-static"},
+        {name: "mips64", toolchain: "qemu-mips64-toolchain.cmake", qemu: "qemu-mips64-static"},
+        {name: "mips32", toolchain: "qemu-mips32-toolchain.cmake", qemu: "qemu-mips-static"},
+        {name: "ppc64",  toolchain: "qemu-ppc64-toolchain.cmake",  qemu: "qemu-ppc64el-static"},
+        {name: "ppc32",  toolchain: "qemu-ppc32-toolchain.cmake",  qemu: "qemu-ppc-static"},
+        {name: "i386",   toolchain: "qemu-i386-toolchain.cmake",   qemu: "qemu-i386-static"},
+        {name: "x86_64", toolchain: "qemu-x86_64-toolchain.cmake", qemu: "qemu-x86_64-static"}
     ];
 
-    // Call tests.
+    // Run arch tests.
     for (arch in arch_list) {
-        if (!arch_test(arch.name, arch.tool, arch.qemu)) {
-	    return 1;
+        if (arch_test(arch.name, arch.toolchain, arch.qemu) == 0) {
+	    break;
 	}
     }
 
@@ -30,53 +30,48 @@ func arch_test(name, tool, qemu) {
     print("[" + name + "]");
 
     // Build a binary for a specified architecture.
-    if (shell("cd ../build && " +
-              "make clean && " +
-              "make CFLAGS=-static " +
-                  "CC=" + tool + "gcc " +
-                  "LD=" + tool + "ld " +
-                  "AR=" + tool + "ar " +
-                  "STRIP=" + tool + "strip " +
-                  "linguine") != 0) {
-        print("Build failed.");
+    if (shell(
+            "cd .. && " +
+            "cmake -B build-" + name + " .  && " +
+            "cmake --build build-" + name)
+        != 0) {
+        print("xxBuild failed.");
 	return 0;
     }
+    print("xxBuild2 failed.");
 
     // Copy a binary.
-    shell("cp ../build/noct ./noct-arch");
-
-    // Cleanup.
-    shell("cd .. && make clean");
-
-    // Run a testsuite.
-    if (!run_testsuite(qemu)) {
+    if (shell(
+            "cp ../build-" + name + "/noct ./noct-arch")
+        != 0) {
+        print("Copy failed.");
         return 0;
     }
 
-    return 1;
-}
-
-func run_testsuite(qemu) {
+    // Testcase list.
     testcase = [
-        "syntax/01-assign.ls",
-	"syntax/02-call.ls",
-        "syntax/03-string.ls",
-	"syntax/04-array.ls",
-	"syntax/05-dictionary.ls",
-	"syntax/06-for.ls",
-	"syntax/07-lambda.ls",
-	"syntax/08-double-loop.ls",
-	"syntax/09-call-in-loop.ls",
-	"syntax/10-if-elif-else.ls",
-	"syntax/11-if-cond.ls",
-	"syntax/12-elif-chain.ls",
-		"syntax/13-call-args.ls"
+        "syntax/01-assign.noct",
+        "syntax/02-call.noct",
+        "syntax/03-string.noct",
+        "syntax/04-array.noct",
+        "syntax/05-dictionary.noct",
+        "syntax/06-for.noct",
+        "syntax/07-lambda.noct",
+        "syntax/08-double-loop.noct",
+        "syntax/09-call-in-loop.noct",
+        "syntax/10-if-elif-else.noct",
+        "syntax/11-if-cond.noct",
+        "syntax/12-elif-chain.noct",
+        "syntax/13-call-args.noct",
+        "syntax/14-ret-val.noct",
+        "syntax/15-while.noct",
+        "syntax/16-unary.noct"
     ];
 
     // Run tests without JIT.
     print("Interpreter...");
     for(file in testcase) {
-        if (!run_testcase(file, qemu, "--disable-jit")) {
+        if (!run_testcase(qemu, "--disable-jit", file)) {
             return 0;
 	}
     }
@@ -84,7 +79,7 @@ func run_testsuite(qemu) {
     // Run tests with JIT.
     print("JIT...");
     for(file in testcase) {
-        if (!run_testcase(file, qemu, "")) {
+        if (!run_testcase(qemu, "", file)) {
 	    return 0;
 	}
     }
@@ -92,7 +87,7 @@ func run_testsuite(qemu) {
     return 1;
 }
 
-func run_testcase(file, qemu, option) {
+func run_testcase(qemu, option, file) {
     print("Running " + file + " ... ");
 
     // Run a testcase.

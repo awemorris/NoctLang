@@ -1133,10 +1133,10 @@ jit_visit_thiscall_op(
 		/* movq %r14, %rdi */			IB(0x4c); IB(0x89); IB(0xf7);
 		/* movq dst, %rsi */			IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
 		/* movq obj, %rdx */			IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)obj);
-		/* movabs symbol, %rcx */		IB(0x48); IB(0x89); IQ((uint64_t)symbol);
+		/* movabs symbol, %rcx */		IB(0x48); IB(0xb9); IQ((uint64_t)symbol);
 		/* movq arg_count, %r8 */		IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)arg_count);
 		/* movabs arg_addr, %r9 */		IB(0x49); IB(0xb9); IQ(arg_addr);
-		/* movabs rt_call_helper, %r10 */	IB(0x49); IB(0xba); IQ((uint64_t)rt_call_helper);
+		/* movabs rt_thiscall_helper, %r10 */	IB(0x49); IB(0xba); IQ((uint64_t)rt_thiscall_helper);
 		/* call *%r10 */			IB(0x41); IB(0xff); IB(0xd2);
 
 		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
@@ -1198,10 +1198,10 @@ jit_visit_jmpiftrue_op(
 		/* addq %r15, %rdx */			IB(0x4c); IB(0x01); IB(0xfa);
 		/* movl 8(%rdx), %eax */		IB(0x8b); IB(0x42); IB(0x08);
 
-		/* Compare: rt->frame->tmpvar[dst].val.i == 1 */
-		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* Compare: rt->frame->tmpvar[dst].val.i == 0 */
+		/* test %eax, %eax */			IB(0x85); IB(0xc0);
 	}
-	
+
 	/* Patch later. */
 	ctx->branch_patch[ctx->branch_patch_count].code = ctx->code;
 	ctx->branch_patch[ctx->branch_patch_count].lpc = target_lpc;
@@ -1210,7 +1210,7 @@ jit_visit_jmpiftrue_op(
 
 	ASM {
 		/* Patched later. */
-		/* jne 6 */				IB(0x0f); IB(0x84); ID(0);
+		/* jne 6 */				IB(0x0f); IB(0x85); ID(0);
 	}
 
 	return true;
@@ -1239,10 +1239,10 @@ jit_visit_jmpiffalse_op(
 		/* addq %r15, %rdx */			IB(0x4c); IB(0x01); IB(0xfa);
 		/* movl 8(%rdx), %eax */		IB(0x8b); IB(0x42); IB(0x08);
 
-		/* Compare: rt->frame->tmpvar[dst].val.i == 1 */
-		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* Compare: rt->frame->tmpvar[dst].val.i == 0 */
+		/* test %eax, %eax */			IB(0x85); IB(0xc0);
 	}
-	
+
 	/* Patch later. */
 	ctx->branch_patch[ctx->branch_patch_count].code = ctx->code;
 	ctx->branch_patch[ctx->branch_patch_count].lpc = target_lpc;
@@ -1251,7 +1251,7 @@ jit_visit_jmpiffalse_op(
 
 	ASM {
 		/* Patched later. */
-		/* je 6 */				IB(0x0f); IB(0x85); ID(0);
+		/* je 6 */				IB(0x0f); IB(0x84); ID(0);
 	}
 
 	return true;
@@ -1418,6 +1418,10 @@ jit_visit_bytecode(
 			break;
 		case ROP_NEG:
 			if (!jit_visit_neg_op(ctx))
+				return false;
+			break;
+		case ROP_NOT:
+			if (!jit_visit_not_op(ctx))
 				return false;
 			break;
 		case ROP_LT:

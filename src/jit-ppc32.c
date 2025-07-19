@@ -1334,7 +1334,7 @@ jit_visit_thiscall_op(
 
 		/* Arg4 R6 = symbol */
 		/* lis  r6, symbol[31:16] */	IW(0x0000c03c | hi16((uint32_t)symbol));
-		/* ori  r6, r6, symbol[15:0] */	IW(0x0000a560 | lo16((uint32_t)symbol));
+		/* ori  r6, r6, symbol[15:0] */	IW(0x0000c660 | lo16(field));
 
 		/* Arg5 R7 = arg_count */
 		/* li r7, arg_count */		IW(0x0000e038 | lo16((uint32_t)arg_count));

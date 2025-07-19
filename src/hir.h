@@ -157,6 +157,9 @@ struct hir_block {
 			char *key_symbol;
 			char *value_symbol;
 			struct hir_expr *collection;
+
+			/* For code generation. */
+			uint32_t inc_addr;
 		} for_;
 
 		/* While Block */

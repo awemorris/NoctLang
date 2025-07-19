@@ -52,12 +52,20 @@ static int tmpvar_top;
 static int tmpvar_count;
 
 /*
- * Location table.
+ * Relocation table.
  */
 
+/* Maximum relocation count */
 #define LOC_MAX	1024
 
+/* Relocation type */
+#define LOC_BLOCK_TOP		0
+#define LOC_BLOCK_INCREMENTER	1
+
 struct loc_entry {
+	/* Type. */
+	int type;
+
 	/* Location offset. */
 	uint32_t offset;
 
@@ -82,6 +90,7 @@ static char lir_error_message[65536];
 static int lir_count_local(struct hir_block *func);
 static bool lir_visit_block(struct hir_block *block);
 static bool lir_visit_basic_block(struct hir_block *block);
+static bool lir_check_succ_loop_head(struct hir_block *block, struct hir_block **loop);
 static bool lir_visit_if_block(struct hir_block *block);
 static bool lir_visit_for_block(struct hir_block *block);
 static bool lir_visit_for_range_block(struct hir_block *block);
@@ -91,6 +100,7 @@ static int lir_get_local_index(struct hir_block *block, const char *symbol);
 static bool lir_visit_while_block(struct hir_block *block);
 static bool lir_visit_stmt(struct hir_block *block, struct hir_stmt *stmt);
 static bool lir_check_lhs_local(struct hir_block *block, struct hir_expr *lhs, int *rhs_tmpvar);
+static bool lir_check_return_stmt(struct hir_stmt *stmt);
 static bool lir_visit_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_binary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
@@ -114,6 +124,7 @@ static bool lir_put_imm8(uint8_t imm);
 static bool lir_put_imm32(uint32_t imm);
 static bool lir_put_string(const char *data);
 static bool lir_put_branch_addr(struct hir_block *block);
+static bool lir_put_incrementer_addr(struct hir_block *block);
 static bool lir_put_u8(uint8_t b);
 static bool lir_put_u16(uint16_t b);
 static bool lir_put_u32(uint32_t b);
@@ -286,6 +297,7 @@ lir_visit_basic_block(
 
 	assert(block != NULL);
 	assert(block->type == HIR_BLOCK_BASIC);
+	assert(block->parent != NULL);
 
 	/* Store the block address. */
 	block->addr = (uint32_t)bytecode_top;
@@ -309,7 +321,60 @@ lir_visit_basic_block(
 		stmt = stmt->next;
 	}
 
+	/*
+	 * If the block is the tail of the siblings, and not the end of
+	 * loop or function, i.e., there is a break, continue, or return.
+	 */
+	if (block->stop &&
+	    (block->parent->type != HIR_BLOCK_FOR &&
+	     block->parent->type != HIR_BLOCK_WHILE &&
+	     block->parent->type != HIR_BLOCK_FUNC)) {
+		struct hir_block *loop;
+
+		/* Check if succ is a loop head. */
+		if (lir_check_succ_loop_head(block, &loop)) {
+			/* Continue edge. */
+			if (!lir_put_opcode(LOP_JMP))
+				return false;
+			if (!lir_put_incrementer_addr(loop))
+				return false;
+		} else {
+			/* Break or return edge. */
+			if (!lir_put_opcode(LOP_JMP))
+				return false;
+			if (!lir_put_branch_addr(block->succ))
+				return false;
+		}
+	}
+
 	return true;
+}
+
+/* Check if succ is a loop head. (Detects a continue edge) */
+static bool
+lir_check_succ_loop_head(
+	struct hir_block *block,
+	struct hir_block **loop)
+{
+	struct hir_block *b;
+
+	b = block;
+	while (b != NULL) {
+		if (b->type == HIR_BLOCK_FOR) {
+			if (b->val.for_.inner == block->succ) {
+				*loop = b;
+				return true;
+			}
+		}
+		if (b->type == HIR_BLOCK_WHILE) {
+			if (b->val.while_.inner == block->succ) {
+				*loop = b;
+				return true;
+			}
+		}
+		b = b->parent;
+	}
+	return false;
 }
 
 static bool
@@ -506,6 +571,9 @@ lir_visit_for_range_block(
 			break;
 		b = b->succ;
 	}
+
+	/* Store the incrementer address. */
+	block->val.for_.inc_addr = (uint32_t)bytecode_top;
 
 	/* Increment the loop variable. */
 	if (!lir_put_opcode(LOP_INC))
@@ -1075,7 +1143,7 @@ lir_visit_unary_expr(
 	int opr_tmpvar;
 
 	assert(expr != NULL);
-	assert(expr->type == HIR_EXPR_NEG);
+	assert(expr->type == HIR_EXPR_NEG || expr->type == HIR_EXPR_NOT);
 
 	/* Visit the operand expr. */
 	if (!lir_increment_tmpvar(&opr_tmpvar))
@@ -1720,6 +1788,32 @@ static bool lir_put_branch_addr(
 		return false;
 	}
 
+	loc_tbl[loc_count].type = LOC_BLOCK_TOP;
+	loc_tbl[loc_count].offset = (uint32_t)bytecode_top;
+	loc_tbl[loc_count].block = block;
+	loc_count++;
+
+	bytecode[bytecode_top] = 0xff;
+	bytecode[bytecode_top + 1] = 0xff;
+	bytecode[bytecode_top + 2] = 0xff;
+	bytecode[bytecode_top + 3] = 0xff;
+	bytecode_top += 4;
+
+	return true;
+}
+
+static bool lir_put_incrementer_addr(
+	struct hir_block *block)
+{
+	assert(block != NULL);
+	assert(block->type == HIR_BLOCK_FOR);
+
+	if (loc_count >= LOC_MAX) {
+		lir_fatal(_("Too many jumps."));
+		return false;
+	}
+
+	loc_tbl[loc_count].type = LOC_BLOCK_INCREMENTER;
 	loc_tbl[loc_count].offset = (uint32_t)bytecode_top;
 	loc_tbl[loc_count].block = block;
 	loc_count++;
@@ -1803,12 +1897,27 @@ patch_block_address(void)
 	int i;
 
 	for (i = 0; i < loc_count; i++) {
-		offset = loc_tbl[i].offset;
-		addr = loc_tbl[i].block->addr;
-		bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
-		bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
-		bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
-		bytecode[offset + 3] = (uint8_t)(addr & 0xff);
+		switch (loc_tbl[i].type) {
+		case LOC_BLOCK_TOP:
+			offset = loc_tbl[i].offset;
+			addr = loc_tbl[i].block->addr;
+			bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
+			bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
+			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
+			bytecode[offset + 3] = (uint8_t)(addr & 0xff);
+			break;
+		case LOC_BLOCK_INCREMENTER:
+			offset = loc_tbl[i].offset;
+			addr = loc_tbl[i].block->val.for_.inc_addr;
+			bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
+			bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
+			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
+			bytecode[offset + 3] = (uint8_t)(addr & 0xff);
+			break;
+		default:
+			assert(NEVER_COME_HERE);
+			break;
+		}
 	}
 }
 

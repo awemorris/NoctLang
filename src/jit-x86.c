@@ -1196,7 +1196,7 @@ jit_visit_thiscall_op(
 		/* pushl %eax */			IB(0x50);
 		/* movl -8(%ebp), %eax */		IB(0x8b); IB(0x45); IB(0xf8);
 		/* pushl %eax */			IB(0x50);
-		/* movl $rt_thiscall_helper, %eax */	IB(0xb8); ID((uint32_t)rt_call_helper);
+		/* movl $rt_thiscall_helper, %eax */	IB(0xb8); ID((uint32_t)rt_thiscall_helper);
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $24, %esp */			IB(0x83); IB(0xc4); IB(24);
 
@@ -1484,6 +1484,10 @@ jit_visit_bytecode(
 			break;
 		case ROP_NEG:
 			if (!jit_visit_neg_op(ctx))
+				return false;
+			break;
+		case ROP_NOT:
+			if (!jit_visit_not_op(ctx))
 				return false;
 			break;
 		case ROP_LT:

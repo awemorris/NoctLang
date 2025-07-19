@@ -1373,6 +1373,10 @@ ast_free_stmt(
 			stmt->val.return_.expr = NULL;
 		}
 		break;
+	case AST_STMT_BREAK:
+		break;
+	case AST_STMT_CONTINUE:
+		break;
 	default:
 		assert(NEVER_COME_HERE);
 		break;

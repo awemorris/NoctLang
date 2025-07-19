@@ -1395,15 +1395,13 @@ jit_visit_thiscall_op(
 		/* dsll $a3, $a3, 16 */		IW(0x00073c38);
 		/* ori  $a3, symbol@ll */	IW(0x34e70000 | lolo16((uint64_t)symbol));
 
-		/* Arg5 arg */
-		/* lui  $t0, arg@hh */		IW(0x3c0c0000 | hihi16(arg_addr));
-		/* ori  $t0, arg@hl */		IW(0x358c0000 | hilo16(arg_addr));
-		/* dsll $t0, $a2, 16 */		IW(0x000c6438);
-		/* ori  $t0, arg@lh */		IW(0x358c0000 | lohi16(arg_addr));
-		/* dsll $t0, $a2, 16 */		IW(0x000c6438);
-		/* ori  $t0, arg@ll */		IW(0x358c0000 | lolo16(arg_addr));
-		/* daddiu $sp, $sp, -40 */	IW(0xffac0020);
-		/* sd $t0, 32($sp) */		IW(0xafa80010);
+		/* Arg5 $a4 = arg */
+		/* lui  $a4, arg@hh */		IW(0x3c080000 | hihi16(arg_addr));
+		/* ori  $a4, arg@hl */		IW(0x35080000 | hilo16(arg_addr));
+		/* dsll $a4, $a4, 16 */		IW(0x00084438);
+		/* ori  $a4, arg@lh */		IW(0x35080000 | lohi16(arg_addr));
+		/* dsll $a4, $a4, 16 */		IW(0x00084438);
+		/* ori  $a4, arg@ll */		IW(0x35080000 | lolo16(arg_addr));
 
 		/* Call rt_thiscall_helper(). */
 		/* lui  $t9, f@hh */		IW(0x3c190000 | hihi16(f));
@@ -1416,7 +1414,6 @@ jit_visit_thiscall_op(
 		/* jalr $t9 */			IW(0x0320f809);
 		/* nop */			IW(0x00000000);
 		/* move $ra, $s2 */		IW(0x0240f825);
-		/* daddiu $sp, $sp, 40 */	IW(0x67bd0028);
 
 		/* If failed: */
 		/* beqz $v0, $zero, exc */	IW(0x10400000 | EXC());

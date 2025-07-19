@@ -349,7 +349,7 @@ hir_visit_stmt_list(
 
 			assert(*cur_block != NULL);
 
-			/* Break if the astmt is a return statement. */
+			/* Break if the astmt is a control statement. */
 			if (cur_astmt->type == AST_STMT_RETURN) {
 				is_control = true;
 				break;
@@ -1048,7 +1048,7 @@ hir_visit_while_stmt(
 	memset(exit_block, 0, sizeof(struct hir_block));
 	exit_block->id = block_id_top++;
 	exit_block->type = HIR_BLOCK_BASIC;
-	exit_block->parent = parent_block->parent;
+	exit_block->parent = parent_block;
 	while_block->succ = exit_block;
 
 	/* Visit a cond expr. */
@@ -1341,6 +1341,9 @@ hir_visit_expr(
 	case AST_EXPR_NEG:
 		result = hir_visit_unary_expr(hexpr, aexpr, HIR_EXPR_NEG);
 		break;
+	case AST_EXPR_NOT:
+		result = hir_visit_unary_expr(hexpr, aexpr, HIR_EXPR_NOT);
+		break;
 	case AST_EXPR_PAR:
 		result = hir_visit_unary_expr(hexpr, aexpr, HIR_EXPR_PAR);
 		break;
@@ -1453,7 +1456,9 @@ hir_visit_unary_expr(
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
 	assert(aexpr != NULL);
-	assert(aexpr->type == AST_EXPR_NEG || aexpr->type == AST_EXPR_PAR);
+	assert(aexpr->type == AST_EXPR_NEG ||
+	       aexpr->type == AST_EXPR_NOT ||
+	       aexpr->type == AST_EXPR_PAR);
 
 	/* Allocate an hexpr. */
 	e = malloc(sizeof(struct hir_expr));

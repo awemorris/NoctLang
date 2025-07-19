@@ -1320,7 +1320,7 @@ jit_visit_thiscall_op(
 		/* addiu $sp, $sp, -20 */	IW(0x27bdffec);
 		/* sw $t0, 16($sp) */		IW(0xafa80010);
 
-		/* Call rt_call_helper(). */
+		/* Call rt_thiscall_helper(). */
 		/* lui  $t0, f@h */		IW(0x3c080000 | hi16(f));
 		/* ori  $t0, $t0, f@l */	IW(0x35080000 | lo16(f));
 		/* move $s2, $ra */		IW(0x03e09025);
