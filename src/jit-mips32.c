@@ -1151,7 +1151,7 @@ jit_visit_storedot_op(
 
 		/* Arg3 $a2 = field */
 		/* lui $a2, field@h */		IW(0x3c060000 | hi16(field));
-		/* ori $a2, $a2, field@l */	IW(0x3c060000 | lo16(field));
+		/* ori $a2, $a2, field@l */	IW(0x34c60000 | lo16(field));
 
 		/* Arg4 $a3 = src */
 		/* li $a3, src */		IW(0x24070000 | tvar16(src));
