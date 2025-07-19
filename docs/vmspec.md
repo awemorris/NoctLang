@@ -1,4 +1,5 @@
-# NoctVM Specification
+NoctVM Specification
+====================
 
 ## Table of Contents
 
@@ -291,13 +292,13 @@ context.
 ## 5.2 Assignment and Constant Loading
 
 | Mnemonic     | Opcode | Operands              | Description                          |
-|--------------|--------|------------------------|--------------------------------------|
-| `ASSIGN`     | 0x01   | `Td:2`, `Ts:2`         | Copy value from source to destination |
-| `ICONST`     | 0x02   | `Td:2`, `Imm4`         | Load 32-bit signed integer constant   |
-| `FCONST`     | 0x03   | `Td:2`, `Imm4`         | Load 32-bit float constant            |
-| `SCONST`     | 0x04   | `Td:2`, `Str`          | Load UTF-8 string constant            |
-| `ACONST`     | 0x05   | `Td:2`                 | Load empty array                      |
-| `DCONST`     | 0x06   | `Td:2`                 | Load empty dictionary                 |
+|--------------|--------|-----------------------|--------------------------------------|
+| `ASSIGN`     | 0x01   | `Td:2`, `Ts:2`        | Copy value from source to destination |
+| `ICONST`     | 0x02   | `Td:2`, `Imm:4`       | Load 32-bit signed integer constant   |
+| `FCONST`     | 0x03   | `Td:2`, `Imm:4        | Load 32-bit float constant            |
+| `SCONST`     | 0x04   | `Td:2`, `Str`         | Load UTF-8 string constant            |
+| `ACONST`     | 0x05   | `Td:2`                | Load empty array                      |
+| `DCONST`     | 0x06   | `Td:2`                | Load empty dictionary                 |
 
 > These instructions are typically used during initialization and
 > expression evaluation.
@@ -485,13 +486,25 @@ These instructions implement field-style dictionary access using the
 > These are syntactic sugar for dictionary `LOADARRAY` / `STOREARRAY`
 > using string keys, optimized for clarity and JIT.
 
-## 5.7 Global Symbol Instructions
+### 5.6 `GETDICTKEYBYINDEX`
+
+| Mnemonic             | Opcode | Operands                  | Description                   |
+|----------------------|--------|---------------------------|-------------------------------|
+| `GETDICTKEYBYINDEX`  | 0x1C   | `Td:2`, `Ts1:2`, `Ts2:2`  | `dst = src1.keyAtIndex(src2)` |
+
+### 5.7 `GETDICTVALBYINDEX`
+
+| Mnemonic             | Opcode | Operands                  | Description                   |
+|----------------------|--------|---------------------------|-------------------------------|
+| `GETDICTVALBYINDEX`  | 0x1C   | `Td:2`, `Ts1:2`, `Ts2:2`  | `dst = src1.valAtIndex(src2)` |
+
+## 5.8 Global Symbol Instructions
 
 These instructions manipulate global symbols, which bind names to
 values at runtime. They provide access to shared state across all
 functions.
 
-### 5.7.1 `LOADSYMBOL`
+### 5.8.1 `LOADSYMBOL`
 
 | Mnemonic     | Opcode | Operands         | Description                          |
 |--------------|--------|------------------|--------------------------------------|
@@ -501,7 +514,7 @@ functions.
 - Loads the value bound to the global symbol named `Str`.
 - If the symbol is not found, raises a runtime error.
 
-### 5.7.2 `STORESYMBOL`
+### 5.8.2 `STORESYMBOL`
 
 | Mnemonic      | Opcode | Operands         | Description                          |
 |---------------|--------|------------------|--------------------------------------|
@@ -524,9 +537,9 @@ These instructions manage execution flow through function calls and jumps.
 
 #### 6.1.1 `CALL`
 
-| Mnemonic | Opcode | Operands                            | Description                     |
-|----------|--------|-------------------------------------|---------------------------------|
-| `CALL`   | 0x22   | `Td:2`, `Ts:2`, `Argc1`, `ArgN...`  | Call a function with arguments  |
+| Mnemonic | Opcode | Operands                               | Description                     |
+|----------|--------|----------------------------------------|---------------------------------|
+| `CALL`   | 0x22   | `Td:2`, `Ts:2`, `Argc:1`, `ArgN:2...`  | Call a function with arguments  |
 
 **Behavior:**
 - `Ts` must contain a function value.
@@ -541,7 +554,7 @@ These instructions manage execution flow through function calls and jumps.
 
 | Mnemonic    | Opcode | Operands                                      | Description                                  |
 |-------------|--------|-----------------------------------------------|----------------------------------------------|
-| `THISCALL`  | 0x23   | `Td:2`, `Ts:2`, `Str`, `Argc1`, `ArgN...`     | Call method stored in `obj.Str`              |
+| `THISCALL`  | 0x23   | `Td:2`, `Ts:2`, `Str`, `Argc:1`, `ArgN:2...`  | Call method stored in `obj.Str`              |
 
 **Behavior:**
 - Retrieves function from `Ts[Str]`, prepends `Ts` as first argument.
@@ -554,14 +567,14 @@ These instructions manage execution flow through function calls and jumps.
 
 | Mnemonic | Opcode | Operands  | Description                |
 |----------|--------|-----------|----------------------------|
-| `JMP`    | 0x24   | `Imm4`    | Unconditional jump         |
+| `JMP`    | 0x24   | `Imm:4`   | Unconditional jump         |
 
 #### 6.2.2 `JMPIFTRUE` / `JMPIFFALSE`
 
 | Mnemonic      | Opcode | Operands           | Description                    |
 |---------------|--------|--------------------|--------------------------------|
-| `JMPIFTRUE`   | 0x25   | `Imm4`, `Ts:2`     | Jump if `src` is non-zero      |
-| `JMPIFFALSE`  | 0x26   | `Imm4`, `Ts:2`     | Jump if `src` is zero          |
+| `JMPIFTRUE`   | 0x25   | `Imm:4`, `Ts:2`    | Jump if `src` is non-zero      |
+| `JMPIFFALSE`  | 0x26   | `Imm:4`, `Ts:2`    | Jump if `src` is zero          |
 
 > Behavior is undefined if `src` is not an integer.
 
@@ -569,7 +582,7 @@ These instructions manage execution flow through function calls and jumps.
 
 | Mnemonic  | Opcode | Operands          | Description                                 |
 |-----------|--------|-------------------|---------------------------------------------|
-| `JMPIFEQ` | 0x27   | `Imm4`, `Ts:2`    | Optimized jump for result of `EQI` = false  |
+| `JMPIFEQ` | 0x27   | `Imm:4`, `Ts:2`   | Optimized jump for result of `EQI` = false  |
 
 > Semantically identical to `JMPIFFALSE`, but allows optimization by
 > following `EQI`.
@@ -586,7 +599,7 @@ reporting, and tooling.
 
 | Mnemonic   | Opcode | Operands   | Description                         |
 |------------|--------|------------|-------------------------------------|
-| `LINEINFO` | 0x28   | `Imm4`     | Annotates source line number        |
+| `LINEINFO` | 0x28   | `Imm:4`    | Annotates source line number        |
 
 **Behavior:**
 
@@ -685,46 +698,46 @@ the NoctVM architecture.
 
 ## 10. Appendix: Opcode List
 
-| Mnemonic     | Opcode | Description                               |
-|--------------|--------|-------------------------------------------|
-| `NOP`        | 0x00   | No operation                              |
-| `ASSIGN`     | 0x01   | Copy a value                              |
-| `ICONST`     | 0x02   | Load integer constant                     |
-| `FCONST`     | 0x03   | Load float constant                       |
-| `SCONST`     | 0x04   | Load string constant                      |
-| `ACONST`     | 0x05   | Load empty array                          |
-| `DCONST`     | 0x06   | Load empty dictionary                     |
-| `INC`        | 0x07   | Increment integer                         |
-| `NEG`        | 0x08   | Negate integer                            |
-| `NOT`        | 0x09   | Logical NOT on integer                    |
-| `ADD`        | 0x0A   | Addition                                  |
-| `SUB`        | 0x0B   | Subtraction                               |
-| `MUL`        | 0x0C   | Multiplication                            |
-| `DIV`        | 0x0D   | Division                                  |
-| `MOD`        | 0x0E   | Modulo                                    |
-| `AND`        | 0x0F   | Bitwise AND                               |
-| `OR`         | 0x10   | Bitwise OR                                |
-| `XOR`        | 0x11   | Bitwise XOR                               |
-| `LT`         | 0x12   | Less than                                 |
-| `LTE`        | 0x13   | Less than or equal                        |
-| `GT`         | 0x14   | Greater than                              |
-| `GTE`        | 0x15   | Greater than or equal                     |
-| `EQ`         | 0x16   | Equality                                  |
-| `NEQ`        | 0x17   | Inequality                                |
-| `EQI`        | 0x18   | Integer equality                          |
-| `LOADARRAY`  | 0x19   | Load value from array or dictionary       |
-| `STOREARRAY` | 0x1A   | Store value to array or dictionary        |
-| `LEN`        | 0x1B   | Get length of string/array/dictionary     |
-| `GETDICTKEYBYINDEX` | 0x1C | (Reserved / Not documented)         |
-| `GETDICTVALBYINDEX` | 0x1D | (Reserved / Not documented)         |
-| `STOREDOT`   | 0x1E   | Store dictionary value by field name      |
-| `LOADDOT`    | 0x1F   | Load dictionary value by field name       |
-| `STORESYMBOL`| 0x20   | Store value in global symbol              |
-| `LOADSYMBOL` | 0x21   | Load value from global symbol             |
-| `CALL`       | 0x22   | Call function                             |
-| `THISCALL`   | 0x23   | Call method on object                     |
-| `JMP`        | 0x24   | Unconditional jump                        |
-| `JMPIFTRUE`  | 0x25   | Jump if true                              |
-| `JMPIFFALSE` | 0x26   | Jump if false                             |
-| `JMPIFEQ`    | 0x27   | Jump if EQI result is false               |
-| `LINEINFO`   | 0x28   | Annotate line number for debugging        |
+| Mnemonic            | Opcode | Description                               |
+|---------------------|--------|-------------------------------------------|
+| `NOP`               | 0x00   | No operation                              |
+| `ASSIGN`            | 0x01   | Copy a value                              |
+| `ICONST`            | 0x02   | Load integer constant                     |
+| `FCONST`            | 0x03   | Load float constant                       |
+| `SCONST`            | 0x04   | Load string constant                      |
+| `ACONST`            | 0x05   | Load empty array                          |
+| `DCONST`            | 0x06   | Load empty dictionary                     |
+| `INC`               | 0x07   | Increment integer                         |
+| `NEG`               | 0x08   | Negate integer                            |
+| `NOT`               | 0x09   | Logical NOT on integer                    |
+| `ADD`               | 0x0A   | Addition                                  |
+| `SUB`               | 0x0B   | Subtraction                               |
+| `MUL`               | 0x0C   | Multiplication                            |
+| `DIV`               | 0x0D   | Division                                  |
+| `MOD`               | 0x0E   | Modulo                                    |
+| `AND`               | 0x0F   | Bitwise AND                               |
+| `OR`                | 0x10   | Bitwise OR                                |
+| `XOR`               | 0x11   | Bitwise XOR                               |
+| `LT`                | 0x12   | Less than                                 |
+| `LTE`               | 0x13   | Less than or equal                        |
+| `GT`                | 0x14   | Greater than                              |
+| `GTE`               | 0x15   | Greater than or equal                     |
+| `EQ`                | 0x16   | Equality                                  |
+| `NEQ`               | 0x17   | Inequality                                |
+| `EQI`               | 0x18   | Integer equality                          |
+| `LOADARRAY`         | 0x19   | Load value from array or dictionary       |
+| `STOREARRAY`        | 0x1A   | Store value to array or dictionary        |
+| `LEN`               | 0x1B   | Get length of string/array/dictionary     |
+| `GETDICTKEYBYINDEX` | 0x1C | Get dictionary key at index          |
+| `GETDICTVALBYINDEX` | 0x1D | Get dictionary value at index        |
+| `STOREDOT`          | 0x1E   | Store dictionary value by field name      |
+| `LOADDOT`           | 0x1F   | Load dictionary value by field name       |
+| `STORESYMBOL`       | 0x20   | Store value in global symbol              |
+| `LOADSYMBOL`        | 0x21   | Load value from global symbol             |
+| `CALL`              | 0x22   | Call function                             |
+| `THISCALL`          | 0x23   | Call method on object                     |
+| `JMP`               | 0x24   | Unconditional jump                        |
+| `JMPIFTRUE`         | 0x25   | Jump if true                              |
+| `JMPIFFALSE`        | 0x26   | Jump if false                             |
+| `JMPIFEQ`           | 0x27   | Jump if EQI result is false               |
+| `LINEINFO`          | 0x28   | Annotate line number for debugging        |
