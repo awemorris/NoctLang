@@ -27,14 +27,14 @@
 
 /* Version */
 #ifndef VERSION
-#define VERSION		"0.1.0"
+#define VERSION			"0.1.0"
 #endif
+
+/* Bytecode File Header */
+#define BYTECODE_HEADER		"Noct Bytecode"
 
 /* Runtime's configuration. */
 extern bool noct_conf_use_jit;
-
-/* REPL mode. */
-extern bool noct_conf_repl_mode;
 
 /* Language code for translation. */
 #ifdef USE_GETTEXT_COMPAT
@@ -60,8 +60,8 @@ static bool add_file_hook_c(const char *fname);
 static bool do_transpile_elisp(const char *out_file, int in_file_count, const char *in_file[]);
 static bool add_file_hook_elisp(const char *fname);
 static bool add_file(const char *fname, bool (*add_file_hook)(const char *));
-static bool is_block_start(const char *text, bool *is_func);
-static bool accept_func(const char *text);
+static bool is_multiline_start(const char *text, bool *is_func);
+static bool accept_multiline(const char *text);
 static bool load_file_content(const char *fname, char **data, size_t *size);
 static int wide_printf(const char *format, ...);
 static bool register_ffi(struct rt_env *rt);
@@ -78,7 +78,9 @@ int main(int argc, char *argv[])
 	init_locale();
 #endif
 
-	if (argc >= 2 && strcmp(argv[1], "--help") == 0 ) {
+	if (argc >= 2 &&
+	    (strcmp(argv[1], "--help") == 0 ||
+	     strcmp(argv[1], "-h") == 0)) {
 		show_usage();
 		return 1;
 	}
@@ -101,24 +103,7 @@ int main(int argc, char *argv[])
 	return command_run(argc, argv);
 }
 
-#ifdef _WIN32
-#include <windows.h>
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
-{
-    /* Dispatch to main(). */
-    int argc, i;
-    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    char **argv = malloc(sizeof(char *) * argc);
-    for (i = 0; i < argc; i++)
-    {
-        char tmp[1024];
-	WideCharToMultiByte(CP_ACP, 0, wargv[i], -1, tmp, sizeof(tmp) - 1, NULL, NULL);
-        argv[i] = strdup(tmp);
-    }
-    return main(argc, argv);
-}
-#endif
-
+/* Show the usage message. */
 static void show_usage(void)
 {
 	wide_printf(_("Noct Programming Language "));
@@ -132,29 +117,26 @@ static void show_usage(void)
 }
 
 /*
- * Translation
+ * Pseudo gettext support.
  */
 
-/* Called from _() of the pseudo gettext(). */
-#ifdef USE_GETTEXT_COMPAT
+#if defined(USE_GETTEXT_COMPAT)
+
+/* Called from noct_gettext(). */
 const char *get_system_language(void)
 {
 	return lang_code;
 }
-#endif
 
 /* Initialized the locale. */
-#if defined(USE_GETTEXT_COMPAT)
-#if !defined(_WIN32)
 static void init_locale(void)
 {
+#if !defined(_WIN32)
 	const char *locale;
-
 	locale = setlocale(LC_ALL, "");
-
-	if (locale == NULL || locale[0] == '\0' || locale[1] == '\0') {
+	if (locale == NULL || locale[0] == '\0' || locale[1] == '\0')
 		lang_code = "en";
-	}else if (strncmp(locale, "en", 2) == 0)
+	else if (strncmp(locale, "en", 2) == 0)
 		lang_code = "en";
 	else if (strncmp(locale, "fr", 2) == 0)
 		lang_code = "fr";
@@ -178,10 +160,7 @@ static void init_locale(void)
 		lang_code = "en";
 
 	setlocale(LC_ALL, "C");
-}
 #else
-static void init_locale(void)
-{
 	DWORD dwLang = GetUserDefaultLCID() & 0x3ff;
 	switch (dwLang) {
 	case LANG_ENGLISH:
@@ -218,14 +197,116 @@ static void init_locale(void)
 		lang_code = "en";
 		break;
 	}
+#endif	/* !defined(_WIN32) */
 }
-#endif
-#endif
+
+#endif	/* defined(USE_GETTEXT_COMPAT) */
+
+/*
+ * Run
+ */
+
+/* Top level function for the run mode. */
+static int command_run(int argc, char *argv[])
+{
+	struct rt_value ret;
+	int file_arg;
+	int i;
+	char *data;
+	size_t len;
+	int arg_count;
+	struct rt_value *arg_value;
+
+	/* Parse options. */
+	file_arg = 1;
+	for (i = 1; i < argc; i++) {
+		if (argv[i][0] != '-')
+			break;
+
+		if (strcmp(argv[1], "--disable-jit") == 0) {
+			noct_conf_use_jit = false;
+			file_arg++;
+			continue;
+		}
+
+		wide_printf(_("Unknown option %s.\n"), argv[1]);
+		return 1;
+	}
+
+	/* Check if a file is specified. */
+	if (file_arg == argc) {
+		wide_printf(_("Specify a file.\n"));
+		return 1;
+	}
+
+	/* Create a runtime. */
+	if (!noct_create(&rt))
+		return 1;
+
+	/* Register FFI functions. */
+	if (!register_ffi(rt))
+		return 1;
+
+	/* Load a file content. */
+	if (!load_file_content(argv[i], &data, &len))
+		return 1;
+
+	/* Check for the bytecode header. */
+	if (strncmp(data, BYTECODE_HEADER, strlen(BYTECODE_HEADER)) != 0) {
+		/* It's a source file. */
+		if (!noct_register_source(rt, argv[i], data)) {
+			wide_printf(_("%s:%d: Error: %s\n"),
+				    noct_get_error_file(rt),
+				    noct_get_error_line(rt),
+				    noct_get_error_message(rt));
+			return 1;
+		}
+	} else {
+		/* It's a bytecode file. */
+		if (!noct_register_bytecode(rt, len, data)) {
+			wide_printf(_("%s:%d: Error: %s\n"),
+				    noct_get_error_file(rt),
+				    noct_get_error_line(rt),
+				    noct_get_error_message(rt));
+			return 1;
+		}
+	}
+
+	/* Make the arguments for "main()". */
+	arg_count = argc - file_arg - 1;
+	if (arg_count > 0) {
+		arg_value = malloc(sizeof(struct rt_value) * arg_count);
+		if (arg_value == NULL)
+			return 1;
+		for (i = 0; i < arg_count; i++) {
+			if (!noct_make_string(rt, &arg_value[i], argv[file_arg + i + 1]))
+				return 1;
+		}
+	} else {
+		arg_value = NULL;
+	}
+
+	/* Run the "main()" function. */
+	if (!noct_call_with_name(rt, "main", arg_count, arg_value, &ret)) {
+		wide_printf(_("%s:%d: Error: %s\n"),
+			      noct_get_error_file(rt),
+			      noct_get_error_line(rt),
+			      noct_get_error_message(rt));
+		return 1;
+	}
+
+	/* Destroy the runtime. */
+	if (!noct_destroy(rt))
+		return 1;
+
+	return 0;
+}
 
 /*
  * Compile
  */
 
+/* The top level function for the compile mode. */
 static int command_compile(int argc, char *argv[])
 {
 	int i;
@@ -240,6 +321,7 @@ static int command_compile(int argc, char *argv[])
 	return 1;
 }
 
+/* Compile a source file. */
 static bool compile_source(const char *file_name)
 {
 	char bc_fname[1024];
@@ -336,9 +418,10 @@ static bool compile_source(const char *file_name)
 }
 
 /*
- * Transpile (C)
+ * C Translation
  */
 
+/* The top level function for the C translation mode. */
 static int command_transpile_c(int argc, char *argv[])
 {
 	if (argc < 4) {
@@ -352,6 +435,7 @@ static int command_transpile_c(int argc, char *argv[])
 	return 0;
 }
 
+/* Do C translation. */
 static bool do_transpile_c(const char *out_file, int in_file_count, const char *in_file[])
 {
 	int i;
@@ -362,6 +446,7 @@ static bool do_transpile_c(const char *out_file, int in_file_count, const char *
 
 	/* For each input file or directory. */
 	for (i = 0; i < in_file_count; i++) {
+		/* Recursively add files. */
 		if (!add_file(in_file[i], add_file_hook_c))
 			return false;
 	}
@@ -373,6 +458,7 @@ static bool do_transpile_c(const char *out_file, int in_file_count, const char *
 	return true;
 }
 
+/* "On file add" callback for the recursive file search. */
 static bool add_file_hook_c(const char *fname)
 {
 	char *data;
@@ -432,9 +518,10 @@ static bool add_file_hook_c(const char *fname)
 }
 
 /*
- * Transpile (Emacs Lisp)
+ * Emacs Lisp Translation
  */
 
+/* The top level function for the Emacs Lisp translation. */
 static int command_transpile_elisp(int argc, char *argv[])
 {
 	if (argc < 4) {
@@ -448,6 +535,7 @@ static int command_transpile_elisp(int argc, char *argv[])
 	return 0;
 }
 
+/* Do Emacs Lisp translation. */
 static bool do_transpile_elisp(const char *out_file, int in_file_count, const char *in_file[])
 {
 	int i;
@@ -469,6 +557,7 @@ static bool do_transpile_elisp(const char *out_file, int in_file_count, const ch
 	return true;
 }
 
+/* "On file add" callback for Emacs Lisp translation. */
 static bool add_file_hook_elisp(const char *fname)
 {
 	char *data;
@@ -516,84 +605,260 @@ static bool add_file_hook_elisp(const char *fname)
 }
 
 /*
- * Recursive Transpile
+ * REPL
  */
 
+int command_repl(void)
+{
+	NoctEnv *rt;
+
+	/* Turn off JIT. */
+	/* noct_conf_use_jit = false; */
+
+	/* Create a runtime. */
+	if (!noct_create(&rt))
+		return 1;
+
+	/* Register FFI functions. */
+	if (!register_ffi(rt))
+		return 1;
+
+	wide_printf(_("Noct Programming Language "));
+	wide_printf(_("Version %s\n"), VERSION);
+#ifdef USE_JIT
+	if (noct_conf_use_jit)
+		wide_printf(_("JIT compilation is enabled. Starting the fast VM...\n"));
+#endif
+	wide_printf(_("Entering REPL mode.\n"));
+	wide_printf("\n");
+
+	/* Prompt. */
+	while (1) {
+		char line[4096];
+		char entire[32768];
+		char *start;
+		bool is_func;
+		NoctValue ret, zero;
+
+		memset(line, 0, sizeof(line));
+		memset(entire, 0, sizeof(entire));
+
+		/* Show the prompt and get an input. */
+		wide_printf("> ");
+		if (fgets(line, sizeof(line) - 1, stdin) == NULL)
+			break;
+
+		/* Check if it is multiple lines. */
+		if (!is_multiline_start(line, &is_func)) {
+			/* Single line. */
+
+			/* Make a function. */
+			strncpy(entire, "func repl() {", sizeof(entire) - 1);
+			strncat(entire, line, sizeof(entire) - 1);
+			strncat(entire, "; }", sizeof(entire) - 1);
+
+			/* Compile the source. */
+			if (!noct_register_source(rt, "REPL", entire)) {
+				wide_printf(_("%s:%d: Error: %s\n"),
+					    noct_get_error_file(rt),
+					    noct_get_error_line(rt),
+					    noct_get_error_message(rt));
+				continue;
+			}
+
+			/* Run the "repl()" function. */
+			if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
+				wide_printf(_("%s:%d: Error: %s\n"),
+					    noct_get_error_file(rt),
+					    noct_get_error_line(rt),
+					    noct_get_error_message(rt));
+				continue;
+			}
+		} else {
+			/* Multiple lines. */
+
+			/* Make a function if the block is not a function. */
+			if (!is_func)
+				strncpy(entire, "func repl() {", sizeof(entire) - 1);
+			else
+				strcpy(entire, "");
+			start = &entire[strlen(entire)];
+
+			/* Show the multiline prompt and get inputs until the block ends. */
+			strncat(entire, line, sizeof(entire) - 1);
+			while (!accept_multiline(start)) {
+				wide_printf(". ");
+				if (fgets(line, sizeof(line) - 1, stdin) == NULL)
+					break;
+				strncat(entire, line, sizeof(entire) - 1);
+			}
+
+			/* Terminate the synthetic function if the block is not a function. */
+			if (!is_func)
+				strncat(entire, "}", sizeof(entire) - 1);
+
+			/* Compile the source. */
+			if (!noct_register_source(rt, "REPL", entire)) {
+				wide_printf(_("%s:%d: Error: %s\n"),
+					    noct_get_error_file(rt),
+					    noct_get_error_line(rt),
+					    noct_get_error_message(rt));
+				continue;
+			}
+
+			/* If the block is not a function, run the synthetic function. */
+			if (!is_func) {
+				/* Run the "repl()" function. */
+				if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
+					wide_printf(_("%s:%d: Error: %s\n"),
+						    noct_get_error_file(rt),
+						    noct_get_error_line(rt),
+						    noct_get_error_message(rt));
+					continue;
+				}
+			}
+		}
+
+		/* Make the "repl()" function updatable. */
+		noct_make_int(&zero, 0);
+		if (!noct_set_global(rt, "repl", &zero))
+			return 1;
+	}
+
+	/* Destroy the runtime. */
+	if (!noct_destroy(rt))
+		return 1;
+
+	return 0;
+}
+
+/* Check for the start of the multiple line mode. */
+static bool is_multiline_start(const char *text, bool *is_func)
+{
+	const char *s;
+
+	s = text;
+	while (*s == ' ')
+		s++;
+
+	*is_func = false;
+	if (strncmp(s, "func", 4) == 0) {
+		if (s[4] == ' ' || s[4] == '\t' || s[4] == '\n' || s[4] == '(') {
+			*is_func = true;
+			return true;
+		}
+	}
+	if (strncmp(s, "if", 2) == 0) {
+		if (s[2] == ' ' || s[2] == '\t' || s[2] == '\n' || s[2] == '(')
+			return true;
+	}
+	if (strncmp(s, "for", 2) == 0) {
+		if (s[3] == ' ' || s[3] == '\t' || s[3] == '\n' || s[3] == '(')
+			return true;
+	}
+	if (strncmp(s, "while", 5) == 0) {
+		if (s[5] == ' ' || s[5] == '\t' || s[5] == '\n' || s[5] == '(')
+			return true;
+	}
+
+	return false;
+}
+
+/* Check for the end of the multiple line mode. */
+static bool accept_multiline(const char *text)
+{
+	int open, close;
+	const char *s;
+
+	open = 0;
+	close = 0;
+	s = text;
+	while(*s) {
+		if (*s == '{')
+			open++;
+		else if (*s == '}')
+			close++;
+		s++;
+	}
+
+	if (open > 0 && open == close)
+		return true; /* Matched. */
+
+	return false;
+}
 
 /*
- * For Windows:
+ * Helpers
  */
-#if defined(_WIN32)
 
-#define BUF_SIZE	1024
-
-static wchar_t wszMessage[BUF_SIZE];
-static char szMessage[BUF_SIZE];
-
-const wchar_t *win32_utf8_to_utf16(const char *utf8_message)
+/* Load a file. */
+static bool load_file_content(const char *fname, char **data, size_t *size)
 {
-	assert(utf8_message != NULL);
-	MultiByteToWideChar(CP_UTF8, 0, utf8_message, -1, wszMessage, BUF_SIZE - 1);
-	return wszMessage;
-}
+	FILE *fp;
+	long pos;
 
-const char *win32_utf16_to_utf8(const wchar_t *utf16_message)
-{
-	assert(utf16_message != NULL);
-	WideCharToMultiByte(CP_UTF8, 0, utf16_message, -1, szMessage, BUF_SIZE - 1, NULL, NULL);
-	return szMessage;
-}
-
-/* Get file list in directory (for Windows) */
-static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
-{
-	WIN32_FIND_DATAW wfd;
-	HANDLE hFind;
-	DWORD dwAttr;
-
-	dwAttr = GetFileAttributesW(win32_utf8_to_utf16(fname));
-	if (dwAttr == INVALID_FILE_ATTRIBUTES)
+	/* Open the file. */
+	fp = fopen(fname, "rb");
+	if (fp == NULL) {
+		wide_printf(_("Cannot open file %s.\n"), fname);
 		return false;
-	if (dwAttr & FILE_ATTRIBUTE_DIRECTORY)
-	{
-		wchar_t wszFindPath[BUF_SIZE];
-
-		_snwprintf(wszFindPath, BUF_SIZE, L"%s\\*.*", win32_utf8_to_utf16(fname));
-
-		hFind = FindFirstFileW(wszFindPath, &wfd);
-		if(hFind == INVALID_HANDLE_VALUE)
-			return false;
-		do
-		{
-			wchar_t wszNextPath[BUF_SIZE];
-
-			if (wcscmp(wfd.cFileName, L".") == 0)
-				continue;
-			if (wcscmp(wfd.cFileName, L"..") == 0)
-				continue;
-
-			_snwprintf(wszNextPath, BUF_SIZE, L"%s\\%s", win32_utf8_to_utf16(fname), wfd.cFileName);
-			if (!add_file(win32_utf16_to_utf8(wszNextPath), add_file_hook))
-				return false;
-		}
-		while(FindNextFileW(hFind, &wfd));
 	}
-	else
-	{
-		wide_printf(_("Adding file %s\n"), fname);
-		if (!add_file_hook(fname))
-			return false;
+
+	/* Get the file size. */
+	fseek(fp, 0, SEEK_END);
+	*size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+
+	/* Allocate a buffer. */
+	*data = malloc(*size + 1);
+	if (*data == NULL) {
+		wide_printf(_("Out of memory.\n"));
+		return false;
 	}
+
+	/* Read the data. */
+	if (fread(*data, 1, *size, fp) != *size) {
+		wide_printf(_("Cannot read file %s.\n"), fname);
+		return false;
+	}
+
+	/* Terminate the string. */
+	(*data)[*size] = '\0';
+
+	fclose(fp);
 
 	return true;
 }
 
-/*
- * For macOS and Linux:
- */
-#else
+/* Print to console. (supports wide characters on Windows console.) */
+static int wide_printf(const char *format, ...)
+{
+	static char buf[4096];
+	va_list ap;
+	int size;
 
-/* Get directory file list (for Mac and Linux) */
+	va_start(ap, format);
+	size = vsnprintf(buf, sizeof(buf), format, ap);
+	va_end(ap);
+
+#if !defined(_WIN32)
+	return printf("%s", buf);
+#else
+	/* Use wprintf() and wide-string. (Otherwise, we'll see garbages.) */
+	static wchar_t wbuf[4096];
+	DWORD dwWritten;
+	MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, sizeof(wbuf) / sizeof(wchar_t));
+	WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), wbuf, lstrlenW(wbuf), &dwWritten, NULL);
+	return size;
+#endif
+}
+
+/*
+ * For POSIX
+ */
+#if !defined(_WIN32)
+
+/* Recursively add files. */
 static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 {
 	struct stat st;
@@ -637,334 +902,77 @@ static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 	return true;
 }
 
-#endif
-
 /*
- * Run
+ * For Windows
  */
+#else
 
-int command_run(int argc, char *argv[])
+#define BUF_SIZE	1024
+
+static wchar_t wszMessage[BUF_SIZE];
+static char szMessage[BUF_SIZE];
+
+/* Convert UTF-8 to UTF-16. */
+static const wchar_t *win32_utf8_to_utf16(const char *utf8_message)
 {
-	struct rt_value ret;
-	int file_arg;
-	int i;
-	char *data;
-	size_t len;
-	int arg_count;
-	struct rt_value *arg_value;
-
-	/* Parse options. */
-	file_arg = 1;
-	for (i = 1; i < argc; i++) {
-		if (argv[i][0] != '-')
-			break;
-
-		if (strcmp(argv[1], "--disable-jit") == 0) {
-			noct_conf_use_jit = false;
-			file_arg++;
-			continue;
-		}
-
-		wide_printf(_("Unknown option %s.\n"), argv[1]);
-		return 1;
-	}
-
-	/* Check if a file is specified. */
-	if (file_arg == argc) {
-		wide_printf(_("Specify a file.\n"));
-		return 1;
-	}
-
-	/* Create a runtime. */
-	if (!noct_create(&rt))
-		return 1;
-
-	/* Register FFI functions. */
-	if (!register_ffi(rt))
-		return 1;
-
-	/* Load a source file content. */
-	if (!load_file_content(argv[i], &data, &len))
-		return 1;
-
-	/* Compile a source file. */
-	if (!noct_register_source(rt, argv[i], data)) {
-		wide_printf(_("%s:%d: Error: %s\n"),
-			    noct_get_error_file(rt),
-			    noct_get_error_line(rt),
-			    noct_get_error_message(rt));
-		return 1;
-	}
-
-	/* Make the args. */
-	arg_count = argc - file_arg - 1;
-	if (arg_count > 0) {
-		arg_value = malloc(sizeof(struct rt_value) * arg_count);
-		if (arg_value == NULL)
-			return 1;
-		for (i = 0; i < arg_count; i++) {
-			if (!noct_make_string(rt, &arg_value[i], argv[file_arg + i + 1]))
-				return 1;
-		}
-	} else {
-		arg_value = NULL;
-	}
-
-	/* Run the "main()" function. */
-	if (!noct_call_with_name(rt, "main", arg_count, arg_value, &ret)) {
-		wide_printf(_("%s:%d: Error: %s\n"),
-			      noct_get_error_file(rt),
-			      noct_get_error_line(rt),
-			      noct_get_error_message(rt));
-		return 1;
-	}
-
-	/* Destroy the runtime. */
-	if (!noct_destroy(rt))
-		return 1;
-
-	return 0;
+	assert(utf8_message != NULL);
+	MultiByteToWideChar(CP_UTF8, 0, utf8_message, -1, wszMessage, BUF_SIZE - 1);
+	return wszMessage;
 }
 
-/*
- * REPL
- */
-
-int command_repl(void)
+/* Convert UTF-16 to UTF-8. */
+static const char *win32_utf16_to_utf8(const wchar_t *utf16_message)
 {
-	NoctEnv *rt;
-
-	/* Will make variables global. */
-	noct_conf_repl_mode = true;
-
-	/* Turn off JIT. */
-	/* noct_conf_use_jit = false; */
-
-	/* Create a runtime. */
-	if (!noct_create(&rt))
-		return 1;
-
-	/* Register FFI functions. */
-	if (!register_ffi(rt))
-		return 1;
-
-	wide_printf(_("Noct Programming Language "));
-	wide_printf(_("Version %s\n"), VERSION);
-#ifdef USE_JIT
-	if (noct_conf_use_jit)
-		wide_printf(_("JIT compilation is enabled. Starting the fast VM...\n"));
-#endif
-	wide_printf(_("Entering REPL mode.\n"));
-	wide_printf("\n");
-
-	while (1) {
-		char line[4096];
-		char entire[32768];
-		char *start;
-		bool is_func;
-		NoctValue ret, zero;
-
-		memset(line, 0, sizeof(line));
-		memset(entire, 0, sizeof(entire));
-
-		wide_printf("> ");
-		if (fgets(line, sizeof(line) - 1, stdin) == NULL)
-			break;
-
-		if (!is_block_start(line, &is_func)) {
-			/* Single line. */
-			strncpy(entire, "func repl() {", sizeof(entire) - 1);
-			strncat(entire, line, sizeof(entire) - 1);
-			strncat(entire, "; }", sizeof(entire) - 1);
-
-			/* Compile the source. */
-			if (!noct_register_source(rt, "REPL", entire)) {
-				wide_printf(_("%s:%d: Error: %s\n"),
-					    noct_get_error_file(rt),
-					    noct_get_error_line(rt),
-					    noct_get_error_message(rt));
-				continue;
-			}
-
-			/* Run the "repl()" function. */
-			if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
-				wide_printf(_("%s:%d: Error: %s\n"),
-					    noct_get_error_file(rt),
-					    noct_get_error_line(rt),
-					    noct_get_error_message(rt));
-				continue;
-			}
-		} else {
-			if (!is_func)
-				strncpy(entire, "func repl() {", sizeof(entire) - 1);
-			else
-				strcpy(entire, "");
-			start = &entire[strlen(entire)];
-
-			/* Multiple lines. */
-			strncat(entire, line, sizeof(entire) - 1);
-			while (!accept_func(start)) {
-				wide_printf(". ");
-				if (fgets(line, sizeof(line) - 1, stdin) == NULL)
-					break;
-				strncat(entire, line, sizeof(entire) - 1);
-			}
-
-			if (!is_func)
-				strncat(entire, "}", sizeof(entire) - 1);
-
-			/* Compile the source. */
-			if (!noct_register_source(rt, "REPL", entire)) {
-				wide_printf(_("%s:%d: Error: %s\n"),
-					    noct_get_error_file(rt),
-					    noct_get_error_line(rt),
-					    noct_get_error_message(rt));
-				continue;
-			}
-
-			if (!is_func) {
-				/* Run the "repl()" function. */
-				if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
-					wide_printf(_("%s:%d: Error: %s\n"),
-						    noct_get_error_file(rt),
-						    noct_get_error_line(rt),
-						    noct_get_error_message(rt));
-					continue;
-				}
-			}
-		}
-
-
-		/* Make the "repl()" function updatable. */
-		noct_make_int(&zero, 0);
-		if (!noct_set_global(rt, "repl", &zero))
-			return 1;
-	}
-
-	/* Destroy the runtime. */
-	if (!noct_destroy(rt))
-		return 1;
-
-	return 0;
+	assert(utf16_message != NULL);
+	WideCharToMultiByte(CP_UTF8, 0, utf16_message, -1, szMessage, BUF_SIZE - 1, NULL, NULL);
+	return szMessage;
 }
 
-static bool is_block_start(const char *text, bool *is_func)
+/* Recursively add files. */
+static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 {
-	const char *s;
+	WIN32_FIND_DATAW wfd;
+	HANDLE hFind;
+	DWORD dwAttr;
 
-	s = text;
-	while (*s == ' ')
-		s++;
-
-	*is_func = false;
-	if (strncmp(s, "func", 4) == 0) {
-		if (s[4] == ' ' || s[4] == '\t' || s[4] == '\n' || s[4] == '(') {
-			*is_func = true;
-			return true;
-		}
-	}
-	if (strncmp(s, "if", 2) == 0) {
-		if (s[2] == ' ' || s[2] == '\t' || s[2] == '\n' || s[2] == '(')
-			return true;
-	}
-	if (strncmp(s, "for", 2) == 0) {
-		if (s[3] == ' ' || s[3] == '\t' || s[3] == '\n' || s[3] == '(')
-			return true;
-	}
-	if (strncmp(s, "while", 5) == 0) {
-		if (s[5] == ' ' || s[5] == '\t' || s[5] == '\n' || s[5] == '(')
-			return true;
-	}
-
-	return false;
-}
-
-static bool accept_func(const char *text)
-{
-	int open, close;
-	const char *s;
-
-	open = 0;
-	close = 0;
-	s = text;
-	while(*s) {
-		if (*s == '{')
-			open++;
-		else if (*s == '}')
-			close++;
-		s++;
-	}
-
-	if (open > 0 && open == close)
-		return true; /* Matched. */
-
-	return false;
-}
-
-/*
- * Helpers
- */
-
-static bool load_file_content(const char *fname, char **data, size_t *size)
-{
-	FILE *fp;
-	long pos;
-
-	/* Open the file. */
-	fp = fopen(fname, "rb");
-	if (fp == NULL) {
-		wide_printf(_("Cannot open file %s.\n"), fname);
+	dwAttr = GetFileAttributesW(win32_utf8_to_utf16(fname));
+	if (dwAttr == INVALID_FILE_ATTRIBUTES)
 		return false;
+	if (dwAttr & FILE_ATTRIBUTE_DIRECTORY)
+	{
+		wchar_t wszFindPath[BUF_SIZE];
+
+		_snwprintf(wszFindPath, BUF_SIZE, L"%s\\*.*", win32_utf8_to_utf16(fname));
+
+		hFind = FindFirstFileW(wszFindPath, &wfd);
+		if(hFind == INVALID_HANDLE_VALUE)
+			return false;
+		do
+		{
+			wchar_t wszNextPath[BUF_SIZE];
+
+			if (wcscmp(wfd.cFileName, L".") == 0)
+				continue;
+			if (wcscmp(wfd.cFileName, L"..") == 0)
+				continue;
+
+			_snwprintf(wszNextPath, BUF_SIZE, L"%s\\%s", win32_utf8_to_utf16(fname), wfd.cFileName);
+			if (!add_file(win32_utf16_to_utf8(wszNextPath), add_file_hook))
+				return false;
+		}
+		while(FindNextFileW(hFind, &wfd));
 	}
-
-	/* Get the file size. */
-	fseek(fp, 0, SEEK_END);
-	*size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-
-	/* Allocate a buffer. */
-	*data = malloc(*size + 1);
-	if (*data == NULL) {
-		wide_printf(_("Out of memory.\n"));
-		return false;
+	else
+	{
+		wide_printf(_("Adding file %s\n"), fname);
+		if (!add_file_hook(fname))
+			return false;
 	}
-
-	/* Read the data. */
-	if (fread(*data, 1, *size, fp) != *size) {
-		wide_printf(_("Cannot read file %s.\n"), fname);
-		return false;
-	}
-
-	/* Terminate the string. */
-	(*data)[*size] = '\0';
-
-	fclose(fp);
 
 	return true;
 }
 
-/* Print to console. (supports wide characters) */
-static int wide_printf(const char *format, ...)
-{
-	static char buf[4096];
-	va_list ap;
-	int size;
-
-	va_start(ap, format);
-	size = vsnprintf(buf, sizeof(buf), format, ap);
-	va_end(ap);
-
-#if defined(_WIN32)
-	/* Use wprintf() and wide-string. (Otherwise, we'll see garbages.) */
-	static wchar_t wbuf[4096];
-	DWORD dwWritten;
-	MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, sizeof(wbuf) / sizeof(wchar_t));
-	WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), wbuf, lstrlenW(wbuf), &dwWritten, NULL);
-	return size;
-#else
-	return printf("%s", buf);
-#endif
-}
+#endif	/* !defined(_WIN32) */
 
 /*
  * FFI Functions
@@ -1031,13 +1039,25 @@ cfunc_import(
 	if (!load_file_content(file, &data, &len))
 		return false;
 
-	/* Compile a source file. */
-	if (!noct_register_source(rt, file, data)) {
-		wide_printf("%s:%d: Error: %s\n",
-			    noct_get_error_file(rt),
-			    noct_get_error_line(rt),
-			    noct_get_error_message(rt));
-		return false;
+	/* Check for the bytecode header. */
+	if (strncmp(data, BYTECODE_HEADER, strlen(BYTECODE_HEADER)) != 0) {
+		/* It's a source file. */
+		if (!noct_register_source(rt, file, data)) {
+			wide_printf("%s:%d: Error: %s\n",
+				    noct_get_error_file(rt),
+				    noct_get_error_line(rt),
+				    noct_get_error_message(rt));
+			return false;
+		}
+	} else {
+		/* It's a bytecode file. */
+		if (!noct_register_bytecode(rt, len, data)) {
+			wide_printf("%s:%d: Error: %s\n",
+				    noct_get_error_file(rt),
+				    noct_get_error_line(rt),
+				    noct_get_error_message(rt));
+			return false;
+		}
 	}
 
 	return true;
@@ -1240,3 +1260,25 @@ cfunc_shell(
 
 	return true;
 }
+
+/*
+ * Windows Quirk
+ */
+
+#ifdef _WIN32
+#include <windows.h>
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
+{
+    /* Dispatch to main(). */
+    int argc, i;
+    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    char **argv = malloc(sizeof(char *) * argc);
+    for (i = 0; i < argc; i++)
+    {
+        char tmp[1024];
+	WideCharToMultiByte(CP_ACP, 0, wargv[i], -1, tmp, sizeof(tmp) - 1, NULL, NULL);
+        argv[i] = strdup(tmp);
+    }
+    return main(argc, argv);
+}
+#endif

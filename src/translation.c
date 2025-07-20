@@ -171,12 +171,30 @@ const char *noct_gettext(const char *msg)
         return "Too many jumps.";
     }
     if (strcmp(msg, "LIR: Out of memory error.") == 0) {
-        if (strcmp(lang_code, "ja") == 0) return "LIR: メモリが足りません。";
-        if (strcmp(lang_code, "ca") == 0) return "LIR: No hi ha prou memòria.";
         if (strcmp(lang_code, "es") == 0) return "LIR: No hay suficiente memoria.";
+        if (strcmp(lang_code, "fr") == 0) return "LIR: Memoria insuficiente.";
         if (strcmp(lang_code, "de") == 0) return "LIR: Nicht genügend Speicher.";
         if (strcmp(lang_code, "it") == 0) return "LIR: Non c'è abbastanza memoria.";
+        if (strcmp(lang_code, "el") == 0) return "LIR: Δεν υπάρχει αρκετή μνήμη.";
+        if (strcmp(lang_code, "ru") == 0) return "LIR: Недостаточно памяти.";
+        if (strcmp(lang_code, "zh") == 0) return "LIR: 内存不足。";
+        if (strcmp(lang_code, "tw") == 0) return "LIR: 記憶體不足。";
+        if (strcmp(lang_code, "ja") == 0) return "LIR: メモリが足りません。";
+        if (strcmp(lang_code, "ca") == 0) return "LIR: No hi ha prou memòria.";
         return "LIR: Out of memory error.";
+    }
+    if (strcmp(msg, "Failed to load bytecode data.") == 0) {
+        if (strcmp(lang_code, "es") == 0) return "No se pudo cargar los datos de bytecode.";
+        if (strcmp(lang_code, "fr") == 0) return "Échec du chargement des données de bytecode.";
+        if (strcmp(lang_code, "de") == 0) return "Bytecode-Daten konnten nicht geladen werden.";
+        if (strcmp(lang_code, "it") == 0) return "Impossibile caricare i dati del bytecode.";
+        if (strcmp(lang_code, "el") == 0) return "Απέτυχε η φόρτωση των δεδομένων bytecode.";
+        if (strcmp(lang_code, "ru") == 0) return "Не удалось загрузить данные байткода.";
+        if (strcmp(lang_code, "zh") == 0) return "加载字节码数据失败。";
+        if (strcmp(lang_code, "tw") == 0) return "無法載入位元碼資料。";
+        if (strcmp(lang_code, "ja") == 0) return "バイトコードの読み込みに失敗しました。";
+        if (strcmp(lang_code, "ca") == 0) return "No s'han pogut carregar les dades del bytecode.";
+        return "Failed to load bytecode data.";
     }
     if (strcmp(msg, "Memory mapping failed.") == 0) {
         if (strcmp(lang_code, "es") == 0) return "El mapeo de la memoria ha fallado.";
