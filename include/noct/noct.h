@@ -75,6 +75,7 @@ typedef unsigned long long uint64_t;
 /* Forward declaration */
 struct rt_env;
 struct rt_frame;
+struct rt_object_header;
 struct rt_value;
 struct rt_string;
 struct rt_array;
@@ -120,6 +121,7 @@ struct rt_value {
 		struct rt_array *arr;
 		struct rt_dict *dict;
 		struct rt_func *func;
+		struct rt_object_header *obj;
 	} val;
 };
 

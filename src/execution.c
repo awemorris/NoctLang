@@ -977,7 +977,7 @@ rt_storearray_helper(
 			return false;
 	}
 
-	rt_make_deep_reference(rt, val_val);
+	rt_move_shallow_to_young_list(rt, val_val);
 
 	return true;
 }
@@ -1194,7 +1194,7 @@ rt_storesymbol_helper(
 	if (rt_find_global(rt, symbol, &global)) {
 		/* Found. */
 		global->val = rt->frame->tmpvar[src];
-		rt_make_deep_reference(rt, &global->val);
+		rt_move_shallow_to_young_list(rt, &global->val);
 	} else {
 		/* Not found. Bind a global variable. */
 		assert(global == NULL);
@@ -1271,7 +1271,7 @@ rt_storedot_helper(
 	if (!noct_set_dict_elem(rt, &rt->frame->tmpvar[dict], field, &rt->frame->tmpvar[src]))
 		return false;
 
-	rt_make_deep_reference(rt, &rt->frame->tmpvar[src]);
+	rt_move_shallow_to_young_list(rt, &rt->frame->tmpvar[src]);
 
 	return true;
 }
@@ -1302,16 +1302,9 @@ rt_call_helper(
 	for (i = 0; i < arg_count; i++)
 		arg_val[i] = rt->frame->tmpvar[arg[i]];
 
-	/* Make a callframe. */
-	if (!rt_enter_frame(rt, callee))
-		return false;
-
 	/* Do call. */
 	if (!noct_call(rt, callee, arg_count, &arg_val[0], &ret))
 		return false;
-
-	/* Destroy a callframe. */
-	rt_leave_frame(rt, &ret);
 
 	/* Store a return value. */
 	rt->frame->tmpvar[dst] = ret;

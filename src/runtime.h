@@ -62,6 +62,25 @@ enum rt_bytecode {
 };
 
 /*
+ * GC List Type
+ */
+enum {
+	RT_GC_SHALLOW,
+	RT_GC_YOUNG,
+	RT_GC_TENURE,
+};
+
+struct rt_env;
+struct rt_frame;
+struct rt_value;
+struct rt_object_header;
+struct rt_string;
+struct rt_array;
+struct rt_dict;
+struct rt_func;
+struct rt_bindglobal;
+
+/*
  * Runtime environment.
  */
 struct rt_env {
@@ -80,36 +99,17 @@ struct rt_env {
 	/* Heap usage in bytes. */
 	size_t heap_usage;
 
-	/* Deep object list. */
-	struct rt_string *deep_str_list;
-	struct rt_array *deep_arr_list;
-	struct rt_dict *deep_dict_list;
+	/* Young object list. */
+	struct rt_object_header *young_list;
 
 	/* Garbage object list. */
-	struct rt_string *garbage_str_list;
-	struct rt_array *garbage_arr_list;
-	struct rt_dict *garbage_dict_list;
+	struct rt_object_header *garbage_list;
 
 	/* Execution file. */
 	char file_name[1024];
 
 	/* Error message. */
 	char error_message[4096];
-
-#if defined(CONF_DEBUGGER)
-	/* Last file and line. */
-	char dbg_last_file_name[1024];
-	int dbg_last_line;
-
-	/* Stop flag. */
-	volatile bool dbg_stop_flag;
-
-	/* Single step flag. */
-	bool dbg_single_step_flag;
-
-	/* Error flag. */
-	bool dbg_error_flag;
-#endif
 };
 
 /*
@@ -123,76 +123,62 @@ struct rt_frame {
 	/* function */
 	struct rt_func *func;
 
-	/* Shallow string list. */
-	struct rt_string *shallow_str_list;
-
-	/* Shallow array list. */
-	struct rt_array *shallow_arr_list;
-
-	/* Shallow dictionary list. */
-	struct rt_dict *shallow_dict_list;
+	/* Shallow object list. */
+	struct rt_object_header *shallow_list;
 
 	/* Next frame. */
 	struct rt_frame *next;
 };
 
 /*
- * String object.
+ * Object header.
  */
-struct rt_string {
-	char *s;
+struct rt_object_header {
+	/* Type. */
+	int type;
 
-	/* String list (shallow or deep). */
-	struct rt_string *prev;
-	struct rt_string *next;
-	bool is_deep;
+	/* String list (shallow, young, or tenure). */
+	struct rt_object_header *prev;
+	struct rt_object_header *next;
+	int gc_type;
 
 	/* Is marked? (for mark-and-sweep GC). */
 	bool is_marked;
 
 	/* Is referenced by native code? */
 	bool has_native_ref;
+};
+
+/*
+ * String object.
+ */
+struct rt_string {
+	struct rt_object_header head;
+
+	char *s;
 };
 
 /*
  * Array object.
  */
 struct rt_array {
+	struct rt_object_header head;
+
 	int alloc_size;
 	int size;
 	struct rt_value *table;
-
-	/* Array list (shallow or deep). */
-	struct rt_array *prev;
-	struct rt_array *next;
-	bool is_deep;
-
-	/* Is marked? (for mark-and-sweep GC). */
-	bool is_marked;
-
-	/* Is referenced by native code? */
-	bool has_native_ref;
 };
 
 /*
  * Dictionary object.
  */
 struct rt_dict {
+	struct rt_object_header head;
+
 	int alloc_size;
 	int size;
 	char **key;
 	struct rt_value *value;
-
-	/* Dict list (shallow or deep). */
-	struct rt_dict *prev;
-	struct rt_dict *next;
-	bool is_deep;
-
-	/* Is marked? (for mark-and-sweep GC). */
-	bool is_marked;
-
-	/* Is referenced by native code? */
-	bool has_native_ref;
 };
 
 /*
@@ -226,56 +212,25 @@ struct rt_func {
 struct rt_bindglobal {
 	char *name;
 	struct rt_value val;
-
-	/* XXX: */
 	struct rt_bindglobal *next;
 };
 
-/*
- * Runtime Internal Functions
- */
-
-/* Output an out-of-memory message. */
-void
-rt_out_of_memory(
-	struct rt_env *rt);
-
 /* Enter a new calling frame. */
-bool
-rt_enter_frame(
-	struct rt_env *rt,
-	struct rt_func *func);
+bool rt_enter_frame(struct rt_env *rt, struct rt_func *func);
 
 /* Leave the current calling frame. */
-void
-rt_leave_frame(
-	struct rt_env *rt,
-	struct rt_value *ret);
-
-/* Add a global variable. */
-bool
-rt_add_global(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindglobal **global);
+void rt_leave_frame(struct rt_env *rt, struct rt_value *ret);
 
 /* Find a global variable. */
-bool
-rt_find_global(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindglobal **global);
+bool rt_find_global(struct rt_env *rt, const char *name, struct rt_bindglobal **global);
 
-/* Get a return value. */
-bool
-rt_get_return(
-	struct rt_env *rt,
-	struct rt_value *val);
+/* Add a global variable. */
+bool rt_add_global(struct rt_env *rt, const char *name, struct rt_bindglobal **global);
 
-/* Make a strong reference. */
-void
-rt_make_deep_reference(
-	struct rt_env *rt,
-	struct rt_value *val);
+/* Move an object from the shallow list to the young list. */
+void rt_move_shallow_to_young_list(struct rt_env *rt, struct rt_value *val);
+
+/* Output an out-of-memory message. */
+void rt_out_of_memory(struct rt_env *rt);
 
 #endif

@@ -78,12 +78,10 @@ static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, uint
 static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos);
 static bool rt_expand_array(struct rt_env *rt, struct rt_value *array, int size);
 static bool rt_expand_dict(struct rt_env *rt, struct rt_value *dict, int size);
-static void rt_recursively_mark_object(struct rt_env *rt, struct rt_value *val);
-static void rt_recursively_mark_array(struct rt_env *rt, struct rt_array *arr);
-static void rt_recursively_mark_dict(struct rt_env *rt, struct rt_dict *dict);
-static void rt_free_string(struct rt_env *rt, struct rt_string *str);
-static void rt_free_array(struct rt_env *rt, struct rt_array *array);
-static void rt_free_dict(struct rt_env *rt, struct rt_dict *dict);
+static bool rt_get_return(struct rt_env *rt, struct rt_value *val);
+static void rt_recursively_mark_object(struct rt_env *rt, struct rt_object_header *obj);
+static void rt_insert_new_object_to_list(struct rt_env *rt, struct rt_object_header *obj, int type);
+static void rt_free_object(struct rt_env *rt, struct rt_object_header *obj);
 
 /*
  * Create a runtime environment.
@@ -117,9 +115,7 @@ bool
 noct_destroy(
 	struct rt_env *rt)
 {
-	struct rt_string *str, *next_str;
-	struct rt_array *arr, *next_arr;
-	struct rt_dict *dict, *next_dict;
+	struct rt_object_header *obj, *next_obj;
 	struct rt_func *func, *next_func;
 
 	/* Free frames. */
@@ -129,28 +125,12 @@ noct_destroy(
 	/* Sweep garbages */
 	noct_shallow_gc(rt);
 
-	/* Free strongly-referenced strings. */
-	str = rt->deep_str_list;
-	while (str != NULL) {
-		next_str = str->next;
-		rt_free_string(rt, str);
-		str = next_str;
-	}
-
-	/* Free strongly-referenced arrays. */
-	arr = rt->deep_arr_list;
-	while (arr != NULL) {
-		next_arr = arr->next;
-		rt_free_array(rt, arr);
-		arr = next_arr;
-	}
-
-	/* Free strongly-referenced dictionaries. */
-	dict = rt->deep_dict_list;
-	while (dict != NULL) {
-		next_dict = dict->next;
-		rt_free_dict(rt, dict);
-		dict = next_dict;
+	/* Free young objects. */
+	obj = rt->young_list;
+	while (obj != NULL) {
+		next_obj = obj->next;
+		rt_free_object(rt, obj);
+		obj = next_obj;
 	}
 
 	/* Free functions. */
@@ -754,82 +734,16 @@ rt_leave_frame(
 	struct rt_value *ret)
 {
 	struct rt_frame *frame;
-	struct rt_string *str, *next_str;
-	struct rt_array *arr, *next_arr;
-	struct rt_dict *dict, *next_dict;
+	struct rt_object_header *obj, *next_obj;
 
-	if (ret != NULL) {
-		/*
-		 * - If the return value is in the shallow list of the callee's frame:
-		 *   - Unlink the return value from the callee's shallow list.
-		 *   - If the caller has a frame:
-		 *     -  Relink the return value to the caller's shallow list.
-		 *   - If the caller doesn't have a frame:
-		 *     -  Relink the return value to the deep list.
-		 */
-		if (ret->type == NOCT_VALUE_STRING && !ret->val.str->is_deep) {
-			str = rt->frame->shallow_str_list;
-			while (str != NULL) {
-				next_str = str->next;
-				if (str == ret->val.str) {
-					UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_str_list);
-					if (rt->frame->next != NULL)
-						INSERT_TO_LIST(ret->val.str, rt->frame->next->shallow_str_list);
-					else
-						INSERT_TO_LIST(ret->val.str, rt->deep_str_list);
-				}
-				str = next_str;
-			}
-		} else if (ret->type == NOCT_VALUE_ARRAY && !ret->val.arr->is_deep) {
-			arr = rt->frame->shallow_arr_list;
-			while (arr != NULL) {
-				next_arr = arr->next;
-				if (arr == ret->val.arr) {
-					UNLINK_FROM_LIST(ret->val.arr, rt->frame->shallow_arr_list);
-					if (rt->frame->next != NULL)
-						INSERT_TO_LIST(ret->val.arr, rt->frame->next->shallow_arr_list);
-					else
-						INSERT_TO_LIST(ret->val.arr, rt->deep_arr_list);
-				}
-				arr = next_arr;
-			}
-		} else if (ret->type == NOCT_VALUE_DICT && !ret->val.dict->is_deep) {
-			dict = rt->frame->shallow_dict_list;
-			while (dict != NULL) {
-				next_dict = dict->next;
-				if (dict == ret->val.dict) {
-					UNLINK_FROM_LIST(ret->val.dict, rt->frame->shallow_dict_list);
-					if (rt->frame->next != NULL)
-						INSERT_TO_LIST(ret->val.dict, rt->frame->next->shallow_dict_list);
-					else
-						INSERT_TO_LIST(ret->val.dict, rt->deep_dict_list);
-				}
-				dict = next_dict;
-			}
-		}
-	}
-
-	/* Move shallow references to the garbage lists. */
-	str = rt->frame->shallow_str_list;
-	while (str != NULL) {
-		next_str = str->next;
-		UNLINK_FROM_LIST(str, rt->frame->shallow_str_list);
-		INSERT_TO_LIST(str, rt->garbage_str_list);
-		str = next_str;
-	}
-	arr = rt->frame->shallow_arr_list;
-	while (arr != NULL) {
-		next_arr = arr->next;
-		UNLINK_FROM_LIST(arr, rt->frame->shallow_arr_list);
-		INSERT_TO_LIST(arr, rt->garbage_arr_list);
-		arr = next_arr;
-	}
-	dict = rt->frame->shallow_dict_list;
-	while (dict != NULL) {
-		next_dict = dict->next;
-		UNLINK_FROM_LIST(dict, rt->frame->shallow_dict_list);
-		INSERT_TO_LIST(dict, rt->garbage_dict_list);
-		dict = next_dict;
+	/* Move the shallow objects to the garbage lists. */
+	/* TODO: O(1) by using the list tail. */
+	obj = rt->frame->shallow_list;
+	while (obj != NULL) {
+		next_obj = obj->next;
+		UNLINK_FROM_LIST(obj, rt->frame->shallow_list);
+		INSERT_TO_LIST(obj, rt->garbage_list);
+		obj = next_obj;
 	}
 
 	/* Unlink the frame from the list. */
@@ -891,19 +805,8 @@ noct_make_string(
 		return false;
 	}
 
-	/* Add to the shallow string list. */
-	if (rt->frame != NULL) {
-		rts->next = rt->frame->shallow_str_list;
-		if (rt->frame->shallow_str_list != NULL)
-			rt->frame->shallow_str_list->prev = rts;
-		rt->frame->shallow_str_list = rts;
-	} else {
-		rts->next = rt->deep_str_list;
-		if (rt->deep_str_list != NULL)
-			rt->deep_str_list->prev = rts;
-		rt->deep_str_list = rts;
-		rts->is_deep = true;
-	}
+	/* Insert to the list. */
+	rt_insert_new_object_to_list(rt, (struct rt_object_header *)rts, NOCT_VALUE_STRING);
 
 	/* Setup a value. */
 	val->type = NOCT_VALUE_STRING;
@@ -911,7 +814,6 @@ noct_make_string(
 
 	/* Increment the heap usage. */
 	rt->heap_usage += strlen(s);
-
 
 	return true;
 }
@@ -970,19 +872,8 @@ noct_make_empty_array(struct rt_env *rt, struct rt_value *val)
 	val->type = NOCT_VALUE_ARRAY;
 	val->val.arr = arr;
 
-	/* Add to the shallow array list. */
-	if (rt->frame != NULL) {
-		arr->next = rt->frame->shallow_arr_list;
-		if (rt->frame->shallow_arr_list != NULL)
-			rt->frame->shallow_arr_list->prev = arr;
-		rt->frame->shallow_arr_list = arr;
-	} else {
-		arr->next = rt->deep_arr_list;
-		if (rt->deep_arr_list != NULL)
-			rt->deep_arr_list->prev = arr;
-		rt->deep_arr_list = arr;
-		arr->is_deep = true;
-	}
+	/* Insert to the list. */
+	rt_insert_new_object_to_list(rt, (struct rt_object_header *)arr, NOCT_VALUE_ARRAY);
 
 	/* Increment the heap usage. */
 	rt->heap_usage += (size_t)arr->alloc_size * sizeof(struct rt_value);
@@ -1027,19 +918,8 @@ noct_make_empty_dict(struct rt_env *rt, struct rt_value *val)
 	val->type = NOCT_VALUE_DICT;
 	val->val.dict = dict;
 
-	/* Add to the shallow dict list. */
-	if (rt->frame != NULL) {
-		dict->next = rt->frame->shallow_dict_list;
-		if (rt->frame->shallow_dict_list != NULL)
-			rt->frame->shallow_dict_list->prev = dict;
-		rt->frame->shallow_dict_list = dict;
-	} else {
-		dict->next = rt->deep_dict_list;
-		if (rt->deep_dict_list != NULL)
-			rt->deep_dict_list->prev = dict;
-		rt->deep_dict_list = dict;
-		dict->is_deep = true;
-	}
+	/* Insert to the list. */
+	rt_insert_new_object_to_list(rt, (struct rt_object_header *)dict, NOCT_VALUE_DICT);
 
 	/* Increment the heap usage. */
 	rt->heap_usage += (size_t)dict->alloc_size * sizeof(struct rt_value);
@@ -1433,9 +1313,9 @@ noct_set_array_elem(struct rt_env *rt, struct rt_value *array, int index, struct
 	/* Store. */
 	array->val.arr->table[index] = *val;
 
-	/* Mark the references of the array and its element as strong. */
-	rt_make_deep_reference(rt, array);
-	rt_make_deep_reference(rt, val);
+	/* Move to the young list. */
+	rt_move_shallow_to_young_list(rt, array);
+	rt_move_shallow_to_young_list(rt, val);
 
 	return true;
 }
@@ -1898,9 +1778,9 @@ noct_set_dict_elem(
 	dict->val.dict->value[dict->val.dict->size] = *val;
 	dict->val.dict->size++;
 
-	/* Mark the references of the dictionary and its element as strong. */
-	rt_make_deep_reference(rt, dict);
-	rt_make_deep_reference(rt, val);
+	/* Move to the young list. */
+	rt_move_shallow_to_young_list(rt, dict);
+	rt_move_shallow_to_young_list(rt, val);
 
 	return true;
 }
@@ -2296,6 +2176,9 @@ noct_set_return(
 
 	rt->frame->tmpvar[0] = *val;
 
+	/* Move to the young list. */
+	rt_move_shallow_to_young_list(rt, val);
+
 	return true;
 }
 
@@ -2393,9 +2276,7 @@ noct_get_global(
 	return true;
 }
 
-/*
- * Find a global variable.
- */
+/* Find a global variable. */
 bool
 rt_find_global(
 	struct rt_env *rt,
@@ -2430,13 +2311,17 @@ noct_set_global(
 {
 	struct rt_bindglobal *global;
 
-	rt_make_deep_reference(rt, val);
+	/* Move to the young list. */
+	rt_move_shallow_to_young_list(rt, val);
 
+	/* Find a bindglobal. */
 	if (!rt_find_global(rt, name, &global)) {
+		/* Add a global. */
 		if (!rt_add_global(rt, name, &global))
 			return false;
 	}
 
+	/* Set the value. */
 	global->val = *val;
 
 	return true;
@@ -2476,28 +2361,6 @@ rt_add_global(
 }
 
 /*
- * Set a native reference status of an object.
- */
-bool
-noct_set_native_reference(
-	NoctEnv *rt,
-	NoctValue *val,
-	bool is_enabled)
-{
-	assert(rt != NULL);
-	assert(val != NULL);
-
-	if (val->type == NOCT_VALUE_STRING)
-		val->val.str->has_native_ref = is_enabled;
-	else if (val->type == NOCT_VALUE_ARRAY)
-		val->val.arr->has_native_ref = is_enabled;
-	else if (val->type == NOCT_VALUE_DICT)
-		val->val.dict->has_native_ref = is_enabled;
-
-	return true;
-}
-
-/*
  * GC
  */
 
@@ -2508,9 +2371,7 @@ bool
 noct_shallow_gc(
 	struct rt_env *rt)
 {
-	struct rt_string *str, *next_str;
-	struct rt_array *arr, *next_arr;
-	struct rt_dict *dict, *next_dict;
+	struct rt_object_header *obj, *next_obj;
 
 	/*
 	 * A nursery space belongs to a calling frame.
@@ -2522,29 +2383,13 @@ noct_shallow_gc(
 	 * The shallow GC sweeps such objects in the garbage list.
 	 */
 
-	str = rt->garbage_str_list;
-	while (str != NULL) {
-		next_str = str->next;
-		rt_free_string(rt, str);
-		str = next_str;
+	obj = rt->garbage_list;
+	while (obj != NULL) {
+		next_obj = obj->next;
+		rt_free_object(rt, obj);
+		obj = next_obj;
 	}
-	rt->garbage_str_list = NULL;
-
-	arr = rt->garbage_arr_list;
-	while (arr != NULL) {
-		next_arr = arr->next;
-		rt_free_array(rt, arr);
-		arr = next_arr;
-	}
-	rt->garbage_arr_list = NULL;
-
-	dict = rt->garbage_dict_list;
-	while (dict != NULL) {
-		next_dict = dict->next;
-		rt_free_dict(rt, dict);
-		dict = next_dict;
-	}
-	rt->garbage_dict_list = NULL;
+	rt->garbage_list = NULL;
 
 	return true;
 }
@@ -2556,9 +2401,7 @@ bool
 noct_deep_gc(
 	struct rt_env *rt)
 {
-	struct rt_string *str, *next_str;
-	struct rt_array *arr, *next_arr;
-	struct rt_dict *dict, *next_dict;
+	struct rt_object_header *obj, *next_obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
 
@@ -2570,51 +2413,22 @@ noct_deep_gc(
 	 * Clear phase.
 	 */
 
-	/* Clear the marks of all strings in the deep list. */
-	str = rt->deep_str_list;
-	while (str != NULL) {
-		str->is_marked = false;
-		str = str->next;
-	}
-	
-	/* Clear the marks of all arrays in the deep list. */
-	arr = rt->deep_arr_list;
-	while (arr != NULL) {
-		arr->is_marked = false;
-		arr = arr->next;
+	/* Clear the marks of all objects in the young list. */
+	obj = rt->young_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj = obj->next;
 	}
 
-	/* Clear the marks of all dictionaries in the deep list. */
-	dict = rt->deep_dict_list;
-	while (dict != NULL) {
-		dict->is_marked = false;
-		dict = dict->next;
-	}
-
-	/* Clear the marks of all objects in the all shallow lists. */
+	/* Clear the marks of all objects in the all frames' shallow lists. */
 	frame = rt->frame;
 	while (frame != NULL) {
 		/* Clear the marks of all strings in the frame's shallow list. */
-		str = frame->shallow_str_list;
-		while (str != NULL) {
-			str->is_marked = false;
-			str = str->next;
+		obj = frame->shallow_list;
+		while (obj != NULL) {
+			obj->is_marked = false;
+			obj = obj->next;
 		}
-	
-		/* Clear the marks of all arrays in the frame's shallow list. */
-		arr = frame->shallow_arr_list;
-		while (arr != NULL) {
-			arr->is_marked = false;
-			arr = arr->next;
-		}
-
-		/* Clear the marks of all dictionaries in the frame's shallow list. */
-		dict = frame->shallow_dict_list;
-		while (dict != NULL) {
-			dict->is_marked = false;
-			dict = dict->next;
-		}
-
 		frame = frame->next;
 	}
 
@@ -2625,153 +2439,67 @@ noct_deep_gc(
 	/* Recursively mark all objects that are referenced by the global variables. */
 	global = rt->global;
 	while (global != NULL) {
-		rt_recursively_mark_object(rt, &global->val);
+		if (global->val.type == NOCT_VALUE_STRING ||
+		    global->val.type == NOCT_VALUE_ARRAY ||
+		    global->val.type == NOCT_VALUE_DICT)
+			rt_recursively_mark_object(rt, global->val.val.obj);
 		global = global->next;
 	}
 
 	/* Recursively mark all objects in the all shallow lists. */
 	frame = rt->frame;
 	while (frame != NULL) {
-		/* Mark all strings in the frame's shallow list. */
-		str = frame->shallow_str_list;
-		while (str != NULL) {
-			str->is_marked = true;
-			str = str->next;
+		/* Recursively mark all objects in the frame's shallow list. */
+		obj = frame->shallow_list;
+		while (obj != NULL) {
+			rt_recursively_mark_object(rt, obj);
+			obj = obj->next;
 		}
-		
-		/* Recursively mark all arrays in the frame's shallow list. */
-		arr = frame->shallow_arr_list;
-		while (arr != NULL) {
-			rt_recursively_mark_array(rt, arr);
-			arr = arr->next;
-		}
-
-		/* Recursively mark all arrays in the frame's shallow list. */
-		dict = frame->shallow_dict_list;
-		while (dict != NULL) {
-			rt_recursively_mark_dict(rt, dict);
-			dict = dict->next;
-		}
-
 		frame = frame->next;
 	}
 
-	/* Mark all strings in the deep list that have native references. */
-	str = rt->deep_str_list;
-	while (str != NULL) {
-		if (str->has_native_ref)
-			str->is_marked = true;
-		str = str->next;
-	}
-
-	/* Recursively mark all arrays in the deep list that have native references. */
-	arr = rt->deep_arr_list;
-	while (arr != NULL) {
-		if (arr->has_native_ref)
-			rt_recursively_mark_array(rt, arr);
-		arr = arr->next;
-	}
-
-	/* Recursively mark all dictionaries in the deep list that have native references. */
-	dict = rt->deep_dict_list;
-	while (dict != NULL) {
-		if (dict->has_native_ref) {
-			rt_recursively_mark_dict(rt, dict);
-		}
-		dict = dict->next;
+	/* Recursively mark all objects in the young list that have native references. */
+	obj = rt->young_list;
+	while (obj != NULL) {
+		if (obj->has_native_ref)
+			rt_recursively_mark_object(rt, obj);
+		obj = obj->next;
 	}
 
 	/*
 	 * Sweep phase.
 	 */
 
-	/* Sweep non-marked strings in the deep list. */
-	str = rt->deep_str_list;
-	while (str != NULL) {
-		next_str = str->next;
-		if (!str->is_marked) {
+	/* Sweep non-marked objects in the young list. */
+	obj = rt->young_list;
+	while (obj != NULL) {
+		next_obj = obj->next;
+		if (!obj->is_marked) {
 			/* Unlink. */
-			UNLINK_FROM_LIST(str, rt->deep_str_list);
+			UNLINK_FROM_LIST(obj, rt->young_list);
 
 			/* Remove. */
-			rt_free_string(rt, str);
+			rt_free_object(rt, obj);
 		}
-		str = next_str;
+		obj = next_obj;
 	}
 
-	/* Sweep non-marked arrays in the deep list. */
-	arr = rt->deep_arr_list;
-	while (arr != NULL) {
-		next_arr = arr->next;
-		if (!arr->is_marked) {
-			/* Unlink. */
-			UNLINK_FROM_LIST(arr, rt->deep_arr_list);
-
-			/* Remove. */
-			rt_free_array(rt, arr);
-		}
-		arr = next_arr;
-	}
-
-	/* Sweep non-marked dictionaries in the deep list. */
-	dict = rt->deep_dict_list;
-	while (dict != NULL) {
-		next_dict = dict->next;
-		if (!dict->is_marked) {
-			/* Unlink from the deep list. */
-			UNLINK_FROM_LIST(dict, rt->deep_dict_list);
-
-			/* Remove. */
-			rt_free_dict(rt, dict);
-		}
-		dict = next_dict;
-	}
-
-	/* Sweep non-marked objects in the all frames. */
+	/* Sweep non-marked objects in the all frames' shallow lists. */
 	frame = rt->frame;
 	while (frame != NULL) {
 		/* Sweep non-marked strings in the frame's shallow list. */
-		str = frame->shallow_str_list;
-		while (str != NULL) {
-			next_str = str->next;
-			if (!str->is_marked) {
+		obj = frame->shallow_list;
+		while (obj != NULL) {
+			next_obj = obj->next;
+			if (!obj->is_marked) {
 				/* Unlink from the shallow list. */
-				UNLINK_FROM_LIST(str, frame->shallow_str_list);
+				UNLINK_FROM_LIST(obj, frame->shallow_list);
 
 				/* Remove. */
-				rt_free_string(rt, str);
+				rt_free_object(rt, obj);
 			}
-			str = next_str;
+			obj = next_obj;
 		}
-
-		/* Sweep non-marked arrays in the frame's shallow list. */
-		arr = frame->shallow_arr_list;
-		while (arr != NULL) {
-			next_arr = arr->next;
-			if (!arr->is_marked) {
-				/* Unlink from the shallow list. */
-				UNLINK_FROM_LIST(arr, frame->shallow_arr_list);
-
-				/* Remove. */
-				rt_free_array(rt, arr);
-			}
-			arr = next_arr;
-		}
-
-		/* Sweep non-marked dictionaries in the frame's shallow list. */
-		dict = frame->shallow_dict_list;
-		while (dict != NULL) {
-			next_dict = dict->next;
-			if (!dict->is_marked) {
-				/* Unlink from the shallow list. */
-				UNLINK_FROM_LIST(dict, frame->shallow_dict_list);
-
-				/* Remove. */
-				rt_free_dict(rt, dict);
-			}
-			dict = next_dict;
-		}
-
 		frame = frame->next;
 	}
 
@@ -2782,214 +2510,139 @@ noct_deep_gc(
 static void
 rt_recursively_mark_object(
 	struct rt_env *rt,
-	struct rt_value *val)
+	struct rt_object_header *obj)
 {
+	struct rt_array *arr;
+	struct rt_dict *dict;
 	int i;
 
-	switch (val->type) {
-	case NOCT_VALUE_INT:
-	case NOCT_VALUE_FLOAT:
-		break;
-	case NOCT_VALUE_STRING:
-		val->val.str->is_marked = true;
-		break;
-	case NOCT_VALUE_ARRAY:
-		if (!val->val.arr->is_marked) {
-			val->val.arr->is_marked = true;
-			for (i = 0; i < val->val.arr->size; i++)
-				rt_recursively_mark_object(rt, &val->val.arr->table[i]);
+	if (obj->is_marked)
+		return;
+
+	if (obj->type == NOCT_VALUE_STRING) {
+		obj->is_marked = true;
+	} else if (obj->type == NOCT_VALUE_ARRAY) {
+		obj->is_marked = true;
+		arr = (struct rt_array *)obj;
+		for (i = 0; i < arr->size; i++) {
+			struct rt_value *val;
+			val = &arr->table[i];
+			if (val->type == NOCT_VALUE_STRING ||
+			    val->type == NOCT_VALUE_ARRAY ||
+			    val->type == NOCT_VALUE_DICT) {
+				rt_recursively_mark_object(rt, val->val.obj);
+			}
 		}
-		break;
-	case NOCT_VALUE_DICT:
-		if (!val->val.dict->is_marked) {
-			val->val.dict->is_marked = true;
-			for (i = 0; i < val->val.dict->size; i++)
-				rt_recursively_mark_object(rt, &val->val.dict->value[i]);
+	} else {
+		obj->is_marked = true;
+		dict = (struct rt_dict *)obj;
+		for (i = 0; i < dict->size; i++) {
+			struct rt_value *val;
+			val = &dict->value[i];
+			if (val->type == NOCT_VALUE_STRING ||
+			    val->type == NOCT_VALUE_ARRAY ||
+			    val->type == NOCT_VALUE_DICT) {
+				rt_recursively_mark_object(rt, val->val.obj);
+			}
 		}
-		break;
-	case NOCT_VALUE_FUNC:
-		break;
-	default:
-		assert(NEVER_COME_HERE);
-		break;
 	}
 }
 
-/* Mark an array recursively as used. */
+/* Insert a new object to the shallow of young list. */
 static void
-rt_recursively_mark_array(
+rt_insert_new_object_to_list(
 	struct rt_env *rt,
-	struct rt_array *arr)
+	struct rt_object_header *obj,
+	int type)
 {
-	int i;
-
-	if (!arr->is_marked) {
-		arr->is_marked = true;
-		for (i = 0; i < arr->size; i++)
-			rt_recursively_mark_object(rt, &arr->table[i]);
+	/*
+	 * - If a frame exists, add to the shallow list.
+	 * - If no frame exists, add to the young list.
+	 */
+	if (rt->frame != NULL) {
+		/* Insert the object to the top of the shallow list. */
+		if (rt->frame->shallow_list == NULL) {
+			obj->type = type;
+			obj->prev = NULL;
+			obj->next = NULL;
+			obj->gc_type = RT_GC_SHALLOW;
+			rt->frame->shallow_list = obj;
+		} else {
+			obj->type = type;
+			obj->prev = NULL;
+			obj->next = rt->frame->shallow_list;
+			obj->gc_type = RT_GC_SHALLOW;
+			rt->frame->shallow_list->prev = obj;
+			rt->frame->shallow_list = obj;
+		}
+	} else {
+		/* Insert the object to the top of the young list. */
+		if (rt->young_list == NULL) {
+			obj->type = type;
+			obj->prev = NULL;
+			obj->next = NULL;
+			obj->gc_type = RT_GC_YOUNG;
+			rt->young_list = obj;
+		} else {
+			obj->type = type;
+			obj->prev = NULL;
+			obj->next = rt->young_list;
+			obj->gc_type = RT_GC_YOUNG;
+			rt->young_list->prev = obj;
+			rt->young_list = obj;
+		}
 	}
 }
 
-/* Mark an array recursively as used. */
-static void
-rt_recursively_mark_dict(
-	struct rt_env *rt,
-	struct rt_dict *dict)
-{
-	int i;
-
-	if (!dict->is_marked) {
-		dict->is_marked = true;
-		for (i = 0; i < dict->size; i++)
-			rt_recursively_mark_object(rt, &dict->value[i]);
-	}
-}
-
-/* Set the reference of a value's object as strong.  */
+/* Move an object from the shallow list to the young list. */
 void
-rt_make_deep_reference(
+rt_move_shallow_to_young_list(
 	struct rt_env *rt,
 	struct rt_value *val)
 {
-	if (rt->frame == NULL) {
-		switch (val->type) {
-		case NOCT_VALUE_INT:
-		case NOCT_VALUE_FLOAT:
-		case NOCT_VALUE_FUNC:
-			return;
-		case NOCT_VALUE_STRING:
-			val->val.str->is_deep = true;
-			return;
-		case NOCT_VALUE_ARRAY:
-			val->val.arr->is_deep = true;
-			return;
-		case NOCT_VALUE_DICT:
-			val->val.dict->is_deep = true;
-			return;
-		default:
-			assert(NEVER_COME_HERE);
-			return;
-		}
-	}
+	struct rt_object_header *obj;
 
-	switch (val->type) {
-	case NOCT_VALUE_INT:
-	case NOCT_VALUE_FLOAT:
-	case NOCT_VALUE_FUNC:
-		break;
-	case NOCT_VALUE_STRING:
-		if (!val->val.str->is_deep) {
-			/* Unlink from the shallow list. */
-			if (val->val.str->prev != NULL) {
-				val->val.str->prev->next = val->val.str->next;
-				if (val->val.str->next != NULL)
-					val->val.str->next->prev = val->val.str->prev;
-			} else {
-				if (val->val.str->next != NULL)
-					val->val.str->next->prev = NULL;
-				rt->frame->shallow_str_list = val->val.str->next;
-			}
+	if (val->type == NOCT_VALUE_INT || val->type == NOCT_VALUE_FLOAT)
+		return;
 
-			/* Link to the deep list. */
-			val->val.str->prev = NULL;
-			val->val.str->next = rt->deep_str_list;
-			if (rt->deep_str_list != NULL)
-				rt->deep_str_list->prev = val->val.str;
-			rt->deep_str_list = val->val.str;
+	obj = val->val.obj;
+	if (rt->frame == NULL)
+		assert(obj->gc_type == RT_GC_YOUNG);
+	if (obj->gc_type == RT_GC_SHALLOW) {
+		/* Unlink from the shallow list. */
+		UNLINK_FROM_LIST(obj, rt->frame->shallow_list);
 
-			/* Make deep. */
-			val->val.str->is_deep = true;
-		}
-		break;
-	case NOCT_VALUE_ARRAY:
-		if (!val->val.arr->is_deep) {
-			/* Unlink from the shallow list. */
-			if (val->val.arr->prev != NULL) {
-				val->val.arr->prev->next = val->val.arr->next;
-				if (val->val.arr->next != NULL)
-					val->val.arr->next->prev = val->val.arr->prev;
-			} else {
-				if (val->val.arr->next != NULL)
-					val->val.arr->next->prev = NULL;
-				rt->frame->shallow_arr_list = val->val.arr->next;
-			}
+		/* Relink to the young list. */
+		INSERT_TO_LIST(obj, rt->young_list);
 
-			/* Link to the deep list. */
-			val->val.arr->prev = NULL;
-			val->val.arr->next = rt->deep_arr_list;
-			if (rt->deep_arr_list != NULL)
-				rt->deep_arr_list->prev = val->val.arr;
-			rt->deep_arr_list = val->val.arr;
-
-			/* Make deep. */
-			val->val.arr->is_deep = true;
-		}
-		break;
-	case NOCT_VALUE_DICT:
-		if (!val->val.dict->is_deep) {
-			/* Unlink from the shallow list. */
-			if (val->val.dict->prev != NULL) {
-				val->val.dict->prev->next = val->val.dict->next;
-				if (val->val.dict->next != NULL)
-					val->val.dict->next->prev = val->val.dict->prev;
-			} else {
-				if (val->val.dict->next != NULL)
-					val->val.dict->next->prev = NULL;
-				rt->frame->shallow_dict_list = val->val.dict->next;
-			}
-
-			/* Link to the deep list. */
-			val->val.dict->prev = NULL;
-			val->val.dict->next = rt->deep_dict_list;
-			if (rt->deep_dict_list != NULL)
-				rt->deep_dict_list->prev = val->val.dict;
-			rt->deep_dict_list = val->val.dict;
-
-			/* Make deep. */
-			val->val.dict->is_deep = true;
-		}
-		break;
-	default:
-		assert(NEVER_COME_HERE);
-		break;
+		/* Make the object young. */
+		obj->gc_type = RT_GC_YOUNG;
 	}
 }
 
-/* Free a string. */
-static void
-rt_free_string(
-	struct rt_env *rt,
-	struct rt_string *str)
+/*
+ * Set a native reference status of an object.
+ */
+bool
+noct_set_native_reference(
+	NoctEnv *rt,
+	NoctValue *val,
+	bool is_enabled)
 {
-	UNUSED_PARAMETER(rt);
+	struct rt_object_header *obj;
 
-	free(str->s);
-	free(str);
-}
+	assert(rt != NULL);
+	assert(val != NULL);
 
-/* Free an array. */
-static void
-rt_free_array(
-	struct rt_env *rt,
-	struct rt_array *array)
-{
-	UNUSED_PARAMETER(rt);
+	if (val->type == NOCT_VALUE_INT ||
+	    val->type == NOCT_VALUE_FLOAT ||
+	    val->type == NOCT_VALUE_FUNC)
+		return true;
 
-	free(array->table);
-	free(array);
-}
+	obj = (struct rt_object_header *)val->val.obj;
+	obj->has_native_ref = is_enabled;
 
-/* Free a dictionary. */
-static void
-rt_free_dict(
-	struct rt_env *rt,
-	struct rt_dict *dict)
-{
-	UNUSED_PARAMETER(rt);
-
-	free(dict->key);
-	free(dict->value);
-	free(dict);
+	return true;
 }
 
 /* Get an approximate memory usage in bytes. */
@@ -3000,6 +2653,37 @@ rt_get_heap_usage(
 {
 	*ret = rt->heap_usage;
 	return true;
+}
+
+/*
+ * Free
+ */
+
+/* Free a string, array, or dictionary object. */
+static void
+rt_free_object(
+	struct rt_env *rt,
+	struct rt_object_header *obj)
+{
+	UNUSED_PARAMETER(rt);
+
+	if (obj->type == NOCT_VALUE_STRING) {
+		struct rt_string *str;
+		str = (struct rt_string *)obj;
+		free(str->s);
+		free(str);
+	} else if (obj->type == NOCT_VALUE_ARRAY) {
+		struct rt_array *arr;
+		arr = (struct rt_array *)obj;
+		free(arr->table);
+		free(arr);
+	} else if (obj->type == NOCT_VALUE_DICT) {
+		struct rt_dict *dict;
+		dict = (struct rt_dict *)obj;
+		free(dict->key);
+		free(dict->value);
+		free(dict);
+	}
 }
 
 /*
