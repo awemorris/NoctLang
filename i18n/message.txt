@@ -151,11 +151,28 @@ ja:ジャンプが多すぎます。
 ca:Hi ha massa salts.
 ---
 ID:LIR: Out of memory error.
-ja:LIR: メモリが足りません。
-ca:LIR: No hi ha prou memòria.
 es:LIR: No hay suficiente memoria.
+fr:LIR: Memoria insuficiente.
 de:LIR: Nicht genügend Speicher.
 it:LIR: Non c'è abbastanza memoria.
+el:LIR: Δεν υπάρχει αρκετή μνήμη.
+ru:LIR: Недостаточно памяти.
+zh:LIR: 内存不足。
+tw:LIR: 記憶體不足。
+ja:LIR: メモリが足りません。
+ca:LIR: No hi ha prou memòria.
+---
+ID:Failed to load bytecode data.
+es:No se pudo cargar los datos de bytecode.
+fr:Échec du chargement des données de bytecode.
+de:Bytecode-Daten konnten nicht geladen werden.
+it:Impossibile caricare i dati del bytecode.
+el:Απέτυχε η φόρτωση των δεδομένων bytecode.
+ru:Не удалось загрузить данные байткода.
+zh:加载字节码数据失败。
+tw:無法載入位元碼資料。
+ja:バイトコードの読み込みに失敗しました。
+ca:No s'han pogut carregar les dades del bytecode.
 ---
 ID:Memory mapping failed.
 es:El mapeo de la memoria ha fallado.

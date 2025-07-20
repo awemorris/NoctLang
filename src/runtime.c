@@ -484,7 +484,7 @@ rt_register_bytecode_function(
 
 		/* Check "Temporary Size". */
 		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || strcmp(line, "Local Size") != 0)
+		if (line == NULL || strcmp(line, "Temporary Size") != 0)
 			break;
 
 		/* Get a local size. */
@@ -526,8 +526,10 @@ rt_register_bytecode_function(
 			free(lfunc.param_name[i]);
 	}
 
-	if (!succeeded)
+	if (!succeeded) {
+		noct_error(rt, _("Failed to load bytecode data."));
 		return false;
+	}
 
 	return true;
 }
