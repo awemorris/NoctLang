@@ -2678,7 +2678,7 @@ noct_deep_gc(
 		if (dict->has_native_ref) {
 			rt_recursively_mark_dict(rt, dict);
 		}
-		arr = arr->next;
+		dict = dict->next;
 	}
 
 	/*
