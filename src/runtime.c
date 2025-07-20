@@ -734,16 +734,16 @@ rt_leave_frame(
 	struct rt_value *ret)
 {
 	struct rt_frame *frame;
-	struct rt_object_header *obj, *next_obj;
 
 	/* Move the shallow objects to the garbage lists. */
-	/* TODO: O(1) by using the list tail. */
-	obj = rt->frame->shallow_list;
-	while (obj != NULL) {
-		next_obj = obj->next;
-		UNLINK_FROM_LIST(obj, rt->frame->shallow_list);
-		INSERT_TO_LIST(obj, rt->garbage_list);
-		obj = next_obj;
+	if (rt->frame->shallow_list != NULL) {
+		if (rt->garbage_list == NULL) {
+			rt->garbage_list = rt->frame->shallow_list;
+		} else {
+			rt->frame->shallow_list_tail->next = rt->garbage_list;
+			rt->garbage_list->prev = rt->frame->shallow_list_tail;
+			rt->garbage_list = rt->frame->shallow_list;
+		}
 	}
 
 	/* Unlink the frame from the list. */
@@ -1313,8 +1313,7 @@ noct_set_array_elem(struct rt_env *rt, struct rt_value *array, int index, struct
 	/* Store. */
 	array->val.arr->table[index] = *val;
 
-	/* Move to the young list. */
-	rt_move_shallow_to_young_list(rt, array);
+	/* Move the element to the young list. */
 	rt_move_shallow_to_young_list(rt, val);
 
 	return true;
@@ -1778,8 +1777,7 @@ noct_set_dict_elem(
 	dict->val.dict->value[dict->val.dict->size] = *val;
 	dict->val.dict->size++;
 
-	/* Move to the young list. */
-	rt_move_shallow_to_young_list(rt, dict);
+	/* Move the element to the young list. */
 	rt_move_shallow_to_young_list(rt, val);
 
 	return true;
@@ -2555,20 +2553,17 @@ rt_insert_new_object_to_list(
 	struct rt_object_header *obj,
 	int type)
 {
-	/*
-	 * - If a frame exists, add to the shallow list.
-	 * - If no frame exists, add to the young list.
-	 */
-	if (rt->frame != NULL) {
+	if (rt->frame != NULL && type == NOCT_VALUE_STRING) {
 		/* Insert the object to the top of the shallow list. */
 		if (rt->frame->shallow_list == NULL) {
-			obj->type = type;
+			obj->type = NOCT_VALUE_STRING;
 			obj->prev = NULL;
 			obj->next = NULL;
 			obj->gc_type = RT_GC_SHALLOW;
 			rt->frame->shallow_list = obj;
+			rt->frame->shallow_list_tail = obj;
 		} else {
-			obj->type = type;
+			obj->type = NOCT_VALUE_STRING;
 			obj->prev = NULL;
 			obj->next = rt->frame->shallow_list;
 			obj->gc_type = RT_GC_SHALLOW;
@@ -2602,22 +2597,21 @@ rt_move_shallow_to_young_list(
 {
 	struct rt_object_header *obj;
 
+	if (rt->frame == NULL)
+		return;
 	if (val->type == NOCT_VALUE_INT || val->type == NOCT_VALUE_FLOAT)
 		return;
+	if (val->val.obj->gc_type != RT_GC_SHALLOW)
+		return;
 
-	obj = val->val.obj;
-	if (rt->frame == NULL)
-		assert(obj->gc_type == RT_GC_YOUNG);
-	if (obj->gc_type == RT_GC_SHALLOW) {
-		/* Unlink from the shallow list. */
-		UNLINK_FROM_LIST(obj, rt->frame->shallow_list);
+	/* Unlink from the shallow list. */
+	UNLINK_FROM_LIST(val->val.obj, rt->frame->shallow_list);
 
-		/* Relink to the young list. */
-		INSERT_TO_LIST(obj, rt->young_list);
+	/* Relink to the young list. */
+	INSERT_TO_LIST(val->val.obj, rt->young_list);
 
-		/* Make the object young. */
-		obj->gc_type = RT_GC_YOUNG;
-	}
+	/* Make the object young. */
+	val->val.obj->gc_type = RT_GC_YOUNG;
 }
 
 /*

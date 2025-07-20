@@ -125,6 +125,7 @@ struct rt_frame {
 
 	/* Shallow object list. */
 	struct rt_object_header *shallow_list;
+	struct rt_object_header *shallow_list_tail;
 
 	/* Next frame. */
 	struct rt_frame *next;
