@@ -35,6 +35,21 @@
 #define NOT_IMPLEMENTED		0
 #define NEVER_COME_HERE		0
 
+/* Unlink an element from a list. */
+#define UNLINK_FROM_LIST(elem, list)	\
+	do { \
+	} while (0)
+
+/* Insert an element to a list. */
+#define INSERT_TO_LIST(elem, list)	\
+	do { \
+		elem->next = list; \
+		elem->prev = NULL; \
+		if (list != NULL) \
+			list->prev = elem; \
+		list = elem; \
+	} while (0)			
+
 /*
  * Config
  */
@@ -53,6 +68,8 @@ static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos)
 static bool rt_expand_array(struct rt_env *rt, struct rt_value *array, int size);
 static bool rt_expand_dict(struct rt_env *rt, struct rt_value *dict, int size);
 static void rt_recursively_mark_object(struct rt_env *rt, struct rt_value *val);
+static void rt_recursively_mark_array(struct rt_env *rt, struct rt_array *arr);
+static void rt_recursively_mark_dict(struct rt_env *rt, struct rt_dict *dict);
 static void rt_free_string(struct rt_env *rt, struct rt_string *str);
 static void rt_free_array(struct rt_env *rt, struct rt_array *array);
 static void rt_free_dict(struct rt_env *rt, struct rt_dict *dict);
@@ -96,7 +113,7 @@ noct_destroy(
 
 	/* Free frames. */
 	while (rt->frame != NULL)
-		rt_leave_frame(rt);
+		rt_leave_frame(rt, NULL);
 
 	/* Sweep garbages */
 	noct_shallow_gc(rt);
@@ -674,12 +691,12 @@ noct_call(
 		}
 	}
 
-	/* Search a return value. */
+	/* Get a return value. */
 	if (!rt_get_return(rt, ret))
 		return false;
 
 	/* Succeeded. */
-	rt_leave_frame(rt);
+	rt_leave_frame(rt, ret);
 
 	return true;
 }
@@ -720,52 +737,62 @@ rt_enter_frame(
  */
 void
 rt_leave_frame(
-	struct rt_env *rt)
+	struct rt_env *rt,
+	struct rt_value *ret)
 {
 	struct rt_frame *frame;
 	struct rt_string *str, *next_str;
 	struct rt_array *arr, *next_arr;
 	struct rt_dict *dict, *next_dict;
 
+	/* Unlink the return value from the callee's shallow list. */
+	if (ret != NULL) {
+		if (ret->type == NOCT_VALUE_STRING)
+			UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_str_list);
+		else if (ret->type == NOCT_VALUE_ARRAY)
+			UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_arr_list);
+		else if (ret->type == NOCT_VALUE_DICT)
+			UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_dict_list);
+	}
+
 	/* Move shallow references to the garbage lists. */
 	str = rt->frame->shallow_str_list;
 	while (str != NULL) {
 		next_str = str->next;
-		if (!str->is_deep) {
-			str->next = rt->garbage_str_list;
-			str->prev = NULL;
-			if (rt->garbage_str_list != NULL)
-				rt->garbage_str_list->prev = str;
-			rt->garbage_str_list = str;
-		}
+		if (!str->is_deep)
+			INSERT_TO_LIST(str, rt->garbage_str_list);
 		str = next_str;
 	}
 	arr = rt->frame->shallow_arr_list;
 	while (arr != NULL) {
 		next_arr = arr->next;
-		if (!arr->is_deep) {
-			arr->next = rt->garbage_arr_list;
-			arr->prev = NULL;
-			if (rt->garbage_arr_list != NULL)
-				rt->garbage_arr_list->prev = arr;
-			rt->garbage_arr_list = arr;
-		}
+		if (!arr->is_deep)
+			INSERT_TO_LIST(arr, rt->garbage_arr_list);
 		arr = next_arr;
 	}
 	dict = rt->frame->shallow_dict_list;
 	while (dict != NULL) {
 		next_dict = dict->next;
-		if (!dict->is_deep) {
-			dict->next = rt->garbage_dict_list;
-			dict->prev = NULL;
-			if (rt->garbage_dict_list != NULL)
-				rt->garbage_dict_list->prev = dict;
-			rt->garbage_dict_list = dict;
-		}
+		if (!dict->is_deep)
+			INSERT_TO_LIST(dict, rt->garbage_dict_list);
 		dict = next_dict;
 	}
 
-	/* Unlink from the list. */
+	/*
+	 * Relink the return value to the caller's shadow list.
+	 * If the caller is the top level native code,
+	 * relink the return value to the deep list.
+	 */
+	if (ret != NULL) {
+		if (ret->type == NOCT_VALUE_STRING)
+			INSERT_TO_LIST(ret->val.str, rt->frame->next->shallow_str_list);
+		else if (ret->type == NOCT_VALUE_ARRAY)
+			INSERT_TO_LIST(ret->val.arr, rt->frame->next->shallow_arr_list);
+		else if (ret->type == NOCT_VALUE_DICT)
+			INSERT_TO_LIST(ret->val.dict, rt->frame->next->shallow_dict_list);
+	}
+
+	/* Unlink the frame from the list. */
 	frame = rt->frame;
 	rt->frame = rt->frame->next;
 
@@ -2409,6 +2436,28 @@ rt_add_global(
 }
 
 /*
+ * Set a native reference status of an object.
+ */
+bool
+noct_set_native_reference(
+	NoctEnv *rt,
+	NoctValue *val,
+	bool is_enabled)
+{
+	assert(rt != NULL);
+	assert(val != NULL);
+
+	if (val->type == NOCT_VALUE_STRING)
+		val->val.str->has_native_ref = is_enabled;
+	else if (val->type == NOCT_VALUE_ARRAY)
+		val->val.arr->has_native_ref = is_enabled;
+	else if (val->type == NOCT_VALUE_DICT)
+		val->val.dict->has_native_ref = is_enabled;
+
+	return true;
+}
+
+/*
  * GC
  */
 
@@ -2471,35 +2520,67 @@ noct_deep_gc(
 	struct rt_array *arr, *next_arr;
 	struct rt_dict *dict, *next_dict;
 	struct rt_bindglobal *global;
+	struct rt_frame *frame;
 
 	/*
-	 * We do a full mark-and-sweep GC for objects in the tenured space.
-	 * For now, objects in nersery spaces are not affected by this deep GC.
+	 * We do a full mark-and-sweep GC.
 	 */
 
-	/* First, do a shallow GC and sweep objects in the garbage lists. */
-	noct_shallow_gc(rt);
+	/*
+	 * Clear phase.
+	 */
 
-	/* Clear marks of strings with strong references. */
+	/* Clear the marks of all strings in the deep list. */
 	str = rt->deep_str_list;
 	while (str != NULL) {
 		str->is_marked = false;
 		str = str->next;
 	}
 	
-	/* Clear marks of arrays with a strong references. */
+	/* Clear the marks of all arrays in the deep list. */
 	arr = rt->deep_arr_list;
 	while (arr != NULL) {
 		arr->is_marked = false;
 		arr = arr->next;
 	}
 
-	/* Clear marks of dictionaries with strong references. */
+	/* Clear the marks of all dictionaries in the deep list. */
 	dict = rt->deep_dict_list;
 	while (dict != NULL) {
 		dict->is_marked = false;
 		dict = dict->next;
 	}
+
+	/* Clear the marks of all objects in the all shallow lists. */
+	frame = rt->frame;
+	while (frame != NULL) {
+		/* Clear the marks of all strings in the frame's shallow list. */
+		str = frame->shallow_str_list;
+		while (str != NULL) {
+			str->is_marked = false;
+			str = str->next;
+		}
+	
+		/* Clear the marks of all arrays in the frame's shallow list. */
+		arr = frame->shallow_arr_list;
+		while (arr != NULL) {
+			arr->is_marked = false;
+			arr = arr->next;
+		}
+
+		/* Clear the marks of all dictionaries in the frame's shallow list. */
+		dict = frame->shallow_dict_list;
+		while (dict != NULL) {
+			dict->is_marked = false;
+			dict = dict->next;
+		}
+
+		frame = frame->next;
+	}
+
+	/*
+	 * Mark phase.
+	 */
 
 	/* Recursively mark all objects that are referenced by the global variables. */
 	global = rt->global;
@@ -2508,21 +2589,69 @@ noct_deep_gc(
 		global = global->next;
 	}
 
-	/* Sweep strings without marks. */
+	/* Recursively mark all objects in the all shallow lists. */
+	frame = rt->frame;
+	while (frame != NULL) {
+		/* Mark all strings in the frame's shallow list. */
+		str = frame->shallow_str_list;
+		while (str != NULL) {
+			str->is_marked = true;
+			str = str->next;
+		}
+		
+		/* Recursively mark all arrays in the frame's shallow list. */
+		arr = frame->shallow_arr_list;
+		while (arr != NULL) {
+			rt_recursively_mark_array(rt, arr);
+			arr = arr->next;
+		}
+
+		/* Recursively mark all arrays in the frame's shallow list. */
+		dict = frame->shallow_dict_list;
+		while (dict != NULL) {
+			rt_recursively_mark_dict(rt, dict);
+			dict = dict->next;
+		}
+
+		frame = frame->next;
+	}
+
+	/* Mark all strings in the deep list that have native references. */
+	str = rt->deep_str_list;
+	while (str != NULL) {
+		if (str->has_native_ref)
+			str->is_marked = true;
+		str = str->next;
+	}
+
+	/* Recursively mark all arrays in the deep list that have native references. */
+	arr = rt->deep_arr_list;
+	while (arr != NULL) {
+		if (arr->has_native_ref)
+			rt_recursively_mark_array(rt, arr);
+		arr = arr->next;
+	}
+
+	/* Recursively mark all dictionaries in the deep list that have native references. */
+	dict = rt->deep_dict_list;
+	while (dict != NULL) {
+		if (dict->has_native_ref) {
+			rt_recursively_mark_dict(rt, dict);
+		}
+		arr = arr->next;
+	}
+
+	/*
+	 * Sweep phase.
+	 */
+
+	/* Sweep non-marked strings in the deep list. */
 	str = rt->deep_str_list;
 	while (str != NULL) {
 		next_str = str->next;
 		if (!str->is_marked) {
 			/* Unlink. */
-			if (str->prev != NULL) {
-				str->prev->next = str->next;
-				if (str->next != NULL)
-					str->next->prev = str->prev;
-			} else {
-				if (str->next != NULL)
-					str->next->prev = NULL;
-				rt->deep_str_list = str->next;
-			}
+			UNLINK_FROM_LIST(str, rt->deep_str_list);
 
 			/* Remove. */
 			rt_free_string(rt, str);
@@ -2530,21 +2659,13 @@ noct_deep_gc(
 		str = next_str;
 	}
 
-	/* Sweep arrays without marks. */
+	/* Sweep non-marked arrays in the deep list. */
 	arr = rt->deep_arr_list;
 	while (arr != NULL) {
 		next_arr = arr->next;
 		if (!arr->is_marked) {
 			/* Unlink. */
-			if (arr->prev != NULL) {
-				arr->prev->next = arr->next;
-				if (arr->next != NULL)
-					arr->next->prev = arr->prev;
-			} else {
-				if (arr->next != NULL)
-					arr->next->prev = NULL;
-				rt->deep_arr_list = arr->next;
-			}
+			UNLINK_FROM_LIST(arr, rt->deep_arr_list);
 
 			/* Remove. */
 			rt_free_array(rt, arr);
@@ -2552,26 +2673,66 @@ noct_deep_gc(
 		arr = next_arr;
 	}
 
-	/* Sweep dictionaries without marks. */
+	/* Sweep non-marked dictionaries in the deep list. */
 	dict = rt->deep_dict_list;
 	while (dict != NULL) {
 		next_dict = dict->next;
 		if (!dict->is_marked) {
-			/* Unlink. */
-			if (dict->prev != NULL) {
-				dict->prev->next = dict->next;
-				if (dict->next != NULL)
-					dict->next->prev = dict->prev;
-			} else {
-				if (dict->next != NULL)
-					dict->next->prev = NULL;
-				rt->deep_dict_list = dict->next;
-			}
+			/* Unlink from the deep list. */
+			UNLINK_FROM_LIST(dict, rt->deep_dict_list);
 
 			/* Remove. */
 			rt_free_dict(rt, dict);
 		}
 		dict = next_dict;
+	}
+
+	/* Sweep non-marked objects in the all frames. */
+	frame = rt->frame;
+	while (frame != NULL) {
+		/* Sweep non-marked strings in the frame's shallow list. */
+		str = frame->shallow_str_list;
+		while (str != NULL) {
+			next_str = str->next;
+			if (!str->is_marked) {
+				/* Unlink from the shallow list. */
+				UNLINK_FROM_LIST(str, frame->shallow_str_list);
+
+				/* Remove. */
+				rt_free_string(rt, str);
+			}
+			str = next_str;
+		}
+
+		/* Sweep non-marked arrays in the frame's shallow list. */
+		arr = frame->shallow_arr_list;
+		while (arr != NULL) {
+			next_arr = arr->next;
+			if (!arr->is_marked) {
+				/* Unlink from the shallow list. */
+				UNLINK_FROM_LIST(str, frame->shallow_arr_list);
+
+				/* Remove. */
+				rt_free_array(rt, arr);
+			}
+			arr = next_arr;
+		}
+
+		/* Sweep non-marked dictionaries in the frame's shallow list. */
+		dict = frame->shallow_dict_list;
+		while (dict != NULL) {
+			next_dict = dict->next;
+			if (!dict->is_marked) {
+				/* Unlink from the shallow list. */
+				UNLINK_FROM_LIST(str, frame->shallow_dict_list);
+
+				/* Remove. */
+				rt_free_array(rt, arr);
+			}
+			dict = next_dict;
+		}
+
+		frame = frame->next;
 	}
 
 	return true;
@@ -2611,6 +2772,36 @@ rt_recursively_mark_object(
 	default:
 		assert(NEVER_COME_HERE);
 		break;
+	}
+}
+
+/* Mark an array recursively as used. */
+static void
+rt_recursively_mark_array(
+	struct rt_env *rt,
+	struct rt_array *arr)
+{
+	int i;
+
+	if (!arr->is_marked) {
+		arr->is_marked = true;
+		for (i = 0; i < arr->size; i++)
+			rt_recursively_mark_object(rt, &arr->table[i]);
+	}
+}
+
+/* Mark an array recursively as used. */
+static void
+rt_recursively_mark_dict(
+	struct rt_env *rt,
+	struct rt_dict *dict)
+{
+	int i;
+
+	if (!dict->is_marked) {
+		dict->is_marked = true;
+		for (i = 0; i < dict->size; i++)
+			rt_recursively_mark_object(rt, &dict->value[i]);
 	}
 }
 

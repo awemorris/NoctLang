@@ -149,6 +149,9 @@ struct rt_string {
 
 	/* Is marked? (for mark-and-sweep GC). */
 	bool is_marked;
+
+	/* Is referenced by native code? */
+	bool has_native_ref;
 };
 
 /*
@@ -166,6 +169,9 @@ struct rt_array {
 
 	/* Is marked? (for mark-and-sweep GC). */
 	bool is_marked;
+
+	/* Is referenced by native code? */
+	bool has_native_ref;
 };
 
 /*
@@ -184,6 +190,9 @@ struct rt_dict {
 
 	/* Is marked? (for mark-and-sweep GC). */
 	bool is_marked;
+
+	/* Is referenced by native code? */
+	bool has_native_ref;
 };
 
 /*
@@ -240,7 +249,8 @@ rt_enter_frame(
 /* Leave the current calling frame. */
 void
 rt_leave_frame(
-	struct rt_env *rt);
+	struct rt_env *rt,
+	struct rt_value *ret);
 
 /* Add a global variable. */
 bool
