@@ -35,6 +35,10 @@
 #define ARCH_PPC64
 #elif defined(_ARCH_PPC)
 #define ARCH_PPC32
+#elif defined(__riscv) && (__riscv_xlen == 64)
+#define ARCH_RISCV64
+#elif defined(__riscv) && (__riscv_xlen == 32)
+#define ARCH_RISCV32
 #endif
 
 /* Define a macro that indicates a endian. */

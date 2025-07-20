@@ -11,4 +11,5 @@ sudo apt-get install -y \
      crossbuild-essential-armhf \
      crossbuild-essential-arm64 \
      crossbuild-essential-mips \
-     crossbuild-essential-mips64
+     crossbuild-essential-mips64 \
+     crossbuild-essential-riscv64
