@@ -38,6 +38,17 @@
 /* Unlink an element from a list. */
 #define UNLINK_FROM_LIST(elem, list)	\
 	do { \
+		if (elem->prev != NULL) { \
+			elem->prev->next = elem->next; \
+			if (elem->next != NULL) \
+				elem->next->prev = elem->prev; \
+		} else { \
+			if (elem->next != NULL) \
+				elem->next->prev = NULL; \
+			list = elem->next; \
+		} \
+		elem->prev = NULL; \
+		elem->next = NULL; \
 	} while (0)
 
 /* Insert an element to a list. */
@@ -745,51 +756,78 @@ rt_leave_frame(
 	struct rt_array *arr, *next_arr;
 	struct rt_dict *dict, *next_dict;
 
-	/* Unlink the return value from the callee's shallow list. */
 	if (ret != NULL) {
-		if (ret->type == NOCT_VALUE_STRING)
-			UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_str_list);
-		else if (ret->type == NOCT_VALUE_ARRAY)
-			UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_arr_list);
-		else if (ret->type == NOCT_VALUE_DICT)
-			UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_dict_list);
+		/*
+		 * - If the return value is in the shallow list of the callee's frame:
+		 *   - Unlink the return value from the callee's shallow list.
+		 *   - If the caller has a frame:
+		 *     -  Relink the return value to the caller's shallow list.
+		 *   - If the caller doesn't have a frame:
+		 *     -  Relink the return value to the deep list.
+		 */
+		if (ret->type == NOCT_VALUE_STRING && !ret->val.str->is_deep) {
+			str = rt->frame->shallow_str_list;
+			while (str != NULL) {
+				next_str = str->next;
+				if (str == ret->val.str) {
+					UNLINK_FROM_LIST(ret->val.str, rt->frame->shallow_str_list);
+					if (rt->frame->next != NULL)
+						INSERT_TO_LIST(ret->val.str, rt->frame->next->shallow_str_list);
+					else
+						INSERT_TO_LIST(ret->val.str, rt->deep_str_list);
+				}
+				str = next_str;
+			}
+		} else if (ret->type == NOCT_VALUE_ARRAY && !ret->val.arr->is_deep) {
+			arr = rt->frame->shallow_arr_list;
+			while (arr != NULL) {
+				next_arr = arr->next;
+				if (arr == ret->val.arr) {
+					UNLINK_FROM_LIST(ret->val.arr, rt->frame->shallow_arr_list);
+					if (rt->frame->next != NULL)
+						INSERT_TO_LIST(ret->val.arr, rt->frame->next->shallow_arr_list);
+					else
+						INSERT_TO_LIST(ret->val.arr, rt->deep_arr_list);
+				}
+				arr = next_arr;
+			}
+		} else if (ret->type == NOCT_VALUE_DICT && !ret->val.dict->is_deep) {
+			dict = rt->frame->shallow_dict_list;
+			while (dict != NULL) {
+				next_dict = dict->next;
+				if (dict == ret->val.dict) {
+					UNLINK_FROM_LIST(ret->val.dict, rt->frame->shallow_dict_list);
+					if (rt->frame->next != NULL)
+						INSERT_TO_LIST(ret->val.dict, rt->frame->next->shallow_dict_list);
+					else
+						INSERT_TO_LIST(ret->val.dict, rt->deep_dict_list);
+				}
+				dict = next_dict;
+			}
+		}
 	}
 
 	/* Move shallow references to the garbage lists. */
 	str = rt->frame->shallow_str_list;
 	while (str != NULL) {
 		next_str = str->next;
-		if (!str->is_deep)
-			INSERT_TO_LIST(str, rt->garbage_str_list);
+		UNLINK_FROM_LIST(str, rt->frame->shallow_str_list);
+		INSERT_TO_LIST(str, rt->garbage_str_list);
 		str = next_str;
 	}
 	arr = rt->frame->shallow_arr_list;
 	while (arr != NULL) {
 		next_arr = arr->next;
-		if (!arr->is_deep)
-			INSERT_TO_LIST(arr, rt->garbage_arr_list);
+		UNLINK_FROM_LIST(arr, rt->frame->shallow_arr_list);
+		INSERT_TO_LIST(arr, rt->garbage_arr_list);
 		arr = next_arr;
 	}
 	dict = rt->frame->shallow_dict_list;
 	while (dict != NULL) {
 		next_dict = dict->next;
-		if (!dict->is_deep)
-			INSERT_TO_LIST(dict, rt->garbage_dict_list);
+		UNLINK_FROM_LIST(dict, rt->frame->shallow_dict_list);
+		INSERT_TO_LIST(dict, rt->garbage_dict_list);
 		dict = next_dict;
-	}
-
-	/*
-	 * Relink the return value to the caller's shadow list.
-	 * If the caller is the top level native code,
-	 * relink the return value to the deep list.
-	 */
-	if (ret != NULL) {
-		if (ret->type == NOCT_VALUE_STRING)
-			INSERT_TO_LIST(ret->val.str, rt->frame->next->shallow_str_list);
-		else if (ret->type == NOCT_VALUE_ARRAY)
-			INSERT_TO_LIST(ret->val.arr, rt->frame->next->shallow_arr_list);
-		else if (ret->type == NOCT_VALUE_DICT)
-			INSERT_TO_LIST(ret->val.dict, rt->frame->next->shallow_dict_list);
 	}
 
 	/* Unlink the frame from the list. */
@@ -2710,7 +2748,7 @@ noct_deep_gc(
 			next_arr = arr->next;
 			if (!arr->is_marked) {
 				/* Unlink from the shallow list. */
-				UNLINK_FROM_LIST(str, frame->shallow_arr_list);
+				UNLINK_FROM_LIST(arr, frame->shallow_arr_list);
 
 				/* Remove. */
 				rt_free_array(rt, arr);
@@ -2724,10 +2762,10 @@ noct_deep_gc(
 			next_dict = dict->next;
 			if (!dict->is_marked) {
 				/* Unlink from the shallow list. */
-				UNLINK_FROM_LIST(str, frame->shallow_dict_list);
+				UNLINK_FROM_LIST(dict, frame->shallow_dict_list);
 
 				/* Remove. */
-				rt_free_array(rt, arr);
+				rt_free_dict(rt, dict);
 			}
 			dict = next_dict;
 		}

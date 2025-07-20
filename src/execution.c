@@ -1311,7 +1311,7 @@ rt_call_helper(
 		return false;
 
 	/* Destroy a callframe. */
-	rt_leave_frame(rt, NULL);
+	rt_leave_frame(rt, &ret);
 
 	/* Store a return value. */
 	rt->frame->tmpvar[dst] = ret;
