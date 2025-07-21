@@ -177,7 +177,7 @@ static int command_run(int argc, char *argv[])
 		}
 	} else {
 		/* It's a bytecode file. */
-		if (!noct_register_bytecode(rt, len, data)) {
+		if (!noct_register_bytecode(rt, len, (void *)data)) {
 			wide_printf(_("%s:%d: Error: %s\n"),
 				    noct_get_error_file(rt),
 				    noct_get_error_line(rt),
@@ -1075,7 +1075,7 @@ cfunc_import(
 		}
 	} else {
 		/* It's a bytecode file. */
-		if (!noct_register_bytecode(rt, len, data)) {
+		if (!noct_register_bytecode(rt, len, (void *)data)) {
 			wide_printf("%s:%d: Error: %s\n",
 				    noct_get_error_file(rt),
 				    noct_get_error_line(rt),
