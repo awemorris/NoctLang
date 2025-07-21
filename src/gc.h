@@ -58,6 +58,18 @@ struct rt_gc_object_header {
 	bool is_marked_on_gc;
 };
 
+/* Allocate a string. */
+struct rt_string *rt_gc_allocate_string(struct rt_env *rt, size_t len);
+
+/* Allocate an array. */
+struct rt_array *rt_gc_allocate_array(struct rt_env *rt, size_t size);
+
+/* Allocate an array. */
+struct rt_dict *rt_gc_allocate_dict(struct rt_env *rt, size_t size);
+
+/* Reallocate an array. */
+struct rt_array *rt_gc_reallocate_array(struct rt_env *rt, struct rt_array *arr, size_t size);
+
 /* Insert a new object to the shallow of young list. */
 void rt_gc_insert_new_object_to_list(struct rt_env *rt, struct rt_gc_object_header *obj, int type);
 

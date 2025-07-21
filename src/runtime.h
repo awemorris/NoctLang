@@ -132,6 +132,7 @@ struct rt_string {
 	struct rt_gc_object_header head;
 
 	char *s;
+	size_t len;
 };
 
 /*

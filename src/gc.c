@@ -17,6 +17,7 @@
 #include "runtime.h"
 #include "gc.h"
 
+#include <string.h>
 #include <stdlib.h>
 #include <assert.h>
 
@@ -259,6 +260,166 @@ rt_gc_free_object(
 		free(dict->value);
 		free(dict);
 	}
+}
+
+/*
+ * Allocate a string.
+ */
+struct rt_string *
+rt_gc_allocate_string(
+	struct rt_env *rt,
+	size_t len)
+{
+	struct rt_string *rts;
+
+	/* Allocate a rt_string. */
+	rts = malloc(sizeof(struct rt_string));
+	if (rts == NULL)
+		return NULL;
+	memset(rts, 0, sizeof(struct rt_string));
+
+	/* Allocate a block for the text. */
+	rts->s = malloc(len);
+	if (rts->s == NULL) {
+		free(rts);
+		return NULL;
+	}
+
+	/* Insert to the list. */
+	rt_gc_insert_new_object_to_list(
+		rt,
+		(struct rt_gc_object_header *)rts,
+		NOCT_VALUE_STRING);
+
+	/* Increment the heap size. */
+	rt_gc_increment_heap_usage_on_new_object(
+		rt,
+		NOCT_VALUE_STRING,
+		len);
+
+	return rts;
+}
+
+/*
+ * Allocate an array.
+ */
+struct rt_array *
+rt_gc_allocate_array(
+	struct rt_env *rt,
+	size_t size)
+{
+	struct rt_array *arr;
+
+	/* Allocate a rt_array. */
+	arr = malloc(sizeof(struct rt_array));
+	if (arr == NULL)
+		return NULL;
+	memset(arr, 0, sizeof(struct rt_array));
+
+	/* Allocate a table. */
+	arr->alloc_size = size;
+	arr->table = malloc(sizeof(struct rt_value) * size);
+	if (arr->table == NULL) {
+		free(arr);
+		return NULL;
+	}
+	memset(arr->table, 0, sizeof(struct rt_value) * size);
+	arr->size = 0;
+
+	/* Insert to the list. */
+	rt_gc_insert_new_object_to_list(
+		rt,
+		(struct rt_gc_object_header *)arr,
+		NOCT_VALUE_ARRAY);
+
+	/* Increment the heap size. */
+	rt_gc_increment_heap_usage_on_new_object(
+		rt,
+		NOCT_VALUE_ARRAY,
+		arr->alloc_size);
+
+	return arr;
+}
+
+/*
+ * Allocate an array.
+ */
+struct rt_dict *
+rt_gc_allocate_dict(
+	struct rt_env *rt,
+	size_t size)
+{
+	struct rt_dict *dict;
+
+	/* Allocate a rt_dict. */
+	dict = malloc(sizeof(struct rt_dict));
+	if (dict == NULL) {
+		rt_out_of_memory(rt);
+		return false;
+	}
+	memset(dict, 0, sizeof(struct rt_dict));
+
+	/* Allocate key an value tables. */
+	dict->alloc_size = size;
+	dict->key = malloc(sizeof(char *) * size);
+	if (dict->key == NULL) {
+		rt_out_of_memory(rt);
+		return NULL;
+	}
+	dict->value = malloc(sizeof(struct rt_value) * size);
+	if (dict->value == NULL) {
+		rt_out_of_memory(rt);
+		return NULL;
+	}
+	memset(dict->value, 0, sizeof(struct rt_value) * size);
+	dict->size = 0;
+
+	/* Insert to the list. */
+	rt_gc_insert_new_object_to_list(
+		rt,
+		(struct rt_gc_object_header *)dict,
+		NOCT_VALUE_DICT);
+
+	/* Increment the heap size. */
+	rt_gc_increment_heap_usage_on_new_object(
+		rt,
+		NOCT_VALUE_DICT,
+		dict->alloc_size);
+
+	return dict;
+}
+
+/*
+ * Reallocate an array.
+ */
+struct rt_array *
+rt_gc_reallocate_array(
+	struct rt_env *rt,
+	struct rt_array *arr,
+	size_t size)
+{
+	struct rt_value *new_tbl, *old_tbl;
+
+	/* Allocate a table. */
+	new_tbl = malloc(sizeof(struct rt_value) * size);
+	if (new_tbl == NULL) {
+		free(arr);
+		return false;
+	}
+	memset(new_tbl, 0, sizeof(struct rt_value) * size);
+
+	/* Copy the content. */
+	memcpy(new_tbl, arr->table, sizeof(struct rt_value) * (size_t)arr->alloc_size);
+
+	/* Swap the table. */
+	old_tbl = arr->table;
+	arr->table = new_tbl;
+	free(old_tbl);
+
+	/* Increment the heap size. */
+	rt_gc_increment_heap_usage_by_array_expand(rt, size - arr->size);
+
+	return arr;
 }
 
 /*

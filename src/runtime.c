@@ -751,27 +751,16 @@ noct_make_string(
 	struct rt_string *rts;
 	size_t len;
 
-	/* Allocate a rt_string. */
-	rts = malloc(sizeof(struct rt_string));
+	/* Allocate a string. */
+	len = strlen(s) + 1;
+	rts = rt_gc_allocate_string(rt, len);
 	if (rts == NULL) {
 		rt_out_of_memory(rt);
 		return false;
 	}
-	memset(rts, 0, sizeof(struct rt_string));
-	len = strlen(s) + 1;
-	rts->s = malloc(len);
-	if (rts->s == NULL) {
-		rt_out_of_memory(rt);
-		free(rts);
-		return false;
-	}
+
+	/* Copy the text. */
 	memcpy(rts->s, s, len);
-
-	/* GC: Insert to the list. */
-	rt_gc_insert_new_object_to_list(rt, (struct rt_gc_object_header *)rts, NOCT_VALUE_STRING);
-
-	/* GC: Increment the heap size. */
-	rt_gc_increment_heap_usage_on_new_object(rt, NOCT_VALUE_STRING, len);
 
 	/* Setup a value. */
 	val->type = NOCT_VALUE_STRING;
@@ -813,32 +802,16 @@ noct_make_empty_array(struct rt_env *rt, struct rt_value *val)
 
 	const int START_SIZE = 16;
 
-	/* Alloc a rt_array. */
-	arr = malloc(sizeof(struct rt_array));
+	/* Allocate an array. */
+	arr = rt_gc_allocate_array(rt, START_SIZE);
 	if (arr == NULL) {
 		rt_out_of_memory(rt);
 		return false;
 	}
-	memset(arr, 0, sizeof(struct rt_array));
 
-	/* Start from size 16. */
-	arr->alloc_size = START_SIZE;
-	arr->table = malloc(sizeof(struct rt_value) * (size_t)START_SIZE);
-	if (arr->table == NULL) {
-		rt_out_of_memory(rt);
-		return false;
-	}
-	memset(arr->table, 0, sizeof(struct rt_value) * (size_t)START_SIZE);
-	arr->size = 0;
-
+	/* Setup a value. */
 	val->type = NOCT_VALUE_ARRAY;
 	val->val.arr = arr;
-
-	/* GC: Insert to the list. */
-	rt_gc_insert_new_object_to_list(rt, (struct rt_gc_object_header *)arr, NOCT_VALUE_ARRAY);
-
-	/* GC: Increment the heap size. */
-	rt_gc_increment_heap_usage_on_new_object(rt, NOCT_VALUE_ARRAY, arr->alloc_size);
 
 	return true;
 }
@@ -854,37 +827,16 @@ noct_make_empty_dict(struct rt_env *rt, struct rt_value *val)
 
 	const int START_SIZE = 16;
 
-	/* Alloc a rt_dict. */
-	dict = malloc(sizeof(struct rt_dict));
+	/* Allocate a dictionary. */
+	dict = rt_gc_allocate_dict(rt, START_SIZE);
 	if (dict == NULL) {
 		rt_out_of_memory(rt);
 		return false;
 	}
-	memset(dict, 0, sizeof(struct rt_dict));
 
-	/* Start from size 16. */
-	dict->alloc_size = START_SIZE;
-	dict->key = malloc(sizeof(char *) * (size_t)START_SIZE);
-	if (dict->key == NULL) {
-		rt_out_of_memory(rt);
-		return false;
-	}
-	dict->value = malloc(sizeof(struct rt_value) * (size_t)START_SIZE);
-	if (dict->value == NULL) {
-		rt_out_of_memory(rt);
-		return false;
-	}
-	memset(dict->value, 0, sizeof(struct rt_value) * (size_t)START_SIZE);
-	dict->size = 0;
-
+	/* Setup a value. */
 	val->type = NOCT_VALUE_DICT;
 	val->val.dict = dict;
-
-	/* GC: Insert to the list. */
-	rt_gc_insert_new_object_to_list(rt, (struct rt_gc_object_header *)dict, NOCT_VALUE_DICT);
-
-	/* GC: Increment the heap size. */
-	rt_gc_increment_heap_usage_on_new_object(rt, NOCT_VALUE_DICT, dict->alloc_size);
 
 	return true;
 }
@@ -1266,13 +1218,16 @@ noct_set_array_elem(struct rt_env *rt, struct rt_value *array, int index, struct
 		return false;
 	}
 
-	/* Expand the array if needed. */
+	/*
+	 * Expand the array if needed.
+	 * array->val.arr may be replaced.
+	 */
 	if (!rt_expand_array(rt, array, index + 1))
 		return false;
-	if (array->val.arr->size < index + 1)
-		array->val.arr->size = index + 1;
 
 	/* Store. */
+	if (array->val.arr->size < index + 1)
+		array->val.arr->size = index + 1;
 	array->val.arr->table[index] = *val;
 
 	/* Move the element to the young list. */
@@ -1353,8 +1308,7 @@ rt_expand_array(
 	struct rt_value *array,
 	size_t size)
 {
-	struct rt_array *arr;
-	struct rt_value *new_tbl;
+	struct rt_array *arr, *new_arr;
 
 	assert(rt != NULL);
 	assert(array->type == NOCT_VALUE_ARRAY);
@@ -1367,28 +1321,21 @@ rt_expand_array(
 
 		orig_size = arr->alloc_size;
 
-		/* Get a next size. */
+		/* Get the next size. */
 		if (size < arr->alloc_size * 2)
 			size = arr->alloc_size * 2;
 		else
 			size = size * 2;
 
 		/* Realloc the table. */
-		new_tbl = malloc(sizeof(struct rt_value) * (size_t)size);
-		if (new_tbl == NULL) {
+		new_arr = rt_gc_reallocate_array(rt, arr, size);
+		if (new_arr == NULL) {
 			rt_out_of_memory(rt);
 			return false;
 		}
-		memset(new_tbl, 0, sizeof(struct rt_value) * (size_t)size);
-		memcpy(new_tbl, arr->table, sizeof(struct rt_value) * (size_t)arr->alloc_size);
-		free(arr->table);
-		arr->table = new_tbl;
-		arr->alloc_size = size;
 
-		/* GC: Increment the heap size. */
-		rt_gc_increment_heap_usage_by_array_expand(rt, size - orig_size);
+		array->val.arr = new_arr;
 	}
-
 
 	return true;
 }
@@ -1396,28 +1343,30 @@ rt_expand_array(
 bool
 noct_resize_array(
 	struct rt_env *rt,
-	struct rt_value *arr,
+	struct rt_value *array,
 	int size)
 {
-	struct rt_array *a;
+	struct rt_array *arr;
 
 	assert(rt != NULL);
 	assert(arr->type == NOCT_VALUE_ARRAY);
 
-	a = arr->val.arr;
+	arr = array->val.arr;
 
-	/* Expand the array size if needed. */
-	if (!rt_expand_array(rt, arr, size))
-		return false;
+	if (size > arr->size) {
+		/* Expand the array size if needed. */
+		if (!rt_expand_array(rt, array, size))
+			return false;
 
-	/* If we shrink the array: */
-	if (size <= a->size) {
+		/* Set the element count. */
+		arr->size = size;
+	} else {
 		/* Remove the reminder. */
-		memset(&a->table[size], 0, sizeof(struct rt_value) * (size_t)(a->size - size - 1));
-	}
+		memset(&arr->table[size], 0, sizeof(struct rt_value) * (size_t)(arr->size - size - 1));
 
-	/* Set the element count. */
-	a->size = size;
+		/* Set the element count. */
+		arr->size = size;
+	}
 
 	return true;
 }
