@@ -1220,7 +1220,7 @@ noct_set_array_elem(struct rt_env *rt, struct rt_value *array, int index, struct
 
 	/*
 	 * Expand the array if needed.
-	 * array->val.arr may be replaced.
+	 * Note that array->val.arr may be replaced.
 	 */
 	if (!rt_expand_array(rt, array, index + 1))
 		return false;
@@ -1678,7 +1678,10 @@ noct_set_dict_elem(
 		}
 	}
 
-	/* Expand the size. */
+	/*
+	 * Expand the size.
+	 * Note that dict->val.dict may change.
+	 */
 	if (!rt_expand_dict(rt, dict, dict->val.dict->size + 1))
 		return false;
 
