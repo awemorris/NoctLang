@@ -94,11 +94,11 @@ noct_destroy(
 	while (rt->frame != NULL)
 		rt_leave_frame(rt, NULL);
 
-	/* Sweep garbages */
+	/* GC: Free all objects in the garbage list. */
 	noct_shallow_gc(rt);
 
-	/* Free young objects. */
-	rt_free_young_objects(rt);
+	/* GC: Free all objects in the young list. */
+	rt_gc_free_young_objects(rt);
 
 	/* Free functions. */
 	func = rt->func_list;
@@ -702,8 +702,8 @@ rt_leave_frame(
 {
 	struct rt_frame *frame;
 
-	/* Move the shallow objects to the garbage lists. */
-	rt_move_shallow_to_garbage_list(rt);
+	/* Move objects in the shallow list to the garbage lists. */
+	rt_gc_move_shallow_to_garbage_list(rt);
 
 	/* Unlink the frame from the list. */
 	frame = rt->frame;
@@ -768,10 +768,10 @@ noct_make_string(
 	memcpy(rts->s, s, len);
 
 	/* GC: Insert to the list. */
-	rt_insert_new_object_to_list(rt, (struct rt_object_header *)rts, NOCT_VALUE_STRING);
+	rt_gc_insert_new_object_to_list(rt, (struct rt_gc_object_header *)rts, NOCT_VALUE_STRING);
 
 	/* GC: Increment the heap size. */
-	rt_increment_heap_usage_on_new_object(rt, NOCT_VALUE_STRING, len);
+	rt_gc_increment_heap_usage_on_new_object(rt, NOCT_VALUE_STRING, len);
 
 	/* Setup a value. */
 	val->type = NOCT_VALUE_STRING;
@@ -835,10 +835,10 @@ noct_make_empty_array(struct rt_env *rt, struct rt_value *val)
 	val->val.arr = arr;
 
 	/* GC: Insert to the list. */
-	rt_insert_new_object_to_list(rt, (struct rt_object_header *)arr, NOCT_VALUE_ARRAY);
+	rt_gc_insert_new_object_to_list(rt, (struct rt_gc_object_header *)arr, NOCT_VALUE_ARRAY);
 
 	/* GC: Increment the heap size. */
-	rt_increment_heap_usage_on_new_object(rt, NOCT_VALUE_ARRAY, arr->alloc_size);
+	rt_gc_increment_heap_usage_on_new_object(rt, NOCT_VALUE_ARRAY, arr->alloc_size);
 
 	return true;
 }
@@ -881,10 +881,10 @@ noct_make_empty_dict(struct rt_env *rt, struct rt_value *val)
 	val->val.dict = dict;
 
 	/* GC: Insert to the list. */
-	rt_insert_new_object_to_list(rt, (struct rt_object_header *)dict, NOCT_VALUE_DICT);
+	rt_gc_insert_new_object_to_list(rt, (struct rt_gc_object_header *)dict, NOCT_VALUE_DICT);
 
 	/* GC: Increment the heap size. */
-	rt_increment_heap_usage_on_new_object(rt, NOCT_VALUE_DICT, dict->alloc_size);
+	rt_gc_increment_heap_usage_on_new_object(rt, NOCT_VALUE_DICT, dict->alloc_size);
 
 	return true;
 }
@@ -1276,7 +1276,7 @@ noct_set_array_elem(struct rt_env *rt, struct rt_value *array, int index, struct
 	array->val.arr->table[index] = *val;
 
 	/* Move the element to the young list. */
-	rt_move_shallow_to_young_list(rt, val);
+	rt_gc_move_shallow_to_young_list(rt, val);
 
 	return true;
 }
@@ -1386,7 +1386,7 @@ rt_expand_array(
 		arr->alloc_size = size;
 
 		/* GC: Increment the heap size. */
-		rt_increment_heap_usage_by_array_expand(rt, size - orig_size);
+		rt_gc_increment_heap_usage_by_array_expand(rt, size - orig_size);
 	}
 
 
@@ -1745,10 +1745,10 @@ noct_set_dict_elem(
 	dict->val.dict->size++;
 
 	/* GC: Move the element to the young list. */
-	rt_move_shallow_to_young_list(rt, val);
+	rt_gc_move_shallow_to_young_list(rt, val);
 
 	/* GC: Increment the heap size. */
-	rt_increment_heap_usage_by_dict_add(rt, len);
+	rt_gc_increment_heap_usage_by_dict_add(rt, len);
 
 	return true;
 }
@@ -1878,7 +1878,7 @@ rt_expand_dict(
 		d->alloc_size = size;
 
 		/* GC: Increment the heap size. */
-		rt_increment_heap_usage_by_array_expand(rt, size - orig_size);
+		rt_gc_increment_heap_usage_by_array_expand(rt, size - orig_size);
 	}
 
 	return true;
@@ -2146,7 +2146,7 @@ noct_set_return(
 	rt->frame->tmpvar[0] = *val;
 
 	/* Move to the young list. */
-	rt_move_shallow_to_young_list(rt, val);
+	rt_gc_move_shallow_to_young_list(rt, val);
 
 	return true;
 }
@@ -2281,7 +2281,7 @@ noct_set_global(
 	struct rt_bindglobal *global;
 
 	/* Move to the young list. */
-	rt_move_shallow_to_young_list(rt, val);
+	rt_gc_move_shallow_to_young_list(rt, val);
 
 	/* Find a bindglobal. */
 	if (!rt_find_global(rt, name, &global)) {

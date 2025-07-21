@@ -13,6 +13,7 @@
 
 #include <noct/noct.h>
 #include "c89compat.h"
+#include "gc.h"
 
 /*
  * Butecode OP definition.
@@ -96,14 +97,8 @@ struct rt_env {
 	/* Function list. */
 	struct rt_func *func_list;
 
-	/* Heap usage in bytes. */
-	size_t heap_usage;
-
-	/* Young object list. */
-	struct rt_object_header *young_list;
-
-	/* Garbage object list. */
-	struct rt_object_header *garbage_list;
+	/* GC. */
+	struct rt_gc_global gc;
 
 	/* Execution file. */
 	char file_name[1024];
@@ -123,38 +118,18 @@ struct rt_frame {
 	/* function */
 	struct rt_func *func;
 
-	/* Shallow object list. */
-	struct rt_object_header *shallow_list;
-	struct rt_object_header *shallow_list_tail;
+	/* GC. */
+	struct rt_gc_local gc;
 
 	/* Next frame. */
 	struct rt_frame *next;
 };
 
 /*
- * Object header.
- */
-struct rt_object_header {
-	/* Type. */
-	int type;
-
-	/* String list (shallow, young, or tenure). */
-	struct rt_object_header *prev;
-	struct rt_object_header *next;
-	int gc_type;
-
-	/* Is marked? (for mark-and-sweep GC). */
-	bool is_marked;
-
-	/* Is referenced by native code? */
-	bool has_native_ref;
-};
-
-/*
  * String object.
  */
 struct rt_string {
-	struct rt_object_header head;
+	struct rt_gc_object_header head;
 
 	char *s;
 };
@@ -163,7 +138,7 @@ struct rt_string {
  * Array object.
  */
 struct rt_array {
-	struct rt_object_header head;
+	struct rt_gc_object_header head;
 
 	size_t alloc_size;
 	size_t size;
@@ -174,7 +149,7 @@ struct rt_array {
  * Dictionary object.
  */
 struct rt_dict {
-	struct rt_object_header head;
+	struct rt_gc_object_header head;
 
 	size_t alloc_size;
 	size_t size;

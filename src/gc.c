@@ -47,8 +47,8 @@
 	} while (0)			
 
 /* Forward declaration. */
-static void rt_recursively_mark_object(struct rt_env *rt, struct rt_object_header *obj);
-static void rt_free_object(struct rt_env *rt, struct rt_object_header *obj);
+static void rt_gc_recursively_mark_object(struct rt_env *rt, struct rt_gc_object_header *obj);
+static void rt_gc_free_object(struct rt_env *rt, struct rt_gc_object_header *obj);
 
 /*
  * Do a shallow GC for nursery space.
@@ -57,7 +57,7 @@ bool
 noct_shallow_gc(
 	struct rt_env *rt)
 {
-	struct rt_object_header *obj, *next_obj;
+	struct rt_gc_object_header *obj, *next_obj;
 
 	/*
 	 * A nursery space belongs to a calling frame.
@@ -69,13 +69,13 @@ noct_shallow_gc(
 	 * The shallow GC sweeps such objects in the garbage list.
 	 */
 
-	obj = rt->garbage_list;
+	obj = rt->gc.garbage_list;
 	while (obj != NULL) {
 		next_obj = obj->next;
-		rt_free_object(rt, obj);
+		rt_gc_free_object(rt, obj);
 		obj = next_obj;
 	}
-	rt->garbage_list = NULL;
+	rt->gc.garbage_list = NULL;
 
 	return true;
 }
@@ -87,7 +87,7 @@ bool
 noct_deep_gc(
 	struct rt_env *rt)
 {
-	struct rt_object_header *obj, *next_obj;
+	struct rt_gc_object_header *obj, *next_obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
 
@@ -100,7 +100,7 @@ noct_deep_gc(
 	 */
 
 	/* Clear the marks of all objects in the young list. */
-	obj = rt->young_list;
+	obj = rt->gc.young_list;
 	while (obj != NULL) {
 		obj->is_marked = false;
 		obj = obj->next;
@@ -110,7 +110,7 @@ noct_deep_gc(
 	frame = rt->frame;
 	while (frame != NULL) {
 		/* Clear the marks of all strings in the frame's shallow list. */
-		obj = frame->shallow_list;
+		obj = frame->gc.shallow_list;
 		while (obj != NULL) {
 			obj->is_marked = false;
 			obj = obj->next;
@@ -128,7 +128,7 @@ noct_deep_gc(
 		if (global->val.type == NOCT_VALUE_STRING ||
 		    global->val.type == NOCT_VALUE_ARRAY ||
 		    global->val.type == NOCT_VALUE_DICT)
-			rt_recursively_mark_object(rt, global->val.val.obj);
+			rt_gc_recursively_mark_object(rt, global->val.val.obj);
 		global = global->next;
 	}
 
@@ -136,19 +136,19 @@ noct_deep_gc(
 	frame = rt->frame;
 	while (frame != NULL) {
 		/* Recursively mark all objects in the frame's shallow list. */
-		obj = frame->shallow_list;
+		obj = frame->gc.shallow_list;
 		while (obj != NULL) {
-			rt_recursively_mark_object(rt, obj);
+			rt_gc_recursively_mark_object(rt, obj);
 			obj = obj->next;
 		}
 		frame = frame->next;
 	}
 
 	/* Recursively mark all objects in the young list that have native references. */
-	obj = rt->young_list;
+	obj = rt->gc.young_list;
 	while (obj != NULL) {
 		if (obj->has_native_ref)
-			rt_recursively_mark_object(rt, obj);
+			rt_gc_recursively_mark_object(rt, obj);
 		obj = obj->next;
 	}
 
@@ -157,15 +157,15 @@ noct_deep_gc(
 	 */
 
 	/* Sweep non-marked objects in the young list. */
-	obj = rt->young_list;
+	obj = rt->gc.young_list;
 	while (obj != NULL) {
 		next_obj = obj->next;
 		if (!obj->is_marked) {
 			/* Unlink. */
-			UNLINK_FROM_LIST(obj, rt->young_list);
+			UNLINK_FROM_LIST(obj, rt->gc.young_list);
 
 			/* Remove. */
-			rt_free_object(rt, obj);
+			rt_gc_free_object(rt, obj);
 		}
 		obj = next_obj;
 	}
@@ -174,15 +174,15 @@ noct_deep_gc(
 	frame = rt->frame;
 	while (frame != NULL) {
 		/* Sweep non-marked strings in the frame's shallow list. */
-		obj = frame->shallow_list;
+		obj = frame->gc.shallow_list;
 		while (obj != NULL) {
 			next_obj = obj->next;
 			if (!obj->is_marked) {
 				/* Unlink from the shallow list. */
-				UNLINK_FROM_LIST(obj, frame->shallow_list);
+				UNLINK_FROM_LIST(obj, frame->gc.shallow_list);
 
 				/* Remove. */
-				rt_free_object(rt, obj);
+				rt_gc_free_object(rt, obj);
 			}
 			obj = next_obj;
 		}
@@ -194,9 +194,9 @@ noct_deep_gc(
 
 /* Mark objects recursively as used. */
 static void
-rt_recursively_mark_object(
+rt_gc_recursively_mark_object(
 	struct rt_env *rt,
-	struct rt_object_header *obj)
+	struct rt_gc_object_header *obj)
 {
 	struct rt_array *arr;
 	struct rt_dict *dict;
@@ -216,7 +216,7 @@ rt_recursively_mark_object(
 			if (val->type == NOCT_VALUE_STRING ||
 			    val->type == NOCT_VALUE_ARRAY ||
 			    val->type == NOCT_VALUE_DICT) {
-				rt_recursively_mark_object(rt, val->val.obj);
+				rt_gc_recursively_mark_object(rt, val->val.obj);
 			}
 		}
 	} else {
@@ -228,7 +228,7 @@ rt_recursively_mark_object(
 			if (val->type == NOCT_VALUE_STRING ||
 			    val->type == NOCT_VALUE_ARRAY ||
 			    val->type == NOCT_VALUE_DICT) {
-				rt_recursively_mark_object(rt, val->val.obj);
+				rt_gc_recursively_mark_object(rt, val->val.obj);
 			}
 		}
 	}
@@ -236,9 +236,9 @@ rt_recursively_mark_object(
 
 /* Free a string, array, or dictionary object. */
 static void
-rt_free_object(
+rt_gc_free_object(
 	struct rt_env *rt,
-	struct rt_object_header *obj)
+	struct rt_gc_object_header *obj)
 {
 	UNUSED_PARAMETER(rt);
 
@@ -265,43 +265,43 @@ rt_free_object(
  * Insert a new object to the shallow of young list.
  */
 void
-rt_insert_new_object_to_list(
+rt_gc_insert_new_object_to_list(
 	struct rt_env *rt,
-	struct rt_object_header *obj,
+	struct rt_gc_object_header *obj,
 	int type)
 {
 	if (rt->frame != NULL && type == NOCT_VALUE_STRING) {
 		/* Insert the object to the top of the shallow list. */
-		if (rt->frame->shallow_list == NULL) {
+		if (rt->frame->gc.shallow_list == NULL) {
 			obj->type = NOCT_VALUE_STRING;
 			obj->prev = NULL;
 			obj->next = NULL;
 			obj->gc_type = RT_GC_SHALLOW;
-			rt->frame->shallow_list = obj;
-			rt->frame->shallow_list_tail = obj;
+			rt->frame->gc.shallow_list = obj;
+			rt->frame->gc.shallow_list_tail = obj;
 		} else {
 			obj->type = NOCT_VALUE_STRING;
 			obj->prev = NULL;
-			obj->next = rt->frame->shallow_list;
+			obj->next = rt->frame->gc.shallow_list;
 			obj->gc_type = RT_GC_SHALLOW;
-			rt->frame->shallow_list->prev = obj;
-			rt->frame->shallow_list = obj;
+			rt->frame->gc.shallow_list->prev = obj;
+			rt->frame->gc.shallow_list = obj;
 		}
 	} else {
 		/* Insert the object to the top of the young list. */
-		if (rt->young_list == NULL) {
+		if (rt->gc.young_list == NULL) {
 			obj->type = type;
 			obj->prev = NULL;
 			obj->next = NULL;
 			obj->gc_type = RT_GC_YOUNG;
-			rt->young_list = obj;
+			rt->gc.young_list = obj;
 		} else {
 			obj->type = type;
 			obj->prev = NULL;
-			obj->next = rt->young_list;
+			obj->next = rt->gc.young_list;
 			obj->gc_type = RT_GC_YOUNG;
-			rt->young_list->prev = obj;
-			rt->young_list = obj;
+			rt->gc.young_list->prev = obj;
+			rt->gc.young_list = obj;
 		}
 	}
 }
@@ -310,11 +310,11 @@ rt_insert_new_object_to_list(
  * Move an object from the shallow list to the young list.
  */
 void
-rt_move_shallow_to_young_list(
+rt_gc_move_shallow_to_young_list(
 	struct rt_env *rt,
 	struct rt_value *val)
 {
-	struct rt_object_header *obj;
+	struct rt_gc_object_header *obj;
 
 	if (rt->frame == NULL)
 		return;
@@ -324,10 +324,10 @@ rt_move_shallow_to_young_list(
 		return;
 
 	/* Unlink from the shallow list. */
-	UNLINK_FROM_LIST(val->val.obj, rt->frame->shallow_list);
+	UNLINK_FROM_LIST(val->val.obj, rt->frame->gc.shallow_list);
 
 	/* Relink to the young list. */
-	INSERT_TO_LIST(val->val.obj, rt->young_list);
+	INSERT_TO_LIST(val->val.obj, rt->gc.young_list);
 
 	/* Make the object young. */
 	val->val.obj->gc_type = RT_GC_YOUNG;
@@ -337,18 +337,18 @@ rt_move_shallow_to_young_list(
  * Move all shallow objects to the garbage list.
  */
 void
-rt_move_shallow_to_garbage_list(
+rt_gc_move_shallow_to_garbage_list(
 	struct rt_env *rt)
 {
-	if (rt->frame->shallow_list == NULL)
+	if (rt->frame->gc.shallow_list == NULL)
 		return;
 
-	if (rt->garbage_list == NULL) {
-		rt->garbage_list = rt->frame->shallow_list;
+	if (rt->gc.garbage_list == NULL) {
+		rt->gc.garbage_list = rt->frame->gc.shallow_list;
 	} else {
-		rt->frame->shallow_list_tail->next = rt->garbage_list;
-		rt->garbage_list->prev = rt->frame->shallow_list_tail;
-		rt->garbage_list = rt->frame->shallow_list;
+		rt->frame->gc.shallow_list_tail->next = rt->gc.garbage_list;
+		rt->gc.garbage_list->prev = rt->frame->gc.shallow_list_tail;
+		rt->gc.garbage_list = rt->frame->gc.shallow_list;
 	}
 }
 
@@ -361,7 +361,7 @@ noct_set_native_reference(
 	NoctValue *val,
 	bool is_enabled)
 {
-	struct rt_object_header *obj;
+	struct rt_gc_object_header *obj;
 
 	assert(rt != NULL);
 	assert(val != NULL);
@@ -371,7 +371,7 @@ noct_set_native_reference(
 	    val->type == NOCT_VALUE_FUNC)
 		return true;
 
-	obj = (struct rt_object_header *)val->val.obj;
+	obj = (struct rt_gc_object_header *)val->val.obj;
 	obj->has_native_ref = is_enabled;
 
 	return true;
@@ -381,15 +381,15 @@ noct_set_native_reference(
  * Free all young objects.
  */
 void
-rt_free_young_objects(
+rt_gc_free_young_objects(
 	struct rt_env *rt)
 {
-	struct rt_object_header *obj, *next_obj;
+	struct rt_gc_object_header *obj, *next_obj;
 
-	obj = rt->young_list;
+	obj = rt->gc.young_list;
 	while (obj != NULL) {
 		next_obj = obj->next;
-		rt_free_object(rt, obj);
+		rt_gc_free_object(rt, obj);
 		obj = next_obj;
 	}
 }
@@ -398,21 +398,21 @@ rt_free_young_objects(
  * Increment heap usage on new object.
  */
 void
-rt_increment_heap_usage_on_new_object(
+rt_gc_increment_heap_usage_on_new_object(
 	struct rt_env *rt,
 	int type,
 	size_t len)
 {
 	if (type == NOCT_VALUE_STRING) {
-		rt->heap_usage +=
+		rt->gc.heap_usage +=
 			sizeof(struct rt_string) +
 			len;
 	} else if (type == NOCT_VALUE_ARRAY) {
-		rt->heap_usage +=
+		rt->gc.heap_usage +=
 			sizeof(struct rt_array) +
 			sizeof(struct rt_value) * len;
 	} else if (type == NOCT_VALUE_DICT) {
-		rt->heap_usage +=
+		rt->gc.heap_usage +=
 			sizeof(struct rt_dict) +
 			sizeof(char *) * len +
 			sizeof(struct rt_value) * len;
@@ -423,11 +423,11 @@ rt_increment_heap_usage_on_new_object(
  * Increment heap usage on array expand.
  */
 void
-rt_increment_heap_usage_by_array_expand(
+rt_gc_increment_heap_usage_by_array_expand(
 	struct rt_env *rt,
 	size_t expand_len)
 {
-	rt->heap_usage +=
+	rt->gc.heap_usage +=
 		sizeof(struct rt_value) * expand_len;
 }
 
@@ -435,11 +435,11 @@ rt_increment_heap_usage_by_array_expand(
  * Increment heap usage on dict expand.
  */
 void
-rt_increment_heap_usage_by_dict_expand(
+rt_gc_increment_heap_usage_by_dict_expand(
 	struct rt_env *rt,
 	size_t expand_len)
 {
-	rt->heap_usage +=
+	rt->gc.heap_usage +=
 		sizeof(char *) * expand_len +
 		sizeof(struct rt_value) * expand_len;
 }
@@ -448,24 +448,24 @@ rt_increment_heap_usage_by_dict_expand(
  * Increment heap usage on dict add.
  */
 void
-rt_increment_heap_usage_by_dict_add(
+rt_gc_increment_heap_usage_by_dict_add(
 	struct rt_env *rt,
 	size_t key_len)
 {
-	rt->heap_usage += key_len;
+	rt->gc.heap_usage += key_len;
 }
 
 /*
  * Increment heap usage on dict unset.
  */
 void
-rt_increment_heap_usage_by_dict_unset(
+rt_gc_increment_heap_usage_by_dict_unset(
 	struct rt_env *rt,
 	size_t key_len)
 {
 	assert(rt->heap_usage > key_len);
 
-	rt->heap_usage -= key_len;
+	rt->gc.heap_usage -= key_len;
 }
 
 /*
@@ -476,6 +476,6 @@ noct_get_heap_usage(
 	struct rt_env *rt,
 	size_t *ret)
 {
-	*ret = rt->heap_usage;
+	*ret = rt->gc.heap_usage;
 	return true;
 }

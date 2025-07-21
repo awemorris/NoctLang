@@ -977,7 +977,7 @@ rt_storearray_helper(
 			return false;
 	}
 
-	rt_move_shallow_to_young_list(rt, val_val);
+	rt_gc_move_shallow_to_young_list(rt, val_val);
 
 	return true;
 }
@@ -1194,7 +1194,7 @@ rt_storesymbol_helper(
 	if (rt_find_global(rt, symbol, &global)) {
 		/* Found. */
 		global->val = rt->frame->tmpvar[src];
-		rt_move_shallow_to_young_list(rt, &global->val);
+		rt_gc_move_shallow_to_young_list(rt, &global->val);
 	} else {
 		/* Not found. Bind a global variable. */
 		assert(global == NULL);
@@ -1271,7 +1271,7 @@ rt_storedot_helper(
 	if (!noct_set_dict_elem(rt, &rt->frame->tmpvar[dict], field, &rt->frame->tmpvar[src]))
 		return false;
 
-	rt_move_shallow_to_young_list(rt, &rt->frame->tmpvar[src]);
+	rt_gc_move_shallow_to_young_list(rt, &rt->frame->tmpvar[src]);
 
 	return true;
 }
