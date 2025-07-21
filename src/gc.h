@@ -19,10 +19,10 @@
  */
 struct rt_gc_global {
 	/* Young object list. */
-	struct rt_gc_object_header *young_list;
+	struct rt_gc_object *young_list;
 
 	/* Garbage object list. */
-	struct rt_gc_object_header *garbage_list;
+	struct rt_gc_object *garbage_list;
 
 	/* Heap usage in bytes. */
 	size_t heap_usage;
@@ -33,14 +33,15 @@ struct rt_gc_global {
  */
 struct rt_gc_local {
 	/* Shallow object list. */
-	struct rt_gc_object_header *shallow_list;
-	struct rt_gc_object_header *shallow_list_tail;
+	struct rt_gc_object *shallow_list;
+	struct rt_gc_object *shallow_list_tail;
 };
 
 /*
- * Object header, embedded to objects.
+ * Object header for string, array, and dictionry.
+ * This header is embedded to object's top address.
  */
-struct rt_gc_object_header {
+struct rt_gc_object {
 	/* Type. */
 	int type;
 
@@ -48,8 +49,8 @@ struct rt_gc_object_header {
 	int gc_type;
 
 	/* Object list/ (shallow, young, or tenure) */
-	struct rt_gc_object_header *prev;
-	struct rt_gc_object_header *next;
+	struct rt_gc_object *prev;
+	struct rt_gc_object *next;
 
 	/* Native reference count. */
 	int native_ref_count;
@@ -71,7 +72,7 @@ struct rt_dict *rt_gc_allocate_dict(struct rt_env *rt, size_t size);
 struct rt_array *rt_gc_reallocate_array(struct rt_env *rt, struct rt_array *arr, size_t size);
 
 /* Insert a new object to the shallow of young list. */
-void rt_gc_insert_new_object_to_list(struct rt_env *rt, struct rt_gc_object_header *obj, int type);
+void rt_gc_insert_new_object_to_list(struct rt_env *rt, struct rt_gc_object *obj, int type);
 
 /* Move an object from the shallow list to the young list. */
 void rt_gc_move_shallow_to_young_list(struct rt_env *rt, struct rt_value *val);

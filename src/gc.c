@@ -49,8 +49,8 @@
 	} while (0)			
 
 /* Forward declaration. */
-static void rt_gc_recursively_mark_object(struct rt_env *rt, struct rt_gc_object_header *obj);
-static void rt_gc_free_object(struct rt_env *rt, struct rt_gc_object_header *obj);
+static void rt_gc_recursively_mark_object(struct rt_env *rt, struct rt_gc_object *obj);
+static void rt_gc_free_object(struct rt_env *rt, struct rt_gc_object *obj);
 
 /*
  * Do a shallow GC for nursery space.
@@ -59,7 +59,7 @@ bool
 noct_shallow_gc(
 	struct rt_env *rt)
 {
-	struct rt_gc_object_header *obj, *next_obj;
+	struct rt_gc_object *obj, *next_obj;
 
 	/*
 	 * A nursery space belongs to a calling frame.
@@ -89,7 +89,7 @@ bool
 noct_deep_gc(
 	struct rt_env *rt)
 {
-	struct rt_gc_object_header *obj, *next_obj;
+	struct rt_gc_object *obj, *next_obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
 
@@ -198,7 +198,7 @@ noct_deep_gc(
 static void
 rt_gc_recursively_mark_object(
 	struct rt_env *rt,
-	struct rt_gc_object_header *obj)
+	struct rt_gc_object *obj)
 {
 	struct rt_array *arr;
 	struct rt_dict *dict;
@@ -240,7 +240,7 @@ rt_gc_recursively_mark_object(
 static void
 rt_gc_free_object(
 	struct rt_env *rt,
-	struct rt_gc_object_header *obj)
+	struct rt_gc_object *obj)
 {
 	UNUSED_PARAMETER(rt);
 
@@ -289,7 +289,7 @@ rt_gc_allocate_string(
 	/* Insert to the list. */
 	rt_gc_insert_new_object_to_list(
 		rt,
-		(struct rt_gc_object_header *)rts,
+		(struct rt_gc_object *)rts,
 		NOCT_VALUE_STRING);
 
 	/* Increment the heap size. */
@@ -330,7 +330,7 @@ rt_gc_allocate_array(
 	/* Insert to the list. */
 	rt_gc_insert_new_object_to_list(
 		rt,
-		(struct rt_gc_object_header *)arr,
+		(struct rt_gc_object *)arr,
 		NOCT_VALUE_ARRAY);
 
 	/* Increment the heap size. */
@@ -378,7 +378,7 @@ rt_gc_allocate_dict(
 	/* Insert to the list. */
 	rt_gc_insert_new_object_to_list(
 		rt,
-		(struct rt_gc_object_header *)dict,
+		(struct rt_gc_object *)dict,
 		NOCT_VALUE_DICT);
 
 	/* Increment the heap size. */
@@ -429,7 +429,7 @@ rt_gc_reallocate_array(
 void
 rt_gc_insert_new_object_to_list(
 	struct rt_env *rt,
-	struct rt_gc_object_header *obj,
+	struct rt_gc_object *obj,
 	int type)
 {
 	if (rt->frame != NULL && type == NOCT_VALUE_STRING) {
@@ -476,7 +476,7 @@ rt_gc_move_shallow_to_young_list(
 	struct rt_env *rt,
 	struct rt_value *val)
 {
-	struct rt_gc_object_header *obj;
+	struct rt_gc_object *obj;
 
 	if (rt->frame == NULL)
 		return;
@@ -522,7 +522,7 @@ noct_acquire_native_reference(
 	NoctEnv *rt,
 	NoctValue *val)
 {
-	struct rt_gc_object_header *obj;
+	struct rt_gc_object *obj;
 
 	assert(rt != NULL);
 	assert(val != NULL);
@@ -532,7 +532,7 @@ noct_acquire_native_reference(
 	    val->type == NOCT_VALUE_FUNC)
 		return true;
 
-	obj = (struct rt_gc_object_header *)val->val.obj;
+	obj = (struct rt_gc_object *)val->val.obj;
 
 	obj->native_ref_count++;
 
@@ -547,7 +547,7 @@ noct_release_native_reference(
 	NoctEnv *rt,
 	NoctValue *val)
 {
-	struct rt_gc_object_header *obj;
+	struct rt_gc_object *obj;
 
 	assert(rt != NULL);
 	assert(val != NULL);
@@ -557,7 +557,7 @@ noct_release_native_reference(
 	    val->type == NOCT_VALUE_FUNC)
 		return true;
 
-	obj = (struct rt_gc_object_header *)val->val.obj;
+	obj = (struct rt_gc_object *)val->val.obj;
 
 	assert(obj->native_ref_count > 0);
 
@@ -573,7 +573,7 @@ void
 rt_gc_free_young_objects(
 	struct rt_env *rt)
 {
-	struct rt_gc_object_header *obj, *next_obj;
+	struct rt_gc_object *obj, *next_obj;
 
 	obj = rt->gc.young_list;
 	while (obj != NULL) {

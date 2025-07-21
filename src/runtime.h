@@ -129,7 +129,7 @@ struct rt_frame {
  * String object.
  */
 struct rt_string {
-	struct rt_gc_object_header head;
+	struct rt_gc_object head;
 
 	char *s;
 	size_t len;
@@ -139,7 +139,7 @@ struct rt_string {
  * Array object.
  */
 struct rt_array {
-	struct rt_gc_object_header head;
+	struct rt_gc_object head;
 
 	size_t alloc_size;
 	size_t size;
@@ -150,7 +150,7 @@ struct rt_array {
  * Dictionary object.
  */
 struct rt_dict {
-	struct rt_gc_object_header head;
+	struct rt_gc_object head;
 
 	size_t alloc_size;
 	size_t size;
