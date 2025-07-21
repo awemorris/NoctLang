@@ -19,6 +19,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <assert.h>
 
 /* Unlink an element from a list. */
@@ -654,6 +655,30 @@ rt_gc_increment_heap_usage_by_dict_unset(
 	assert(rt->heap_usage > key_len);
 
 	rt->gc.heap_usage -= key_len;
+}
+
+/*
+ * Pin FFI variables for GC.
+ */
+void
+noct_ffi_pin(
+	int count,
+	...)
+{
+	va_list ap;
+	int i;
+	struct rt_value *valp;
+
+	va_start(ap, count);
+	for (i = 0; i < count; i++) {
+		valp = va_arg(ap, struct rt_value *);
+
+		/*
+		 * TODO: add valp to frame's FFI pin list.
+		 */
+	}
+
+	va_end(ap);
 }
 
 /*

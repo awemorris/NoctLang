@@ -622,6 +622,12 @@ noct_release_native_reference(
 	NoctEnv *rt,
 	NoctValue *val);
 
+/* Pin FFI variables for GC. */
+void
+noct_ffi_pin(
+	int count,
+	...);
+
 /* Do a shallow GC for nursery space. */
 bool
 noct_shallow_gc(

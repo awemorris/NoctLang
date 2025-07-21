@@ -2220,7 +2220,6 @@ rt_find_global(
 	return false;
 }
 
-
 /*
  * Set a global variable.
  */
