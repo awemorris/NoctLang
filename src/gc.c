@@ -102,7 +102,7 @@ noct_deep_gc(
 	/* Clear the marks of all objects in the young list. */
 	obj = rt->gc.young_list;
 	while (obj != NULL) {
-		obj->is_marked = false;
+		obj->is_marked_on_gc = false;
 		obj = obj->next;
 	}
 
@@ -112,7 +112,7 @@ noct_deep_gc(
 		/* Clear the marks of all strings in the frame's shallow list. */
 		obj = frame->gc.shallow_list;
 		while (obj != NULL) {
-			obj->is_marked = false;
+			obj->is_marked_on_gc = false;
 			obj = obj->next;
 		}
 		frame = frame->next;
@@ -147,7 +147,7 @@ noct_deep_gc(
 	/* Recursively mark all objects in the young list that have native references. */
 	obj = rt->gc.young_list;
 	while (obj != NULL) {
-		if (obj->has_native_ref)
+		if (obj->native_ref_count > 0)
 			rt_gc_recursively_mark_object(rt, obj);
 		obj = obj->next;
 	}
@@ -160,7 +160,7 @@ noct_deep_gc(
 	obj = rt->gc.young_list;
 	while (obj != NULL) {
 		next_obj = obj->next;
-		if (!obj->is_marked) {
+		if (!obj->is_marked_on_gc) {
 			/* Unlink. */
 			UNLINK_FROM_LIST(obj, rt->gc.young_list);
 
@@ -177,7 +177,7 @@ noct_deep_gc(
 		obj = frame->gc.shallow_list;
 		while (obj != NULL) {
 			next_obj = obj->next;
-			if (!obj->is_marked) {
+			if (!obj->is_marked_on_gc) {
 				/* Unlink from the shallow list. */
 				UNLINK_FROM_LIST(obj, frame->gc.shallow_list);
 
@@ -202,13 +202,13 @@ rt_gc_recursively_mark_object(
 	struct rt_dict *dict;
 	int i;
 
-	if (obj->is_marked)
+	if (obj->is_marked_on_gc)
 		return;
 
 	if (obj->type == NOCT_VALUE_STRING) {
-		obj->is_marked = true;
+		obj->is_marked_on_gc = true;
 	} else if (obj->type == NOCT_VALUE_ARRAY) {
-		obj->is_marked = true;
+		obj->is_marked_on_gc = true;
 		arr = (struct rt_array *)obj;
 		for (i = 0; i < arr->size; i++) {
 			struct rt_value *val;
@@ -220,7 +220,7 @@ rt_gc_recursively_mark_object(
 			}
 		}
 	} else {
-		obj->is_marked = true;
+		obj->is_marked_on_gc = true;
 		dict = (struct rt_dict *)obj;
 		for (i = 0; i < dict->size; i++) {
 			struct rt_value *val;
@@ -353,13 +353,12 @@ rt_gc_move_shallow_to_garbage_list(
 }
 
 /*
- * Set a native reference status of an object.
+ * Increment a native reference count on an object.
  */
 bool
-noct_set_native_reference(
+noct_acquire_native_reference(
 	NoctEnv *rt,
-	NoctValue *val,
-	bool is_enabled)
+	NoctValue *val)
 {
 	struct rt_gc_object_header *obj;
 
@@ -372,7 +371,35 @@ noct_set_native_reference(
 		return true;
 
 	obj = (struct rt_gc_object_header *)val->val.obj;
-	obj->has_native_ref = is_enabled;
+
+	obj->native_ref_count++;
+
+	return true;
+}
+
+/*
+ * Decrement a native reference count on an object.
+ */
+bool
+noct_release_native_reference(
+	NoctEnv *rt,
+	NoctValue *val)
+{
+	struct rt_gc_object_header *obj;
+
+	assert(rt != NULL);
+	assert(val != NULL);
+
+	if (val->type == NOCT_VALUE_INT ||
+	    val->type == NOCT_VALUE_FLOAT ||
+	    val->type == NOCT_VALUE_FUNC)
+		return true;
+
+	obj = (struct rt_gc_object_header *)val->val.obj;
+
+	assert(obj->native_ref_count > 0);
+
+	obj->native_ref_count--;
 
 	return true;
 }

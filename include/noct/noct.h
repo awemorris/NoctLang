@@ -606,12 +606,21 @@ noct_set_global(
 	const char *name,
 	NoctValue *val);
 
-/* Set a native reference status of an object. */
+/*
+ * Increment a native reference count on an object.
+ */
 bool
-noct_set_native_reference(
+noct_acquire_native_reference(
 	NoctEnv *rt,
-	NoctValue *val,
-	bool is_enabled);
+	NoctValue *val);
+
+/*
+ * Decrement a native reference count on an object.
+ */
+bool
+noct_release_native_reference(
+	NoctEnv *rt,
+	NoctValue *val);
 
 /* Do a shallow GC for nursery space. */
 bool

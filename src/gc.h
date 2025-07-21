@@ -44,16 +44,18 @@ struct rt_gc_object_header {
 	/* Type. */
 	int type;
 
-	/* String list (shallow, young, or tenure). */
-	struct rt_gc_object_header *prev;
-	struct rt_gc_object_header *next;
+	/* Which GC list is this object in? */
 	int gc_type;
 
-	/* Is marked? (for mark-and-sweep GC). */
-	bool is_marked;
+	/* Object list/ (shallow, young, or tenure) */
+	struct rt_gc_object_header *prev;
+	struct rt_gc_object_header *next;
 
-	/* Is referenced by native code? */
-	bool has_native_ref;
+	/* Native reference count. */
+	int native_ref_count;
+
+	/* Is marked? (for mark-and-sweep). */
+	bool is_marked_on_gc;
 };
 
 /* Insert a new object to the shallow of young list. */
