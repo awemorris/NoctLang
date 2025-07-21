@@ -15,9 +15,10 @@
  */
 
 #include "runtime.h"
-#include "jit.h"
 #include "intrinsics.h"
 #include "interpreter.h"
+#include "jit.h"
+#include "gc.h"
 
 #if !defined(NO_COMPILATION)
 #include "ast.h"
@@ -35,32 +36,6 @@
 #define NOT_IMPLEMENTED		0
 #define NEVER_COME_HERE		0
 
-/* Unlink an element from a list. */
-#define UNLINK_FROM_LIST(elem, list)	\
-	do { \
-		if (elem->prev != NULL) { \
-			elem->prev->next = elem->next; \
-			if (elem->next != NULL) \
-				elem->next->prev = elem->prev; \
-		} else { \
-			if (elem->next != NULL) \
-				elem->next->prev = NULL; \
-			list = elem->next; \
-		} \
-		elem->prev = NULL; \
-		elem->next = NULL; \
-	} while (0)
-
-/* Insert an element to a list. */
-#define INSERT_TO_LIST(elem, list)	\
-	do { \
-		elem->next = list; \
-		elem->prev = NULL; \
-		if (list != NULL) \
-			list->prev = elem; \
-		list = elem; \
-	} while (0)			
-
 /*
  * Config
  */
@@ -76,12 +51,9 @@ static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, uint32_t size, int *pos, char *file_name);
 static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos);
-static bool rt_expand_array(struct rt_env *rt, struct rt_value *array, int size);
-static bool rt_expand_dict(struct rt_env *rt, struct rt_value *dict, int size);
+static bool rt_expand_array(struct rt_env *rt, struct rt_value *array, size_t size);
+static bool rt_expand_dict(struct rt_env *rt, struct rt_value *dict, size_t size);
 static bool rt_get_return(struct rt_env *rt, struct rt_value *val);
-static void rt_recursively_mark_object(struct rt_env *rt, struct rt_object_header *obj);
-static void rt_insert_new_object_to_list(struct rt_env *rt, struct rt_object_header *obj, int type);
-static void rt_free_object(struct rt_env *rt, struct rt_object_header *obj);
 
 /*
  * Create a runtime environment.
@@ -126,12 +98,7 @@ noct_destroy(
 	noct_shallow_gc(rt);
 
 	/* Free young objects. */
-	obj = rt->young_list;
-	while (obj != NULL) {
-		next_obj = obj->next;
-		rt_free_object(rt, obj);
-		obj = next_obj;
-	}
+	rt_free_young_objects(rt);
 
 	/* Free functions. */
 	func = rt->func_list;
@@ -736,15 +703,7 @@ rt_leave_frame(
 	struct rt_frame *frame;
 
 	/* Move the shallow objects to the garbage lists. */
-	if (rt->frame->shallow_list != NULL) {
-		if (rt->garbage_list == NULL) {
-			rt->garbage_list = rt->frame->shallow_list;
-		} else {
-			rt->frame->shallow_list_tail->next = rt->garbage_list;
-			rt->garbage_list->prev = rt->frame->shallow_list_tail;
-			rt->garbage_list = rt->frame->shallow_list;
-		}
-	}
+	rt_move_shallow_to_garbage_list(rt);
 
 	/* Unlink the frame from the list. */
 	frame = rt->frame;
@@ -790,6 +749,7 @@ noct_make_string(
 	const char *s)
 {
 	struct rt_string *rts;
+	size_t len;
 
 	/* Allocate a rt_string. */
 	rts = malloc(sizeof(struct rt_string));
@@ -798,22 +758,24 @@ noct_make_string(
 		return false;
 	}
 	memset(rts, 0, sizeof(struct rt_string));
-	rts->s = strdup(s);
+	len = strlen(s) + 1;
+	rts->s = malloc(len);
 	if (rts->s == NULL) {
 		rt_out_of_memory(rt);
 		free(rts);
 		return false;
 	}
+	memcpy(rts->s, s, len);
 
-	/* Insert to the list. */
+	/* GC: Insert to the list. */
 	rt_insert_new_object_to_list(rt, (struct rt_object_header *)rts, NOCT_VALUE_STRING);
+
+	/* GC: Increment the heap size. */
+	rt_increment_heap_usage_on_new_object(rt, NOCT_VALUE_STRING, len);
 
 	/* Setup a value. */
 	val->type = NOCT_VALUE_STRING;
 	val->val.str = rts;
-
-	/* Increment the heap usage. */
-	rt->heap_usage += strlen(s);
 
 	return true;
 }
@@ -872,11 +834,11 @@ noct_make_empty_array(struct rt_env *rt, struct rt_value *val)
 	val->type = NOCT_VALUE_ARRAY;
 	val->val.arr = arr;
 
-	/* Insert to the list. */
+	/* GC: Insert to the list. */
 	rt_insert_new_object_to_list(rt, (struct rt_object_header *)arr, NOCT_VALUE_ARRAY);
 
-	/* Increment the heap usage. */
-	rt->heap_usage += (size_t)arr->alloc_size * sizeof(struct rt_value);
+	/* GC: Increment the heap size. */
+	rt_increment_heap_usage_on_new_object(rt, NOCT_VALUE_ARRAY, arr->alloc_size);
 
 	return true;
 }
@@ -918,11 +880,11 @@ noct_make_empty_dict(struct rt_env *rt, struct rt_value *val)
 	val->type = NOCT_VALUE_DICT;
 	val->val.dict = dict;
 
-	/* Insert to the list. */
+	/* GC: Insert to the list. */
 	rt_insert_new_object_to_list(rt, (struct rt_object_header *)dict, NOCT_VALUE_DICT);
 
-	/* Increment the heap usage. */
-	rt->heap_usage += (size_t)dict->alloc_size * sizeof(struct rt_value);
+	/* GC: Increment the heap size. */
+	rt_increment_heap_usage_on_new_object(rt, NOCT_VALUE_DICT, dict->alloc_size);
 
 	return true;
 }
@@ -1389,7 +1351,7 @@ static bool
 rt_expand_array(
 	struct rt_env *rt,
 	struct rt_value *array,
-	int size)
+	size_t size)
 {
 	struct rt_array *arr;
 	struct rt_value *new_tbl;
@@ -1401,14 +1363,15 @@ rt_expand_array(
 
 	/* Expand the table. */
 	if (arr->alloc_size < size) {
+		size_t orig_size;
+
+		orig_size = arr->alloc_size;
+
 		/* Get a next size. */
 		if (size < arr->alloc_size * 2)
 			size = arr->alloc_size * 2;
 		else
 			size = size * 2;
-
-		/* Decrement the heap usage. */
-		rt->heap_usage -= (size_t)arr->alloc_size * sizeof(struct rt_value);
 
 		/* Realloc the table. */
 		new_tbl = malloc(sizeof(struct rt_value) * (size_t)size);
@@ -1422,9 +1385,10 @@ rt_expand_array(
 		arr->table = new_tbl;
 		arr->alloc_size = size;
 
-		/* Increment the heap usage. */
-		rt->heap_usage += (size_t)arr->alloc_size * sizeof(struct rt_value);
+		/* GC: Increment the heap size. */
+		rt_increment_heap_usage_by_array_expand(rt, size - orig_size);
 	}
+
 
 	return true;
 }
@@ -1749,6 +1713,7 @@ noct_set_dict_elem(
 	struct rt_value *val)
 {
 	int i;
+	size_t len;
 
 	assert(rt != NULL);
 	assert(dict != NULL);
@@ -1769,16 +1734,21 @@ noct_set_dict_elem(
 		return false;
 
 	/* Append the key. */
-	dict->val.dict->key[dict->val.dict->size] = strdup(key);
+	len = strlen(key) + 1;
+	dict->val.dict->key[dict->val.dict->size] = malloc(len);
 	if (dict->val.dict->key[dict->val.dict->size] == NULL) {
 		rt_out_of_memory(rt);
 		return false;
 	}
+	memcpy(dict->val.dict->key[dict->val.dict->size], key, len);
 	dict->val.dict->value[dict->val.dict->size] = *val;
 	dict->val.dict->size++;
 
-	/* Move the element to the young list. */
+	/* GC: Move the element to the young list. */
 	rt_move_shallow_to_young_list(rt, val);
+
+	/* GC: Increment the heap size. */
+	rt_increment_heap_usage_by_dict_add(rt, len);
 
 	return true;
 }
@@ -1862,7 +1832,7 @@ static bool
 rt_expand_dict(
 	struct rt_env *rt,
 	struct rt_value *dict,
-	int size)
+	size_t size)
 {
 	struct rt_dict *d;
 	char **new_key;
@@ -1875,14 +1845,15 @@ rt_expand_dict(
 
 	/* Expand the table. */
 	if (d->alloc_size < size) {
+		size_t orig_size;
+
+		orig_size = d->alloc_size;
+
 		/* Get a next size. */
 		if (size < d->alloc_size * 2)
 			size = d->alloc_size * 2;
 		else
 			size = size * 2;
-
-		/* Decrement the heap usage. */
-		rt->heap_usage -= (size_t)d->alloc_size * (sizeof(char *) + sizeof(struct rt_value));
 
 		/* Realloc the key table. */
 		new_key = malloc(sizeof(const char *) * (size_t)size);
@@ -1906,8 +1877,8 @@ rt_expand_dict(
 
 		d->alloc_size = size;
 
-		/* Increment the heap usage. */
-		rt->heap_usage += (size_t)d->alloc_size * (sizeof(char *) + sizeof(struct rt_value));
+		/* GC: Increment the heap size. */
+		rt_increment_heap_usage_by_array_expand(rt, size - orig_size);
 	}
 
 	return true;
@@ -2356,328 +2327,6 @@ rt_add_global(
 	*global = g;
 
 	return true;
-}
-
-/*
- * GC
- */
-
-/*
- * Do a shallow GC for nursery space.
- */
-bool
-noct_shallow_gc(
-	struct rt_env *rt)
-{
-	struct rt_object_header *obj, *next_obj;
-
-	/*
-	 * A nursery space belongs to a calling frame.
-	 * An object first created in a nursery space,
-	 * and when it get a strong reference,
-	 * it is moved to the tenured space.
-	 * Objects in a nursery space are released by rt_leave_frame(),
-	 * and are moved to the garbage list.
-	 * The shallow GC sweeps such objects in the garbage list.
-	 */
-
-	obj = rt->garbage_list;
-	while (obj != NULL) {
-		next_obj = obj->next;
-		rt_free_object(rt, obj);
-		obj = next_obj;
-	}
-	rt->garbage_list = NULL;
-
-	return true;
-}
-
-/*
- * Do a deep GC. (tenured space GC)
- */
-bool
-noct_deep_gc(
-	struct rt_env *rt)
-{
-	struct rt_object_header *obj, *next_obj;
-	struct rt_bindglobal *global;
-	struct rt_frame *frame;
-
-	/*
-	 * We do a full mark-and-sweep GC.
-	 */
-
-	/*
-	 * Clear phase.
-	 */
-
-	/* Clear the marks of all objects in the young list. */
-	obj = rt->young_list;
-	while (obj != NULL) {
-		obj->is_marked = false;
-		obj = obj->next;
-	}
-
-	/* Clear the marks of all objects in the all frames' shallow lists. */
-	frame = rt->frame;
-	while (frame != NULL) {
-		/* Clear the marks of all strings in the frame's shallow list. */
-		obj = frame->shallow_list;
-		while (obj != NULL) {
-			obj->is_marked = false;
-			obj = obj->next;
-		}
-		frame = frame->next;
-	}
-
-	/*
-	 * Mark phase.
-	 */
-
-	/* Recursively mark all objects that are referenced by the global variables. */
-	global = rt->global;
-	while (global != NULL) {
-		if (global->val.type == NOCT_VALUE_STRING ||
-		    global->val.type == NOCT_VALUE_ARRAY ||
-		    global->val.type == NOCT_VALUE_DICT)
-			rt_recursively_mark_object(rt, global->val.val.obj);
-		global = global->next;
-	}
-
-	/* Recursively mark all objects in the all shallow lists. */
-	frame = rt->frame;
-	while (frame != NULL) {
-		/* Recursively mark all objects in the frame's shallow list. */
-		obj = frame->shallow_list;
-		while (obj != NULL) {
-			rt_recursively_mark_object(rt, obj);
-			obj = obj->next;
-		}
-		frame = frame->next;
-	}
-
-	/* Recursively mark all objects in the young list that have native references. */
-	obj = rt->young_list;
-	while (obj != NULL) {
-		if (obj->has_native_ref)
-			rt_recursively_mark_object(rt, obj);
-		obj = obj->next;
-	}
-
-	/*
-	 * Sweep phase.
-	 */
-
-	/* Sweep non-marked objects in the young list. */
-	obj = rt->young_list;
-	while (obj != NULL) {
-		next_obj = obj->next;
-		if (!obj->is_marked) {
-			/* Unlink. */
-			UNLINK_FROM_LIST(obj, rt->young_list);
-
-			/* Remove. */
-			rt_free_object(rt, obj);
-		}
-		obj = next_obj;
-	}
-
-	/* Sweep non-marked objects in the all frames' shallow lists. */
-	frame = rt->frame;
-	while (frame != NULL) {
-		/* Sweep non-marked strings in the frame's shallow list. */
-		obj = frame->shallow_list;
-		while (obj != NULL) {
-			next_obj = obj->next;
-			if (!obj->is_marked) {
-				/* Unlink from the shallow list. */
-				UNLINK_FROM_LIST(obj, frame->shallow_list);
-
-				/* Remove. */
-				rt_free_object(rt, obj);
-			}
-			obj = next_obj;
-		}
-		frame = frame->next;
-	}
-
-	return true;
-}
-
-/* Mark objects recursively as used. */
-static void
-rt_recursively_mark_object(
-	struct rt_env *rt,
-	struct rt_object_header *obj)
-{
-	struct rt_array *arr;
-	struct rt_dict *dict;
-	int i;
-
-	if (obj->is_marked)
-		return;
-
-	if (obj->type == NOCT_VALUE_STRING) {
-		obj->is_marked = true;
-	} else if (obj->type == NOCT_VALUE_ARRAY) {
-		obj->is_marked = true;
-		arr = (struct rt_array *)obj;
-		for (i = 0; i < arr->size; i++) {
-			struct rt_value *val;
-			val = &arr->table[i];
-			if (val->type == NOCT_VALUE_STRING ||
-			    val->type == NOCT_VALUE_ARRAY ||
-			    val->type == NOCT_VALUE_DICT) {
-				rt_recursively_mark_object(rt, val->val.obj);
-			}
-		}
-	} else {
-		obj->is_marked = true;
-		dict = (struct rt_dict *)obj;
-		for (i = 0; i < dict->size; i++) {
-			struct rt_value *val;
-			val = &dict->value[i];
-			if (val->type == NOCT_VALUE_STRING ||
-			    val->type == NOCT_VALUE_ARRAY ||
-			    val->type == NOCT_VALUE_DICT) {
-				rt_recursively_mark_object(rt, val->val.obj);
-			}
-		}
-	}
-}
-
-/* Insert a new object to the shallow of young list. */
-static void
-rt_insert_new_object_to_list(
-	struct rt_env *rt,
-	struct rt_object_header *obj,
-	int type)
-{
-	if (rt->frame != NULL && type == NOCT_VALUE_STRING) {
-		/* Insert the object to the top of the shallow list. */
-		if (rt->frame->shallow_list == NULL) {
-			obj->type = NOCT_VALUE_STRING;
-			obj->prev = NULL;
-			obj->next = NULL;
-			obj->gc_type = RT_GC_SHALLOW;
-			rt->frame->shallow_list = obj;
-			rt->frame->shallow_list_tail = obj;
-		} else {
-			obj->type = NOCT_VALUE_STRING;
-			obj->prev = NULL;
-			obj->next = rt->frame->shallow_list;
-			obj->gc_type = RT_GC_SHALLOW;
-			rt->frame->shallow_list->prev = obj;
-			rt->frame->shallow_list = obj;
-		}
-	} else {
-		/* Insert the object to the top of the young list. */
-		if (rt->young_list == NULL) {
-			obj->type = type;
-			obj->prev = NULL;
-			obj->next = NULL;
-			obj->gc_type = RT_GC_YOUNG;
-			rt->young_list = obj;
-		} else {
-			obj->type = type;
-			obj->prev = NULL;
-			obj->next = rt->young_list;
-			obj->gc_type = RT_GC_YOUNG;
-			rt->young_list->prev = obj;
-			rt->young_list = obj;
-		}
-	}
-}
-
-/* Move an object from the shallow list to the young list. */
-void
-rt_move_shallow_to_young_list(
-	struct rt_env *rt,
-	struct rt_value *val)
-{
-	struct rt_object_header *obj;
-
-	if (rt->frame == NULL)
-		return;
-	if (val->type == NOCT_VALUE_INT || val->type == NOCT_VALUE_FLOAT)
-		return;
-	if (val->val.obj->gc_type != RT_GC_SHALLOW)
-		return;
-
-	/* Unlink from the shallow list. */
-	UNLINK_FROM_LIST(val->val.obj, rt->frame->shallow_list);
-
-	/* Relink to the young list. */
-	INSERT_TO_LIST(val->val.obj, rt->young_list);
-
-	/* Make the object young. */
-	val->val.obj->gc_type = RT_GC_YOUNG;
-}
-
-/*
- * Set a native reference status of an object.
- */
-bool
-noct_set_native_reference(
-	NoctEnv *rt,
-	NoctValue *val,
-	bool is_enabled)
-{
-	struct rt_object_header *obj;
-
-	assert(rt != NULL);
-	assert(val != NULL);
-
-	if (val->type == NOCT_VALUE_INT ||
-	    val->type == NOCT_VALUE_FLOAT ||
-	    val->type == NOCT_VALUE_FUNC)
-		return true;
-
-	obj = (struct rt_object_header *)val->val.obj;
-	obj->has_native_ref = is_enabled;
-
-	return true;
-}
-
-/* Get an approximate memory usage in bytes. */
-bool
-rt_get_heap_usage(
-	struct rt_env *rt,
-	size_t *ret)
-{
-	*ret = rt->heap_usage;
-	return true;
-}
-
-/*
- * Free
- */
-
-/* Free a string, array, or dictionary object. */
-static void
-rt_free_object(
-	struct rt_env *rt,
-	struct rt_object_header *obj)
-{
-	UNUSED_PARAMETER(rt);
-
-	if (obj->type == NOCT_VALUE_STRING) {
-		struct rt_string *str;
-		str = (struct rt_string *)obj;
-		free(str->s);
-		free(str);
-	} else if (obj->type == NOCT_VALUE_ARRAY) {
-		struct rt_array *arr;
-		arr = (struct rt_array *)obj;
-		free(arr->table);
-		free(arr);
-	} else if (obj->type == NOCT_VALUE_DICT) {
-		struct rt_dict *dict;
-		dict = (struct rt_dict *)obj;
-		free(dict->key);
-		free(dict->value);
-		free(dict);
-	}
 }
 
 /*

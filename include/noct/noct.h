@@ -625,7 +625,7 @@ noct_deep_gc(
 
 /* Get an approximate memory usage in bytes. */
 bool
-rt_get_heap_usage(
+noct_get_heap_usage(
 	NoctEnv *rt,
 	size_t *ret);
 

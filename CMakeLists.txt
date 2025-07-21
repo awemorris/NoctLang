@@ -53,6 +53,7 @@ set(LIB_SOURCES
   src/interpreter.c
   src/execution.c
   src/intrinsics.c
+  src/gc.c
   src/jit-common.c
   src/jit-x86_64.c
   src/jit-x86.c

@@ -5,7 +5,7 @@
  */
 
 /*
- * NoctLang
+ * Runtime
  */
 
 #ifndef NOCT_RUNTIME_H
@@ -165,8 +165,8 @@ struct rt_string {
 struct rt_array {
 	struct rt_object_header head;
 
-	int alloc_size;
-	int size;
+	size_t alloc_size;
+	size_t size;
 	struct rt_value *table;
 };
 
@@ -176,8 +176,8 @@ struct rt_array {
 struct rt_dict {
 	struct rt_object_header head;
 
-	int alloc_size;
-	int size;
+	size_t alloc_size;
+	size_t size;
 	char **key;
 	struct rt_value *value;
 };
