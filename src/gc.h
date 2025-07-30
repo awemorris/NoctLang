@@ -5,7 +5,28 @@
  */
 
 /*
- * GC
+ * Garbage Collector
+ *
+ * The heap is divided into three generations, with an additional remember set:
+ *
+ * - Nursery Generation:
+ *   For newly allocated small objects.
+ *   Managed in a dedicated 2MB memory region.
+ *   Collected via copying GC along with the graduate generation.
+ *
+ * - Graduate Generation:
+ *   For surviving nursery objects.
+ *   Uses semi-space copying GC with two 256KB regions (from and to spaces).
+ *
+ * - Tenure Generation:
+ *   For long-lived, large, or native-referenced objects.
+ *   Collected using mark-and-sweep GC.
+ *
+ * - Remember Set:
+ *   Tracks tenure-generation arrays or dictionaries that reference
+ *   young-generation objects (in the nursery or graduate space).
+ *   Maintained via a write barrier triggered on container updates.
+ *   Ensures proper GC reachability across generations.
  */
 
 #ifndef NOCT_GC_H
@@ -13,89 +34,167 @@
 
 #include <noct/noct.h>
 #include "c89compat.h"
+#include "arena.h"
 
 /*
- * Global GC info, embedded to global envs.
+ * Region Size
  */
-struct rt_gc_global {
-	/* Young object list. */
-	struct rt_gc_object *young_list;
+#define RT_GC_NURSERY_SIZE		(2 * 1024 * 1024)
+#define RT_GC_GRADUATE_SIZE		(256 * 1024)
+#define RT_GC_TENURE_SIZE		(512 * 1024 * 1024)
 
-	/* Garbage object list. */
-	struct rt_gc_object *garbage_list;
+/*
+ * Large Object Promotion Threshold - A new object that has a size
+ * beyond this value will be allocated directly in the tenure region.
+ */
+#define RT_GC_LOP_THRESHOLD		(32768)
 
-	/* Heap usage in bytes. */
-	size_t heap_usage;
+/*
+ * Regions.
+ */
+enum gt_gc_generation {
+	RT_GC_REGION_NURSERY,
+	RT_GC_REGION_GRADUATE,
+	RT_GC_REGION_TENURE,
 };
 
 /*
- * Local GC Info, embedded to call frames.
+ * Object Types.
  */
-struct rt_gc_local {
-	/* Shallow object list. */
-	struct rt_gc_object *shallow_list;
-	struct rt_gc_object *shallow_list_tail;
+enum rt_gc_object_type {
+	RT_GC_TYPE_STRING,
+	RT_GC_TYPE_ARRAY,
+	RT_GC_TYPE_DICT,
 };
 
 /*
- * Object header for string, array, and dictionry.
- * This header is embedded to object's top address.
+ * Garbage Collector state structure that is embedded to struct rt_vm.
+ */
+struct rt_gc_info {
+	/* Memory region for the nursery generation (2MB). */
+	struct arena_info nursery_arena;
+
+	/*
+	 * Memory regions for the graduate generation:
+	 * [0] = from-space, [1] = to-space (256KB each).
+	 */
+	struct arena_info graduate_arena[2];
+	int cur_grad_from;
+	int cur_grad_to;
+
+	/*
+	 * Memory region for the tenure generation.
+	 * TODO:
+	 *  - Currently we use malloc() directly for tenute object generation.
+	 *  - We'll implement an allocator for the tenure generation soon.
+	 */
+	/* struct tenure_allocator tenure_allocator; */
+
+	/* Linked list of objects in the nursery generation. */
+	struct rt_gc_object *nursery_list;
+
+	/* Linked list of objects in the graduate generation. */
+	struct rt_gc_object *graduate_list;
+	struct rt_gc_object *graduate_new_list;
+
+	/* Linked list of objects in the tenure generation. */
+	struct rt_gc_object *tenure_list;
+
+	/* Linked list of the remember set. (see struct rt_gc_remember_set) */
+	struct rt_gc_object *remember_set;
+};
+
+/*
+ * GC-managed object header for strings, arrays, and dictionaries.
+ * This struct is embedded at the beginning of each managed object.
  */
 struct rt_gc_object {
-	/* Type. */
+	/*
+	 * Object type: one of RT_GC_TYPE_STRING, RT_GC_TYPE_ARRAY, or
+	 * RT_GC_TYPE_DICT.
+	 */
 	int type;
 
-	/* Which GC list is this object in? */
-	int gc_type;
+	/*
+	 * Region tag: indicates which GC generation this object
+	 * belongs to.
+	 */
+	int region;
 
-	/* Object list/ (shallow, young, or tenure) */
+	/*
+	 * Intrusive doubly-linked list for the corresponding
+	 * region's list (nursery, graduate, or tenure).
+	 */
 	struct rt_gc_object *prev;
 	struct rt_gc_object *next;
 
-	/* Native reference count. */
-	int native_ref_count;
+	/*
+	 * Intrusive doubly-linked list for the remember set.
+	 */
+	struct rt_gc_remember_set *rem_prev;
+	struct rt_gc_remember_set *rem_next; 
+	bool rem_flg;
 
-	/* Is marked? (for mark-and-sweep). */
-	bool is_marked_on_gc;
+	/* Mark bit used in mark-and-sweep GC for the tenure generation. */
+	bool is_marked;
+
+	/* Promotion count. */
+	int promotion_count;
+
+	/* Forwarding pointer. */
+	struct rt_gc_object *forward;
 };
 
-/* Allocate a string. */
-struct rt_string *rt_gc_allocate_string(struct rt_env *rt, size_t len);
+/*
+ * Node structure for the GC remember set.
+ *
+ * Each node tracks an array or dictionary object in the tenure generation
+ * that holds references to young-generation objects (nursery or graduate).
+ * The list is maintained as a non-intrusive doubly-linked list.
+ */
+struct rt_gc_remember_set {
+	/* Tenure-generation array or dictionary object tracked by this node. */
+	struct rt_gc_object *obj;
 
-/* Allocate an array. */
-struct rt_array *rt_gc_allocate_array(struct rt_env *rt, size_t size);
+        /* Previous node in the remember set list. */
+	struct rt_gc_remember_set *prev;
 
-/* Allocate an array. */
-struct rt_dict *rt_gc_allocate_dict(struct rt_env *rt, size_t size);
+	/* Next node in the remember set list. */
+	struct rt_gc_remember_set *next;
+};
 
-/* Reallocate an array. */
-struct rt_array *rt_gc_reallocate_array(struct rt_env *rt, struct rt_array *arr, size_t size);
+/*
+ * The following functions are part of the GC interface used by runtime.c.
+ */
 
-/* Insert a new object to the shallow of young list. */
-void rt_gc_insert_new_object_to_list(struct rt_env *rt, struct rt_gc_object *obj, int type);
+/* Initialize the garbage collector and allocate memory regions. */
+bool rt_gc_init(struct rt_vm *vm);
 
-/* Move an object from the shallow list to the young list. */
-void rt_gc_move_shallow_to_young_list(struct rt_env *rt, struct rt_value *val);
+/* Cleanup the garbage collector and deallocate memory regions. */
+void rt_gc_cleanup(struct rt_vm *vm);
 
-/* Move all shallow objects to the garbage list. */
-void rt_gc_move_shallow_to_garbage_list(struct rt_env *rt);
+/* Allocate a string object in the appropriate GC generation. */
+struct rt_string *rt_gc_alloc_string(struct rt_env *env, size_t len, const char *data);
 
-/* Free all young objects. */
-void rt_gc_free_young_objects(struct rt_env *rt);
+/* Allocate an array object in the appropriate GC generation. */
+struct rt_array *rt_gc_alloc_array(struct rt_env *env, size_t size);
 
-/* Increment heap usage on new object. */
-void rt_gc_increment_heap_usage_on_new_object(struct rt_env *rt, int type, size_t len);
+/* Allocate a dictionary object in the appropriate GC generation. */
+struct rt_dict *rt_gc_alloc_dict(struct rt_env *env, size_t size);
 
-/* Increment heap usage on array expand. */
-void rt_gc_increment_heap_usage_by_array_expand(struct rt_env *rt, size_t expand_len);
+/* Write barrier: register container in the remember set if it references a younger object. */
+void rt_gc_array_write_barrier(struct rt_env *env, struct rt_array *arr, int index, struct rt_value *val);
 
-/* Increment heap usage on dict expand. */
-void rt_gc_increment_heap_usage_by_dict_expand(struct rt_env *rt, size_t expand_len);
+/* Write barrier: register container in the remember set if it references a younger object. */
+void rt_gc_dict_write_barrier(struct rt_env *env, struct rt_dict *dict,int index, struct rt_value *val);
 
-/* Increment heap usage on dict add. */
-void rt_gc_increment_heap_usage_by_dict_add(struct rt_env *rt, size_t key_len);
+/* Manually trigger a young-generation GC (nursery + graduate, copying GC). */
+void rt_gc_level1_gc(struct rt_env *env);
 
-/* Increment heap usage on dict unset. */
-void rt_gc_increment_heap_usage_by_dict_unset(struct rt_env *rt, size_t key_len);
+/* Manually trigger an old-generation GC (tenure, mark-and-sweep). */
+void rt_gc_level2_gc(struct rt_env *env);
+
+/* Manually trigger a full GC. */
+void rt_gc_level3_gc(struct rt_env *env);
 
 #endif

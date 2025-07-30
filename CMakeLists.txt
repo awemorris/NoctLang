@@ -10,9 +10,8 @@ set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
 # Configuration
 #
 
-option(USE_SHARED      "Enable shared libraries" OFF)
-option(USE_JIT         "Enable JIT"              ON)
-option(USE_TRANSLATION "Enable translation"      ON)
+option(ENABLE_SHARED  "Enable shared library"  OFF)
+option(ENABLE_JIT     "Enable JIT"             ON)
 
 #
 # FLEX
@@ -49,6 +48,7 @@ set(LIB_SOURCES
   src/ast.c
   src/hir.c
   src/lir.c
+  src/noct.c
   src/runtime.c
   src/interpreter.c
   src/execution.c
@@ -69,25 +69,18 @@ set(LIB_SOURCES
 
 set(CLI_SOURCES
   src/cli.c
+  src/translation.c
 )
 
-if(USE_TRANSLATION)
-  set(I18N_SOURCES
-    src/translation.c
-  )
-endif()
-
 # Library
-if(USE_SHARED)
-  set(LIB_TYPE SHARED)
+if(ENABLE_SHARED)
+  add_library(noctlang SHARED ${LIB_SOURCES})
 else()
-  set(LIB_TYPE STATIC)
+  add_library(noctlang STATIC ${LIB_SOURCES})
 endif()
-add_library(noctlang STATIC ${LIB_SOURCES} ${I18N_SOURCES})
 
 # CLI
-add_executable(noct ${CLI_SOURCES})
-target_link_libraries(noct PRIVATE noctlang)
+add_executable(noct ${LIB_SOURCES} ${CLI_SOURCES})
 
 #
 # CPPFLAGS
@@ -103,14 +96,13 @@ target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(noct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # -DUSE_JIT
-if(USE_JIT)
+if(ENABLE_JIT)
   target_compile_definitions(noctlang PRIVATE USE_JIT)
   target_compile_definitions(noct PRIVATE USE_JIT)
 endif()
 
 # -DUSE_GETTEXT_COMPAT
 if(USE_TRANSLATION)
-  target_compile_definitions(noctlang PRIVATE USE_GETTEXT_COMPAT)
   target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
 endif()  
 

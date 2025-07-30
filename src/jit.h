@@ -17,13 +17,13 @@
 /* Generate a JIT-compiled code for a function. */
 bool
 jit_build(
-	struct rt_env *rt,
+	struct rt_vm *env,
 	struct rt_func *func);
 
 /* Free a JIT-compiled code for a function. */
 void
 jit_free(
-	struct rt_env *rt,
+	struct rt_env *env,
 	struct rt_func *func);
 
 /*
@@ -47,7 +47,7 @@ jit_free(
  * JIT codegen context
  */
 struct jit_context {
-	struct rt_env *rt;
+	struct rt_env *env;
 	struct rt_func *func;
 
 	/* Top of the mapped code area. */
