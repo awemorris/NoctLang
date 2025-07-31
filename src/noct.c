@@ -246,17 +246,13 @@ bool
 noct_make_string(
 	NoctEnv *env,
 	NoctValue *val,
-	const char *data,
-	size_t len)
+	const char *data)
 {
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(data != NULL);
 
-	if (len == (size_t)-1)
-		len = strlen(data) + 1;
-
-	if (!rt_make_string(env, val, data, len))
+	if (!rt_make_string(env, val, data))
 		return false;
 
 	return true;
@@ -1066,7 +1062,7 @@ noct_make_string_format(
 	vsnprintf(tmp, sizeof(tmp), s, ap);
 	va_end(ap);
 
-	if (!rt_make_string(env, val, tmp, strlen(tmp) + 1))
+	if (!rt_make_string(env, val, tmp))
 		return false;
 
 	return true;
@@ -1324,8 +1320,7 @@ noct_set_array_elem_make_string(
 	NoctValue *array,
 	int index,
 	NoctValue *val,
-	const char *data,
-	size_t len)
+	const char *data)
 {
 	assert(env != NULL);
 	assert(array != NULL);
@@ -1334,7 +1329,7 @@ noct_set_array_elem_make_string(
 	assert(data != NULL);
 
 	/* Make an integer value. */
-	if (!rt_make_string(env, val, data, len))
+	if (!rt_make_string(env, val, data))
 		return false;
 
 	/* Get the element. */
@@ -1585,8 +1580,7 @@ noct_set_dict_elem_make_string(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	const char *data,
-	size_t len)
+	const char *data)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1595,7 +1589,7 @@ noct_set_dict_elem_make_string(
 	assert(data != NULL);
 
 	/* Make a string value. */
-	if (!rt_make_string(env, val, data, len))
+	if (!rt_make_string(env, val, data))
 		return false;
 
 	/* Set the key-value pair. */
@@ -1825,15 +1819,14 @@ bool
 noct_set_return_make_string(
 	NoctEnv *env,
 	NoctValue *val,
-	const char *data,
-	size_t len)
+	const char *data)
 {
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(data != NULL);
 
-	/* Make a float value. */
-	if (!rt_make_string(env, val, data, len))
+	/* Make a string value. */
+	if (!rt_make_string(env, val, data))
 		return false;
 
 	/* Set the return value. */

@@ -197,7 +197,7 @@ static int command_run(int argc, char *argv[])
 		if (arg_value == NULL)
 			return 1;
 		for (i = 0; i < arg_count; i++) {
-			if (!noct_make_string(env, &arg_value[i], argv[file_arg + i + 1], (size_t)-1))
+			if (!noct_make_string(env, &arg_value[i], argv[file_arg + i + 1]))
 				return 1;
 		}
 	} else {
@@ -1165,7 +1165,7 @@ cfunc_readline(
 	if (len > 0)
 		buf[len - 1] = '\0';
 	
-	if (!noct_make_string(rt, &ret, buf, (size_t)-1))
+	if (!noct_make_string(rt, &ret, buf))
 		return false;
 	if (!noct_set_return(rt, &ret))
 		return false;
@@ -1226,7 +1226,7 @@ cfunc_readfilelines(
 				buf[len - 1] = '\0';
 		}
 
-		if (!noct_make_string(rt, &line, buf, (size_t)-1))
+		if (!noct_make_string(rt, &line, buf))
 			return false;
 		if (!noct_set_array_elem(rt, &array, index, &line))
 			return false;

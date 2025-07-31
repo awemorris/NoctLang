@@ -1112,10 +1112,7 @@ rt_getdictkeybyindex_helper(
 	}
 
 	/* Load the element. */
-	if (!rt_make_string(env,
-			    dst_val,
-			    dict_val->val.dict->key[subscr_val->val.i],
-			    strlen(dict_val->val.dict->key[subscr_val->val.i]) + 1))
+	if (!rt_make_string(env, dst_val, dict_val->val.dict->key[subscr_val->val.i]))
 		return false;
 
 	return true;

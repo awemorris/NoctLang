@@ -310,8 +310,7 @@ bool
 noct_make_string(
 	NoctEnv *env,
 	NoctValue *val,
-	const char *data,
-	size_t len);
+	const char *data);
 
 /*
  * Makes a string value with a format.
@@ -888,8 +887,7 @@ noct_set_array_elem_make_string(
 	NoctValue *array,
 	int index,
 	NoctValue *val,
-	const char *data,
-	size_t len);
+	const char *data);
 
 /* Dictionaries */
 
@@ -1063,8 +1061,7 @@ noct_set_dict_elem_make_string(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	const char *data,
-	size_t len);
+	const char *data);
 
 /* Arguments */
 
@@ -1213,7 +1210,6 @@ bool
 noct_set_return_make_string(
 	NoctEnv *env,
 	NoctValue *val,
-	const char *data,
-	size_t len);
+	const char *data);
 
 #endif

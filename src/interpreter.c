@@ -291,7 +291,7 @@ rt_visit_sconst_op(
 		return false;
 	}
 
-	if (!rt_make_string(env, &env->frame->tmpvar[dst], s, len + 1))
+	if (!rt_make_string(env, &env->frame->tmpvar[dst], s))
 		return false;
 
 	*pc += 1 + 2 + len + 1;

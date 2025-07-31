@@ -287,7 +287,7 @@ rt_intrin_substring(
 
 	strncpy(s, str_v.val.str->data + start_i, (size_t)len_i);
 
-	if (!noct_make_string(rt, &ret_v, s, strlen(s) + 1))
+	if (!noct_make_string(rt, &ret_v, s))
 		return false;
 
 	free(s);

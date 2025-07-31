@@ -115,11 +115,11 @@ struct rt_env {
 	/* Stack. (Do not move this. JIT assumes its offset is 0.) */
 	struct rt_frame *frame;
 
-	/* VM. */
-	struct rt_vm *vm;
-
 	/* Execution line. (Do not move. JIT assumes the offset 8.) */
 	int line;
+
+	/* VM. */
+	struct rt_vm *vm;
 
 	/* Execution file. */
 	char file_name[1024];
@@ -259,7 +259,10 @@ bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 void rt_leave_frame(struct rt_env *env, struct rt_value *ret);
 
 /* Make a string value. */
-SYSVABI bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data, size_t len);
+SYSVABI bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data);
+
+/* Make a string value. */
+bool rt_make_string_binary(struct rt_env *env, struct rt_value *val, const char *data, size_t len);
 
 /* Make an empty array value. */
 SYSVABI bool rt_make_empty_array(struct rt_env *env, struct rt_value *val);

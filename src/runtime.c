@@ -768,13 +768,12 @@ bool
 rt_make_string(
 	struct rt_env *env,
 	struct rt_value *val,
-	const char *data,
-	size_t len)
+	const char *data)
 {
 	struct rt_string *rts;
 
 	/* Allocate a string. */
-	rts = rt_gc_alloc_string(env, len, data);
+	rts = rt_gc_alloc_string(env, strlen(data) + 1, data);
 	if (rts == NULL) {
 		rt_out_of_memory(env);
 		return false;
