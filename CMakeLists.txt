@@ -4,7 +4,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   project(NoctLang LANGUAGES C)
 endif()
 
-set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
+#set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
 
 #
 # Configuration
@@ -64,8 +64,6 @@ set(LIB_SOURCE
   src/jit-ppc32.c
   src/jit-mips64.c
   src/jit-mips32.c
-  src/cback.c
-  src/elback.c
 )
 
 if(ENABLE_I18N)
@@ -82,6 +80,8 @@ add_library(
   noctlang
   ${LIB_TYPE}
   ${LIB_SOURCE}
+  src/cback.c
+  src/elback.c
   ${I18N_SOURCE}
 )
 
@@ -134,8 +134,8 @@ set(CMAKE_C_FLAGS_DEBUG   "${CMAKE_C_FLAGS_RELEASE}   -O0 -g3 -UNDEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -O0 -g3 -UNDEBUG")
 
 # Release Configuration.
-set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -O2 -g0 -DNDEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -g0 -DNDEBUG")
+set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -Os -g0 -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Os -g0 -DNDEBUG")
 
 # Unicode options.
 if(WIN32)
