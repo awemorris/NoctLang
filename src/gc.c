@@ -84,10 +84,10 @@ static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size
 static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
 static void rt_gc_young_gc(struct rt_env *env);
 static bool rt_gc_copy_young_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
-static bool rt_gc_promote_object(struct rt_env *env, struct rt_gc_object *obj);
-static bool rt_gc_promote_string(struct rt_env *env, struct rt_gc_object *obj);
-static bool rt_gc_promote_array(struct rt_env *env, struct rt_gc_object *obj);
-static bool rt_gc_promote_dict(struct rt_env *env, struct rt_gc_object *obj);
+static struct rt_gc_object *rt_gc_promote_object(struct rt_env *env, struct rt_gc_object *obj);
+static struct rt_gc_object *rt_gc_promote_string(struct rt_env *env, struct rt_gc_object *obj);
+static struct rt_gc_object *rt_gc_promote_array(struct rt_env *env, struct rt_gc_object *obj);
+static struct rt_gc_object *rt_gc_promote_dict(struct rt_env *env, struct rt_gc_object *obj);
 struct rt_gc_object *rt_gc_copy_string_to_graduate(struct rt_env *env, struct rt_string *old_obj);
 struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_array *old_obj);
 struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
@@ -876,6 +876,14 @@ rt_gc_young_gc(
 		obj = obj->next;
 	}
 
+	/* Clear marks of the tenure objects. */
+	obj = env->vm->gc.tenure_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj->forward = NULL;
+		obj = obj->next;
+	}
+
 	/*
 	 * Mark and Copy objects.
 	 *  - Recursively visit root objects.
@@ -1032,10 +1040,15 @@ rt_gc_copy_young_object_recursively(
 	bool is_promoted;
 	int i;
 
-	/* If already copied, rewrite the reference by the forwarding pointer. */
+	/* If already processed. */
 	if ((*obj)->is_marked) {
-		assert((*obj)->forward != NULL);
-		*obj = (*obj)->forward;
+		/* And if this is a young object. */
+		if (IS_YOUNG_OBJ(*obj) && (*obj)->forward != NULL) {
+			/* Rewrite the reference. */
+			*obj = (*obj)->forward;
+		}
+
+		/* Skip. */
 		return true;
 	}
 
@@ -1061,15 +1074,27 @@ rt_gc_copy_young_object_recursively(
 				assert(NEVER_COME_HERE);
 				break;
 			}
+
+			/* Set the forwarding pointer. */
 			(*obj)->forward = new_obj;
+
+			/* Increment the promotion count. */
 			new_obj->promotion_count = (*obj)->promotion_count + 1;
 		} else {
 			/* Promote the object. */
-			if (!rt_gc_promote_object(env, *obj))
+			new_obj = rt_gc_promote_object(env, *obj);
+			if (new_obj == NULL)
 				return false;
+
 			is_promoted = true;
+
+			/* The forwarding pointer is set in rt_gc_promote_object(). */
 		}
+
+		/* Rewrite the reference. */
 		*obj = new_obj;
+
+		/* Mark as processed. */
 		(*obj)->is_marked = true;
 	}
 
@@ -1145,34 +1170,40 @@ rt_gc_copy_young_object_recursively(
 }
 
 /* Promotes an object. */
-static bool
+static struct rt_gc_object *
 rt_gc_promote_object(
 	struct rt_env *env,
 	struct rt_gc_object *obj)
 {
+	struct rt_gc_object *ret;
+
 	switch (obj->type) {
 	case RT_GC_TYPE_STRING:
-		if (!rt_gc_promote_string(env, obj))
-			return false;
+		ret = rt_gc_promote_string(env, obj);
+		if (ret == NULL)
+			return NULL;
 		break;
 	case RT_GC_TYPE_ARRAY:
-		if (!rt_gc_promote_array(env, obj))
-			return false;
+		ret = rt_gc_promote_array(env, obj);
+		if (ret == NULL)
+			return NULL;
 		break;
 	case RT_GC_TYPE_DICT:
-		if (!rt_gc_promote_dict(env, obj))
-			return false;
+		ret = rt_gc_promote_dict(env, obj);
+		if (ret == NULL)
+			return NULL;
 		break;
 	default:
 		assert(NEVER_COME_HERE);
+		ret = NULL;
 		break;
 	}
 
-	return true;
+	return ret;
 }
 
 /* Promotes a string object. */
-static bool
+static struct rt_gc_object *
 rt_gc_promote_string(
 	struct rt_env *env,
 	struct rt_gc_object *obj)
@@ -1185,13 +1216,14 @@ rt_gc_promote_string(
 	if (new_rts == NULL)
 		return false;
 
+	/* Set the forwarding pointer. */
 	obj->forward = &new_rts->head;
 
-	return true;
+	return &new_rts->head;
 }
 
 /* Promotes an array object. */
-static bool
+static struct rt_gc_object *
 rt_gc_promote_array(
 	struct rt_env *env,
 	struct rt_gc_object *obj)
@@ -1205,15 +1237,17 @@ rt_gc_promote_array(
 		return false;
 
 	/* Copy the table. */
+	new_arr->size = old_arr->size;
 	memcpy(new_arr->table, old_arr->table, old_arr->size * sizeof(struct rt_value));
 
+	/* Set the forwarding pointer. */
 	obj->forward = &new_arr->head;
 
-	return true;
+	return &new_arr->head;
 }
 
 /* Promotes a dictionary object. */
-static bool
+static struct rt_gc_object *
 rt_gc_promote_dict(
 	struct rt_env *env,
 	struct rt_gc_object *obj)
@@ -1229,6 +1263,7 @@ rt_gc_promote_dict(
 		return false;
 
 	/* Copy the keys. */
+	new_dict->size = old_dict->size;
 	for (i = 0; i < old_dict->size; i++) {
 		len = strlen(old_dict->key[i]);
 		new_dict->key[i] = tenure_alloc(env, len + 1);
@@ -1241,9 +1276,10 @@ rt_gc_promote_dict(
 	/* Copy the values. */
 	memcpy(new_dict->value, old_dict->value, old_dict->size * sizeof(struct rt_value));
 
+	/* Set the forwarding pointer. */
 	obj->forward = &new_dict->head;
 
-	return true;
+	return &new_dict->head;
 }
 
 /* Copies a string object to the graduate region. */
@@ -1291,6 +1327,7 @@ rt_gc_copy_array_to_graduate(
 		return NULL;
 
 	/* Copy the table. */
+	new_obj->size = old_obj->size;
 	memcpy(new_obj->table, old_obj->table, old_obj->size * sizeof(struct rt_value));
 
 	/* Check for cross-generation references. */
@@ -1345,6 +1382,7 @@ rt_gc_copy_dict_to_graduate(
 			retry = true;
 
 		/* Copy the keys. */
+		new_obj->size = old_obj->size;
 		if (new_obj->head.region == RT_GC_REGION_GRADUATE) {
 			for (i = 0; i < new_obj->size; i++) {
 				new_obj->key[i] = graduate_alloc(env, strlen(old_obj->key[i]) + 1);

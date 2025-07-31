@@ -215,6 +215,21 @@ static int command_run(int argc, char *argv[])
 		return 1;
 	}
 
+	/*
+	 * XXX: Testing
+	 */
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+
+	struct rt_value zero = NOCT_ZERO;
+	rt_set_global(env, "b", &zero);
+
+	rt_gc_level2_gc(env);
+
 	/* Destroy the runtime. */
 	if (!noct_destroy_vm(vm))
 		return 1;

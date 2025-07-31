@@ -126,6 +126,11 @@ enum noct_value_type {
 };
 
 /*
+ * Zero value.
+ */
+#define NOCT_ZERO	{0, 0}
+
+/*
  * NoctValue implementation.
  *  - If a value is zero-cleared, it shows an integer zero.
  *  - This struct has 8 bytes on 32-bit architecture and 16 bytes on 64-bit architecture.

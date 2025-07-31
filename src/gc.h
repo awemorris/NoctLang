@@ -53,7 +53,7 @@
  * Survivor Promotion Threshold - A graduate object that survived the
  * young GC beyond this value will be promoted to the tenure region.
  */
-#define RT_GC_PROMOTION_THRESHOLD	(5)
+#define RT_GC_PROMOTION_THRESHOLD	(2)
 
 /*
  * Regions.
