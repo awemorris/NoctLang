@@ -83,7 +83,7 @@ static struct rt_array *rt_gc_alloc_array_tenure(struct rt_env *env, size_t size
 static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
 static void rt_gc_young_gc(struct rt_env *env);
-static bool rt_gc_mark_and_copy_object(struct rt_env *env, struct rt_gc_object **obj);
+static bool rt_gc_copy_young_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
 static bool rt_gc_promote_object(struct rt_env *env, struct rt_gc_object *obj);
 static bool rt_gc_promote_string(struct rt_env *env, struct rt_gc_object *obj);
 static bool rt_gc_promote_array(struct rt_env *env, struct rt_gc_object *obj);
@@ -91,7 +91,8 @@ static bool rt_gc_promote_dict(struct rt_env *env, struct rt_gc_object *obj);
 struct rt_gc_object *rt_gc_copy_string_to_graduate(struct rt_env *env, struct rt_string *old_obj);
 struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_array *old_obj);
 struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
-static void rt_gc_free_object(struct rt_env *env, struct rt_gc_object *obj);
+static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object *obj);
+static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_run_gc(struct rt_env *env, int level);
 static void *nursery_alloc(struct rt_env *env, size_t size);
 static void *graduate_alloc(struct rt_env *env, size_t size);
@@ -886,7 +887,7 @@ rt_gc_young_gc(
 	global = env->vm->global;
 	while (global != NULL) {
 		if (IS_REF_VAL(&global->val)) {
-			if (!rt_gc_mark_and_copy_object(env, &global->val.val.obj))
+			if (!rt_gc_copy_young_object_recursively(env, &global->val.val.obj))
 				return;
 		}
 		global = global->next;
@@ -898,7 +899,7 @@ rt_gc_young_gc(
 		/* For all temporary variables in the frame. */
 		for (i = 0; i < frame->tmpvar_size; i++) {
 			if (IS_REF_VAL(&frame->tmpvar[i])) {
-				if (!rt_gc_mark_and_copy_object(env, &frame->tmpvar[i].val.obj))
+				if (!rt_gc_copy_young_object_recursively(env, &frame->tmpvar[i].val.obj))
 					return;
 			}
 		}
@@ -906,7 +907,7 @@ rt_gc_young_gc(
 		/* For all pinned C local variables in the frame. */
 		for (i = 0; i < frame->pinned_count; i++) {
 			if (IS_REF_VAL(frame->pinned[i])) {
-				if (!rt_gc_mark_and_copy_object(env, &(*frame->pinned[i]).val.obj))
+				if (!rt_gc_copy_young_object_recursively(env, &frame->pinned[i]->val.obj))
 					return;
 			}
 		}
@@ -917,7 +918,7 @@ rt_gc_young_gc(
 	/* For all pinned C global variables. */
 	for (i = 0; i < env->vm->pinned_count; i++) {
 		if (IS_REF_VAL(env->vm->pinned[i])) {
-			if (!rt_gc_mark_and_copy_object(env, &(*env->vm->pinned[i]).val.obj))
+			if (!rt_gc_copy_young_object_recursively(env, &env->vm->pinned[i]->val.obj))
 				return;
 		}
 	}
@@ -925,7 +926,7 @@ rt_gc_young_gc(
 	/* For all remember set objects. */
 	obj = env->vm->gc.remember_set;
 	while (obj != NULL) {
-		if (!rt_gc_mark_and_copy_object(env, &obj))
+		if (!rt_gc_copy_young_object_recursively(env, &obj))
 			return;
 		obj = obj->rem_next;
 	}
@@ -1021,7 +1022,7 @@ rt_gc_young_gc(
 
 /* Marks-and-copies objects recursively. */
 static bool
-rt_gc_mark_and_copy_object(
+rt_gc_copy_young_object_recursively(
 	struct rt_env *env,
 	struct rt_gc_object **obj)
 {
@@ -1043,7 +1044,7 @@ rt_gc_mark_and_copy_object(
 	if ((*obj)->region != RT_GC_REGION_TENURE) {
 		/* Check for the promotion. */
 		if ((*obj)->promotion_count < RT_GC_PROMOTION_THRESHOLD) {
-			/* Copy the object */
+			/* No promotion, just copy the object. */
 			switch ((*obj)->type) {
 			case RT_GC_TYPE_STRING:
 				new_obj = rt_gc_copy_string_to_graduate(env, (struct rt_string *)*obj);
@@ -1072,7 +1073,7 @@ rt_gc_mark_and_copy_object(
 		(*obj)->is_marked = true;
 	}
 
-	/* Recursively mark and copy. */
+	/* Recursively copy. */
 	switch ((*obj)->type) {
 	case RT_GC_TYPE_STRING:
 		break;
@@ -1080,7 +1081,7 @@ rt_gc_mark_and_copy_object(
 		arr = (struct rt_array *)*obj;
 		for (i = 0; i < arr->size; i++) {
 			if (IS_REF_VAL(&arr->table[i])) {
-				if (!rt_gc_mark_and_copy_object(env, &arr->table[i].val.obj))
+				if (!rt_gc_copy_young_object_recursively(env, &arr->table[i].val.obj))
 					return false;
 			}
 		}
@@ -1089,7 +1090,7 @@ rt_gc_mark_and_copy_object(
 		dict = (struct rt_dict *)*obj;
 		for (i = 0; i < dict->size; i++) {
 			if (IS_REF_VAL(&dict->value[i])) {
-				if (!rt_gc_mark_and_copy_object(env, &dict->value[i].val.obj))
+				if (!rt_gc_copy_young_object_recursively(env, &dict->value[i].val.obj))
 					return false;
 			}
 		}
@@ -1099,10 +1100,10 @@ rt_gc_mark_and_copy_object(
 		break;
 	}
 
-	/* Check for the remember set operation. */
+	/* When promoted, check for cross-generation references. */
 	if (is_promoted) {
 		if ((*obj)->type == RT_GC_TYPE_ARRAY) {
-			/* Check for cross-generation references. */
+			/* Check for array cross-generation references. */
 			arr = (struct rt_array *)*obj;
 			for (i = 0; i < arr->size; i++) {
 				/* If the element is young generation. */
@@ -1120,7 +1121,7 @@ rt_gc_mark_and_copy_object(
 				}
 			}
 		} else if ((*obj)->type == RT_GC_TYPE_DICT) {
-			/* Check for cross-generation references. */
+			/* Check for dictionary cross-generation references. */
 			dict = (struct rt_dict *)*obj;
 			for (i = 0; i < dict->size; i++) {
 				/* If the element is young generation. */
@@ -1403,18 +1404,114 @@ static void
 rt_gc_old_gc(
 	struct rt_env *env)
 {
-	/* TODO: implement. */
+	struct rt_gc_object *obj;
+	struct rt_bindglobal *global;
+	struct rt_frame *frame;
+	int i;
+
+	/*
+	 * Clear marks.
+	 */
+
+	/* Clear marks of the tenure objects. */
+	obj = env->vm->gc.tenure_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj = obj->next;
+	}
+
+	/*
+	 * Mark.
+	 */
+
+	/* For all global variables. */
+	global = env->vm->global;
+	while (global != NULL) {
+		if (IS_REF_VAL(&global->val))
+			rt_gc_mark_old_object_recursively(env, global->val.val.obj);
+		global = global->next;
+	}
+
+	/* For all call frames. */
+	frame = env->frame;
+	while (frame != NULL) {
+		/* For all temporary variables in the frame. */
+		for (i = 0; i < frame->tmpvar_size; i++) {
+			if (IS_REF_VAL(&frame->tmpvar[i]))
+				rt_gc_mark_old_object_recursively(env, frame->tmpvar[i].val.obj);
+		}
+
+		/* For all pinned C local variables in the frame. */
+		for (i = 0; i < frame->pinned_count; i++) {
+			if (IS_REF_VAL(frame->pinned[i]))
+				rt_gc_mark_old_object_recursively(env, frame->pinned[i]->val.obj);
+		}
+
+		frame = frame->next;
+	}
+
+	/* For all pinned C global variables. */
+	for (i = 0; i < env->vm->pinned_count; i++) {
+		if (IS_REF_VAL(env->vm->pinned[i]))
+			rt_gc_mark_old_object_recursively(env, env->vm->pinned[i]->val.obj);
+	}
+
+	/*
+	 * Sweep.
+	 */
+
+	/* For all tenure objects. */
+	obj = env->vm->gc.tenure_list;
+	while (obj != NULL) {
+		if (!obj->is_marked)
+			rt_gc_free_old_object(env, obj);
+		obj = obj->next;
+	}
 }
 
-/* Free a string, array, or dictionary object. */
+/* Mark object recursively for the old GC. */
 static void
-rt_gc_free_object(
+rt_gc_mark_old_object_recursively(
 	struct rt_env *env,
 	struct rt_gc_object *obj)
 {
 	int i;
 
-	UNUSED_PARAMETER(env);
+	/* If the object is a tenure object. */
+	if (obj->region == RT_GC_REGION_TENURE) {
+		/* If already marked, just return. */
+		if (obj->is_marked)
+			return;
+
+		/* Mark. */
+		obj->is_marked = true;
+	}
+
+	/* Mark recursively. */
+	if (obj->type == RT_GC_TYPE_ARRAY) {
+		struct rt_array *arr = (struct rt_array *)obj;
+		for (i = 0; i < arr->size; i++) {
+			if (IS_REF_VAL(&arr->table[i]))
+				rt_gc_mark_old_object_recursively(env, arr->table[i].val.obj);
+		}
+	} else if (obj->type == RT_GC_TYPE_DICT) {
+		struct rt_dict *dict = (struct rt_dict *)obj;
+		for (i = 0; i < dict->size; i++) {
+			if (IS_REF_VAL(&dict->value[i]))
+				rt_gc_mark_old_object_recursively(env, dict->value[i].val.obj);
+		}
+	}
+}
+
+/* Free a string, array, or dictionary object. */
+static void
+rt_gc_free_old_object(
+	struct rt_env *env,
+	struct rt_gc_object *obj)
+{
+	int i;
+
+	assert(obj->region == RT_GC_REGION_TENURE);
 
 	/*
 	 * Nursery and graduate objects are allocated by arena
@@ -1423,6 +1520,14 @@ rt_gc_free_object(
 	if (obj->region != RT_GC_REGION_TENURE)
 		return;
 
+	/* Unlink from the tenure list. */
+	UNLINK_FROM_LIST(obj, env->vm->gc.tenure_list, prev, next);
+
+	/* Unlink from the remember set. */
+	if (obj->rem_flg)
+		UNLINK_FROM_LIST(obj, env->vm->gc.remember_set, rem_prev, rem_next);
+
+	/* Free. */
 	if (obj->type == RT_GC_TYPE_STRING) {
 		struct rt_string *str;
 		str = (struct rt_string *)obj;
