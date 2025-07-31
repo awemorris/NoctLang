@@ -67,7 +67,10 @@ set(LIB_SOURCE
 )
 
 if(ENABLE_I18N)
-  set(I18N_SOURCE src/translation.c)
+  set(I18N_SOURCE
+    src/i18n.c
+    src/translation.c
+  )
 endif()
 
 if(ENABLE_SHARED)
@@ -76,12 +79,14 @@ else()
   set(LIB_TYPE STATIC)
 endif()
 
+#
+# Library
+#
+
 add_library(
   noctlang
   ${LIB_TYPE}
   ${LIB_SOURCE}
-  src/cback.c
-  src/elback.c
   ${I18N_SOURCE}
 )
 
@@ -92,6 +97,8 @@ add_library(
 add_executable(
   noct
   src/cli.c
+  src/cback.c
+  src/elback.c
 )
 
 target_link_libraries(noct PRIVATE noctlang)
@@ -134,8 +141,8 @@ set(CMAKE_C_FLAGS_DEBUG   "${CMAKE_C_FLAGS_RELEASE}   -O0 -g3 -UNDEBUG")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -O0 -g3 -UNDEBUG")
 
 # Release Configuration.
-set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -Os -g0 -DNDEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Os -g0 -DNDEBUG")
+set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -Oz -g0 -flto -ffunction-sections -fdata-sections -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Oz -g0 -flto -ffunction-sections -fdata-sections -Wl,--gc-sections -DNDEBUG")
 
 # Unicode options.
 if(WIN32)
