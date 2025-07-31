@@ -1404,7 +1404,7 @@ static void
 rt_gc_old_gc(
 	struct rt_env *env)
 {
-	struct rt_gc_object *obj;
+	struct rt_gc_object *obj, *next_obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
 	int i;
@@ -1463,9 +1463,10 @@ rt_gc_old_gc(
 	/* For all tenure objects. */
 	obj = env->vm->gc.tenure_list;
 	while (obj != NULL) {
+		next_obj = obj->next;
 		if (!obj->is_marked)
 			rt_gc_free_old_object(env, obj);
-		obj = obj->next;
+		obj = next_obj;
 	}
 }
 
