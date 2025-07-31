@@ -186,6 +186,8 @@ struct rt_dict {
  * Function object.
  */
 struct rt_func {
+	struct rt_gc_object head;
+
 	char *name;
 	int param_count;
 	char *param_name[NOCT_ARG_MAX];

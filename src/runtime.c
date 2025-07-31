@@ -707,6 +707,12 @@ rt_call(
 	/* Succeeded. */
 	rt_leave_frame(env, ret);
 
+	/*
+	 * XXX: Testing
+	 */
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+
 	return true;
 }
 

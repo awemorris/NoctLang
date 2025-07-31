@@ -71,6 +71,7 @@ enum rt_gc_object_type {
 	RT_GC_TYPE_STRING,
 	RT_GC_TYPE_ARRAY,
 	RT_GC_TYPE_DICT,
+	RT_GC_TYPE_FUNC,
 };
 
 /*
@@ -106,7 +107,7 @@ struct rt_gc_info {
 	/* Linked list of objects in the tenure generation. */
 	struct rt_gc_object *tenure_list;
 
-	/* Linked list of the remember set. (see struct rt_gc_remember_set) */
+	/* Linked list of the remember set. */
 	struct rt_gc_object *remember_set;
 };
 
@@ -149,24 +150,6 @@ struct rt_gc_object {
 
 	/* Forwarding pointer. */
 	struct rt_gc_object *forward;
-};
-
-/*
- * Node structure for the GC remember set.
- *
- * Each node tracks an array or dictionary object in the tenure generation
- * that holds references to young-generation objects (nursery or graduate).
- * The list is maintained as a non-intrusive doubly-linked list.
- */
-struct rt_gc_remember_set {
-	/* Tenure-generation array or dictionary object tracked by this node. */
-	struct rt_gc_object *obj;
-
-        /* Previous node in the remember set list. */
-	struct rt_gc_remember_set *prev;
-
-	/* Next node in the remember set list. */
-	struct rt_gc_remember_set *next;
 };
 
 /*
