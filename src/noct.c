@@ -87,7 +87,7 @@ noct_register_cfunc(
 	bool (*cfunc)(NoctEnv *env),
 	NoctFunc **ret_func)
 {
-	assert(vm != NULL);
+	assert(env != NULL);
 	assert(name != NULL);
 	assert(param_count >= 0);
 	assert(cfunc != NULL);
@@ -105,7 +105,7 @@ noct_create_thread_env(
 	NoctEnv **env)
 {
 	assert(vm != NULL);
-	assert(env != NUL);
+	assert(env != NULL);
 
 	if (!rt_create_thread_env(vm, env))
 		return false;
@@ -140,7 +140,6 @@ noct_get_error_file(
 {
 	assert(env != NULL);
 	assert(msg != NULL);
-	assert(len > 0);
 
 	*msg = rt_get_error_file(env);
 
@@ -169,7 +168,6 @@ noct_get_error_message(
 {
 	assert(env != NULL);
 	assert(msg != NULL);
-	assert(size > 0);
 
 	*msg = rt_get_error_message(env);
 
@@ -407,7 +405,6 @@ noct_get_string(
 
 	assert(env != NULL);
 	assert(val != NULL);
-	assert(len != NULL);
 
 	/* Get the value type. */
 	type = val->type;
@@ -1161,7 +1158,8 @@ noct_get_array_elem_check_string(
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
-	assert(f != NULL);
+	assert(val != NULL);
+	assert(data != NULL);
 
 	/* Get the element. */
 	if (!noct_get_array_elem(env, array, index, val))
@@ -1306,7 +1304,7 @@ noct_set_array_elem_make_float(
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
-	assert(backing_val != NULL);
+	assert(val != NULL);
 
 	/* Make an integer value. */
 	val->type = NOCT_VALUE_FLOAT;
@@ -1332,7 +1330,8 @@ noct_set_array_elem_make_string(
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
-	assert(backing_val != NULL);
+	assert(val != NULL);
+	assert(data != NULL);
 
 	/* Make an integer value. */
 	if (!rt_make_string(env, val, data, len))
@@ -1423,8 +1422,8 @@ noct_get_dict_elem_check_string(
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
-	assert(s != NULL);
-	assert(backing_val != NULL);
+	assert(val != NULL);
+	assert(data != NULL);
 
 	/* Get the element. */
 	if (!noct_get_dict_elem(env, dict, key, val))
@@ -1541,7 +1540,6 @@ noct_set_dict_elem_make_int(
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
-	assert(i != NULL);
 	assert(val != NULL);
 
 	/* Make an integer value. */
@@ -1567,7 +1565,6 @@ noct_set_dict_elem_make_float(
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
-	assert(i != NULL);
 	assert(val != NULL);
 
 	/* Make a float value. */
@@ -1594,8 +1591,8 @@ noct_set_dict_elem_make_string(
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
-	assert(s != NULL);
 	assert(val != NULL);
+	assert(data != NULL);
 
 	/* Make a string value. */
 	if (!rt_make_string(env, val, data, len))
@@ -1621,8 +1618,7 @@ noct_get_arg_check_int(
 	int *i)
 {
 	assert(env != NULL);
-	assert(dict != NULL);
-	assert(key != NULL);
+	assert(index >= 0);
 	assert(val != NULL);
 	assert(i != NULL);
 
@@ -1683,7 +1679,6 @@ noct_get_arg_check_string(
 	assert(index >= 0);
 	assert(val != NULL);
 	assert(data != NULL);
-	assert(len != NULL);
 
 	/* Get the argument. */
 	if (!noct_get_arg(env, index, val))
@@ -1759,7 +1754,7 @@ noct_get_arg_func(
 	NoctFunc **f)
 {
 	assert(env != NULL);
-	assert(key != NULL);
+	assert(index >= 0);
 	assert(val != NULL);
 	assert(f != NULL);
 

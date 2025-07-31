@@ -112,11 +112,11 @@ struct rt_vm {
  * Runtime environment.
  */
 struct rt_env {
+	/* Stack. (Do not move this. JIT assumes its offset is 0.) */
+	struct rt_frame *frame;
+
 	/* VM. */
 	struct rt_vm *vm;
-
-	/* Stack. (Do not move. JIT assumes the offset 0.) */
-	struct rt_frame *frame;
 
 	/* Execution line. (Do not move. JIT assumes the offset 8.) */
 	int line;

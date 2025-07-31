@@ -22,17 +22,27 @@
 #include <stdarg.h>
 #include <assert.h>
 
-/* Link an element to a list. */
+/*
+ * False Assertion
+ */
+#define NEVER_COME_HERE		0
+#define PINNED_VAR_NOT_FOUND	0
+
+/*
+ *Link an element to a list.
+ */
 #define INSERT_TO_LIST(elem, list, prev, next)				\
 	do { 								\
 		(elem)->prev = NULL;					\
 		(elem)->next = (list);					\
-		if ((list) == NULL)					\
+		if ((list) != NULL)					\
 			(list)->prev = (elem);				\
 		(list) = (elem);					\
 	} while (0)
 
-/* Unlink an element from a list. */
+/*
+ * Unlink an element from a list.
+ */
 #define UNLINK_FROM_LIST(elem, list, prev, next)			\
 	do {								\
 		if ((elem)->prev != NULL) {				\
@@ -48,16 +58,24 @@
 		(elem)->next = NULL;					\
 	} while (0)
 
-/* Check if a value is a reference type. */
+/*
+ * Check if a value is a reference type.
+ */
 #define IS_REF_VAL(v)			((v)->type >= NOCT_VALUE_STRING)
 
-/* Check if an object is in the nursery or graduate region. */
+/*
+ * Check if an object is in the nursery or graduate region.
+ */
 #define IS_YOUNG_OBJ(o)			((o)->region < RT_GC_REGION_TENURE)
 
-/* Convert an allocation retry count (3,2,1) to an GC level (0, 1, 2). */
+/*
+ * Convert an allocation retry count (3,2,1) to an GC level (0, 1, 2).
+ */
 #define RETRY_COUNT_TO_GC_LEVEL(rc)	(3 - rc)
 
-/* Forward declaration. */
+/*
+ * Forward declaration.
+ */
 static struct rt_string *rt_gc_alloc_string_graduate(struct rt_env *env, size_t len, const char *data);
 static struct rt_string *rt_gc_alloc_string_tenure(struct rt_env *env, size_t len, const char *data);
 static struct rt_array *rt_gc_alloc_array_graduate(struct rt_env *env, size_t size);

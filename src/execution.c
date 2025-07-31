@@ -1240,7 +1240,7 @@ rt_loaddot_helper(
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = env->frame->tmpvar[dict].val.str->len;
+			env->frame->tmpvar[dst].val.i = strlen(env->frame->tmpvar[dict].val.str->data);
 			return true;
 		}
 	}

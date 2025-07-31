@@ -609,7 +609,7 @@ rt_register_cfunc(
 	env->vm->global = global;
 
 	if (ret_func != NULL)
-	*ret_func = func;
+		*ret_func = func;
 
 	return true;
 }
@@ -854,7 +854,7 @@ rt_get_array_elem(
 	int type;
 
 	assert(env != NULL);
-	assert(array != NULL);
+	assert(arr != NULL);
 	assert(index >= 0);
 	assert(index < arr->size);
 	assert(val != NULL);
@@ -875,7 +875,7 @@ rt_set_array_elem(
 	NoctValue *val)
 {
 	assert(env != NULL);
-	assert(array != NULL);
+	assert(arr != NULL);
 	assert(index >= 0);
 	assert(val != NULL);
 
@@ -940,8 +940,7 @@ rt_expand_array(
 	struct rt_array *old_arr, *new_arr;
 	int i;
 
-	assert(rt != NULL);
-	assert(array->type == NOCT_VALUE_ARRAY);
+	assert(env != NULL);
 
 	old_arr = *arr;
 
@@ -1069,7 +1068,7 @@ rt_expand_dict(
 	struct rt_dict *old_dict, *new_dict;
 	int i;
 
-	assert(rt != NULL);
+	assert(env != NULL);
 	assert(dict != NULL);
 
 	old_dict = *dict;
