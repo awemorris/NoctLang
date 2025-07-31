@@ -104,7 +104,7 @@ struct rt_vm {
 	struct rt_env *env_list;
 
 	/* Pinned C global variables. */
-	struct rt_variable *pinned[RT_PIN_MAX];
+	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
 	int pinned_count;
 };
 
@@ -142,7 +142,7 @@ struct rt_frame {
 	struct rt_func *func;
 
 	/* Pinned C local variables. */
-	struct rt_variable *pinned[RT_PIN_MAX];
+	struct rt_value *pinned[RT_LOCAL_PIN_MAX];
 	int pinned_count;
 
 	/* Next frame. */
@@ -217,10 +217,13 @@ struct rt_bindglobal {
 };
 
 /* Create a runtime environment. */
-bool rt_create_vm(struct rt_vm **vm, struct rt_env **env);
+bool rt_create_vm(struct rt_vm **vm, struct rt_env **default_env);
 
 /* Destroy a runtime environment. */
 bool rt_destroy_vm(struct rt_vm *vm);
+
+/* Create an environment for the current thread. */
+bool rt_create_thread_env(NoctVM *vm, NoctEnv **env);
 
 /* Get an error message. */
 const char *rt_get_error_message(struct rt_env *env);
@@ -255,14 +258,8 @@ bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 /* Leave the current calling frame. */
 void rt_leave_frame(struct rt_env *env, struct rt_value *ret);
 
-/* Make an integer value. */
-void rt_make_int(struct rt_env *env, struct rt_value *val, int i);
-
-/* Make an floating-point value. */
-void rt_make_float(struct rt_env *env, struct rt_value *val, float f);
-
 /* Make a string value. */
-SYSVABI bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *s);
+SYSVABI bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data, size_t len);
 
 /* Make an empty array value. */
 SYSVABI bool rt_make_empty_array(struct rt_env *env, struct rt_value *val);
@@ -270,62 +267,29 @@ SYSVABI bool rt_make_empty_array(struct rt_env *env, struct rt_value *val);
 /* Make an empty dictionary value. */
 SYSVABI bool rt_make_empty_dict(struct rt_env *env, struct rt_value *val);
 
-/* Get a value type. */
-bool rt_get_value_type(struct rt_env *env, struct rt_value *val, int *type);
+/* Retrieves an array element. */
+bool rt_get_array_elem(struct rt_env *env, struct rt_array *array, int index, struct rt_value *val);
 
-/* Get an integer value. */
-bool rt_get_int(struct rt_env *env, struct rt_value *val, int *ret);
+/* Stores an value to an array. */
+bool rt_set_array_elem(struct rt_env *env, struct rt_array *arr, int index, struct rt_value *val);
 
-/* Get a floating-point value. */
-bool rt_get_float(struct rt_env *env, struct rt_value *val, float *ret);
+/* Resizes an array. */
+bool rt_resize_array(struct rt_env *env, struct rt_array *arr, int size);
 
-/* Get a string value. */
-bool rt_get_string(struct rt_env *env, struct rt_value *val, const char **ret);
+/* Checks if a key exists in a dictionary. */
+bool rt_check_dict_key(struct rt_env *env, struct rt_dict *dict, const char *key, bool *ret);
 
-/* Get a function value. */
-bool rt_get_func(struct rt_env *env, struct rt_value *val, struct rt_func **ret);
+/* Retrieves the value by a key in a dictionary. */
+bool rt_get_dict_elem(struct rt_env *env, struct rt_dict *dict, const char *key, struct rt_value *val);
 
-/* Get an array size. */
-bool rt_get_array_size(struct rt_env *env, struct rt_value *array, int *size);
-
-/* Get an array element. */
-bool rt_get_array_elem(struct rt_env *env, struct rt_value *array, int index, struct rt_value *val);
-
-/* Set an array element. */
-bool rt_set_array_elem(struct rt_env *env, struct rt_value *array, int index, struct rt_value *val);
-
-/* Resize an array. */
-bool rt_resize_array(struct rt_env *env, struct rt_value *array, int size);
-
-/* Get a dictionary size. */
-bool rt_get_dict_size(struct rt_env *env, struct rt_value *dict, int *size);
-
-/* Get a dictionary value by an index. */
-bool rt_get_dict_value_by_index(struct rt_env *env, struct rt_value *dict, int index, struct rt_value *val);
-
-/* Get a dictionary key by an index. */
-bool rt_get_dict_key_by_index(struct rt_env *env, struct rt_value *dict, int index, const char **key);
-
-/* Get a dictionary element. */
-bool rt_get_dict_elem(struct rt_env *env, struct rt_value *dict, const char *key, struct rt_value *val);
-
-/* Set a dictionary element. */
-bool rt_set_dict_elem(struct rt_env *env, struct rt_value *dict, const char *key, struct rt_value *val);
-
-/* Remove a dictionary element. */
-bool rt_remove_dict_elem(struct rt_env *rt, struct rt_value *dict, const char *key);
-
-/* Make a shallow copy of a dictionary. */
-bool rt_make_dict_copy(struct rt_env *rt, struct rt_value *dst, struct rt_value *src);
-
-/* Get a call argument. */
-bool rt_get_arg(struct rt_env *env, int index, struct rt_value *val);
-
-/* Set a return value. */
-bool rt_set_return(struct rt_env *env, struct rt_value *val);
+/* Stores a key-value-pair to a dictionary. */
+bool rt_set_dict_elem(struct rt_env *env, struct rt_dict *dict, const char *key, struct rt_value *val);
 
 /* Get a global variable. */
 bool rt_get_global(struct rt_env *env, const char *name, struct rt_value *val);
+
+/* Find a global variable. */
+bool rt_find_global(struct rt_env *env, const char *name, struct rt_bindglobal **global);
 
 /* Set a global variable. */
 bool rt_set_global(struct rt_env *env, const char *name, struct rt_value *val);
@@ -334,10 +298,16 @@ bool rt_set_global(struct rt_env *env, const char *name, struct rt_value *val);
 bool rt_add_global(struct rt_env *env, const char *name, struct rt_bindglobal **global);
 
 /* Pin a C global variable. */
-bool rt_declare_c_global(struct rt_env *env, struct rt_value *val);
+bool rt_pin_global(struct rt_env *env, struct rt_value *val);
+
+/* Pin a C global variable. */
+bool rt_unpin_global(struct rt_env *env, struct rt_value *val);
 
 /* Pin a C local variable. */
-bool rt_declare_c_local(struct rt_env *env, struct rt_value *val);
+bool rt_pin_local(struct rt_env *env, struct rt_value *val);
+
+/* Retrieves the approximate memory usage, in bytes. */
+bool rt_get_heap_usage(struct rt_env *env, size_t *ret);
 
 /* Output an error message.*/
 void rt_error(struct rt_env *env, const char *msg, ...);

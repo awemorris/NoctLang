@@ -29,6 +29,7 @@
 /* False assertion */
 #define NOT_IMPLEMENTED		0
 #define NEVER_COME_HERE		0
+#define PINNED_VAR_NOT_FOUND	0
 
 /*
  * Config
@@ -38,12 +39,13 @@ int noct_conf_optimize = 0;
 bool noct_conf_repl_mode = 0;
 
 /* Forward declarations. */
+static void rt_free_env(struct rt_env *env);
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, uint32_t size, int *pos, char *file_name);
 static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos);
-static bool rt_expand_array(struct rt_env *rt, struct rt_value *array, size_t size);
-static bool rt_expand_dict(struct rt_env *rt, struct rt_value *dict, size_t size);
+static bool rt_expand_array(struct rt_env *env, struct rt_array **arr, size_t size);
+static bool rt_expand_dict(struct rt_env *env, struct rt_dict **dict, size_t size);
 static bool rt_get_return(struct rt_env *rt, struct rt_value *val);
 
 /*
@@ -52,40 +54,42 @@ static bool rt_get_return(struct rt_env *rt, struct rt_value *val);
 bool
 rt_create_vm(
 	struct rt_vm **vm,
-	struct rt_env **env)
+	struct rt_env **default_env)
 {
 	/* Allocate a struct rt_vm. */
 	*vm = malloc(sizeof(struct rt_vm));
 	if (*vm == NULL) {
-		*env = NULL;
+		*default_env = NULL;
 		return false;
 	}
 	memset(*vm, 0, sizeof(struct rt_vm));
 
 	/* Allocate a struct rt_env. */
-	*env = malloc(sizeof(struct rt_env));
-	if (*env == NULL) {
+	*default_env = malloc(sizeof(struct rt_env));
+	if (*default_env == NULL) {
 		free(*vm);
 		*vm = NULL;
 		return false;
 	}
-	memset(*env, 0, sizeof(struct rt_env));
-	(*env)->vm = *vm;
-	(*vm)->env_list = *env;
+	memset(*default_env, 0, sizeof(struct rt_env));
+	(*default_env)->vm = *vm;
+	(*vm)->env_list = *default_env;
 
 	/* Initialize the garbage collector. */
 	if (!rt_gc_init(*vm)) {
-		free(env);
+		free(*default_env);
+		free(*vm);
 		return false;
 	}
 
 	/* Register the intrinsics. */
-	if (!rt_register_intrinsics(env)) {
-		free(env);
+	if (!rt_register_intrinsics(*default_env)) {
+		rt_gc_cleanup(*vm);
+		free(*default_env);
+		free(*vm);
 		return false;
 	}
 
-	*rt = env;
 	return true;
 }
 
@@ -104,7 +108,7 @@ rt_destroy_vm(
 	env = vm->env_list;
 	while (env != NULL) {
 		next_env = env->next;
-		rt_free_env(env, NULL);
+		rt_free_env(env);
 		env = next_env;
 	}
 
@@ -160,6 +164,18 @@ rt_free_func(
 		jit_free(env, func);
 		func->jit_code = NULL;
 	}
+}
+
+/*
+ * Create an environment for the current thread.
+ */
+bool
+rt_create_thread_env(
+	struct rt_vm *vm,
+	struct rt_env **env)
+{
+	/* TODO: */
+	return false;
 }
 
 /*
@@ -318,8 +334,8 @@ rt_register_lir(
 	}
 	global->val.type = NOCT_VALUE_FUNC;
 	global->val.val.func = func;
-	global->next = env->global;
-	env->global = global;
+	global->next = env->vm->global;
+	env->vm->global = global;
 
 	/* Do JIT compilation */
 	if (noct_conf_use_jit) {
@@ -404,7 +420,7 @@ rt_register_bytecode(
 /* Register a function from bytecode file data. */
 static bool
 rt_register_bytecode_function(
-	struct rt_env *rt,
+	struct rt_env *env,
 	uint8_t *data,
 	uint32_t size,
 	int *pos,
@@ -589,8 +605,8 @@ rt_register_cfunc(
 	}
 	global->val.type = NOCT_VALUE_FUNC;
 	global->val.val.func = func;
-	global->next = env->global;
-	env->global = global;
+	global->next = env->vm->global;
+	env->vm->global = global;
 
 	if (ret_func != NULL)
 	*ret_func = func;
@@ -735,9 +751,6 @@ rt_leave_frame(
 {
 	struct rt_frame *frame;
 
-	/* Move objects in the shallow list to the garbage lists. */
-	rt_gc_move_shallow_to_garbage_list(env);
-
 	/* Unlink the frame from the list. */
 	frame = env->frame;
 	env->frame = env->frame->next;
@@ -759,7 +772,6 @@ rt_make_string(
 	size_t len)
 {
 	struct rt_string *rts;
-	size_t len;
 
 	/* Allocate a string. */
 	rts = rt_gc_alloc_string(env, len, data);
@@ -829,29 +841,119 @@ rt_make_empty_dict(
 	return true;
 }
 
-/* Expand an array. */
+/*
+ * Retrieves an array element.
+ */
 bool
+rt_get_array_elem(
+	struct rt_env *env,
+	struct rt_array *arr,
+	int index,
+	struct rt_value *val)
+{
+	int type;
+
+	assert(env != NULL);
+	assert(array != NULL);
+	assert(index >= 0);
+	assert(index < arr->size);
+	assert(val != NULL);
+
+	*val = arr->table[index];
+
+	return true;
+}
+
+/*
+ * Stores an value to an array.
+ */
+bool
+rt_set_array_elem(
+	struct rt_env *env,
+	struct rt_array *arr,
+	int index,
+	NoctValue *val)
+{
+	assert(env != NULL);
+	assert(array != NULL);
+	assert(index >= 0);
+	assert(val != NULL);
+
+	/*
+	 * Expand the array if needed.
+	 * Note that array->val.arr may be replaced.
+	 */
+	if (!rt_expand_array(env, &arr, index + 1))
+		return false;
+	if (arr->size < index + 1)
+		arr->size = index + 1;
+
+	/* Store. */
+	arr->table[index] = *val;
+
+	/* GC: Write barrier for the remember set. */
+	if (val->type == NOCT_VALUE_STRING ||
+	    val->type == NOCT_VALUE_ARRAY ||
+	    val->type == NOCT_VALUE_DICT)
+		rt_gc_array_write_barrier(env, arr, index, val);
+
+	return true;
+}
+
+/*
+ * Resizes an array.
+ */
+bool
+rt_resize_array(
+	struct rt_env *env,
+	struct rt_array *arr,
+	int size)
+{
+	assert(env != NULL);
+	assert(arr != NULL);
+
+	if (size > arr->size) {
+		/* Expand the array size if needed. */
+		if (!rt_expand_array(env, &arr, size))
+			return false;
+
+		/* Set the element count. */
+		arr->size = size;
+	} else {
+		/* Remove (zero-fill) the reminder. */
+		memset(&arr->table[size], 0, sizeof(struct rt_value) * (size_t)(arr->size - size - 1));
+
+		/* Set the element count. */
+		arr->size = size;
+	}
+
+	return true;
+}
+
+/* Expand an array. */
+static bool
 rt_expand_array(
 	struct rt_env *env,
-	struct rt_value *array,
+	struct rt_array **arr,
 	size_t size)
 {
 	struct rt_array *old_arr, *new_arr;
+	int i;
 
 	assert(rt != NULL);
 	assert(array->type == NOCT_VALUE_ARRAY);
 
-	old_arr = array->val.arr;
+	old_arr = *arr;
 
 	/* Expand the table. */
-	if (arr->alloc_size < size) {
+	if (old_arr->alloc_size < size) {
 		size_t old_size;
 
-		old_size = arr->alloc_size;
+		old_size = old_arr->alloc_size;
 
 		/* Get the next size. */
-		if (size < arr->alloc_size * 2)
-			size = arr->alloc_size * 2;
+		if (size < old_size * 2)
+			size = old_size * 2;
 		else
 			size = size * 2;
 
@@ -865,73 +967,148 @@ rt_expand_array(
 		/* Copy the values with write barrier. */
 		for (i = 0; i < (int)old_arr->size; i++) {
 			/* Copy. */
-			new_arr->table[i] = old_arr->table[index];
+			new_arr->table[i] = old_arr->table[i];
 
 			/* Write barrier. */
-			rt_gc_array_write_barrier(env, new_arr, i, new_arr->table[i]);
+			rt_gc_array_write_barrier(env, new_arr, i, &new_arr->table[i]);
 		}
 
 		/* The older array reference is unlinked here. */
-		array->val.arr = new_arr;
+		*arr = new_arr;
 	}
 
 	return true;
 }
 
 /*
- * Expand an array.
+ * Retrieves the value by a key in a dictionary.
  */
 bool
+rt_get_dict_elem(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	const char *key,
+	struct rt_value *val)
+{
+	int i;
+
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(key != NULL);
+	assert(val != NULL);
+	
+	/* Search the key. */
+	for (i = 0; i < dict->size; i++) {
+		if (strcmp(dict->key[i], key) == 0) {
+			/* Succeede. */
+			*val = dict->value[i];
+			return true;
+		}
+	}
+
+	/* Failed. */
+	rt_error(env, _("Dictionary key \"%s\" not found."), key);
+	return false;
+}
+
+/*
+ * Stores a key-value-pair to a dictionary.
+ */
+bool
+rt_set_dict_elem(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	const char *key,
+	struct rt_value *val)
+{
+	int i;
+	size_t len;
+
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(key != NULL);
+	assert(val != NULL);
+	
+	/* Search for the key. */
+	for (i = 0; i < dict->size; i++) {
+		if (strcmp(dict->key[i], key) == 0) {
+			dict->value[i] = *val;
+			return true;
+		}
+	}
+
+	/* Expand the size. */
+	if (!rt_expand_dict(env, &dict, dict->size + 1))
+		return false;
+
+	/* Append the key. */
+	dict->key[dict->size] = rt_gc_alloc_dict_key(env, dict, key);
+	if (dict->key[dict->size] == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	dict->value[dict->size] = *val;
+	dict->size++;
+
+	/* GC: Write barrier for the remember set. */
+	if (val->type == NOCT_VALUE_STRING ||
+	    val->type == NOCT_VALUE_ARRAY ||
+	    val->type == NOCT_VALUE_DICT)
+		rt_gc_dict_write_barrier(env, dict, i, val);
+
+	return true;
+}
+
+/* Expand an array. */
+static bool
 rt_expand_dict(
-	struct rt_env *rt,
-	struct rt_value *dict,
+	struct rt_env *env,
+	struct rt_dict **dict,
 	size_t size)
 {
-	struct rt_dict *d;
-	char **new_key;
-	struct rt_value *new_value;
+	struct rt_dict *old_dict, *new_dict;
+	int i;
 
 	assert(rt != NULL);
-	assert(dict->type == NOCT_VALUE_DICT);
+	assert(dict != NULL);
 
-	d = dict->val.dict;
+	old_dict = *dict;
 
-	/* Expand the table. */
-	if (d->alloc_size < size) {
-		size_t orig_size;
+	/* Expand the tables. */
+	if (old_dict->alloc_size < size) {
+		size_t old_size;
 
-		orig_size = d->alloc_size;
+		old_size = old_dict->alloc_size;
 
-		/* Get a next size. */
-		if (size < d->alloc_size * 2)
-			size = d->alloc_size * 2;
+		/* Get the next size. */
+		if (size < old_size * 2)
+			size = old_size * 2;
 		else
 			size = size * 2;
 
-		/* Realloc the key table. */
-		new_key = malloc(sizeof(const char *) * (size_t)size);
-		if (new_key == NULL) {
+		/* Allocate the new array. */
+		new_dict = rt_gc_alloc_dict(env, size);
+		if (new_dict == NULL) {
 			rt_out_of_memory(env);
 			return false;
 		}
-		memcpy(new_key, d->key, sizeof(const char *) * (size_t)d->alloc_size);
-		free(d->key);
-		d->key = new_key;
 
-		/* Realloc the value table. */
-		new_value = malloc(sizeof(struct rt_value) * (size_t)size);
-		if (new_value == NULL) {
-			rt_out_of_memory(env);
-			return false;
+		/* Copy the values with write barrier. */
+		for (i = 0; i < (int)old_dict->size; i++) {
+			/* Copy the key. */
+			new_dict->key[i] = rt_gc_alloc_dict_key(env, new_dict, old_dict->key[i]);
+			if (new_dict->key[i] == NULL)
+				return false;
+
+			/* Copy the value. */
+			new_dict->value[i] = old_dict->value[i];
+
+			/* Write barrier. */
+			rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->value[i]);
 		}
-		memcpy(new_value, d->value, sizeof(struct rt_value) * (size_t)d->alloc_size);
-		free(d->value);
-		d->value = new_value;
 
-		d->alloc_size = size;
-
-		/* GC: Increment the heap size. */
-		rt_gc_increment_heap_usage_by_array_expand(env, size - orig_size);
+		/* The older array reference is unlinked here. */
+		*dict = new_dict;
 	}
 
 	return true;
@@ -940,7 +1117,7 @@ rt_expand_dict(
 /* Get a return value. */
 static bool
 rt_get_return(
-	struct rt_env *rt,
+	struct rt_env *env,
 	struct rt_value *val)
 {
 	int ret_index;
@@ -961,7 +1138,7 @@ rt_get_global(
 {
 	struct rt_bindglobal *global;
 
-	global = env->global;
+	global = env->vm->global;
 	while (global != NULL) {
 		if (strcmp(global->name, name) == 0)
 			break;
@@ -986,7 +1163,7 @@ rt_find_global(
 {
 	struct rt_bindglobal *g;
 
-	g = env->global;
+	g = env->vm->global;
 	while (g != NULL) {
 		if (strcmp(g->name, name) == 0) {
 			*global = g;
@@ -1010,9 +1187,6 @@ rt_set_global(
 	struct rt_value *val)
 {
 	struct rt_bindglobal *global;
-
-	/* Move to the young list. */
-	rt_gc_move_shallow_to_young_list(env, val);
 
 	/* Find a bindglobal. */
 	if (!rt_find_global(env, name, &global)) {
@@ -1052,8 +1226,8 @@ rt_add_global(
 	g->val.type = NOCT_VALUE_INT;
 	g->val.val.i = 0;
 
-	g->next = env->global;
-	env->global = g;
+	g->next = env->vm->global;
+	env->vm->global = g;
 
 	*global = g;
 
@@ -1061,22 +1235,35 @@ rt_add_global(
 }
 
 /*
- * Pin a C global variable.
+ * Pins a C global variable.
  */
 bool
-rt_declare_c_global(
+rt_pin_global(
 	struct rt_env *env,
 	struct rt_value *val)
 {
 	assert(env != NULL);
 	assert(val != NULL);
 
-	if (env->vm->pinned_count == RT_PIN_MAX) {
-		rt_error(env, _("Too many pinned global variables."));
+	if (!rt_gc_pin_global(env, val))
 		return false;
-	}
 
-	env->vm->pinned[env->vm->pinned_count++] = val;
+	return true;
+}
+
+/*
+ * Unpins a C global variable.
+ */
+bool
+rt_unpin_global(
+	struct rt_env *env,
+	struct rt_value *val)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+
+	if (!rt_gc_unpin_global(env, val))
+		return false;
 
 	return true;
 }
@@ -1085,19 +1272,29 @@ rt_declare_c_global(
  * Pin a C local variable.
  */
 bool
-rt_declare_c_local(
+rt_pin_local(
 	struct rt_env *env,
 	struct rt_value *val)
 {
 	assert(env != NULL);
 	assert(val != NULL);
 
-	if (env->pinned_count == RT_PIN_MAX) {
-		rt_error(env, _("Too many pinned local variables."));
+	if (!rt_gc_pin_local(env, val))
 		return false;
-	}
 
-	env->pinned[env->pinned_count++] = val;
+	return true;
+}
+
+/*
+ * Retrieves the approximate memory usage, in bytes.
+ */
+bool
+rt_get_heap_usage(
+	struct rt_env *env,
+	size_t *ret)
+{
+	if (!rt_gc_get_heap_usage(env, ret))
+		return false;
 
 	return true;
 }

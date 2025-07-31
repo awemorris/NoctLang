@@ -11,13 +11,15 @@
 #include <noct/noct.h>
 #include "runtime.h"
 
-static char text_buf[65536];
+#include <stdio.h>
+#include <stdarg.h>
+#include <assert.h>
 
 NOCT_DLL
 bool
 noct_create_vm(
 	NoctVM **vm,
-	NoctEnv *default_env)
+	NoctEnv **default_env)
 {
 	assert(vm != NULL);
 	assert(default_env != NULL);
@@ -44,15 +46,15 @@ noct_destroy_vm(
 NOCT_DLL
 bool
 noct_register_source(
-	NoctVM *vm,
+	NoctEnv *env,
 	const char *file_name,
 	const char *source_text)
 {
-	assert(vm != NULL);
+	assert(env != NULL);
 	assert(file_name != NULL);
 	assert(source_text != NULL);
 
-	if (!rt_register_source(vm, file_name, source_text))
+	if (!rt_register_source(env, file_name, source_text))
 		return false;
 
 	return true;
@@ -61,15 +63,15 @@ noct_register_source(
 NOCT_DLL
 bool
 noct_register_bytecode(
-	NoctVM *vm,
+	NoctEnv *env,
 	uint8_t *data,
 	size_t size)
 {
-	assert(vm != NULL);
+	assert(env != NULL);
 	assert(size > 0);
 	assert(data != NULL);
 
-	if (!rt_register_bytecode(vm, size, data))
+	if (!rt_register_bytecode(env, size, data))
 		return false;
 
 	return true;
@@ -78,7 +80,7 @@ noct_register_bytecode(
 NOCT_DLL
 bool
 noct_register_cfunc(
-	NoctVM *vm,
+	NoctEnv *env,
 	const char *name,
 	int param_count,
 	const char *param_name[],
@@ -90,7 +92,7 @@ noct_register_cfunc(
 	assert(param_count >= 0);
 	assert(cfunc != NULL);
 
-	if (!rt_register_cfunc(vm, name, param_count, param_name, cfunc, ret_func))
+	if (!rt_register_cfunc(env, name, param_count, param_name, cfunc, ret_func))
 		return false;
 
 	return true;
@@ -124,7 +126,7 @@ noct_enter_vm(
 	assert(func_name != NULL);
 	assert(arg_count >= 0);
 
-	if (!rt_enter_vm(env, func_name, arg_count, arg, ret))
+	if (!rt_call_with_name(env, func_name, arg_count, arg, ret))
 		return false;
 
 	return true;
@@ -134,16 +136,13 @@ NOCT_DLL
 bool
 noct_get_error_file(
 	NoctEnv *env,
-	const char *msg,
-	size_t len)
+	const char **msg)
 {
 	assert(env != NULL);
 	assert(msg != NULL);
 	assert(len > 0);
 
-	strncpy(msg,
-		rt_get_error_file(env, msg),
-		len);
+	*msg = rt_get_error_file(env);
 
 	return true;
 }
@@ -166,16 +165,13 @@ NOCT_DLL
 bool
 noct_get_error_message(
 	NoctEnv *env,
-	const char *msg,
-	size_t size)
+	const char **msg)
 {
 	assert(env != NULL);
 	assert(msg != NULL);
 	assert(size > 0);
 
-	strncpy(msg,
-		rt_get_error_message(env),
-		size);
+	*msg = rt_get_error_message(env);
 
 	return true;
 }
@@ -210,8 +206,7 @@ noct_assign(
 	assert(dst != NULL);
 	assert(src != NULL);
 
-	if (!rt_assign(env, dst, src))
-		return false;
+	*dst = *src;
 
 	return true;
 }
@@ -259,6 +254,9 @@ noct_make_string(
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(data != NULL);
+
+	if (len == (size_t)-1)
+		len = strlen(data) + 1;
 
 	if (!rt_make_string(env, val, data, len))
 		return false;
@@ -330,7 +328,7 @@ noct_get_int(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_INT) {
-		noct_error(rt, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -358,7 +356,7 @@ noct_get_float(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_FLOAT) {
-		noct_error(rt, _("Value is not a float."));
+		rt_error(env, _("Value is not a float."));
 		return false;
 	}
 
@@ -386,7 +384,7 @@ noct_get_string_len(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_STRING) {
-		noct_error(rt, _("Value is not a string."));
+		rt_error(env, _("Value is not a string."));
 		return false;
 	}
 
@@ -401,8 +399,7 @@ bool
 noct_get_string(
 	NoctEnv *env,
 	NoctValue *val,
-	char *s,
-	size_t len)
+	const char **s)
 {
 	int type;
 	size_t src_len;
@@ -417,19 +414,12 @@ noct_get_string(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_STRING) {
-		noct_error(rt, _("Value is not a string."));
+		rt_error(env, _("Value is not a string."));
 		return false;
 	}
 
-	/* Determine the size to copy. */
-	src_len = val->val.str->len;
-	if (len < src_len)
-		copy_len = len;
-	else
-		copy_len = src_len;
-
-	/* Copy. */
-	memcpy(s, val->val.str->s, copy_len);
+	/* Get the pointer. */
+	*s = val->val.str->data;
 
 	return true;
 }
@@ -452,7 +442,7 @@ noct_get_func(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_FUNC) {
-		noct_error(rt, _("Value is not a function."));
+		rt_error(env, _("Value is not a function."));
 		return false;
 	}
 
@@ -480,7 +470,7 @@ noct_get_array_size(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_ARRAY) {
-		noct_error(rt, _("Value is not an array."));
+		rt_error(env, _("Value is not an array."));
 		return false;
 	}
 
@@ -510,13 +500,13 @@ noct_get_array_elem(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_ARRAY) {
-		noct_error(rt, _("Value is not an array."));
+		rt_error(env, _("Value is not an array."));
 		return false;
 	}
 
 	/* Check the array boundary. */
 	if (index < 0 || index >= array->val.arr->size) {
-		noct_error(env, _("Array index %d is out-of-range."), index);
+		rt_error(env, _("Array index %d is out-of-range."), index);
 		return false;
 	}
 	
@@ -539,23 +529,15 @@ noct_set_array_elem(
 	assert(index >= 0);
 	assert(val != NULL);
 
-	/* Check the value type. */
+	/* Check the type. */
 	if (array->type != NOCT_VALUE_ARRAY) {
-		noct_error(env, _("Not an array."));
+		rt_error(env, _("Not an array."));
 		return false;
 	}
 
-	/*
-	 * Expand the array if needed.
-	 * Note that array->val.arr may be replaced.
-	 */
-	if (!rt_expand_array(env, array, index + 1))
+	/* Set a value. */
+	if (!rt_set_array_elem(env, array->val.arr, index, val))
 		return false;
-	if (array->val.arr->size < index + 1)
-		array->val.arr->size = index + 1;
-
-	/* Store. */
-	array->val.arr->table[index] = *val;
 
 	return true;
 }
@@ -564,7 +546,7 @@ NOCT_DLL
 bool
 noct_resize_array(
 	NoctEnv *env,
-	NoctValue *arr,
+	NoctValue *array,
 	int size)
 {
 	struct rt_array *arr;
@@ -572,22 +554,15 @@ noct_resize_array(
 	assert(env != NULL);
 	assert(arr != NULL);
 
-	arr = array->val.arr;
-
-	if (size > arr->size) {
-		/* Expand the array size if needed. */
-		if (!rt_expand_array(env, array, size))
-			return false;
-
-		/* Set the element count. */
-		arr->size = size;
-	} else {
-		/* Remove (zero-fill) the reminder. */
-		memset(&arr->table[size], 0, sizeof(struct rt_value) * (size_t)(arr->size - size - 1));
-
-		/* Set the element count. */
-		arr->size = size;
+	/* Check the type. */
+	if (array->type != NOCT_VALUE_ARRAY) {
+		rt_error(env, _("Not an array."));
+		return false;
 	}
+
+	/* Resize. */
+	if (!rt_resize_array(env, array->val.arr, size))
+		return false;
 
 	return true;
 }
@@ -599,7 +574,7 @@ noct_make_array_copy(
 	NoctValue *dst,
 	NoctValue *src)
 {
-	struct rt_array *new_arr;
+	struct rt_array *arr;
 	int i;
 
 	assert(env != NULL);
@@ -607,28 +582,28 @@ noct_make_array_copy(
 	assert(src != NULL);
 
 	/* Check the type. */
-	if (src->val.type != NOCT_VALUE_ARRAY) {
-		noct_error(env, _("Not an array."));
+	if (src->type != NOCT_VALUE_ARRAY) {
+		rt_error(env, _("Not an array."));
 		return false;
 	}
 
 	/* Allocate an array. */
-	new_arr = rt_gc_alloc_array(env, src->val.arr->size);
-	if (new_arr == NULL)
+	arr = rt_gc_alloc_array(env, src->val.arr->size);
+	if (arr == NULL)
 		return false;
 
 	/* Copy the array with write-barrier. */
 	for (i = 0; i < (int)src->val.arr->size; i++) {
 		/* Copy. */
-		new_arr->table[i] = src->val.arr->table[index];
+		arr->table[i] = src->val.arr->table[i];
 
 		/* Write barrier. */
-		rt_gc_array_write_barrier(env, new_arr, i, new_arr->table[i]);
+		rt_gc_array_write_barrier(env, arr, i, &arr->table[i]);
 	}
 
 	/* Setup the value. */
 	dst->type = NOCT_VALUE_ARRAY;
-	dst->val.arr = new_arr;
+	dst->val.arr = arr;
 
 	return true;
 }
@@ -677,12 +652,12 @@ noct_get_dict_key_by_index(
 
 	/* Check the boundary. */
 	if (index < 0 || index >= dict->val.dict->size) {
-		noct_error(env, _("Dictionary index %d is out-of-range."), index);
+		rt_error(env, _("Dictionary index %d is out-of-range."), index);
 		return false;
 	}
 
 	/* Load. */
-	*val = dict->val.dict->key[index];
+	*key = dict->val.dict->key[index];
 
 	return true;
 }
@@ -708,7 +683,7 @@ noct_get_dict_value_by_index(
 
 	/* Check the boundary. */
 	if (index < 0 || index >= dict->val.dict->size) {
-		noct_error(env, _("Dictionary index %d is out-of-range."), index);
+		rt_error(env, _("Dictionary index %d is out-of-range."), index);
 		return false;
 	}
 
@@ -743,12 +718,14 @@ noct_check_dict_key(
 	for (i = 0; i < dict->val.dict->size; i++) {
 		if (strcmp(dict->val.dict->key[i], key) == 0) {
 			/* Found. */
+			*ret = true;
 			return true;
 		}
 	}
 
 	/* Not found. */
-	return false;
+	*ret = false;
+	return true;
 }
 
 NOCT_DLL
@@ -759,6 +736,8 @@ noct_get_dict_elem(
 	const char *key,
 	NoctValue *val)
 {
+	int i;
+
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
@@ -770,18 +749,11 @@ noct_get_dict_elem(
 		return false;
 	}
 
-	/* Search the key. */
-	for (i = 0; i < dict->val.dict->size; i++) {
-		if (strcmp(dict->val.dict->key[i], key) == 0) {
-			/* Succeede. */
-			*val = dict->val.dict->value[i];
-			return true;
-		}
-	}
+	/* Get. */
+	if (!rt_get_dict_elem(env, dict->val.dict, key, val))
+		return false;
 
-	/* Failed. */
-	rt_error(env, _("Dictionary key \"%s\" not found."), key);
-	return false;
+	return true;
 }
 
 NOCT_DLL
@@ -806,32 +778,9 @@ noct_set_dict_elem(
 		return false;
 	}
 
-	/* Search for the key. */
-	for (i = 0; i < dict->val.dict->size; i++) {
-		if (strcmp(dict->val.dict->key[i], key) == 0) {
-			dict->val.dict->value[i] = *val;
-			return true;
-		}
-	}
-
-	/*
-	 * Expand the size.
-	 * Note that dict->val.dict may change.
-	 */
-	if (!rt_expand_dict(env, dict, dict->val.dict->size + 1))
+	/* Set a value. */
+	if (!rt_set_dict_elem(env, dict->val.dict, key, val))
 		return false;
-
-	/* Append the key. */
-	dict->val.dict->key[dict->val.dict->size] = rt_gc_alloc_dict_key(env, dict->val.dict, key);
-	if (dict->val.dict->key[dict->val.dict->size] == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-	dict->val.dict->value[dict->val.dict->size] = *val;
-	dict->val.dict->size++;
-
-	/* Write-barrier. */
-	rt_gc_dict_write_barrier(env, dict->val.dict, i, val);
 
 	return true;
 }
@@ -843,6 +792,9 @@ noct_remove_dict_elem(
 	NoctValue *dict,
 	const char *key)
 {
+	struct rt_dict *d;
+	int i;
+
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
@@ -854,24 +806,29 @@ noct_remove_dict_elem(
 	}
 
 	/* Search for the key. */
-	for (i = 0; i < dict->val.dict->size; i++) {
-		if (strcmp(dict->val.dict->key[i], key) == 0) {
+	d = dict->val.dict;
+	for (i = 0; i < d->size; i++) {
+		if (strcmp(d->key[i], key) == 0) {
 			/* Remove the key and value. */
-			rt_gc_free_dict_key(env, dict->val.dict->key[i]);
-			memmove(&dict->val.dict->key[i],
-				&dict->val.dict->key[i + 1],
-				sizeof(const char *) * (size_t)(dict->val.dict->size - i - 1));
-			memmove(&dict->val.dict->value[i],
-				&dict->val.dict->value[i + 1],
-				sizeof(struct rt_value) * (size_t)(dict->val.dict->size - i - 1));
-			dict->val.dict->key[dict->val.dict->size - 1] = NULL;
-			dict->val.dict->value[dict->val.dict->size - 1] = NULL;
-			dict->val.dict->size--;
+			rt_gc_free_dict_key(env, d, d->key[i]);
+			memmove(&d->key[i],
+				&d->key[i + 1],
+				sizeof(const char *) * (size_t)(d->size - i - 1));
+			memmove(&d->value[i],
+				&d->value[i + 1],
+				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
+			d->key[d->size - 1] = NULL;
+			d->value[d->size - 1].type = NOCT_VALUE_INT;
+			d->value[d->size - 1].val.i = 0;
+			d->size--;
+
+			/* Succeeded. */
 			return true;
 		}
 	}
 
-	noct_error(env, _("Dictionary key \"%s\" not found."), key);
+	/* Failed. */
+	rt_error(env, _("Dictionary key \"%s\" not found."), key);
 	return false;
 }
 
@@ -882,40 +839,41 @@ noct_make_dict_copy(
 	NoctValue *dst,
 	NoctValue *src)
 {
-	struct rt_dict *new_dict;
+	struct rt_dict *d;
+	int i;
 
 	assert(env != NULL);
 	assert(src != NULL);
 	assert(dst != NULL);
 
 	/* Check the type. */
-	if (dict->type != NOCT_VALUE_DICT) {
+	if (src->type != NOCT_VALUE_DICT) {
 		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 
 	/* Make a dictionary */
-	new_dict = rt_gc_alloc_dict(env, src->val.dict->size);
-	if (new_dict == NULL)
+	d = rt_gc_alloc_dict(env, src->val.dict->size);
+	if (d == NULL)
 		return false;
 
 	/* Copy the array with write-barrier. */
-	for (i = 0; i < (int)src->val.arr->size; i++) {
+	for (i = 0; i < (int)src->val.dict->size; i++) {
 		/* Copy the key. */
-		new_dict->key[i] = rt_gc_alloc_dict_key(env, new_dict, src->val.dict->key[i]);
-		if (new_dict->key[i] == NULL)
+		d->key[i] = rt_gc_alloc_dict_key(env, d, src->val.dict->key[i]);
+		if (d->key[i] == NULL)
 			return false;
 
 		/* Copy the value. */
-		new_dict->value[i] = src->val.dict->value[index];
+		d->value[i] = src->val.dict->value[i];
 
 		/* Write barrier. */
-		rt_gc_dict_write_barrier(env, new_dict, i, new_dict->value[i]);
+		rt_gc_dict_write_barrier(env, d, i, &d->value[i]);
 	}
 
 	/* Setup the value. */
 	dst->type = NOCT_VALUE_DICT;
-	dst->val.dict = new_dict;
+	dst->val.dict = d;
 
 	return true;
 }
@@ -961,10 +919,8 @@ noct_get_global(
 	assert(name != NULL);
 	assert(val != NULL);
 
-	if (!rt_get_global(env, name, val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!rt_get_global(env, name, val))
 		return false;
-	}
 
 	return true;
 }
@@ -980,80 +936,81 @@ noct_set_global(
 	assert(name != NULL);
 	assert(val != NULL);
 
-	if (!rt_set_global(env, name, val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!rt_set_global(env, name, val))
 		return false;
-	}
-
-	return true;
-}
-
-NOCT_DLL
-void
-noct_declare_c_global(
-	NoctEnv *env,
-	int count,
-	...)
-{
-	int i;
-	va_list ap;
-
-	assert(env != NULL);
-	assert(count > 0);
-
-	va_start(ap, count);
-	for (i = 0; i < count; i++) {
-		if (!rt_declare_c_global(env, val))
-			return false;
-	}
-	va_end(ap);
-
-	return true;
-}
-
-NOCT_DLL
-void
-noct_declare_local(
-	NoctEnv *env,
-	int count,
-	...)
-{
-	int i;
-	va_list ap;
-
-	assert(env != NULL);
-	assert(count > 0);
-
-	va_start(ap, count);
-	for (i = 0; i < count; i++) {
-		if (!rt_declare_c_local(env, val))
-			return false;
-	}
-	va_end(ap);
 
 	return true;
 }
 
 NOCT_DLL
 bool
+noct_pin_global(
+	NoctEnv *env,
+	NoctValue *val)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+
+	if (!rt_pin_global(env, val))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_unpin_global(
+	NoctEnv *env,
+	struct rt_value *val)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+
+	if (!rt_unpin_global(env, val))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_pin_local(
+	NoctEnv *env,
+	int count,
+	...)
+{
+	va_list ap;
+	int i;
+	struct rt_value *val;
+
+	assert(env != NULL);
+	assert(count > 0);
+
+	va_start(ap, count);
+	for (i = 0; i < count; i++) {
+		val = va_arg(ap, struct rt_value *);
+		if (!rt_pin_local(env, val))
+			return false;
+	}
+	va_end(ap);
+
+	return true;
+}
+
+NOCT_DLL
+void
 noct_fast_gc(
 	NoctEnv *env)
 {
-	if (!rt_gc_level1_gc(env))
-		return false;
-
-	return true;
+	rt_gc_level1_gc(env);
 }
 
 NOCT_DLL
-bool
+void
 noct_full_gc(
 	NoctEnv *env)
 {
-	if (!rt_gc_full_gc(env))
-		return false;
-
-	return true;
+	rt_gc_level3_gc(env);
 }
 
 NOCT_DLL
@@ -1062,7 +1019,7 @@ noct_get_heap_usage(
 	NoctEnv *env,
 	size_t *ret)
 {
-	if (!rt_gc_get_heap_usage(env, ret))
+	if (!rt_get_heap_usage(env, ret))
 		return false;
 
 	return true;
@@ -1076,10 +1033,13 @@ noct_error(
 	...)
 {
 	va_list ap;
+	char tmp[1024];
 
 	va_start(ap, msg);
-	rt_error_va(env, msg, ap);
+	vsnprintf(tmp, sizeof(tmp), msg, ap);
 	va_end(ap);
+
+	rt_error(env, "%s", tmp);
 }
 
 /*
@@ -1099,48 +1059,21 @@ noct_make_string_format(
 	...)
 {
 	va_list ap;
+	char tmp[1024];
 
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(s != NULL);
 
 	va_start(ap, s);
-	vsnprintf(text_buf, sizeof(text_buf), s, ap);
+	vsnprintf(tmp, sizeof(tmp), s, ap);
 	va_end(ap);
 
-	if (!rt_make_string(env, val, text_buf))
+	if (!rt_make_string(env, val, tmp, strlen(tmp) + 1))
 		return false;
 
 	return true;
 }
-
-NOCT_DLL
-bool
-noct_get_string_dup(
-	NoctEnv *env,
-	NoctValue *val,
-	char **s)
-{
-}
-	int type;
-
-	assert(env != NULL);
-	assert(val != NULL);
-	assert(len != NULL);
-
-	/* Get the value type. */
-	type = val->type;
-
-	/* Check the type. */
-	if (type != NOCT_VALUE_STRING) {
-		noct_error(rt, _("Value is not a string."));
-		return false;
-	}
-
-	/* Copy. */
-*s = strdup(val->val.str->s);
-
-	return true;
 
 /*
  * Array Getters
@@ -1163,20 +1096,19 @@ noct_get_array_elem_check_int(
 	assert(i != NULL);
 
 	/* Get the element. */
-	if (!noct_get_array_elem(env, array, index, var))
+	if (!noct_get_array_elem(env, array, index, val))
 		return false;
 
 	/* Check the element value type. */
-	if (!noct_get_value_type(env, var, &type))
+	if (!noct_get_value_type(env, val, &type))
 		return false;
 	if (type != NOCT_VALUE_INT) {
-		noct_error(rt, _("Element %d is not an integer."), index);
+		rt_error(env, _("Element %d is not an integer."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_int(env, tmp, i))
-		return false;
+	*i = val->val.i;
 
 	return true;
 }
@@ -1202,29 +1134,27 @@ noct_get_array_elem_check_float(
 		return false;
 
 	/* Check the element value type. */
-	if (!noct_get_value_type(env, var, &type))
-		return false
+	if (!noct_get_value_type(env, val, &type))
+		return false;
 	if (type != NOCT_VALUE_FLOAT) {
-		noct_error(rt, _("Element %d is not a float."), index);
+		rt_error(env, _("Element %d is not a float."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_float(env, tmp, f))
-		return false;
+	*f = val->val.f;
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_array_elem_string(
+noct_get_array_elem_check_string(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	NoctVal *val,
-	size_t len,
-	const char **s)
+	NoctValue *val,
+	const char **data)
 {
 	int type;
 
@@ -1234,77 +1164,45 @@ noct_get_array_elem_string(
 	assert(f != NULL);
 
 	/* Get the element. */
-	if (!noct_get_array_elem(env, array, index, var))
+	if (!noct_get_array_elem(env, array, index, val))
 		return false;
 
 	/* Check the element value type. */
-	if (!noct_get_value_type(env, var, &type))
-		return false
+	if (!noct_get_value_type(env, val, &type))
+		return false;
 	if (type != NOCT_VALUE_FLOAT) {
-		noct_error(rt, _("Element %d is not a float."), index);
+		rt_error(env, _("Element %d is not a float."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_float(env, tmp, f))
-		return false;
-
-	return true;
-}
-
-	/* Get the element. */
-	if (!rt_get_array_elem(env, array, index, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	/* Check the element value type. */
-	if (backing_val->type != NOCT_VALUE_STRING) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a string."), index);
-		return false;
-	}
-
-	/* Get the value. */
-	if (!rt_get_string(env, backing_val, s)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*data = val->val.str->data;
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_array_elem_array(
+noct_get_array_elem_check_array(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	NoctVal *val)
+	NoctValue *val)
 {
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
 	assert(val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the element. */
-	if (!rt_get_array_elem(env, array, index, &val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_array_elem(env, array, index, val))
 		return false;
-	}
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_ARRAY) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not an array."), index);
+		rt_error(env, _("Element %d is not an array."), index);
 		return false;
 	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
@@ -1322,62 +1220,45 @@ noct_get_array_elem_dict(
 	assert(index >= 0);
 	assert(val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the element. */
-	if (!rt_get_array_elem(env, array, index, &val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_array_elem(env, array, index, val))
 		return false;
-	}
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_ARRAY) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a dictionary."), index);
+		rt_error(env, _("Element %d is not a dictionary."), index);
 		return false;
 	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_array_elem_func(
+noct_get_array_elem_check_func(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	NoctFunc **f,
-	NoctValue *backing_val)
+	NoctValue *val,
+	NoctFunc **f)
 {
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
 	assert(val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the element. */
-	if (!rt_get_array_elem(env, array, index, &val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_array_elem(env, array, index, val))
 		return false;
-	}
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_FUNC) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a function."), index);
+		rt_error(env, _("Element %d is not a function."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_func(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*f = val->val.func;
 
 	return true;
 }
@@ -1388,10 +1269,11 @@ noct_get_array_elem_func(
 
 NOCT_DLL
 bool
-noct_set_array_elem_int(
+noct_set_array_elem_make_int(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
+	NoctValue *val,
 	int i)
 {
 	struct rt_value *tmp;
@@ -1399,58 +1281,40 @@ noct_set_array_elem_int(
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
-
-	tmp = RT_TLS_TMP(env);		
+	assert(val != NULL);
 
 	/* Make an integer value. */
-	if (!rt_make_int(env, tmp, i)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
+	val->type = NOCT_VALUE_INT;
+	val->val.i = i;
 
 	/* Get the element. */
-	if (!rt_set_array_elem(env, array, index, tmp)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_array_elem(env, array, index, val))
 		return false;
-	}
 
-	RT_GC_LEAVE_VALUE_GUARD();
-	
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_set_array_elem_float(
+noct_set_array_elem_make_float(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	float f,
-	NoctValue *backing_val)
+	NoctValue *val,
+	float f)
 {
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
 	assert(backing_val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Make an integer value. */
-	if (!rt_make_float(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
+	val->type = NOCT_VALUE_FLOAT;
+	val->val.f = f;
 
 	/* Get the element. */
-	if (!rt_set_array_elem(env, array, index, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_array_elem(env, array, index, val))
 		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 	
 	return true;
 }
@@ -1462,7 +1326,8 @@ noct_set_array_elem_make_string(
 	NoctValue *array,
 	int index,
 	NoctValue *val,
-	const char *s)
+	const char *data,
+	size_t len)
 {
 	assert(env != NULL);
 	assert(array != NULL);
@@ -1470,7 +1335,7 @@ noct_set_array_elem_make_string(
 	assert(backing_val != NULL);
 
 	/* Make an integer value. */
-	if (!noct_make_string(env, val, s))
+	if (!rt_make_string(env, val, data, len))
 		return false;
 
 	/* Get the element. */
@@ -1486,94 +1351,74 @@ noct_set_array_elem_make_string(
 
 NOCT_DLL
 bool
-noct_get_dict_elem_int(
+noct_get_dict_elem_check_int(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	int *i,
-	NoctValue *backing_val)
+	NoctValue *val,
+	int *i)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(i != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Get the element. */
-	if (!rt_get_dict_elem(env, dict, key, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_dict_elem(env, dict, key, val))
 		return false;
-	}
 
 	/* Check the element value type. */
-	if (backing_val->type != NOCT_VALUE_INT) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not an integer."), index);
+	if (val->type != NOCT_VALUE_INT) {
+		rt_error(env, _("Element %d is not an integer."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_int(env, backing_val, i)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*i = val->val.i;
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_dict_elem_float(
+noct_get_dict_elem_check_float(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	float *f,
-	NoctValue *backing_val)
+	NoctValue *val,
+	float *f)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(f != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Get the element. */
-	if (!rt_get_dict_elem(env, dict, key, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_dict_elem(env, dict, key, val))
 		return false;
-	}
 
 	/* Check the element value type. */
-	if (backing_val->type != NOCT_VALUE_FLOAT) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a float."), index);
+	if (val->type != NOCT_VALUE_FLOAT) {
+		rt_error(env, _("Element %d is not a float."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_float(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*f = val->val.f;
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_dict_elem_string(
+noct_get_dict_elem_check_string(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	const char **s,
-	NoctValue *backing_val)
+	NoctValue *val,
+	const char **data)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1581,35 +1426,25 @@ noct_get_dict_elem_string(
 	assert(s != NULL);
 	assert(backing_val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the element. */
-	if (!rt_get_dict_elem(env, dict, key, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_dict_elem(env, dict, key, val))
 		return false;
-	}
 
 	/* Check the element value type. */
-	if (backing_val->type != NOCT_VALUE_STRING) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a string."), index);
+	if (val->type != NOCT_VALUE_STRING) {
+		rt_error(env, _("Element %d is not a string."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_string(env, backing_val, s)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*data = val->val.str->data;
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_dict_elem_array(
+noct_get_dict_elem_check_array(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
@@ -1620,29 +1455,22 @@ noct_get_dict_elem_array(
 	assert(key != NULL);
 	assert(val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the element. */
-	if (!rt_get_dict_elem(env, dict, key, val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_dict_elem(env, dict, key, val))
 		return false;
-	}
 
 	/* Check the element value type. */
-	if (backing_val->type != NOCT_VALUE_ARRAY) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not an array."), index);
+	if (val->type != NOCT_VALUE_ARRAY) {
+		rt_error(env, _("Element %d is not an array."), index);
 		return false;
 	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_dict_elem_dict(
+noct_get_dict_elem_check_dict(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
@@ -1653,63 +1481,46 @@ noct_get_dict_elem_dict(
 	assert(key != NULL);
 	assert(val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the element. */
-	if (!rt_get_dict_elem(env, dict, key, val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_dict_elem(env, dict, key, val))
 		return false;
-	}
 
 	/* Check the element value type. */
-	if (backing_val->type != NOCT_VALUE_DICT) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a dictionary."), index);
+	if (val->type != NOCT_VALUE_DICT) {
+		rt_error(env, _("Element %d is not a dictionary."), index);
 		return false;
 	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_dict_elem_func(
+noct_get_dict_elem_check_func(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	NoctFunc **f,
-	NoctValue *backing_val)
+	NoctValue *val,
+	NoctFunc **f)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(f != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Get the element. */
-	if (!rt_get_dict_elem(env, dict, key, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_dict_elem(env, dict, key, val))
 		return false;
-	}
 
 	/* Check the element value type. */
-	if (backing_val->type != NOCT_VALUE_FUNC) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a function."), index);
+	if (val->type != NOCT_VALUE_FUNC) {
+		rt_error(env, _("Element %d is not a function."), index);
 		return false;
 	}
 
 	/* Get the value. */
-	if (!rt_get_func(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*f = val->val.func;
 
 	return true;
 }
@@ -1720,102 +1531,79 @@ noct_get_dict_elem_func(
 
 NOCT_DLL
 bool
-noct_set_dict_elem_int(
+noct_set_dict_elem_make_int(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	int i,
-	NoctValue *backing_val)
+	NoctValue *val,
+	int i)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(i != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Make an integer value. */
-	if (!rt_make_int(env, backing_val, i)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
+	val->type = NOCT_VALUE_INT;
+	val->val.i = i;
 
 	/* Set the key-value pair. */
-	if (!rt_set_dict_elem(env, dict, key, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_dict_elem(env, dict, key, val))
 		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_set_dict_elem_float(
+noct_set_dict_elem_make_float(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	float f,
-	NoctValue *backing_val)
+	NoctValue *val,
+	float f)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(i != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Make a float value. */
-	if (!rt_make_float(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
+	val->type = NOCT_VALUE_FLOAT;
+	val->val.f = f;
 
 	/* Set the key-value pair. */
-	if (!rt_set_dict_elem(env, dict, key, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_dict_elem(env, dict, key, val))
 		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_set_dict_elem_string(
+noct_set_dict_elem_make_string(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	const char *s,
-	NoctValue *backing_val)
+	NoctValue *val,
+	const char *data,
+	size_t len)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(s != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Make a string value. */
-	if (!rt_make_string(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!rt_make_string(env, val, data, len))
 		return false;
-	}
 
 	/* Set the key-value pair. */
-	if (!rt_set_dict_elem(env, dict, key, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_dict_elem(env, dict, key, val))
 		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
@@ -1826,40 +1614,30 @@ noct_set_dict_elem_string(
 
 NOCT_DLL
 bool
-noct_get_arg_int(
+noct_get_arg_check_int(
 	NoctEnv *env,
 	int index,
-	int *i,
-	NoctValue *backing_val)
+	NoctValue *val,
+	int *i)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
+	assert(val != NULL);
 	assert(i != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
 
 	/* Get the argument. */
-	if (!rt_get_arg(env, index, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_arg(env, index, val))
 		return false;
-	}
 
 	/* Check the value type. */
-	if (backing_val->type != NOCT_VALUE_INT) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not an integer."), index);
+	if (val->type != NOCT_VALUE_INT) {
+		rt_error(env, _("Element %d is not an integer."), index);
 		return false;
 	}
 
 	/* Get the integer. */
-	if (!rt_get_int(env, backing_val, i)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*i = val->val.i;
 
 	return true;
 }
@@ -1869,82 +1647,63 @@ bool
 noct_get_arg_float(
 	NoctEnv *env,
 	int index,
-	float *f,
-	NoctValue *backing_val)
+	NoctValue *val,
+	float *f)
 {
 	assert(env != NULL);
 	assert(index >= 0);
+	assert(val != NULL);
 	assert(f != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
 
 	/* Get the argument. */
-	if (!rt_get_arg(env, index, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_arg(env, index, val))
 		return false;
-	}
 
 	/* Check the value type. */
-	if (backing_val->type != NOCT_VALUE_FLOAT) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a float."), index);
+	if (val->type != NOCT_VALUE_FLOAT) {
+		rt_error(env, _("Element %d is not a float."), index);
 		return false;
 	}
 
 	/* Get the float. */
-	if (!rt_get_float(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	*f = val->val.f;
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_arg_string(
+noct_get_arg_check_string(
 	NoctEnv *env,
 	int index,
-	const char **s,
-	NoctValue *backing_val)
+	NoctValue *val,
+	const char **data)
 {
 	assert(env != NULL);
 	assert(index >= 0);
-	assert(s != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
+	assert(data != NULL);
+	assert(len != NULL);
 
 	/* Get the argument. */
-	if (!rt_get_arg(env, index, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_arg(env, index, val))
 		return false;
-	}
 
 	/* Check the value type. */
-	if (backing_val->type != NOCT_VALUE_STRING) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a string."), index);
+	if (val->type != NOCT_VALUE_STRING) {
+		rt_error(env, _("Element %d is not a string."), index);
 		return false;
 	}
 
-	/* Get the float. */
-	if (!rt_get_float(env, backing_val, f)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
+	/* Get the string. */
+	*data = val->val.str->data;
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_get_arg_array(
+noct_get_arg_check_array(
 	NoctEnv *env,
 	int index,
 	NoctValue *val)
@@ -1953,22 +1712,15 @@ noct_get_arg_array(
 	assert(index >= 0);
 	assert(val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the argument. */
-	if (!rt_get_arg(env, index, val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_arg(env, index, val))
 		return false;
-	}
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_ARRAY) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not an array."), index);
+		rt_error(env, _("Element %d is not an array."), index);
 		return false;
 	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
@@ -1976,7 +1728,7 @@ noct_get_arg_array(
 
 NOCT_DLL
 bool
-noct_get_arg_dict(
+noct_get_arg_check_dict(
 	NoctEnv *env,
 	int index,
 	NoctValue *val)
@@ -1985,22 +1737,15 @@ noct_get_arg_dict(
 	assert(index >= 0);
 	assert(val != NULL);
 
-	RT_GC_ENTER_VALUE_GUARD();
-
 	/* Get the argument. */
-	if (!rt_get_arg(env, index, val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_arg(env, index, val))
 		return false;
-	}
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_DICT) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a dictionary."), index);
+		rt_error(env, _("Element %d is not a dictionary."), index);
 		return false;
 	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
@@ -2010,30 +1755,26 @@ bool
 noct_get_arg_func(
 	NoctEnv *env,
 	int index,
-	NoctFunc **f,
-	NoctValue *backing_val)
+	NoctValue *val,
+	NoctFunc **f)
 {
 	assert(env != NULL);
 	assert(key != NULL);
+	assert(val != NULL);
 	assert(f != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
 
 	/* Get the argument. */
-	if (!rt_get_arg(env, index, val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_get_arg(env, index, val))
 		return false;
-	}
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_DICT) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		noct_error(rt, _("Element %d is not a dictionary."), index);
+		rt_error(env, _("Element %d is not a dictionary."), index);
 		return false;
 	}
 
-	RT_GC_LEAVE_VALUE_GUARD();
+	/* Get the function. */
+	*f = val->val.func;
 
 	return true;
 }
@@ -2044,88 +1785,65 @@ noct_get_arg_func(
 
 NOCT_DLL
 bool
-noct_set_return_int(
+noct_set_return_make_int(
 	NoctEnv *env,
-	int i,
-	NoctValue *backing_val)
+	NoctValue *val,
+	int i)
 {
 	assert(env != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Make an integer value. */
-	if (!rt_make_int(env, backing_val, i)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
+	val->type = NOCT_VALUE_INT;
+	val->val.i = i;
 
 	/* Set the return value. */
-	if (!rt_set_return(env, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_return(env, val))
 		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_set_return_float(
+noct_set_return_make_float(
 	NoctEnv *env,
-	float val,
-	NoctValue *backing_val)
+	NoctValue *val,
+	float f)
 {
 	assert(env != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
 
 	/* Make a float value. */
-	if (!rt_make_int(env, backing_val, i)) {
-		RT_GC_LEAVE_VALUE_GUARD();
-		return false;
-	}
+	val->type = NOCT_VALUE_FLOAT;
+	val->val.f = f;
 
 	/* Set the return value. */
-	if (!rt_set_return(env, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_return(env, val))
 		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }
 
 NOCT_DLL
 bool
-noct_set_return_string(
+noct_set_return_make_string(
 	NoctEnv *env,
-	const char *s,
-	NoctValue *backing_val)
+	NoctValue *val,
+	const char *data,
+	size_t len)
 {
 	assert(env != NULL);
-	assert(s != NULL);
-	assert(backing_val != NULL);
-
-	RT_GC_ENTER_VALUE_GUARD();
+	assert(val != NULL);
+	assert(data != NULL);
 
 	/* Make a float value. */
-	if (!rt_make_string(env, backing_val, s)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!rt_make_string(env, val, data, len))
 		return false;
-	}
 
 	/* Set the return value. */
-	if (!rt_set_return(env, backing_val)) {
-		RT_GC_LEAVE_VALUE_GUARD();
+	if (!noct_set_return(env, val))
 		return false;
-	}
-
-	RT_GC_LEAVE_VALUE_GUARD();
 
 	return true;
 }

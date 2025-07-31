@@ -10,8 +10,9 @@ set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
 # Configuration
 #
 
-option(ENABLE_SHARED  "Enable shared library"  OFF)
-option(ENABLE_JIT     "Enable JIT"             ON)
+option(ENABLE_SHARED "Enable shared library" OFF)
+option(ENABLE_JIT    "Enable JIT"            ON)
+option(ENABLE_I18N   "Enable translation"    OFF)
 
 #
 # FLEX
@@ -39,10 +40,10 @@ BISON_TARGET(Parser
 )
 
 #
-# Source Files
+# Library Target
 #
 
-set(LIB_SOURCES
+set(LIB_SOURCE
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
   src/ast.c
@@ -67,20 +68,33 @@ set(LIB_SOURCES
   src/elback.c
 )
 
-set(CLI_SOURCES
-  src/cli.c
-  src/translation.c
-)
-
-# Library
-if(ENABLE_SHARED)
-  add_library(noctlang SHARED ${LIB_SOURCES})
-else()
-  add_library(noctlang STATIC ${LIB_SOURCES})
+if(ENABLE_I18N)
+  set(I18N_SOURCE src/translation.c)
 endif()
 
-# CLI
-add_executable(noct ${LIB_SOURCES} ${CLI_SOURCES})
+if(ENABLE_SHARED)
+  set(LIB_TYPE SHARED)
+else()
+  set(LIB_TYPE STATIC)
+endif()
+
+add_library(
+  noctlang
+  ${LIB_TYPE}
+  ${LIB_SOURCE}
+  ${I18N_SOURCE}
+)
+
+#
+# CLI Target
+#
+
+add_executable(
+  noct
+  src/cli.c
+)
+
+target_link_libraries(noct PRIVATE noctlang)
 
 #
 # CPPFLAGS
@@ -102,7 +116,7 @@ if(ENABLE_JIT)
 endif()
 
 # -DUSE_GETTEXT_COMPAT
-if(USE_TRANSLATION)
+if(ENABLE_I18N)
   target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
 endif()  
 

@@ -195,7 +195,7 @@ rt_intrin_unset(
 		return false;
 	}
 
-	if (!noct_remove_dict_elem(rt, &arr, val.val.str->s))
+	if (!noct_remove_dict_elem(rt, &arr, val.val.str->data))
 		return false;
 
 	return true;
@@ -272,7 +272,7 @@ rt_intrin_substring(
 	if (start_i == -1)
 		start_i = 0;
 
-	slen = (int)strlen(str_v.val.str->s);
+	slen = (int)strlen(str_v.val.str->data);
 	len_i = len_v.val.i;
 	if (len_i < 0)
 		len_i = slen;
@@ -285,9 +285,9 @@ rt_intrin_substring(
 		return false;
 	}
 
-	strncpy(s, str_v.val.str->s + start_i, (size_t)len_i);
+	strncpy(s, str_v.val.str->data + start_i, (size_t)len_i);
 
-	if (!noct_make_string(rt, &ret_v, s))
+	if (!noct_make_string(rt, &ret_v, s, strlen(s) + 1))
 		return false;
 
 	free(s);

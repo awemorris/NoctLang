@@ -164,7 +164,7 @@ NOCT_DLL
 bool
 noct_create_vm(
 	NoctVM **vm,
-	NoctEnv *default_env);
+	NoctEnv **default_env);
 
 /*
  * Destroys the given VM instance and releases associated resources.
@@ -180,7 +180,7 @@ noct_destroy_vm(
 NOCT_DLL
 bool
 noct_register_source(
-	NoctVM *vm,
+	NoctEnv *env,
 	const char *file_name,
 	const char *source_text);
 
@@ -190,7 +190,7 @@ noct_register_source(
 NOCT_DLL
 bool
 noct_register_bytecode(
-	NoctVM *vm,
+	NoctEnv *env,
 	uint8_t *data,
 	size_t size);
 
@@ -200,7 +200,7 @@ noct_register_bytecode(
 NOCT_DLL
 bool
 noct_register_cfunc(
-	NoctVM *vm,
+	NoctEnv *env,
 	const char *name,
 	int param_count,
 	const char *param_name[],
@@ -219,7 +219,7 @@ bool noct_create_thread_env(
 	NoctEnv **env);
 
 /*
- * Enter the VM and invoke a function by name.
+ * Enters the VM in the current thread and invokes a function by name.
  *
  * Executes the specified function with the given arguments and stores
  * the results in the provided return value slot.
@@ -234,17 +234,16 @@ noct_enter_vm(
 	NoctValue *ret);
 
 /*
- * Get the file name where the last error occurred.
+ * Retrieves the file name where the last error occurred.
  */
 NOCT_DLL
 bool
 noct_get_error_file(
 	NoctEnv *env,
-	const char *msg,
-	size_t len);
+	const char **msg);
 
 /*
- * Get the line number where the last error occurred.
+ * Retrieves the line number where the last error occurred.
  */
 NOCT_DLL
 bool
@@ -253,17 +252,16 @@ noct_get_error_line(
 	int *line);
 
 /*
- * Get the error message where the last error occurred.
+ * Retrieves the error message where the last error occurred.
  */
 NOCT_DLL
 bool
 noct_get_error_message(
 	NoctEnv *env,
-	const char *msg,
-	size_t size);
+	const char **msg);
 
 /*
- * Call a function.
+ * Calls a function.
  */
 NOCT_DLL
 bool
@@ -285,7 +283,7 @@ noct_assign(
 	NoctValue *src);
 
 /*
- * Create an integer value.
+ * Creates an integer value.
  */
 NOCT_DLL
 bool
@@ -295,7 +293,7 @@ noct_make_int(
 	int i);
 
 /*
- * Make a float value.
+ * Makes a float value.
  */
 NOCT_DLL
 bool
@@ -305,7 +303,7 @@ noct_make_float(
 	float f);
 
 /*
- * Make a string value.
+ * Makes a string value.
  */
 NOCT_DLL
 bool
@@ -316,7 +314,7 @@ noct_make_string(
 	size_t len);
 
 /*
- * Make a string value with a format.
+ * Makes a string value with a format.
  */
 NOCT_DLL
 bool
@@ -327,7 +325,7 @@ noct_make_string_format(
 	...);
 
 /*
- * Make an empty array value.
+ * Makes an empty array value.
  */
 NOCT_DLL
 bool
@@ -336,7 +334,7 @@ noct_make_empty_array(
 	NoctValue *val);
 
 /*
- * Make an empty dictionary value.
+ * Makes an empty dictionary value.
  */
 NOCT_DLL
 bool
@@ -345,7 +343,7 @@ noct_make_empty_dict(
 	NoctValue *val);
 
 /*
- * Get the type tag of a value.
+ * Retrieves the type tag of a value.
  *
  * The result is one of the NOCT_VALUE_* constants.
  */
@@ -357,7 +355,7 @@ noct_get_value_type(
 	int *type);
 
 /*
- * Extract an integer from a value with type checking.
+ * Retrieves an integer from a value with type checking.
  *
  * Fails if the given value is not of integer type.
  */
@@ -369,7 +367,7 @@ noct_get_int(
 	int *i);
 
 /*
- * Extracts a float from a value with type checking.
+ * Retrieves a float from a value with type checking.
  *
  * Fails if the given value is not of float type.
  */
@@ -381,7 +379,7 @@ noct_get_float(
 	float *f);
 
 /*
- * Retrieves the length of a string from a value with type checking.
+ * Retrieves the length of the string in a value with type checking.
  *
  * Fails if the given value is not of string type.
  */
@@ -393,7 +391,7 @@ noct_get_string_len(
 	size_t *len);
 
 /*
- * Extracts a string from a value with type checking.
+ * Retrieves the string from a value with type checking.
  *
  * Fails if the given value is not of string type.
  */
@@ -402,11 +400,10 @@ bool
 noct_get_string(
 	NoctEnv *env,
 	NoctValue *val,
-	char *s,
-	size_t len);
+	const char **s);
 
 /*
- * Extracts a function from a value with type checking.
+ * Retrieves the function from a value with type checking.
  *
  * Fails if the given value is not of function type.
  */
@@ -619,33 +616,39 @@ noct_set_global(
 	NoctValue *val);
 
 /*
- * Declare native global variables for use within an FFI function.
+ * Declare a native global variable for use within an FFI function.
  *
- * This informs the GC that the given NoctValue variables are
+ * This informs the GC that the given NoctValue variable is
  * in use and should not be collected during GC.
- *
- * This function should be called with the number of variables,
- * followed by that many NoctValue* arguments.
  */
 NOCT_DLL
-void
-noct_declare_c_global(
+bool
+noct_pin_global(
 	NoctEnv *env,
-	int count,
-	...);
+	NoctValue *val);
+
+/*
+ * Undeclare a native global variable for use within an FFI function.
+ */
+NOCT_DLL
+bool
+noct_unpin_global(
+	NoctEnv *env,
+	NoctValue *val);
 
 /*
  * Declare native local variables for use within an FFI function.
  *
  * This informs the GC that the given stack-local NoctValue variables
- * are in use and should not be collected during GC.
+ * are in use and should not be collected during GC. Returning from an
+ * FFI function undeclares the local variables in the current stack.
  *
  * This function should be called with the number of variables,
  * followed by that many NoctValue* arguments.
  */
 NOCT_DLL
-void
-noct_declare_c_local(
+bool
+noct_pin_local(
 	NoctEnv *env,
 	int count,
 	...);
@@ -660,7 +663,7 @@ noct_declare_c_local(
  * incremental GC step.
  */
 NOCT_DLL
-bool
+void
 noct_fast_gc(
 	NoctEnv *env);
 
@@ -668,7 +671,7 @@ noct_fast_gc(
  * Triggers a full, stop-the-world garbage collection.
  */
 NOCT_DLL
-bool
+void
 noct_full_gc(
 	NoctEnv *env);
 
@@ -713,12 +716,12 @@ noct_error(
  */
 NOCT_DLL
 bool
-noct_get_array_elem_int(
+noct_get_array_elem_check_int(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	int *i,
-	NoctValue *backing_val);
+	NoctValue *val,
+	int *i);
 
 /*
  * Convenience function to retrieve a float element from an array with
@@ -734,12 +737,12 @@ noct_get_array_elem_int(
  */
 NOCT_DLL
 bool
-noct_get_array_elem_float(
+noct_get_array_elem_check_float(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	float *f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	float *f);
 
 
 /*
@@ -756,12 +759,12 @@ noct_get_array_elem_float(
  */
 NOCT_DLL
 bool
-noct_get_array_elem_string(
+noct_get_array_elem_check_string(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	const char **val,
-	NoctValue *backing_val);
+	NoctValue *val,
+	const char **data);
 
 /*
  * Convenience function to retrieve an array element from an array
@@ -777,7 +780,7 @@ noct_get_array_elem_string(
  */
 NOCT_DLL
 bool
-noct_get_array_elem_array(
+noct_get_array_elem_check_array(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
@@ -797,7 +800,7 @@ noct_get_array_elem_array(
  */
 NOCT_DLL
 bool
-noct_get_array_elem_dict(
+noct_get_array_elem_check_dict(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
@@ -817,12 +820,12 @@ noct_get_array_elem_dict(
  */
 NOCT_DLL
 bool
-noct_get_array_elem_func(
+noct_get_array_elem_check_func(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	NoctFunc **f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	NoctFunc **f);
 
 /*
  * Convenience function to set an integer element in an array.
@@ -838,12 +841,12 @@ noct_get_array_elem_func(
  */
 NOCT_DLL
 bool
-noct_set_array_elem_int(
+noct_set_array_elem_make_int(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	int val,
-	NoctValue *backing_val);
+	NoctValue *val,
+	int i);
 
 /*
  * Convenience function to set a float element in an array.
@@ -859,12 +862,12 @@ noct_set_array_elem_int(
  */
 NOCT_DLL
 bool
-noct_set_array_elem_float(
+noct_set_array_elem_make_float(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	float f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	float f);
 
 /*
  * Convenience function to set a string element in an array.
@@ -880,12 +883,13 @@ noct_set_array_elem_float(
  */
 NOCT_DLL
 bool
-noct_set_array_elem_string(
+noct_set_array_elem_make_string(
 	NoctEnv *env,
 	NoctValue *array,
 	int index,
-	const char *s,
-	NoctValue *backing_val);
+	NoctValue *val,
+	const char *data,
+	size_t len);
 
 /* Dictionaries */
 
@@ -904,12 +908,12 @@ noct_set_array_elem_string(
  */
 NOCT_DLL
 bool
-noct_get_dict_elem_int(
+noct_get_dict_elem_check_int(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	int *i,
-	NoctValue *backing_val);
+	NoctValue *val,
+	int *i);
 
 /*
  * Convenience function to retrieve a float value associated with a
@@ -926,12 +930,12 @@ noct_get_dict_elem_int(
  */
 NOCT_DLL
 bool
-noct_get_dict_elem_float(
+noct_get_dict_elem_check_float(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	float *f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	float *f);
 
 /*
  * Convenience function to retrieve a string value associated with a
@@ -948,12 +952,12 @@ noct_get_dict_elem_float(
  */
 NOCT_DLL
 bool
-noct_get_dict_elem_string(
+noct_get_dict_elem_check_string(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	const char **s,
-	NoctValue *backing_val);
+	NoctValue *val,
+	const char **data);
 
 /*
  * Convenience function to retrieve an array value associated with a
@@ -964,7 +968,7 @@ noct_get_dict_elem_string(
  */
 NOCT_DLL
 bool
-noct_get_dict_elem_array(
+noct_get_dict_elem_check_array(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
@@ -979,7 +983,7 @@ noct_get_dict_elem_array(
  */
 NOCT_DLL
 bool
-noct_get_dict_elem_dict(
+noct_get_dict_elem_check_dict(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
@@ -1000,12 +1004,12 @@ noct_get_dict_elem_dict(
  */
 NOCT_DLL
 bool
-noct_get_dict_elem_func(
+noct_get_dict_elem_check_func(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	NoctFunc **f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	NoctFunc **f);
 
 /*
  * Convenience function to set an integer value for a key in a dictionary.
@@ -1018,12 +1022,12 @@ noct_get_dict_elem_func(
  */
 NOCT_DLL
 bool
-noct_set_dict_elem_int(
+noct_set_dict_elem_make_int(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	int i,
-	NoctValue *backing_val);
+	NoctValue *val,
+	int i);
 
 /*
  * Convenience function to set a float value for a key in a dictionary.
@@ -1036,12 +1040,12 @@ noct_set_dict_elem_int(
  */
 NOCT_DLL
 bool
-noct_set_dict_elem_float(
+noct_set_dict_elem_make_float(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	float f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	float f);
 
 /*
  * Convenience function to set a string value for a key in a dictionary.
@@ -1054,12 +1058,13 @@ noct_set_dict_elem_float(
  */
 NOCT_DLL
 bool
-noct_set_dict_elem_string(
+noct_set_dict_elem_make_string(
 	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
-	const char *val,
-	NoctValue *backing_val);
+	NoctValue *val,
+	const char *data,
+	size_t len);
 
 /* Arguments */
 
@@ -1075,11 +1080,11 @@ noct_set_dict_elem_string(
  */
 NOCT_DLL
 bool
-noct_get_arg_int(
+noct_get_arg_check_int(
 	NoctEnv *env,
 	int index,
-	int *i,
-	NoctValue *backing_val);
+	NoctValue *val,
+	int *i);
 
 /*
  * Convenience function to retrieve a float function argument with
@@ -1093,11 +1098,11 @@ noct_get_arg_int(
  */
 NOCT_DLL
 bool
-noct_get_arg_float(
+noct_get_arg_check_float(
 	NoctEnv *env,
 	int index,
-	float *f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	float *f);
 
 /*
  * Convenience function to retrieve a string function argument with
@@ -1111,11 +1116,11 @@ noct_get_arg_float(
  */
 NOCT_DLL
 bool
-noct_get_arg_string(
+noct_get_arg_check_string(
 	NoctEnv *env,
 	int index,
-	const char **s,
-	NoctValue *backing_val);
+	NoctValue *val,
+	const char **data);
 
 /*
  * Convenience function to retrieve an array function argument with
@@ -1123,7 +1128,7 @@ noct_get_arg_string(
  */
 NOCT_DLL
 bool
-noct_get_arg_array(
+noct_get_arg_check_array(
 	NoctEnv *env,
 	int index,
 	NoctValue *val);
@@ -1134,7 +1139,7 @@ noct_get_arg_array(
  */
 NOCT_DLL
 bool
-noct_get_arg_dict(
+noct_get_arg_check_dict(
 	NoctEnv *env,
 	int index,
 	NoctValue *val);
@@ -1151,11 +1156,11 @@ noct_get_arg_dict(
  */
 NOCT_DLL
 bool
-noct_get_arg_func(
+noct_get_arg_check_func(
 	NoctEnv *env,
 	int index,
-	NoctFunc **f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	NoctFunc **f);
 
 /* Return Values */
 
@@ -1171,10 +1176,10 @@ noct_get_arg_func(
  */
 NOCT_DLL
 bool
-noct_set_return_int(
+noct_set_return_make_int(
 	NoctEnv *env,
-	int i,
-	NoctValue *backing_val);
+	NoctValue *val,
+	int i);
 
 /*
  * Convenience function to set a float return value for the current
@@ -1188,10 +1193,10 @@ noct_set_return_int(
  */
 NOCT_DLL
 bool
-noct_set_return_float(
+noct_set_return_make_float(
 	NoctEnv *env,
-	float f,
-	NoctValue *backing_val);
+	NoctValue *val,
+	float f);
 
 /*
  * Convenience function to set a string return value for the current
@@ -1205,9 +1210,10 @@ noct_set_return_float(
  */
 NOCT_DLL
 bool
-noct_set_return_string(
+noct_set_return_make_string(
 	NoctEnv *env,
-	const char *s,
-	NoctValue *backing_val);
+	NoctValue *val,
+	const char *data,
+	size_t len);
 
 #endif

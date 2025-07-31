@@ -7,26 +7,26 @@
 /*
  * Garbage Collector
  *
- * The heap is divided into three generations, with an additional remember set:
+ * The heap is divided into three regions, with an additional remember set:
  *
- * - Nursery Generation:
+ * - Nursery Region:
  *   For newly allocated small objects.
  *   Managed in a dedicated 2MB memory region.
  *   Collected via copying GC along with the graduate generation.
  *
- * - Graduate Generation:
+ * - Graduate Region:
  *   For surviving nursery objects.
  *   Uses semi-space copying GC with two 256KB regions (from and to spaces).
  *
- * - Tenure Generation:
+ * - Tenure Region:
  *   For long-lived, large, or native-referenced objects.
  *   Collected using mark-and-sweep GC.
  *
  * - Remember Set:
- *   Tracks tenure-generation arrays or dictionaries that reference
- *   young-generation objects (in the nursery or graduate space).
+ *   Tracks tenure-region arrays or dictionaries that reference
+ *   young-generation objects (in the nursery or graduate region).
  *   Maintained via a write barrier triggered on container updates.
- *   Ensures proper GC reachability across generations.
+ *   Ensures proper GC reachability across regions.
  */
 
 #ifndef NOCT_GC_H
@@ -48,6 +48,12 @@
  * beyond this value will be allocated directly in the tenure region.
  */
 #define RT_GC_LOP_THRESHOLD		(32768)
+
+/*
+ * Survivor Promotion Threshold - A graduate object that survived the
+ * young GC beyond this value will be promoted to the tenure region.
+ */
+#define RT_GC_PROMOTION_THRESHOLD	(5)
 
 /*
  * Regions.
@@ -131,8 +137,8 @@ struct rt_gc_object {
 	/*
 	 * Intrusive doubly-linked list for the remember set.
 	 */
-	struct rt_gc_remember_set *rem_prev;
-	struct rt_gc_remember_set *rem_next; 
+	struct rt_gc_object *rem_prev;
+	struct rt_gc_object *rem_next; 
 	bool rem_flg;
 
 	/* Mark bit used in mark-and-sweep GC for the tenure generation. */
@@ -167,34 +173,52 @@ struct rt_gc_remember_set {
  * The following functions are part of the GC interface used by runtime.c.
  */
 
-/* Initialize the garbage collector and allocate memory regions. */
+/* Initializes the garbage collector and allocate memory regions. */
 bool rt_gc_init(struct rt_vm *vm);
 
-/* Cleanup the garbage collector and deallocate memory regions. */
+/* Cleanups the garbage collector and deallocate memory regions. */
 void rt_gc_cleanup(struct rt_vm *vm);
 
-/* Allocate a string object in the appropriate GC generation. */
+/* Allocates a string object in the appropriate region. */
 struct rt_string *rt_gc_alloc_string(struct rt_env *env, size_t len, const char *data);
 
-/* Allocate an array object in the appropriate GC generation. */
+/* Allocates an array object in the appropriate region. */
 struct rt_array *rt_gc_alloc_array(struct rt_env *env, size_t size);
 
-/* Allocate a dictionary object in the appropriate GC generation. */
+/* Allocates a dictionary object in the appropriate region. */
 struct rt_dict *rt_gc_alloc_dict(struct rt_env *env, size_t size);
 
-/* Write barrier: register container in the remember set if it references a younger object. */
+/* Allocates a dictionary key in the appropriate region. */
+char *rt_gc_alloc_dict_key(struct rt_env *env, struct rt_dict *dict, const char *key);
+
+/* Frees a dictionary key. */
+void rt_gc_free_dict_key(struct rt_env *env, struct rt_dict *dict, char *key);
+
+/* Write barrier: registers a container in the remember set if it references a young object. */
 void rt_gc_array_write_barrier(struct rt_env *env, struct rt_array *arr, int index, struct rt_value *val);
 
-/* Write barrier: register container in the remember set if it references a younger object. */
+/* Write barrier: registers a container in the remember set if it references a young object. */
 void rt_gc_dict_write_barrier(struct rt_env *env, struct rt_dict *dict,int index, struct rt_value *val);
 
-/* Manually trigger a young-generation GC (nursery + graduate, copying GC). */
+/* Pins a C global variable. */
+bool rt_gc_pin_global(struct rt_env *env, struct rt_value *val);
+
+/* Unpins a C global variable. */
+bool rt_gc_unpin_global(struct rt_env *env, struct rt_value *val);
+
+/* Pins a C local variable. */
+bool rt_gc_pin_local(struct rt_env *env, struct rt_value *val);
+
+/* Retrieves the approximate memory usage, in bytes. */
+bool rt_gc_get_heap_usage(struct rt_env *env, size_t *ret);
+
+/* Manually triggers a young GC. (nursery + graduate, copying GC) */
 void rt_gc_level1_gc(struct rt_env *env);
 
-/* Manually trigger an old-generation GC (tenure, mark-and-sweep). */
+/* Manually triggers an old GC. (tenure, mark-and-sweep) */
 void rt_gc_level2_gc(struct rt_env *env);
 
-/* Manually trigger a full GC. */
+/* Manually triggers a full GC. (tenure, nursery + graduate) */
 void rt_gc_level3_gc(struct rt_env *env);
 
 #endif

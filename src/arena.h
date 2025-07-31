@@ -11,6 +11,9 @@
 #ifndef NOCT_ARENA_H
 #define NOCT_ARENA_H
 
+#include <stdlib.h>
+#include <string.h>
+
 #define ARENA_ALIGN	(sizeof(void *))
 
 struct arena_info {

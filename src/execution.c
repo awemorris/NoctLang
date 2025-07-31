@@ -47,11 +47,11 @@ rt_add_helper(
 			dst_val->val.f = (float)src1_val->val.i + src2_val->val.f;
 			break;
 		case NOCT_VALUE_STRING:
-			if (!noct_make_string_format(env, dst_val, "%d%s", src1_val->val.i, src2_val->val.str->s))
+			if (!noct_make_string_format(env, dst_val, "%d%s", src1_val->val.i, src2_val->val.str->data))
 				return false;
 			break;
 		default:
-			noct_error(env, _("Value is not a number or a string."));
+			rt_error(env, _("Value is not a number or a string."));
 			return false;
 		}
 		break;
@@ -66,35 +66,35 @@ rt_add_helper(
 			dst_val->val.f = src1_val->val.f + src2_val->val.f;
 			break;
 		case NOCT_VALUE_STRING:
-			if (!noct_make_string_format(env, dst_val, "%f%s", src1_val->val.f, src2_val->val.str->s))
+			if (!noct_make_string_format(env, dst_val, "%f%s", src1_val->val.f, src2_val->val.str->data))
 				return false;
 			break;
 		default:
-			noct_error(env, _("Value is not a number or a string."));
+			rt_error(env, _("Value is not a number or a string."));
 			return false;
 		}
 		break;
 	case NOCT_VALUE_STRING:
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
-			if (!noct_make_string_format(env, dst_val, "%s%d", src1_val->val.str->s, src2_val->val.i))
+			if (!noct_make_string_format(env, dst_val, "%s%d", src1_val->val.str->data, src2_val->val.i))
 				return false;
 			break;
 		case NOCT_VALUE_FLOAT:
-			if (!noct_make_string_format(env, dst_val, "%s%f", src1_val->val.str->s, src2_val->val.f))
+			if (!noct_make_string_format(env, dst_val, "%s%f", src1_val->val.str->data, src2_val->val.f))
 				return false;
 			break;
 		case NOCT_VALUE_STRING:
-			if (!noct_make_string_format(env, dst_val, "%s%s", src1_val->val.str->s, src2_val->val.str->s))
+			if (!noct_make_string_format(env, dst_val, "%s%s", src1_val->val.str->data, src2_val->val.str->data))
 				return false;
 			break;
 		default:
-			noct_error(env, _("Value is not a number or a string."));
+			rt_error(env, _("Value is not a number or a string."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -132,7 +132,7 @@ rt_sub_helper(
 			dst_val->val.f = (float)src1_val->val.i - src2_val->val.f;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -147,12 +147,12 @@ rt_sub_helper(
 			dst_val->val.f = src1_val->val.f - src2_val->val.f;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -190,7 +190,7 @@ rt_mul_helper(
 			dst_val->val.f = (float)src1_val->val.i * src2_val->val.f;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -205,12 +205,12 @@ rt_mul_helper(
 			dst_val->val.f = src1_val->val.f * src2_val->val.f;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -241,7 +241,7 @@ rt_div_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			if (src2_val->val.i == 0) {
-				noct_error(env, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_INT;
@@ -249,14 +249,14 @@ rt_div_helper(
 			break;
 		case NOCT_VALUE_FLOAT:
 			if (src2_val->val.f == 0) {
-				noct_error(env, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = (float)src1_val->val.i / src2_val->val.f;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -264,7 +264,7 @@ rt_div_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			if (src2_val->val.i == 0) {
-				noct_error(env, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_FLOAT;
@@ -272,19 +272,19 @@ rt_div_helper(
 			break;
 		case NOCT_VALUE_FLOAT:
 			if (src2_val->val.f == 0) {
-				noct_error(env, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = src1_val->val.f / src2_val->val.f;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -318,12 +318,12 @@ rt_mod_helper(
 			dst_val->val.i = src1_val->val.i % src2_val->val.i;
 			break;
 		default:
-			noct_error(env, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -357,12 +357,12 @@ rt_and_helper(
 			dst_val->val.i = src1_val->val.i & src2_val->val.i;
 			break;
 		default:
-			noct_error(env, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -396,12 +396,12 @@ rt_or_helper(
 			dst_val->val.i = src1_val->val.i | src2_val->val.i;
 			break;
 		default:
-			noct_error(env, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -435,12 +435,12 @@ rt_xor_helper(
 			dst_val->val.i = src1_val->val.i ^ src2_val->val.i;
 			break;
 		default:
-			noct_error(env, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -473,7 +473,7 @@ rt_neg_helper(
 		dst_val->val.f = -src_val->val.f;
 		break;
 	default:
-		noct_error(env, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -502,7 +502,7 @@ rt_not_helper(
 		dst_val->val.i = src_val->val.i == 0 ? 1 : 0;
 		break;
 	default:
-		noct_error(env, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -540,7 +540,7 @@ rt_lt_helper(
 			dst_val->val.i = ((float)src1_val->val.i < src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -555,7 +555,7 @@ rt_lt_helper(
 			dst_val->val.i = (src1_val->val.f < src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -563,15 +563,15 @@ rt_lt_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) < 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) < 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -609,7 +609,7 @@ rt_lte_helper(
 			dst_val->val.i = ((float)src1_val->val.i <= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -624,7 +624,7 @@ rt_lte_helper(
 			dst_val->val.i = (src1_val->val.f <= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -632,15 +632,15 @@ rt_lte_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) <= 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) <= 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -678,7 +678,7 @@ rt_gt_helper(
 			dst_val->val.i = ((float)src1_val->val.i > src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -693,7 +693,7 @@ rt_gt_helper(
 			dst_val->val.i = (src1_val->val.f > src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -701,15 +701,15 @@ rt_gt_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) > 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) > 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -747,7 +747,7 @@ rt_gte_helper(
 			dst_val->val.i = ((float)src1_val->val.i >= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -762,7 +762,7 @@ rt_gte_helper(
 			dst_val->val.i = (src1_val->val.f >= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -770,15 +770,15 @@ rt_gte_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) >= 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) >= 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -816,7 +816,7 @@ rt_eq_helper(
 			dst_val->val.i = ((float)src1_val->val.i == src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -831,7 +831,7 @@ rt_eq_helper(
 			dst_val->val.i = (src1_val->val.f == src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -839,15 +839,15 @@ rt_eq_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) == 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) == 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -883,7 +883,7 @@ rt_neq_helper(
 			dst_val->val.i = ((float)src1_val->val.i != src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -898,7 +898,7 @@ rt_neq_helper(
 			dst_val->val.i = (src1_val->val.f != src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -906,15 +906,15 @@ rt_neq_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) != 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) != 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(env, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(env, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -946,7 +946,7 @@ rt_storearray_helper(
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
 		is_dict = true;
 	} else {
-		noct_error(env, _("Not an array or a dictionary."));
+		rt_error(env, _("Not an array or a dictionary."));
 		return false;
 	}
 
@@ -954,18 +954,18 @@ rt_storearray_helper(
 	subscr_val = &env->frame->tmpvar[subscr];
 	if (!is_dict) {
 		if (subscr_val->type != NOCT_VALUE_INT) {
-			noct_error(env, _("Subscript not an integer."));
+			rt_error(env, _("Subscript not an integer."));
 			return false;
 		}
 		subscript = subscr_val->val.i;
 		key = NULL;
 	} else {
 		if (subscr_val->type != NOCT_VALUE_STRING) {
-			noct_error(env, _("Subscript not a string."));
+			rt_error(env, _("Subscript not a string."));
 			return false;
 		}
 		subscript = -1;
-		key = subscr_val->val.str->s;
+		key = subscr_val->val.str->data;
 	}
 
 	/* Get the value to assign. */
@@ -973,18 +973,12 @@ rt_storearray_helper(
 
 	/* Store the value as a container element. */
 	if (!is_dict) {
-		if (!noct_set_array_elem(env, arr_val, subscript, val_val))
+		if (!rt_set_array_elem(env, arr_val->val.arr, subscript, val_val))
 			return false;
 	} else {
-		if (!noct_set_dict_elem(env, arr_val, key, val_val))
+		if (!rt_set_dict_elem(env, arr_val->val.dict, key, val_val))
 			return false;
 	}
-
-	/* GC: Write barrier for the remember set. */
-	if (val_val.type == NOCT_VALUE_STRING ||
-	    val_val.type == NOCT_VALUE_ARRAY ||
-	    val_val.type == NOCT_VALUE_DICT)
-		rt_gc_write_barrier(env, arr_val->val.obj, val_val->val.obj);
 
 	return true;
 }
@@ -1017,33 +1011,33 @@ rt_loadarray_helper(
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
 		is_dict = true;
 	} else {
-		noct_error(env, _("Not an array or a dictionary."));
+		rt_error(env, _("Not an array or a dictionary."));
 		return false;
 	}
 
 	/* Check the subscript type. */
 	if (!is_dict) {
 		if (subscr_val->type != NOCT_VALUE_INT) {
-			noct_error(env, _("Subscript not an integer."));
+			rt_error(env, _("Subscript not an integer."));
 			return false;
 		}
 		subscript = subscr_val->val.i;
 		key = NULL;
 	} else {
 		if (subscr_val->type != NOCT_VALUE_STRING) {
-			noct_error(env, _("Subscript not a string."));
+			rt_error(env, _("Subscript not a string."));
 			return false;
 		}
 		subscript = -1;;
-		key = subscr_val->val.str->s;
+		key = subscr_val->val.str->data;
 	}
 
 	/* Load the element. */
 	if (!is_dict) {
-		if (!noct_get_array_elem(env, arr_val, subscript, dst_val))
+		if (!rt_get_array_elem(env, arr_val->val.arr, subscript, dst_val))
 			return false;
 	} else {
-		if (!noct_get_dict_elem(env, arr_val, key, dst_val))
+		if (!rt_get_dict_elem(env, arr_val->val.dict, key, dst_val))
 			return false;
 	}
 
@@ -1069,7 +1063,7 @@ rt_len_helper(
 	switch (src_val->type) {
 	case NOCT_VALUE_STRING:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = (int)strlen(src_val->val.str->s);
+		dst_val->val.i = (int)strlen(src_val->val.str->data);
 		break;
 	case NOCT_VALUE_ARRAY:
 		dst_val->type = NOCT_VALUE_INT;
@@ -1080,7 +1074,7 @@ rt_len_helper(
 		dst_val->val.i = src_val->val.dict->size;
 		break;
 	default:
-		noct_error(env, _("Value is not a string, an array, or a dictionary."));
+		rt_error(env, _("Value is not a string, an array, or a dictionary."));
 		return false;
 	}
 
@@ -1105,20 +1099,23 @@ rt_getdictkeybyindex_helper(
 	subscr_val = &env->frame->tmpvar[subscr];
 
 	if (dict_val->type != NOCT_VALUE_DICT) {
-		noct_error(env, _("Not a dictionary."));
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 	if (subscr_val->type != NOCT_VALUE_INT) {
-		noct_error(env, _("Subscript not an integer."));
+		rt_error(env, _("Subscript not an integer."));
 		return false;
 	}
 	if (subscr_val->val.i >= dict_val->val.dict->size) {
-		noct_error(env, _("Dictionary index out-of-range."));
+		rt_error(env, _("Dictionary index out-of-range."));
 		return false;
 	}
 
 	/* Load the element. */
-	if (!noct_make_string(env, dst_val, dict_val->val.dict->key[subscr_val->val.i]))
+	if (!rt_make_string(env,
+			    dst_val,
+			    dict_val->val.dict->key[subscr_val->val.i],
+			    strlen(dict_val->val.dict->key[subscr_val->val.i]) + 1))
 		return false;
 
 	return true;
@@ -1144,15 +1141,15 @@ rt_getdictvalbyindex_helper(
 	subscr_val = &env->frame->tmpvar[subscr];
 
 	if (dict_val->type != NOCT_VALUE_DICT) {
-		noct_error(env, _("Not a dictionary."));
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 	if (subscr_val->type != NOCT_VALUE_INT) {
-		noct_error(env, _("Subscript not an integer."));
+		rt_error(env, _("Subscript not an integer."));
 		return false;
 	}
 	if (subscr_val->val.i >= dict_val->val.dict->size) {
-		noct_error(env, _("Dictionary index out-of-range."));
+		rt_error(env, _("Dictionary index out-of-range."));
 		return false;
 	}
 
@@ -1178,7 +1175,7 @@ rt_loadsymbol_helper(
 	if (rt_find_global(env, symbol, &global)) {
 		env->frame->tmpvar[dst] = global->val;
 	} else {
-		noct_error(env, _("Symbol \"%s\" not found."), symbol);
+		rt_error(env, _("Symbol \"%s\" not found."), symbol);
 		return false;
 	}
 
@@ -1201,7 +1198,6 @@ rt_storesymbol_helper(
 	if (rt_find_global(env, symbol, &global)) {
 		/* Found. */
 		global->val = env->frame->tmpvar[src];
-		rt_gc_move_shallow_to_young_list(env, &global->val);
 	} else {
 		/* Not found. Bind a global variable. */
 		assert(global == NULL);
@@ -1231,28 +1227,30 @@ rt_loaddot_helper(
 			if (!noct_get_dict_size(env, &env->frame->tmpvar[dict], &size))
 				return false;
 
-			noct_make_int(&env->frame->tmpvar[dst], size);
+			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
+			env->frame->tmpvar[dst].val.i = size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_ARRAY) {
 			int size;
 			if (!noct_get_array_size(env, &env->frame->tmpvar[dict], &size))
 				return false;
 
-			noct_make_int(&env->frame->tmpvar[dst], size);
+			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
+			env->frame->tmpvar[dst].val.i = size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
-			noct_make_int(&env->frame->tmpvar[dst],
-				    strlen(env->frame->tmpvar[dict].val.str->s));
+			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
+			env->frame->tmpvar[dst].val.i = env->frame->tmpvar[dict].val.str->len;
 			return true;
 		}
 	}
 
 	if (env->frame->tmpvar[dict].type != NOCT_VALUE_DICT) {
-		noct_error(env, _("Not a dictionary."));
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 
-	if (!noct_get_dict_elem(env, &env->frame->tmpvar[dict], field, &env->frame->tmpvar[dst]))
+	if (!rt_get_dict_elem(env, env->frame->tmpvar[dict].val.dict, field, &env->frame->tmpvar[dst]))
 		return false;
 
 	return true;
@@ -1269,12 +1267,12 @@ rt_storedot_helper(
 	const char *field,
 	int src)
 {
-	struct rt_value *dict, *val;
+	struct rt_value *dict_val, *val;
 
 	/* Get the dictionary. */
-	dict = &env->frame->tmpvar[dict];
-	if (dict->type != NOCT_VALUE_DICT) {
-		noct_error(env, _("Not a dictionary."));
+	dict_val = &env->frame->tmpvar[dict];
+	if (dict_val->type != NOCT_VALUE_DICT) {
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 
@@ -1282,11 +1280,8 @@ rt_storedot_helper(
 	val = &env->frame->tmpvar[src];
 
 	/* Store the source value to the dictionary with the key. */
-	if (!noct_set_dict_elem(env, dict, field, src))
+	if (!rt_set_dict_elem(env, dict_val->val.dict, field, val))
 		return false;
-
-	/* GC: Write barrier. */
-	rt_gc_write_barrier(env, dict, val);
 
 	return true;
 }
@@ -1308,7 +1303,7 @@ rt_call_helper(
 
 	/* Get a function. */
 	if (env->frame->tmpvar[func].type != NOCT_VALUE_FUNC) {
-		noct_error(env, _("Not a function."));
+		rt_error(env, _("Not a function."));
 		return false;
 	}
 	callee = env->frame->tmpvar[func].val.func;
@@ -1318,7 +1313,7 @@ rt_call_helper(
 		arg_val[i] = env->frame->tmpvar[arg[i]];
 
 	/* Do call. */
-	if (!noct_call(env, callee, arg_count, &arg_val[0], &ret))
+	if (!rt_call(env, callee, arg_count, &arg_val[0], &ret))
 		return false;
 
 	/* Store a return value. */
@@ -1356,7 +1351,7 @@ rt_thiscall_helper(
 	if (callee == NULL) {
 		/* If not an intrinsic call, object must be a dictionary. */
 		if (env->frame->tmpvar[obj].type != NOCT_VALUE_DICT) {
-			noct_error(env, _("Not a dictionary."));
+			rt_error(env, _("Not a dictionary."));
 			return false;
 		}
 
@@ -1364,7 +1359,7 @@ rt_thiscall_helper(
 		if (!noct_get_dict_elem(env, &env->frame->tmpvar[obj], name, &callee_value))
 			return false;
 		if (callee_value.type != NOCT_VALUE_FUNC) {
-			noct_error(env, _("Not a function."));
+			rt_error(env, _("Not a function."));
 			return false;
 		}
 		callee = callee_value.val.func;
@@ -1381,7 +1376,7 @@ rt_thiscall_helper(
 		return false;
 
 	/* Do call. */
-	if (!noct_call(env, callee, arg_count, &arg_val[0], &ret))
+	if (!rt_call(env, callee, arg_count, &arg_val[0], &ret))
 		return false;
 
 	/* Destroy a callframe. */
