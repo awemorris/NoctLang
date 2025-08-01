@@ -1068,8 +1068,6 @@ rt_gc_copy_young_object_recursively(
 			case RT_GC_TYPE_DICT:
 				new_obj = rt_gc_copy_dict_to_graduate(env, (struct rt_dict *)*obj);
 				break;
-			case RT_GC_TYPE_FUNC:
-				break;
 			default:
 				assert(NEVER_COME_HERE);
 				break;

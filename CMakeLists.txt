@@ -120,7 +120,8 @@ target_include_directories(noct     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # -DUSE_DLL
 if(ENABLE_SHARED)
-  target_compile_definitions(noctlang PRIVATE USE_DLL)
+  target_compile_definitions(noctlang PRIVATE USE_DLL DLL_IMPL)
+  target_compile_definitions(noct     PRIVATE USE_DLL)
 endif()
 
 # -DUSE_JIT
