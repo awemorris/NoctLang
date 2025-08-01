@@ -150,7 +150,7 @@ rt_intrin_unset(
 
 	noct_pin_local(env, 2, &arr, &val);
 
-	if (!noct_get_arg_check_array(env, 0, &arr))
+	if (!noct_get_arg_check_dict(env, 0, &arr))
 		return false;
 	if (!noct_get_arg_check_string(env, 1, &val, &val_s))
 		return false;

@@ -421,7 +421,7 @@ rt_gc_alloc_array_graduate(
 			break;
 
 		/* Allocate a table block. */
-		arr->table = graduate_alloc(env, size * sizeof(struct rt_value *));
+		arr->table = graduate_alloc(env, size * sizeof(struct rt_value));
 		if (arr->table == NULL)
 			break;
 
@@ -856,6 +856,8 @@ rt_gc_young_gc(
 	struct rt_frame *frame;
 	int i;
 
+	env->vm->gc.graduate_new_list = NULL;
+
 	/*
 	 * Clear marks.
 	 */
@@ -1109,7 +1111,7 @@ rt_gc_copy_young_object_recursively(
 					return false;
 			}
 		}
-		break;	
+		break;
 	case RT_GC_TYPE_DICT:
 		dict = (struct rt_dict *)*obj;
 		for (i = 0; i < dict->size; i++) {
