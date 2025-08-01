@@ -46,7 +46,7 @@
 #define UNLINK_FROM_LIST(elem, list, prev, next)			\
 	do {								\
 		if ((elem)->prev != NULL) {				\
-			(elem)->prev->next = elem->next;		\
+			(elem)->prev->next = (elem)->next;		\
 			if ((elem)->next != NULL)			\
 				(elem)->next->prev = (elem)->prev;	\
 		} else {						\
@@ -1084,6 +1084,7 @@ rt_gc_copy_young_object_recursively(
 			if (new_obj == NULL)
 				return false;
 
+			/* Mark as promoted. */
 			is_promoted = true;
 
 			/* The forwarding pointer is set in rt_gc_promote_object(). */
