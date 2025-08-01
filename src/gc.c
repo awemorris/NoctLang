@@ -1346,13 +1346,6 @@ rt_gc_old_gc(
 
 		obj = next_obj;
 	}
-
-	/*
-	 * Compaction.
-	 */
-
-	/* Run a compaction. */
-	rt_gc_compact(env);
 }
 
 /* Mark object recursively for the old GC. */
@@ -1432,7 +1425,7 @@ rt_gc_free_old_object(
 
 /* Create the compaction table. */
 static bool
-rt_gc_compact(
+rt_gc_compact_gc(
 	struct rt_env *env)
 {
 	struct rt_gc_object *obj;
@@ -1727,7 +1720,7 @@ rt_gc_run_gc(
 }
 
 /*
- * Manually trigger the young GC (nursery and graduate regions, copying GC).
+ * Manually trigger the young GC.
  */
 void
 rt_gc_level1_gc(struct rt_env *env)
@@ -1736,20 +1729,22 @@ rt_gc_level1_gc(struct rt_env *env)
 }
 
 /*
- * Manually trigger the old GC (tenure region, mark-and-sweep GC).
+ * Manually trigger the old GC.
  */
 void rt_gc_level2_gc(struct rt_env *env)
 {
+	rt_gc_young_gc(env);
 	rt_gc_old_gc(env);
 }
 
 /*
- * Manually triggers a full GC. (tenure, nursery + graduate)
+ * Manually triggers a  GC.
  */
 void rt_gc_level3_gc(struct rt_env *env)
 {
-	rt_gc_old_gc(env);
 	rt_gc_young_gc(env);
+	rt_gc_old_gc(env);
+	rt_gc_compact_gc(env);
 }
 
 static void *

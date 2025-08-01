@@ -658,13 +658,10 @@ noct_pin_local(
 	...);
 
 /*
- * Triggers a fast garbage collection pass during a periodic pause,
- * such as VSync.
+ * Triggers a fast garbage collection pass, typically during a
+ * periodic pause such as VSync.
  *
- * If the VM is configured with generational GC, this function performs
- * a collection for the young generation only.
- * If the VM implements incremental GC, this function performs a single
- * incremental GC step.
+ * This performs a collection of the young generation only.
  */
 NOCT_DLL
 void
@@ -673,10 +670,24 @@ noct_fast_gc(
 
 /*
  * Triggers a full, stop-the-world garbage collection.
+ *
+ * This collects both young and old generations, but does not perform
+ * memory compaction.
  */
 NOCT_DLL
 void
 noct_full_gc(
+	NoctEnv *env);
+
+/*
+ * Triggers a full garbage collection followed by memory compaction.
+ *
+ * This pass eliminates fragmentation by sliding live objects to
+ * create a contiguous free space in the old generation.
+ */
+NOCT_DLL
+void
+noct_compact_gc(
 	NoctEnv *env);
 
 /*
