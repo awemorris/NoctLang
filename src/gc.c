@@ -89,13 +89,12 @@ struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_d
 static void rt_gc_old_gc(struct rt_env *env);
 static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
-static bool rt_gc_compact(struct rt_env *env);
+static bool rt_gc_compact_gc(struct rt_env *env);
 static void rt_gc_update_tenure_ref_recursively(struct rt_env *env, struct rt_gc_object **obj);
-static void rt_gc_run_gc(struct rt_env *env, int level);
 static void *nursery_alloc(struct rt_env *env, size_t size);
 static void *graduate_alloc(struct rt_env *env, size_t size);
-static void *tenure_alloc(struct rt_env *env, size_t size);
-static void tenure_free(struct rt_env *env, void *p);
+static void *rt_gc_tenure_alloc(struct rt_env *env, size_t size);
+static void rt_gc_tenure_free(struct rt_env *env, void *p);
 
 /*
  * Initializes the garbage collector and allocate memory regions.
@@ -271,13 +270,16 @@ rt_gc_alloc_string_tenure(
 	int retry;
 
 	/* Allocate in the tenure region. */
-	for (retry = 0; retry <= 1; retry++) {
+	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_string buffer. */
-		rts = tenure_alloc(env, sizeof(struct rt_string) + len);
+		rts = rt_gc_tenure_alloc(env, sizeof(struct rt_string) + len);
 		if (rts == NULL) {
 			/* Retry. */
 			if (retry == 0) {
 				rt_gc_old_gc(env);
+				continue;
+			} if (retry == 1) {
+				rt_gc_compact_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -426,13 +428,16 @@ rt_gc_alloc_array_tenure(
 	int retry;
 
 	/* Allocate in the tenure region. */
-	for (retry = 0; retry <= 1; retry++) {
+	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_array buffer. */
-		arr = tenure_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
+		arr = rt_gc_tenure_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
 		if (arr == NULL) {
 			/* Retry. */
 			if (retry == 0) {
 				rt_gc_old_gc(env);
+				continue;
+			} if (retry == 1) {
+				rt_gc_compact_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -592,9 +597,9 @@ rt_gc_alloc_dict_tenure(
 	int retry;
 
 	/* Allocate in the tenure region. */
-	for (retry = 0; retry <= 1; retry++) {
+	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate the rt_dict buffer. */
-		dict = tenure_alloc(env,
+		dict = rt_gc_tenure_alloc(env,
 				    sizeof(struct rt_dict) +
 				    size * sizeof(struct rt_value) +
 				    size * sizeof(struct rt_value));
@@ -602,6 +607,9 @@ rt_gc_alloc_dict_tenure(
 			/* Retry. */
 			if (retry == 0) {
 				rt_gc_old_gc(env);
+				continue;
+			} if (retry == 1) {
+				rt_gc_compact_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -1411,15 +1419,15 @@ rt_gc_free_old_object(
 	if (obj->type == RT_GC_TYPE_STRING) {
 		struct rt_string *str;
 		str = (struct rt_string *)obj;
-		tenure_free(env, str);
+		rt_gc_tenure_free(env, str);
 	} else if (obj->type == RT_GC_TYPE_ARRAY) {
 		struct rt_array *arr;
 		arr = (struct rt_array *)obj;
-		tenure_free(env, arr);
+		rt_gc_tenure_free(env, arr);
 	} else if (obj->type == RT_GC_TYPE_DICT) {
 		struct rt_dict *dict;
 		dict = (struct rt_dict *)obj;
-		tenure_free(env, dict);
+		rt_gc_tenure_free(env, dict);
 	}
 }
 
@@ -1699,26 +1707,6 @@ rt_gc_get_heap_usage(
 	return true;
 }
 
-/* Run GC at the specified level. */
-static void
-rt_gc_run_gc(
-	struct rt_env *env,
-	int level)
-{
-	switch (level) {
-	case 0:
-		rt_gc_young_gc(env);
-		break;
-	case 1:
-		rt_gc_old_gc(env);
-		break;
-	case 2:
-		rt_gc_old_gc(env);
-		rt_gc_young_gc(env);
-		break;
-	}
-}
-
 /*
  * Manually trigger the young GC.
  */
@@ -1773,7 +1761,7 @@ graduate_alloc(
  * The LSB of the block size indicates the block is used (set) or freed (clear).
  */
 static void *
-tenure_alloc(
+rt_gc_tenure_alloc(
 	struct rt_env *env,
 	size_t size)
 {
@@ -1825,7 +1813,7 @@ tenure_alloc(
 
 /* Free a tenure block. */
 static void
-tenure_free(
+rt_gc_tenure_free(
 	struct rt_env *env,
 	void *p)
 {
