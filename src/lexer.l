@@ -12,6 +12,7 @@
 
 #define YY_NO_INPUT
 #define YY_NO_UNPUT
+#define YY_NO_UNISTD_H
 
 extern YYLTYPE yylloc;
 %}
