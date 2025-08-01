@@ -8,40 +8,7 @@
  * JIT (common): Just-In-Time native code generation
  */
 
-#if !defined(USE_JIT)
-
-#include "runtime.h"
-
-/*
- * Generate a JIT-compiled code for a function.
- */
-bool
-jit_build(
-	struct rt_env *rt,
-	struct rt_func *func)
-{
-	UNUSED_PARAMETER(rt);
-	UNUSED_PARAMETER(func);
-
-	/* stub */
-	return true;
-}
-
-/*
- * Free a JIT-compiled code for a function.
- */
-void
-jit_free(
-	struct rt_env *rt,
-	struct rt_func *func)
-{
-	UNUSED_PARAMETER(rt);
-	UNUSED_PARAMETER(func);
-
-	/* stub */
-}
-
-#else
+#if defined(USE_JIT)
 
 #include "runtime.h"
 

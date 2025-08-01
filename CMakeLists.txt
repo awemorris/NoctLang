@@ -43,7 +43,7 @@ BISON_TARGET(Parser
 # Library Target
 #
 
-set(LIB_SOURCE
+set(BASE_SOURCE
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
   src/ast.c
@@ -55,16 +55,21 @@ set(LIB_SOURCE
   src/execution.c
   src/intrinsics.c
   src/gc.c
-  src/jit-common.c
-  src/jit-x86_64.c
-  src/jit-x86.c
-  src/jit-arm64.c
-  src/jit-arm32.c
-  src/jit-ppc64.c
-  src/jit-ppc32.c
-  src/jit-mips64.c
-  src/jit-mips32.c
 )
+
+if(ENABLE_JIT)
+  set(JIT_SOURCE
+    src/jit-common.c
+    src/jit-x86_64.c
+    src/jit-x86.c
+    src/jit-arm64.c
+    src/jit-arm32.c
+    src/jit-ppc64.c
+    src/jit-ppc32.c
+    src/jit-mips64.c
+    src/jit-mips32.c
+  )
+endif()
 
 if(ENABLE_I18N)
   set(I18N_SOURCE
@@ -79,14 +84,11 @@ else()
   set(LIB_TYPE STATIC)
 endif()
 
-#
-# Library
-#
-
 add_library(
   noctlang
   ${LIB_TYPE}
-  ${LIB_SOURCE}
+  ${BASE_SOURCE}
+  ${JIT_SOURCE}
   ${I18N_SOURCE}
 )
 
@@ -110,21 +112,22 @@ target_link_libraries(noct PRIVATE noctlang)
 # -Iinclude
 target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(noctlang PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(noct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(noct     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # -Isrc
 target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_include_directories(noct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(noct     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # -DUSE_JIT
 if(ENABLE_JIT)
   target_compile_definitions(noctlang PRIVATE USE_JIT)
-  target_compile_definitions(noct PRIVATE USE_JIT)
+  target_compile_definitions(noct     PRIVATE USE_JIT)
 endif()
 
 # -DUSE_GETTEXT_COMPAT
 if(ENABLE_I18N)
-  target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
+  target_compile_definitions(noctlang PRIVATE USE_GETTEXT_COMPAT)
+  target_compile_definitions(noct     PRIVATE USE_GETTEXT_COMPAT)
 endif()  
 
 #
@@ -136,21 +139,27 @@ if(NOT CMAKE_BUILD_TYPE)
 set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug or Release)" FORCE)
 endif()
 
-# Debug Configuration.
-set(CMAKE_C_FLAGS_DEBUG   "${CMAKE_C_FLAGS_RELEASE}   -O0 -g3 -UNDEBUG")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -O0 -g3 -UNDEBUG")
+# Debug Configuration
+if(NOT MSVC)
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE} -O0 -g3 -UNDEBUG")
+else()
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /Od /Zi /DDEBUG /UNDEBUG")
+endif()
 
-# Release Configuration.
-set(CMAKE_C_FLAGS_RELEASE   "${CMAKE_C_FLAGS_RELEASE}   -Oz -g0 -flto -ffunction-sections -fdata-sections -DNDEBUG")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Oz -g0 -flto -ffunction-sections -fdata-sections -Wl,--gc-sections -DNDEBUG")
+# Release Configuration
+if(NOT MSVC)
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Oz -g0 -DNDEBUG")
+else()
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /O2 /DNDEBUG")
+endif()
 
 # Unicode options.
 if(WIN32)
   if(NOT MSVC)
     target_compile_options(noctlang PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
-    target_compile_options(noct PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+    target_compile_options(noct     PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
   else()
     target_compile_options(noctlang PRIVATE /utf-8)
-    target_compile_options(noct PRIVATE /utf-8)
+    target_compile_options(noct     PRIVATE /utf-8)
   endif()
 endif()

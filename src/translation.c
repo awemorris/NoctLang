@@ -1,10 +1,10 @@
 #include <string.h>
 
-const char *get_system_language(void);
+const char *noct_get_system_language(void);
 
 const char *noct_gettext(const char *msg)
 {
-    const char *lang_code = get_system_language();
+    const char *lang_code = noct_get_system_language();
     if (strcmp(msg, "syntax error") == 0) {
         if (strcmp(lang_code, "en") == 0) return "Syntax error.";
         if (strcmp(lang_code, "es") == 0) return "Error de sintaxis.";
@@ -281,6 +281,9 @@ const char *noct_gettext(const char *msg)
         if (strcmp(lang_code, "ja") == 0) return "配列の添字 %d は範囲外です。";
         if (strcmp(lang_code, "ca") == 0) return "L'índex %d de l'array es troba fora del rang.";
         return "Array index %d is out-of-range.";
+    }
+    if (strcmp(msg, "Dictionary index %d is out-of-range.") == 0) {
+        return "Dictionary index %d is out-of-range.";
     }
     if (strcmp(msg, "Dictionary key \"%s\" not found.") == 0) {
         if (strcmp(lang_code, "es") == 0) return "La llave \"%s\" no se encontró en el diccionario.";
@@ -719,6 +722,9 @@ const char *noct_gettext(const char *msg)
         if (strcmp(lang_code, "ca") == 0) return "No és una funció.";
         return "Not a function.";
     }
+    if (strcmp(msg, "Empty array.") == 0) {
+        return "Empty array.";
+    }
     if (strcmp(msg, "Out of memory.") == 0) {
         if (strcmp(lang_code, "es") == 0) return "Memoria insuficiente.";
         if (strcmp(lang_code, "fr") == 0) return "Mémoire insuffisante.";
@@ -731,6 +737,12 @@ const char *noct_gettext(const char *msg)
         if (strcmp(lang_code, "ja") == 0) return "メモリが足りません。";
         if (strcmp(lang_code, "ca") == 0) return "Memòria insuficient.";
         return "Out of memory.";
+    }
+    if (strcmp(msg, "Too many pinned global variables.") == 0) {
+        return "Too many pinned global variables.";
+    }
+    if (strcmp(msg, "Too many pinned local variables.") == 0) {
+        return "Too many pinned local variables.";
     }
     if (strcmp(msg, "Cannot open file %s.\n") == 0) {
         if (strcmp(lang_code, "es") == 0) return "No se puede abrir el archivo %s.\n";

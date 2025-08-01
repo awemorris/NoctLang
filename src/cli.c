@@ -15,7 +15,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
-#include <locale.h>
 #include <assert.h>
 
 #ifdef _WIN32
@@ -37,20 +36,12 @@
 /* Runtime's configuration. */
 extern bool noct_conf_use_jit;
 
-/* Language code for translation. */
-#ifdef USE_GETTEXT_COMPAT
-const char *lang_code = "en";
-#endif
-
 /* i18n.c */
 #if defined(USE_GETTEXT_COMPAT)
-void init_locale(void);
+void noct_init_locale(void);
 #endif
 
 /* Forward declaration. */
-#if defined(USE_GETTEXT_COMPAT)
-static void init_locale(void);
-#endif
 static void show_usage(void);
 static int command_compile(int argc, char *argv[]);
 static int command_transpile_c(int argc, char *argv[]);
@@ -78,7 +69,7 @@ int main(int argc, char *argv[])
 	char *first_arg;
 
 #if defined(USE_GETTEXT_COMPAT)
-	init_locale();
+	noct_init_locale();
 #endif
 
 	if (argc >= 2 &&
