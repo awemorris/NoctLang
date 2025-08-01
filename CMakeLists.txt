@@ -118,6 +118,11 @@ target_include_directories(noct     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(noct     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# -DUSE_DLL
+if(ENABLE_SHARED)
+  target_compile_definitions(noctlang PRIVATE USE_DLL)
+endif()
+
 # -DUSE_JIT
 if(ENABLE_JIT)
   target_compile_definitions(noctlang PRIVATE USE_JIT)
@@ -140,26 +145,31 @@ set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug or Release)" FORC
 endif()
 
 # Debug Configuration
-if(NOT MSVC)
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE} -O0 -g3 -UNDEBUG")
-else()
+if(MSVC)
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /Od /Zi /DDEBUG /UNDEBUG")
+else()
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE} -O0 -g3 -UNDEBUG")
 endif()
 
 # Release Configuration
-if(NOT MSVC)
-    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Oz -g0 -DNDEBUG")
-else()
-    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /O2 /DNDEBUG")
+if(MSVC)
+  # MSVC
+  set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /O2 /DNDEBUG")
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # Clang
+  set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Oz -g0 -DNDEBUG")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  # GCC
+  set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Os -g0 -DNDEBUG")
 endif()
 
 # Unicode options.
 if(WIN32)
-  if(NOT MSVC)
-    target_compile_options(noctlang PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
-    target_compile_options(noct     PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
-  else()
+  if(MSVC)
     target_compile_options(noctlang PRIVATE /utf-8)
     target_compile_options(noct     PRIVATE /utf-8)
+  else()
+    target_compile_options(noctlang PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+    target_compile_options(noct     PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
   endif()
 endif()
