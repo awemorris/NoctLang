@@ -75,6 +75,13 @@ enum rt_gc_object_type {
 };
 
 /*
+ * Free List Constants.
+ */
+#define RT_GC_FREELIST_ALIGN		(sizeof(void *))
+#define RT_GC_FREELIST_USED_BIT		0x1
+#define RT_GC_FREELIST_SIZE_MASK	((size_t)-1)
+
+/*
  * Garbage Collector state structure that is embedded to struct rt_vm.
  */
 struct rt_gc_info {
@@ -89,13 +96,12 @@ struct rt_gc_info {
 	int cur_grad_from;
 	int cur_grad_to;
 
-	/*
-	 * Memory region for the tenure generation.
-	 * TODO:
-	 *  - Currently we use malloc() directly for tenute object generation.
-	 *  - We'll implement an allocator for the tenure generation soon.
-	 */
-	/* struct tenure_allocator tenure_allocator; */
+	/* Memory region for the tenure generation. */
+	struct freelist {
+		char *top;
+		char *end;
+		char *cur;
+	} tenure_freelist;
 
 	/* Linked list of objects in the nursery generation. */
 	struct rt_gc_object *nursery_list;

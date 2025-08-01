@@ -650,7 +650,7 @@ noct_get_dict_key_by_index(
 	}
 
 	/* Load. */
-	*key = dict->val.dict->key[index];
+	*key = dict->val.dict->key[index].val.str->data;
 
 	return true;
 }
@@ -709,7 +709,7 @@ noct_check_dict_key(
 
 	/* Search the key. */
 	for (i = 0; i < dict->val.dict->size; i++) {
-		if (strcmp(dict->val.dict->key[i], key) == 0) {
+		if (strcmp(dict->val.dict->key[i].val.str->data, key) == 0) {
 			/* Found. */
 			*ret = true;
 			return true;
@@ -801,16 +801,16 @@ noct_remove_dict_elem(
 	/* Search for the key. */
 	d = dict->val.dict;
 	for (i = 0; i < d->size; i++) {
-		if (strcmp(d->key[i], key) == 0) {
+		if (strcmp(d->key[i].val.str->data, key) == 0) {
 			/* Remove the key and value. */
-			rt_gc_free_dict_key(env, d, d->key[i]);
 			memmove(&d->key[i],
 				&d->key[i + 1],
-				sizeof(const char *) * (size_t)(d->size - i - 1));
+				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
 			memmove(&d->value[i],
 				&d->value[i + 1],
 				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
-			d->key[d->size - 1] = NULL;
+			d->key[d->size - 1].type = NOCT_VALUE_INT;
+			d->key[d->size - 1].val.i = 0;
 			d->value[d->size - 1].type = NOCT_VALUE_INT;
 			d->value[d->size - 1].val.i = 0;
 			d->size--;
@@ -853,14 +853,13 @@ noct_make_dict_copy(
 	/* Copy the array with write-barrier. */
 	for (i = 0; i < (int)src->val.dict->size; i++) {
 		/* Copy the key. */
-		d->key[i] = rt_gc_alloc_dict_key(env, d, src->val.dict->key[i]);
-		if (d->key[i] == NULL)
-			return false;
+		d->key[i] = src->val.dict->key[i];
 
 		/* Copy the value. */
 		d->value[i] = src->val.dict->value[i];
 
 		/* Write barrier. */
+		rt_gc_dict_write_barrier(env, d, i, &d->key[i]);
 		rt_gc_dict_write_barrier(env, d, i, &d->value[i]);
 	}
 

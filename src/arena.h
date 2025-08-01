@@ -22,7 +22,9 @@ struct arena_info {
 	size_t size;
 };
 
-/* Initialize the arena allocator. */
+/*
+ * Initialize the arena allocator.
+ */
 static NOCT_INLINE bool
 arena_init(
 	struct arena_info *arena,
@@ -31,12 +33,15 @@ arena_init(
 	arena->top = malloc(size);
 	if (arena->top == NULL)
 		return false;
+	memset(arena->top, 0, size);
 	arena->cur = arena->top;
 	arena->size = size;
 	return true;
 }
 
-/* Initialize the arena allocator. */
+/*
+ * Cleanup the arena allocator.
+ */
 static NOCT_INLINE void
 arena_cleanup(
 	struct arena_info *arena)
@@ -44,7 +49,9 @@ arena_cleanup(
 	free(arena->top);
 }
 
-/* Allocate a block. */
+/*
+ * Allocate a block.
+ */
 static NOCT_INLINE void *
 arena_alloc(
 	struct arena_info *arena,
@@ -59,7 +66,9 @@ arena_alloc(
 	return p;
 }
 
-/* Unwind the arena. */
+/*
+ * Unwind the arena.
+ */
 static NOCT_INLINE void
 arena_unwind(
 	struct arena_info *arena)

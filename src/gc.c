@@ -116,7 +116,13 @@ rt_gc_init(
 	vm->gc.cur_grad_from = 0;
 	vm->gc.cur_grad_to = 1;
 
-	/* TODO: Initialize the tenure allocator.  */
+	/* Initialize the tenure allocator.  */
+	vm->gc.tenure_freelist.top = malloc(RT_GC_TENURE_SIZE);
+	if (vm->gc.tenure_freelist.top == NULL)
+		return false;
+	memset(vm->gc.tenure_freelist.top, 0, RT_GC_TENURE_SIZE);
+	vm->gc.tenure_freelist.end = vm->gc.tenure_freelist.top + RT_GC_TENURE_SIZE;
+	vm->gc.tenure_freelist.cur = vm->gc.tenure_freelist.top;
 
 	return true;
 }
@@ -132,11 +138,15 @@ rt_gc_cleanup(
  */
 void env_gc_cleanup(struct rt_vm *vm)
 {
+	/* Cleanup the nursery allocator. */
 	arena_cleanup(&vm->gc.nursery_arena);
+
+	/* Cleanup the graduate allocators. */
 	arena_cleanup(&vm->gc.graduate_arena[0]);
 	arena_cleanup(&vm->gc.graduate_arena[1]);
 
-	/* TODO: Cleanup the tenure allocator. */
+	/* Cleanup the tenure allocator. */
+	free(vm->gc.tenure_freelist.top);
 }
 
 /*
@@ -160,9 +170,9 @@ rt_gc_alloc_string(
 		return rt_gc_alloc_string_tenure(env, len, data);
 
 	/* Allocate in the nursery region. */
-	for (retry = 0; retry <= 2; retry++) {
+	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_string buffer. */
-		rts = nursery_alloc(env, sizeof(struct rt_string));
+		rts = nursery_alloc(env, sizeof(struct rt_string) + len);
 		if (rts == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -174,18 +184,8 @@ rt_gc_alloc_string(
 			}
 		}
 
-		/* Allocate a string block. */
-		s = nursery_alloc(env, len);
-		if (s == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1) {
-				rt_gc_young_gc(env);
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-		}
+		/* Get the string top address. */
+		s = (char *)rts + sizeof(struct rt_string);
 
 		/* Copy the string. */
 		memcpy(s, data, len);
@@ -222,17 +222,14 @@ rt_gc_alloc_string_graduate(
 	 * and thus, we don't use young GC for a retry here.
 	 */
 
-	/* Try allocating in the graduate region. */
 	do {
-		/* Allocate a rt_string buffer. */
-		rts = graduate_alloc(env, sizeof(struct rt_string));
+		/* Try allocating a rt_string buffer in the graduate region. */
+		rts = graduate_alloc(env, sizeof(struct rt_string) + len);
 		if (rts == NULL)
 			break;
 
-		/* Allocate a string block. */
-		s = graduate_alloc(env, len);
-		if (s == NULL)
-			break;
+		/* Get the string top address. */
+		s = (char *)rts + sizeof(struct rt_string);
 
 		/* Copy the string. */
 		memcpy(s, data, len);
@@ -249,10 +246,7 @@ rt_gc_alloc_string_graduate(
 		return rts;
 	} while (0);
 
-	/*
-	 * Failed to allocate in the graduate region.
-	 * Try allocating in the tenure region.
-	 */
+	/* Failed. Try allocating in the tenure region. */
 	rts = rt_gc_alloc_string_tenure(env, len, data);
 	if (rts == NULL)
 		return NULL;
@@ -273,9 +267,9 @@ rt_gc_alloc_string_tenure(
 	int retry;
 
 	/* Allocate in the tenure region. */
-	for (retry = 0; retry <= 2; retry++) {
+	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_string buffer. */
-		rts = tenure_alloc(env, sizeof(struct rt_string));
+		rts = tenure_alloc(env, sizeof(struct rt_string) + len);
 		if (rts == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -287,18 +281,8 @@ rt_gc_alloc_string_tenure(
 			}
 		}
 
-		/* Allocate a string block. */
-		s = tenure_alloc(env, len);
-		if (s == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1) {
-				rt_gc_old_gc(env);
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-		}
+		/* Get the string top address. */
+		s = (char *)rts + sizeof(struct rt_string);
 
 		/* Copy the string. */
 		memcpy(s, data, len);
@@ -342,9 +326,9 @@ rt_gc_alloc_array(
 		return rt_gc_alloc_array_tenure(env, size);
 
 	/* Allocate in the nursery region. */
-	for (retry = 0; retry <= 2; retry++) {
+	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_array buffer. */
-		arr = nursery_alloc(env, sizeof(struct rt_array));
+		arr = nursery_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
 		if (arr == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -356,18 +340,8 @@ rt_gc_alloc_array(
 			}
 		}
 
-		/* Allocate an array block. */
-		table = nursery_alloc(env, size * sizeof(struct rt_value));
-		if (table == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1) {
-				rt_gc_young_gc(env);
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-		}
+		/* Get the address of the table. */
+		table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
 
 		/* Setup the struct. */
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
@@ -403,14 +377,12 @@ rt_gc_alloc_array_graduate(
 	/* Try allocating in the graduate region. */
 	do {
 		/* Allocate a rt_arrary buffer. */
-		arr = graduate_alloc(env, sizeof(struct rt_array));
+		arr = graduate_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
 		if (arr == NULL)
 			break;
 
-		/* Allocate a table block. */
-		arr->table = graduate_alloc(env, size * sizeof(struct rt_value));
-		if (arr->table == NULL)
-			break;
+		/* Get the address of the table. */
+		arr->table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
 
 		/* Setup the struct. */
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
@@ -447,9 +419,9 @@ rt_gc_alloc_array_tenure(
 	int retry;
 
 	/* Allocate in the tenure region. */
-	for (retry = 0; retry <= 2; retry++) {
+	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_array buffer. */
-		arr = tenure_alloc(env, sizeof(struct rt_array));
+		arr = tenure_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
 		if (arr == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -461,18 +433,8 @@ rt_gc_alloc_array_tenure(
 			}
 		}
 
-		/* Allocate an array block. */
-		table = tenure_alloc(env, size * sizeof(struct rt_value));
-		if (table == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1) {
-				rt_gc_old_gc(env);
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-		}
+		/* Get the address of the table. */
+		table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
 
 		/* Setup the struct. */
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
@@ -502,7 +464,7 @@ rt_gc_alloc_dict(
 {
 	struct rt_dict *dict;
 	size_t len;
-	char **key_table;
+	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
 
@@ -514,9 +476,12 @@ rt_gc_alloc_dict(
 		return rt_gc_alloc_dict_tenure(env, size);
 
 	/* Allocate in the nursery region. */
-	for (retry = 0; retry <= 3; retry++) {
+	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_dict buffer. */
-		dict = nursery_alloc(env, sizeof(struct rt_dict));
+		dict = nursery_alloc(env,
+				     sizeof(struct rt_dict) +
+				     size * sizeof(struct rt_value) +
+				     size * sizeof(struct rt_value));
 		if (dict == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -528,31 +493,11 @@ rt_gc_alloc_dict(
 			}
 		}
 
-		/* Allocate the key array block. */
-		key_table = nursery_alloc(env, size * sizeof(char *));
-		if (key_table == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1) {
-				rt_gc_young_gc(env);
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-		}
+		/* Get the address of the key array block. */
+		key_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
 
-		/* Allocate the value array block. */
-		value_table = nursery_alloc(env, size * sizeof(struct rt_value));
-		if (value_table == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1 || retry == 2) {
-				rt_gc_young_gc(env);
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-		}
+		/* Get the address of the value array block. */
+		value_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
 
 		/* Setup the struct. */
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
@@ -589,17 +534,18 @@ rt_gc_alloc_dict_graduate(
 	/* Try allocating in the graduate region. */
 	do {
 		/* Allocate a rt_dict buffer. */
-		dict = graduate_alloc(env, sizeof(struct rt_dict));
+		dict = graduate_alloc(env,
+				      sizeof(struct rt_dict) +
+				      size * sizeof(struct rt_value) +
+				      size * sizeof(struct rt_value));
 		if (dict == NULL)
 			break;
 
-		/* Allocate the key and value blocks. */
-		dict->key = graduate_alloc(env, size * sizeof(char *));
-		if (dict->key == NULL)
-			break;
-		dict->value = graduate_alloc(env, size * sizeof(struct rt_value));
-		if (dict->value == NULL)
-			break;
+		/* Get the address of the key array block. */
+		dict->key = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
+
+		/* Get the address of the value array block. */
+		dict->value = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
 
 		/* Setup a struct. */
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
@@ -631,14 +577,17 @@ rt_gc_alloc_dict_tenure(
 	size_t size)
 {
 	struct rt_dict *dict;
-	char **key_table;
+	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
 
 	/* Allocate in the tenure region. */
-	for (retry = 0; retry <= 3; retry++) {
+	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate the rt_dict buffer. */
-		dict = tenure_alloc(env, sizeof(struct rt_dict));
+		dict = tenure_alloc(env,
+				    sizeof(struct rt_dict) +
+				    size * sizeof(struct rt_value) +
+				    size * sizeof(struct rt_value));
 		if (dict == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -650,31 +599,11 @@ rt_gc_alloc_dict_tenure(
 			}
 		}
 
-		/* Allocate the key array block. */
-		key_table = tenure_alloc(env, size * sizeof(char *));
-		if (key_table == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1) {
-				rt_gc_old_gc(env);
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-		}
+		/* Get the address of the key array block. */
+		key_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
 
-		/* Allocate the value array block. */
-		value_table = tenure_alloc(env, size * sizeof(struct rt_value));
-		if (value_table == NULL) {
-			/* Retry. */
-			if (retry == 0 || retry == 1 || retry == 2) {
-				rt_gc_old_gc(env);
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
-			}
-			continue;
-		}
+		/* Get the address of the value array block. */
+		value_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
 
 		/* Setup a value. */
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
@@ -952,6 +881,10 @@ rt_gc_young_gc(
 		} else {
 			struct rt_dict *dict = (struct rt_dict *)obj;
 			for (i = 0; i < dict->size; i++) {
+				if (dict->key[i].val.obj->region == RT_GC_REGION_GRADUATE &&
+				    dict->key[i].val.obj->forward != NULL) {
+					dict->key[i].val.obj = dict->key[i].val.obj->forward;
+				}
 				if (IS_REF_VAL(&dict->value[i]) &&
 				    dict->value[i].val.obj->region == RT_GC_REGION_GRADUATE &&
 				    dict->value[i].val.obj->forward != NULL) {
@@ -978,6 +911,10 @@ rt_gc_young_gc(
 		} else {
 			struct rt_dict *dict = (struct rt_dict *)obj;
 			for (i = 0; i < dict->size; i++) {
+				if (IS_YOUNG_OBJ(dict->key[i].val.obj)) {
+					has_cross_gen_ref = true;
+					break;
+				}
 				if (IS_REF_VAL(&dict->value[i]) &&
 				    IS_YOUNG_OBJ(dict->value[i].val.obj)) {
 					has_cross_gen_ref = true;
@@ -1107,6 +1044,8 @@ rt_gc_copy_young_object_recursively(
 	case RT_GC_TYPE_DICT:
 		dict = (struct rt_dict *)*obj;
 		for (i = 0; i < dict->size; i++) {
+			if (!rt_gc_copy_young_object_recursively(env, &dict->key[i].val.obj))
+				return false;
 			if (IS_REF_VAL(&dict->value[i])) {
 				if (!rt_gc_copy_young_object_recursively(env, &dict->value[i].val.obj))
 					return false;
@@ -1142,7 +1081,20 @@ rt_gc_copy_young_object_recursively(
 			/* Check for dictionary cross-generation references. */
 			dict = (struct rt_dict *)*obj;
 			for (i = 0; i < dict->size; i++) {
-				/* If the element is young generation. */
+				/* If the key is young generation. */
+				if (IS_YOUNG_OBJ(dict->key[i].val.obj)) {
+					/* And if the element is not promoted to the tenure region. */
+					if (dict->key[i].val.obj->forward != NULL &&
+					    dict->key[i].val.obj->forward->region == RT_GC_REGION_TENURE)
+						continue;
+
+					/* Add to remember set. */
+					dict->head.rem_flg = true;
+					INSERT_TO_LIST(&dict->head, env->vm->gc.remember_set,rem_prev, rem_next);
+					break;
+				}
+
+				/* If the value is young generation. */
 				if (IS_REF_VAL(&dict->value[i]) &&
 				    IS_YOUNG_OBJ(dict->value[i].val.obj)) {
 					/* And if the element is not promoted to the tenure region. */
@@ -1257,14 +1209,7 @@ rt_gc_promote_dict(
 
 	/* Copy the keys. */
 	new_dict->size = old_dict->size;
-	for (i = 0; i < old_dict->size; i++) {
-		len = strlen(old_dict->key[i]);
-		new_dict->key[i] = tenure_alloc(env, len + 1);
-		if (new_dict->key[i] == NULL)
-			return false;
-
-		strcpy(new_dict->key[i], old_dict->key[i]);
-	}
+	memcpy(new_dict->key, old_dict->key, old_dict->size * sizeof(struct rt_value));
 
 	/* Copy the values. */
 	memcpy(new_dict->value, old_dict->value, old_dict->size * sizeof(struct rt_value));
@@ -1376,36 +1321,7 @@ rt_gc_copy_dict_to_graduate(
 
 		/* Copy the keys. */
 		new_obj->size = old_obj->size;
-		if (new_obj->head.region == RT_GC_REGION_GRADUATE) {
-			for (i = 0; i < new_obj->size; i++) {
-				new_obj->key[i] = graduate_alloc(env, strlen(old_obj->key[i]) + 1);
-				if (new_obj->key[i] == NULL) {
-					/* Graduate is full. Retry with the tenure region. */
-					retry = true;
-					new_obj = NULL;
-					break;
-				}
-				strcpy(new_obj->key[i], old_obj->key[i]);
-			}
-			if (retry)
-				continue;
-		} else if (new_obj->head.region == RT_GC_REGION_TENURE) {
-			for (i = 0; i < new_obj->size; i++) {
-				new_obj->key[i] = tenure_alloc(env, strlen(old_obj->key[i]) + 1);
-				if (new_obj->key[i] == NULL) {
-					/* Tenure is full. Retry. */
-					rt_gc_level2_gc(env);
-					new_obj->key[i] = tenure_alloc(env, strlen(old_obj->key[i]) + 1);
-					if (new_obj->key[i] == NULL) {
-						rt_out_of_memory(env);
-						return NULL;
-					}
-				}
-				strcpy(new_obj->key[i], old_obj->key[i]);
-			}
-		} else {
-			assert(NEVER_COME_HERE);
-		}
+		memcpy(new_obj->key, old_obj->key, old_obj->size * sizeof(struct rt_value));
 
 		/* Copy the value. */
 		memcpy(new_obj->value, old_obj->value, old_obj->size * sizeof(struct rt_value));
@@ -1413,6 +1329,12 @@ rt_gc_copy_dict_to_graduate(
 		/* Check for cross-generation references. */
 		if (new_obj->head.region == RT_GC_REGION_TENURE) {
 			for (i = 0; i < new_obj->size; i++) {
+				if (IS_YOUNG_OBJ(new_obj->key[i].val.obj)) {
+					new_obj->head.rem_flg = true;
+					INSERT_TO_LIST(&new_obj->head, env->vm->gc.remember_set,rem_prev, rem_next);
+					break;
+				}
+
 				if (IS_REF_VAL(&new_obj->value[i]) &&
 				    IS_YOUNG_OBJ(new_obj->value[i].val.obj)) {
 					new_obj->head.rem_flg = true;
@@ -1529,6 +1451,7 @@ rt_gc_mark_old_object_recursively(
 	} else if (obj->type == RT_GC_TYPE_DICT) {
 		struct rt_dict *dict = (struct rt_dict *)obj;
 		for (i = 0; i < dict->size; i++) {
+			rt_gc_mark_old_object_recursively(env, dict->key[i].val.obj);
 			if (IS_REF_VAL(&dict->value[i]))
 				rt_gc_mark_old_object_recursively(env, dict->value[i].val.obj);
 		}
@@ -1563,20 +1486,14 @@ rt_gc_free_old_object(
 	if (obj->type == RT_GC_TYPE_STRING) {
 		struct rt_string *str;
 		str = (struct rt_string *)obj;
-		tenure_free(env, str->data);
 		tenure_free(env, str);
 	} else if (obj->type == RT_GC_TYPE_ARRAY) {
 		struct rt_array *arr;
 		arr = (struct rt_array *)obj;
-		tenure_free(env, arr->table);
 		tenure_free(env, arr);
 	} else if (obj->type == RT_GC_TYPE_DICT) {
 		struct rt_dict *dict;
 		dict = (struct rt_dict *)obj;
-		for (i = 0; i < dict->size; i++)
-			tenure_free(env, dict->key[i]);
-		tenure_free(env, dict->key);
-		tenure_free(env, dict->value);
 		tenure_free(env, dict);
 	}
 }
@@ -1731,20 +1648,82 @@ graduate_alloc(
 	return arena_alloc(&env->vm->gc.graduate_arena[env->vm->gc.cur_grad_to], size);
 }
 
+/*
+ * Allocate a tenure block.
+ *
+ * The allocator for the tenure region.
+ * Each block has its size at the block top.
+ * The LSB of the block size indicates the block is used (set) or freed (clear).
+ */
 static void *
 tenure_alloc(
 	struct rt_env *env,
 	size_t size)
 {
-	/* This is a stub, just use malloc() for now. */
-	return malloc(size);
+	char *cur;
+	char *p;
+
+	assert(size > 0);
+	if (size == 0)
+		return NULL;
+
+	/* Align. */
+	size = (size + RT_GC_FREELIST_ALIGN - 1) & ~(RT_GC_FREELIST_ALIGN - 1);
+
+	/* The second blk */
+	cur = env->vm->gc.tenure_freelist.top;
+
+	/* Search for the first match. */
+	while (*cur) {
+		size_t blk_size = *(size_t *)cur;
+
+		/* Check for the end of the list. */
+		if (blk_size == 0)
+			break;
+
+		/* Check if the block is used or the size is small. */
+		if ((blk_size & RT_GC_FREELIST_USED_BIT) ||
+		    (size > blk_size)) {
+			cur = cur + sizeof(size_t) + (blk_size & RT_GC_FREELIST_SIZE_MASK);
+			continue;
+		}
+
+		/* Reuse this block. */
+		blk_size |= RT_GC_FREELIST_USED_BIT;
+		*(size_t *)cur = blk_size;
+
+		/* Return the address of the block top + the size of the size header. */
+		return cur + sizeof(size_t);
+	}
+
+	/* Check if the remaining size fits. */
+	if (size > env->vm->gc.tenure_freelist.end - cur - sizeof(size_t))
+		return NULL;
+
+	/* Allocate at the end of the free list. */
+	*(size_t *)cur = size | RT_GC_FREELIST_USED_BIT;
+	env->vm->gc.tenure_freelist.cur += size + sizeof(size_t);
+	return cur + sizeof(size_t);
 }
 
+/* Free a tenure block. */
 static void
 tenure_free(
 	struct rt_env *env,
 	void *p)
 {
-	/* This is a stub, just use free() for now. */
-	free(p);
+	size_t *header;
+	size_t size;
+
+	/* Get the header address. */
+	header = (size_t *)((char *)p - sizeof(size_t));
+
+	/* Get the block size. */
+	size = *header;
+
+	/* Block must be used. (check the used bit.) */
+	assert(size & RT_GC_FREELIST_USED_BIT);
+
+	/* Erase the used bit. */
+	*header = size & RT_GC_FREELIST_SIZE_MASK;
 }

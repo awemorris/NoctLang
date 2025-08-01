@@ -997,8 +997,8 @@ rt_get_dict_elem(
 	
 	/* Search the key. */
 	for (i = 0; i < dict->size; i++) {
-		if (strcmp(dict->key[i], key) == 0) {
-			/* Succeede. */
+		if (strcmp(dict->key[i].val.str->data, key) == 0) {
+			/* Succeeded. */
 			*val = dict->value[i];
 			return true;
 		}
@@ -1029,7 +1029,7 @@ rt_set_dict_elem(
 	
 	/* Search for the key. */
 	for (i = 0; i < dict->size; i++) {
-		if (strcmp(dict->key[i], key) == 0) {
+		if (strcmp(dict->key[i].val.str->data, key) == 0) {
 			dict->value[i] = *val;
 			return true;
 		}
@@ -1040,19 +1040,18 @@ rt_set_dict_elem(
 		return false;
 
 	/* Append the key. */
-	dict->key[dict->size] = rt_gc_alloc_dict_key(env, dict, key);
-	if (dict->key[dict->size] == NULL) {
-		rt_out_of_memory(env);
+	if (!rt_make_string(env, &dict->key[dict->size], key))
 		return false;
-	}
 	dict->value[dict->size] = *val;
 	dict->size++;
 
 	/* GC: Write barrier for the remember set. */
 	if (val->type == NOCT_VALUE_STRING ||
 	    val->type == NOCT_VALUE_ARRAY ||
-	    val->type == NOCT_VALUE_DICT)
+	    val->type == NOCT_VALUE_DICT) {
+		rt_gc_dict_write_barrier(env, dict, i, &dict->key[dict->size]);
 		rt_gc_dict_write_barrier(env, dict, i, val);
+	}
 
 	return true;
 }
@@ -1094,14 +1093,13 @@ rt_expand_dict(
 		/* Copy the values with write barrier. */
 		for (i = 0; i < (int)old_dict->size; i++) {
 			/* Copy the key. */
-			new_dict->key[i] = rt_gc_alloc_dict_key(env, new_dict, old_dict->key[i]);
-			if (new_dict->key[i] == NULL)
-				return false;
+			new_dict->key[i] = old_dict->key[i];
 
 			/* Copy the value. */
 			new_dict->value[i] = old_dict->value[i];
 
 			/* Write barrier. */
+			rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->key[i]);
 			rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->value[i]);
 		}
 

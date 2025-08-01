@@ -178,7 +178,7 @@ struct rt_dict {
 
 	size_t alloc_size;
 	size_t size;
-	char **key;
+	struct rt_value *key;
 	struct rt_value *value;
 };
 
