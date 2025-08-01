@@ -69,11 +69,6 @@
 #define IS_YOUNG_OBJ(o)			((o)->region < RT_GC_REGION_TENURE)
 
 /*
- * Convert an allocation retry count (3,2,1) to an GC level (0, 1, 2).
- */
-#define RETRY_COUNT_TO_GC_LEVEL(rc)	(3 - rc)
-
-/*
  * Forward declaration.
  */
 static struct rt_string *rt_gc_alloc_string_graduate(struct rt_env *env, size_t len, const char *data);
@@ -91,6 +86,7 @@ static struct rt_gc_object *rt_gc_promote_dict(struct rt_env *env, struct rt_gc_
 struct rt_gc_object *rt_gc_copy_string_to_graduate(struct rt_env *env, struct rt_string *old_obj);
 struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_array *old_obj);
 struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
+static void rt_gc_old_gc(struct rt_env *env);
 static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_run_gc(struct rt_env *env, int level);
@@ -154,7 +150,7 @@ rt_gc_alloc_string(
 {
 	struct rt_string *rts;
 	char *s;
-	int retry_count;
+	int retry;
 
 	/*
 	 * [Large Object Promotion]
@@ -164,15 +160,13 @@ rt_gc_alloc_string(
 		return rt_gc_alloc_string_tenure(env, len, data);
 
 	/* Allocate in the nursery region. */
-	retry_count = 3;
-	while (retry_count >= 0) {
+	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_string buffer. */
 		rts = nursery_alloc(env, sizeof(struct rt_string));
 		if (rts == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0) {
+				rt_gc_young_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -184,9 +178,8 @@ rt_gc_alloc_string(
 		s = nursery_alloc(env, len);
 		if (s == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0 || retry == 1) {
+				rt_gc_young_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -277,18 +270,16 @@ rt_gc_alloc_string_tenure(
 {
 	struct rt_string *rts;
 	char *s;
-	int retry_count;
+	int retry;
 
 	/* Allocate in the tenure region. */
-	retry_count = 2;
-	while (retry_count >= 0) {
+	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_string buffer. */
 		rts = tenure_alloc(env, sizeof(struct rt_string));
 		if (rts == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0) {
+				rt_gc_old_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -300,9 +291,8 @@ rt_gc_alloc_string_tenure(
 		s = tenure_alloc(env, len);
 		if (s == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0 || retry == 1) {
+				rt_gc_old_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -341,7 +331,7 @@ rt_gc_alloc_array(
 	struct rt_array *arr;
 	size_t len;
 	struct rt_value *table;
-	int retry_count;
+	int retry;
 
 	/*
 	 * [Large Object Promotion]
@@ -352,15 +342,13 @@ rt_gc_alloc_array(
 		return rt_gc_alloc_array_tenure(env, size);
 
 	/* Allocate in the nursery region. */
-	retry_count = 3;
-	while (retry_count > 0) {
+	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_array buffer. */
 		arr = nursery_alloc(env, sizeof(struct rt_array));
 		if (arr == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0) {
+				rt_gc_young_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -372,9 +360,8 @@ rt_gc_alloc_array(
 		table = nursery_alloc(env, size * sizeof(struct rt_value));
 		if (table == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0 || retry == 1) {
+				rt_gc_young_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -457,18 +444,16 @@ rt_gc_alloc_array_tenure(
 	struct rt_array *arr;
 	size_t len;
 	struct rt_value *table;
-	int retry_count;
+	int retry;
 
 	/* Allocate in the tenure region. */
-	retry_count = 2;
-	while (retry_count > 0) {
+	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_array buffer. */
 		arr = tenure_alloc(env, sizeof(struct rt_array));
 		if (arr == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0) {
+				rt_gc_old_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -480,9 +465,8 @@ rt_gc_alloc_array_tenure(
 		table = tenure_alloc(env, size * sizeof(struct rt_value));
 		if (table == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0 || retry == 1) {
+				rt_gc_old_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -520,7 +504,7 @@ rt_gc_alloc_dict(
 	size_t len;
 	char **key_table;
 	struct rt_value *value_table;
-	int retry_count;
+	int retry;
 
 	/*
 	 * [Large Object Promotion]
@@ -530,15 +514,13 @@ rt_gc_alloc_dict(
 		return rt_gc_alloc_dict_tenure(env, size);
 
 	/* Allocate in the nursery region. */
-	retry_count = 3;
-	while (retry_count > 0) {
+	for (retry = 0; retry <= 3; retry++) {
 		/* Allocate a rt_dict buffer. */
 		dict = nursery_alloc(env, sizeof(struct rt_dict));
 		if (dict == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0) {
+				rt_gc_young_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -550,9 +532,8 @@ rt_gc_alloc_dict(
 		key_table = nursery_alloc(env, size * sizeof(char *));
 		if (key_table == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0 || retry == 1) {
+				rt_gc_young_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -564,9 +545,8 @@ rt_gc_alloc_dict(
 		value_table = nursery_alloc(env, size * sizeof(struct rt_value));
 		if (value_table == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0 || retry == 1 || retry == 2) {
+				rt_gc_young_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -653,18 +633,16 @@ rt_gc_alloc_dict_tenure(
 	struct rt_dict *dict;
 	char **key_table;
 	struct rt_value *value_table;
-	int retry_count;
+	int retry;
 
 	/* Allocate in the tenure region. */
-	retry_count = 1;
-	while (retry_count > 0) {
+	for (retry = 0; retry <= 3; retry++) {
 		/* Allocate the rt_dict buffer. */
 		dict = tenure_alloc(env, sizeof(struct rt_dict));
 		if (dict == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0) {
+				rt_gc_old_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -676,9 +654,8 @@ rt_gc_alloc_dict_tenure(
 		key_table = tenure_alloc(env, size * sizeof(char *));
 		if (key_table == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
+			if (retry == 0 || retry == 1) {
+				rt_gc_old_gc(env);
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -690,9 +667,8 @@ rt_gc_alloc_dict_tenure(
 		value_table = tenure_alloc(env, size * sizeof(struct rt_value));
 		if (value_table == NULL) {
 			/* Retry. */
-			retry_count--;
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, 1);
+			if (retry == 0 || retry == 1 || retry == 2) {
+				rt_gc_old_gc(env);
 			} else {
 				rt_out_of_memory(env);
 				return NULL;
@@ -730,34 +706,50 @@ rt_gc_alloc_dict_key(
 {
 	size_t len;
 	char *ret;
-	int retry_count;
+	int retry;
 
 	/* Get the length of the key. */
 	len = strlen(key) + 1;
 
-	retry_count = dict->head.region == RT_GC_REGION_TENURE ? 2 : 3;
-	while (retry_count >= 0) {
+	for (retry = 0; retry <= 1; retry++) {
 		/* Try allocation from a region. */
 		switch (dict->head.region) {
 		case RT_GC_REGION_NURSERY:
 			ret = nursery_alloc(env, len);
+			if (ret == NULL) {
+				if (retry == 0) {
+					rt_gc_young_gc(env);
+					continue;
+				} else {
+					rt_out_of_memory(env);
+					return NULL;
+				}
+			}
 			break;
 		case RT_GC_REGION_GRADUATE:
 			ret = graduate_alloc(env, len);
+			if (ret == NULL) {
+				if (retry == 0) {
+					rt_gc_young_gc(env);
+					continue;
+				} else {
+					rt_out_of_memory(env);
+					return NULL;
+				}
+			}
 			break;
 		case RT_GC_REGION_TENURE:
 			ret = tenure_alloc(env, len);
-			break;
-		}
-
-		if (ret == NULL) {
-			if (retry_count > 0) {
-				rt_gc_run_gc(env, RETRY_COUNT_TO_GC_LEVEL(retry_count));
-				continue;
-			} else {
-				rt_out_of_memory(env);
-				return NULL;
+			if (ret == NULL) {
+				if (retry == 0) {
+					rt_gc_old_gc(env);
+					continue;
+				} else {
+					rt_out_of_memory(env);
+					return NULL;
+				}
 			}
+			break;
 		}
 
 		/* Succeeded. */
@@ -1378,7 +1370,7 @@ rt_gc_copy_dict_to_graduate(
 		if (new_obj == NULL)
 			return NULL;
 
-		/* When failed to allocate on the graduate, go with the retry mode. */
+		/* When fallback to the tenure on the first time, go with retry mode. */
 		if (!retry && new_obj->head.region == RT_GC_REGION_TENURE)
 			retry = true;
 
