@@ -347,7 +347,7 @@ rt_gc_alloc_array(
 	 * [Large Object Promotion]
 	 *  - If the array is large, allocate in the tenure region.
 	 */
-	len = size * sizeof(struct rt_value *);
+	len = size * sizeof(struct rt_value);
 	if (len >= RT_GC_LOP_THRESHOLD)
 		return rt_gc_alloc_array_tenure(env, size);
 
@@ -369,7 +369,7 @@ rt_gc_alloc_array(
 		}
 
 		/* Allocate an array block. */
-		table = nursery_alloc(env, len);
+		table = nursery_alloc(env, size * sizeof(struct rt_value));
 		if (table == NULL) {
 			/* Retry. */
 			retry_count--;
@@ -477,7 +477,7 @@ rt_gc_alloc_array_tenure(
 		}
 
 		/* Allocate an array block. */
-		table = tenure_alloc(env, size);
+		table = tenure_alloc(env, size * sizeof(struct rt_value));
 		if (table == NULL) {
 			/* Retry. */
 			retry_count--;
@@ -561,7 +561,7 @@ rt_gc_alloc_dict(
 		}
 
 		/* Allocate the value array block. */
-		value_table = nursery_alloc(env, size * sizeof(struct rt_value *));
+		value_table = nursery_alloc(env, size * sizeof(struct rt_value));
 		if (value_table == NULL) {
 			/* Retry. */
 			retry_count--;
@@ -614,10 +614,10 @@ rt_gc_alloc_dict_graduate(
 			break;
 
 		/* Allocate the key and value blocks. */
-		dict->key = graduate_alloc(env, size * sizeof(struct rt_value *));
+		dict->key = graduate_alloc(env, size * sizeof(char *));
 		if (dict->key == NULL)
 			break;
-		dict->value = graduate_alloc(env, size * sizeof(struct rt_value *));
+		dict->value = graduate_alloc(env, size * sizeof(struct rt_value));
 		if (dict->value == NULL)
 			break;
 
@@ -687,7 +687,7 @@ rt_gc_alloc_dict_tenure(
 		}
 
 		/* Allocate the value array block. */
-		value_table = tenure_alloc(env, size * sizeof(struct rt_value *));
+		value_table = tenure_alloc(env, size * sizeof(struct rt_value));
 		if (value_table == NULL) {
 			/* Retry. */
 			retry_count--;
