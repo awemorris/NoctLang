@@ -115,6 +115,11 @@ struct rt_gc_info {
 
 	/* Linked list of the remember set. */
 	struct rt_gc_object *remember_set;
+
+	/* Compaction address tables. */
+	int compact_count;
+	void **compact_before;
+	void **compact_after;
 };
 
 /*
@@ -133,6 +138,9 @@ struct rt_gc_object {
 	 * belongs to.
 	 */
 	int region;
+
+	/* Object size. (for compaction) */
+	size_t size;
 
 	/*
 	 * Intrusive doubly-linked list for the corresponding
@@ -176,12 +184,6 @@ struct rt_array *rt_gc_alloc_array(struct rt_env *env, size_t size);
 
 /* Allocates a dictionary object in the appropriate region. */
 struct rt_dict *rt_gc_alloc_dict(struct rt_env *env, size_t size);
-
-/* Allocates a dictionary key in the appropriate region. */
-char *rt_gc_alloc_dict_key(struct rt_env *env, struct rt_dict *dict, const char *key);
-
-/* Frees a dictionary key. */
-void rt_gc_free_dict_key(struct rt_env *env, struct rt_dict *dict, char *key);
 
 /* Write barrier: registers a container in the remember set if it references a young object. */
 void rt_gc_array_write_barrier(struct rt_env *env, struct rt_array *arr, int index, struct rt_value *val);

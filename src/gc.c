@@ -89,6 +89,8 @@ struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_d
 static void rt_gc_old_gc(struct rt_env *env);
 static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
+static bool rt_gc_compact(struct rt_env *env);
+static void rt_gc_update_tenure_ref_recursively(struct rt_env *env, struct rt_gc_object **obj);
 static void rt_gc_run_gc(struct rt_env *env, int level);
 static void *nursery_alloc(struct rt_env *env, size_t size);
 static void *graduate_alloc(struct rt_env *env, size_t size);
@@ -194,6 +196,7 @@ rt_gc_alloc_string(
 		memset(&rts->head, 0, sizeof(struct rt_gc_object));
 		rts->head.type = RT_GC_TYPE_STRING;
 		rts->head.region = RT_GC_REGION_NURSERY;
+		rts->head.size = sizeof(struct rt_string) + len;
 		INSERT_TO_LIST(&rts->head, env->vm->gc.nursery_list, prev, next);
 		rts->data = s;
 		rts->len = len;
@@ -238,6 +241,7 @@ rt_gc_alloc_string_graduate(
 		memset(&rts->head, 0, sizeof(struct rt_gc_object));
 		rts->head.type = RT_GC_TYPE_STRING;
 		rts->head.region = RT_GC_REGION_GRADUATE;
+		rts->head.size = sizeof(struct rt_string) + len;
 		INSERT_TO_LIST(&rts->head, env->vm->gc.graduate_new_list, prev, next);
 		rts->data = s;
 		rts->len = len;
@@ -291,6 +295,7 @@ rt_gc_alloc_string_tenure(
 		memset(&rts->head, 0, sizeof(struct rt_gc_object));
 		rts->head.type = RT_GC_TYPE_STRING;
 		rts->head.region = RT_GC_REGION_TENURE;
+		rts->head.size = sizeof(struct rt_string) + len;
 		INSERT_TO_LIST(&rts->head, env->vm->gc.tenure_list, prev, next);
 		rts->data = s;
 		rts->len = len;
@@ -347,6 +352,7 @@ rt_gc_alloc_array(
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_NURSERY;
+		arr->head.size = sizeof(struct rt_array) + size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&arr->head, env->vm->gc.nursery_list, prev, next);
 		arr->alloc_size = size;
 		arr->size = 0;
@@ -388,6 +394,7 @@ rt_gc_alloc_array_graduate(
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_GRADUATE;
+		arr->head.size = sizeof(struct rt_array) + size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&arr->head, env->vm->gc.graduate_new_list, prev, next);
 		arr->size = size;
 
@@ -440,6 +447,7 @@ rt_gc_alloc_array_tenure(
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_TENURE;
+		arr->head.size = sizeof(struct rt_array) + size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&arr->head, env->vm->gc.tenure_list, prev, next);
 		arr->alloc_size = size;
 		arr->size = 0;
@@ -503,6 +511,7 @@ rt_gc_alloc_dict(
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_NURSERY;
+		dict->head.size = sizeof(struct rt_dict) + 2 * size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&dict->head, env->vm->gc.nursery_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -551,6 +560,7 @@ rt_gc_alloc_dict_graduate(
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_GRADUATE;
+		dict->head.size = sizeof(struct rt_dict) + 2 * size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&dict->head, env->vm->gc.graduate_new_list, prev, next);
 		dict->size = size;
 
@@ -609,6 +619,7 @@ rt_gc_alloc_dict_tenure(
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_TENURE;
+		dict->head.size = sizeof(struct rt_dict) + 2 * size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&dict->head, env->vm->gc.tenure_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -622,93 +633,6 @@ rt_gc_alloc_dict_tenure(
 	/* Failed. */
 	rt_out_of_memory(env);
 	return NULL;
-}
-
-/*
- * Allocates for a dictionary key.
- */
-char *
-rt_gc_alloc_dict_key(
-	struct rt_env *env,
-	struct rt_dict *dict,
-	const char *key)
-{
-	size_t len;
-	char *ret;
-	int retry;
-
-	/* Get the length of the key. */
-	len = strlen(key) + 1;
-
-	for (retry = 0; retry <= 1; retry++) {
-		/* Try allocation from a region. */
-		switch (dict->head.region) {
-		case RT_GC_REGION_NURSERY:
-			ret = nursery_alloc(env, len);
-			if (ret == NULL) {
-				if (retry == 0) {
-					rt_gc_young_gc(env);
-					continue;
-				} else {
-					rt_out_of_memory(env);
-					return NULL;
-				}
-			}
-			break;
-		case RT_GC_REGION_GRADUATE:
-			ret = graduate_alloc(env, len);
-			if (ret == NULL) {
-				if (retry == 0) {
-					rt_gc_young_gc(env);
-					continue;
-				} else {
-					rt_out_of_memory(env);
-					return NULL;
-				}
-			}
-			break;
-		case RT_GC_REGION_TENURE:
-			ret = tenure_alloc(env, len);
-			if (ret == NULL) {
-				if (retry == 0) {
-					rt_gc_old_gc(env);
-					continue;
-				} else {
-					rt_out_of_memory(env);
-					return NULL;
-				}
-			}
-			break;
-		}
-
-		/* Succeeded. */
-		memcpy(ret, key, len);
-		return ret;
-	}
-
-	/* Failed. */
-	return NULL;
-}
-
-/*
- * Frees a dictionary key.
- */
-void
-rt_gc_free_dict_key(
-	struct rt_env *env,
-	struct rt_dict *dict,
-	char *key)
-{
-	/* Free by the region. */
-	switch (dict->head.region) {
-	case RT_GC_REGION_NURSERY:
-	case RT_GC_REGION_GRADUATE:
-		/* No action. (arena allocator) */
-		break;
-	case RT_GC_REGION_TENURE:
-		tenure_free(env, key);
-		break;
-	}
 }
 
 /*
@@ -924,12 +848,8 @@ rt_gc_young_gc(
 		}
 		if (!has_cross_gen_ref) {
 			/* Unlink from the remember set list. */
-			if (obj->rem_prev != NULL)
-				obj->rem_prev->rem_next = obj->rem_next;
-			else
-				env->vm->gc.remember_set = obj->rem_next;
-			if (obj->rem_next != NULL)
-				obj->rem_next->rem_prev = obj->rem_prev;
+			obj->rem_flg = false;
+			UNLINK_FROM_LIST(obj, env->vm->gc.remember_set, rem_prev, rem_next);
 		}
 		obj = obj->rem_next;
 	}
@@ -1353,6 +1273,7 @@ rt_gc_copy_dict_to_graduate(
 	return &new_obj->head;
 }
 
+/* Executes an old GC. */
 static void
 rt_gc_old_gc(
 	struct rt_env *env)
@@ -1360,6 +1281,7 @@ rt_gc_old_gc(
 	struct rt_gc_object *obj, *next_obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
+	int tenure_count;
 	int i;
 
 	/*
@@ -1417,10 +1339,20 @@ rt_gc_old_gc(
 	obj = env->vm->gc.tenure_list;
 	while (obj != NULL) {
 		next_obj = obj->next;
+
+		/* Free if not marked. */
 		if (!obj->is_marked)
 			rt_gc_free_old_object(env, obj);
+
 		obj = next_obj;
 	}
+
+	/*
+	 * Compaction.
+	 */
+
+	/* Run a compaction. */
+	rt_gc_compact(env);
 }
 
 /* Mark object recursively for the old GC. */
@@ -1495,6 +1427,196 @@ rt_gc_free_old_object(
 		struct rt_dict *dict;
 		dict = (struct rt_dict *)obj;
 		tenure_free(env, dict);
+	}
+}
+
+/* Create the compaction table. */
+static bool
+rt_gc_compact(
+	struct rt_env *env)
+{
+	struct rt_gc_object *obj;
+	char *cur_blk, *remap_top;
+	int i, index;
+	struct rt_bindglobal *global;
+	struct rt_frame *frame;
+
+	/*
+	 * Count all tenure objects.
+	 */
+
+	env->vm->gc.compact_count = 0;
+	obj = env->vm->gc.tenure_list;
+	while (obj != NULL) {
+		env->vm->gc.compact_count++;
+		obj = obj->next;
+	}
+	if (env->vm->gc.compact_count == 0)
+		return true;
+
+	/*
+	 * Initialize the compaction table.
+	 */
+
+	/* Allocate the compaction table. */
+	env->vm->gc.compact_before = malloc(env->vm->gc.compact_count * sizeof(void *));
+	if (env->vm->gc.compact_before == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	env->vm->gc.compact_after = malloc(env->vm->gc.compact_count * sizeof(void *));
+	if (env->vm->gc.compact_after == NULL) {
+		free(env->vm->gc.compact_before);
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	/* Traverse the tenure region. */
+	cur_blk = env->vm->gc.tenure_freelist.top;
+	remap_top = env->vm->gc.tenure_freelist.top;
+	index = 0;
+	while (cur_blk < env->vm->gc.tenure_freelist.end) {
+		size_t blk_size, real_size;
+		bool blk_used;
+		struct rt_gc_object *obj;
+
+		blk_size = *(size_t *)cur_blk;
+		blk_used = blk_size & RT_GC_FREELIST_USED_BIT ? true : false;
+		obj = (struct rt_gc_object *)(cur_blk + sizeof(size_t));
+
+		/* Check for the end of the list. */
+		if (blk_size == 0)
+			break;
+
+		/* Skip if unused. */
+		if (!blk_used) {
+			cur_blk += sizeof(size_t) + blk_size;
+			continue;
+		}
+
+		/* Record. */
+		env->vm->gc.compact_before[index] = obj;
+		env->vm->gc.compact_after[index] = remap_top + sizeof(size_t);
+		remap_top += sizeof(size_t) + obj->size;
+		index++;
+
+		cur_blk += sizeof(size_t) + blk_size;
+	}
+	assert(cur_blk < env->vm->gc.tenure_freelist.end);
+	assert(index == env->vm->gc.compact_count);
+
+	/* Update the free list top. */
+	env->vm->gc.tenure_freelist.cur = remap_top;
+
+	/*
+	 * Slide tenure objects.
+	 */
+
+	for (i = 0; i < env->vm->gc.compact_count; i++) {
+		/* Get the real object size. */
+		size_t obj_size = ((struct rt_gc_object *)env->vm->gc.compact_before[i])->size;
+
+		/* Move. */
+		memmove(env->vm->gc.compact_after[i],
+			env->vm->gc.compact_before[i],
+			obj_size);
+
+		/* Store the size header. */
+		*(size_t *)((char *)env->vm->gc.compact_after[i] - sizeof(size_t)) = obj_size;
+
+		/* Fill the reminder. */
+		if (i == env->vm->gc.compact_count - 1) {
+			memset(env->vm->gc.compact_after[i] + obj_size,
+			       0,
+			       env->vm->gc.tenure_freelist.end - ((char *)env->vm->gc.compact_after[i] + obj_size));
+		}
+	}
+
+	/*
+	 * Rewrite all references.
+	 */
+
+	/* For all global variables. */
+	global = env->vm->global;
+	while (global != NULL) {
+		if (IS_REF_VAL(&global->val))
+			rt_gc_update_tenure_ref_recursively(env, &global->val.val.obj);
+		global = global->next;
+	}
+
+	/* For all call frames. */
+	frame = env->frame;
+	while (frame != NULL) {
+		/* For all temporary variables in the frame. */
+		for (i = 0; i < frame->tmpvar_size; i++) {
+			if (IS_REF_VAL(&frame->tmpvar[i]))
+				rt_gc_update_tenure_ref_recursively(env, &frame->tmpvar[i].val.obj);
+		}
+
+		/* For all pinned C local variables in the frame. */
+		for (i = 0; i < frame->pinned_count; i++) {
+			if (IS_REF_VAL(frame->pinned[i]))
+				rt_gc_update_tenure_ref_recursively(env, &frame->pinned[i]->val.obj);
+		}
+
+		frame = frame->next;
+	}
+
+	/* For all pinned C global variables. */
+	for (i = 0; i < env->vm->pinned_count; i++) {
+		if (IS_REF_VAL(env->vm->pinned[i]))
+			rt_gc_update_tenure_ref_recursively(env, &env->vm->pinned[i]->val.obj);
+	}
+
+	/*
+	 * Cleanup the compaction table.
+	 */
+
+	if (env->vm->gc.compact_before != NULL) {
+		free(env->vm->gc.compact_before);
+		env->vm->gc.compact_before = NULL;
+	}
+	if (env->vm->gc.compact_after != NULL) {
+		free(env->vm->gc.compact_after);
+		env->vm->gc.compact_after = NULL;
+	}
+
+	return true;
+}
+
+/* Recursively update the tenure references for compaction. */
+static void
+rt_gc_update_tenure_ref_recursively(
+	struct rt_env *env,
+	struct rt_gc_object **obj)
+{
+	int i;
+
+	/* Search in the compaction table. */
+	for (i = 0; i < env->vm->gc.compact_count; i++) {
+		if (env->vm->gc.compact_before[i] == *obj)
+			break;
+	}
+	if (i == env->vm->gc.compact_count)
+		return;	/* Not found. */
+
+	/* Update the reference. */
+	*obj = env->vm->gc.compact_after[i];
+
+	/* Recursively update. */
+	if ((*obj)->type == RT_GC_TYPE_ARRAY) {
+		struct rt_array *arr = (struct rt_array *)*obj;
+		for (i = 0; i < arr->size; i++) {
+			if (IS_REF_VAL(&arr->table[i]))
+				rt_gc_update_tenure_ref_recursively(env, &arr->table[i].val.obj);
+		}
+	} else if ((*obj)->type == RT_GC_TYPE_DICT) {
+		struct rt_dict *dict = (struct rt_dict *)*obj;
+		for (i = 0; i < dict->size; i++) {
+			rt_gc_update_tenure_ref_recursively(env, &dict->key[i].val.obj);
+			if (IS_REF_VAL(&dict->value[i]))
+				rt_gc_update_tenure_ref_recursively(env, &dict->value[i].val.obj);
+		}
 	}
 }
 
