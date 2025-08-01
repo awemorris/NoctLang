@@ -4,6 +4,7 @@
  * Copyright (c) 2025, Awe Morris. All rights reserved.
  */
 
+#include <noct/noct.h>
 #include "runtime.h"
 #include "ast.h"
 #include "hir.h"
@@ -14,7 +15,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
-#include <locale.h>
 #include <assert.h>
 
 #ifdef _WIN32
@@ -36,18 +36,12 @@
 /* Runtime's configuration. */
 extern bool noct_conf_use_jit;
 
-/* Language code for translation. */
-#ifdef USE_GETTEXT_COMPAT
-const char *lang_code = "en";
+/* i18n.c */
+#if defined(USE_GETTEXT_COMPAT)
+void noct_init_locale(void);
 #endif
-
-/* Language runtime. */
-static struct rt_env *rt;
 
 /* Forward declaration. */
-#if defined(USE_GETTEXT_COMPAT)
-static void init_locale(void);
-#endif
 static void show_usage(void);
 static int command_compile(int argc, char *argv[]);
 static int command_transpile_c(int argc, char *argv[]);
@@ -64,7 +58,7 @@ static bool is_multiline_start(const char *text, bool *is_func);
 static bool accept_multiline(const char *text);
 static bool load_file_content(const char *fname, char **data, size_t *size);
 static int wide_printf(const char *format, ...);
-static bool register_ffi(struct rt_env *rt);
+static bool register_ffi(NoctEnv *env);
 
 /*
  * Main
@@ -75,7 +69,7 @@ int main(int argc, char *argv[])
 	char *first_arg;
 
 #if defined(USE_GETTEXT_COMPAT)
-	init_locale();
+	noct_init_locale();
 #endif
 
 	if (argc >= 2 &&
@@ -123,13 +117,15 @@ static void show_usage(void)
 /* Top level function for the run mode. */
 static int command_run(int argc, char *argv[])
 {
-	struct rt_value ret;
+	NoctVM *vm;
+	NoctEnv *env;
+	NoctValue ret;
 	int file_arg;
 	int i;
 	char *data;
 	size_t len;
 	int arg_count;
-	struct rt_value *arg_value;
+	NoctValue *arg_value;
 
 	/* Parse options. */
 	file_arg = 1;
@@ -154,11 +150,11 @@ static int command_run(int argc, char *argv[])
 	}
 
 	/* Create a runtime. */
-	if (!noct_create(&rt))
+	if (!noct_create_vm(&vm, &env))
 		return 1;
 
 	/* Register FFI functions. */
-	if (!register_ffi(rt))
+	if (!register_ffi(env))
 		return 1;
 
 	/* Load a file content. */
@@ -168,20 +164,24 @@ static int command_run(int argc, char *argv[])
 	/* Check for the bytecode header. */
 	if (strncmp(data, BYTECODE_HEADER, strlen(BYTECODE_HEADER)) != 0) {
 		/* It's a source file. */
-		if (!noct_register_source(rt, argv[i], data)) {
-			wide_printf(_("%s:%d: Error: %s\n"),
-				    noct_get_error_file(rt),
-				    noct_get_error_line(rt),
-				    noct_get_error_message(rt));
+		if (!noct_register_source(env, argv[i], data)) {
+			const char *file, *msg;
+			int line;
+			noct_get_error_file(env, &file);
+			noct_get_error_line(env, &line);
+			noct_get_error_message(env, &msg);
+			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 			return 1;
 		}
 	} else {
 		/* It's a bytecode file. */
-		if (!noct_register_bytecode(rt, len, data)) {
-			wide_printf(_("%s:%d: Error: %s\n"),
-				    noct_get_error_file(rt),
-				    noct_get_error_line(rt),
-				    noct_get_error_message(rt));
+		if (!noct_register_bytecode(env, (void *)data, len)) {
+			const char *file, *msg;
+			int line;
+			noct_get_error_file(env, &file);
+			noct_get_error_line(env, &line);
+			noct_get_error_message(env, &msg);
+			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 			return 1;
 		}
 	}
@@ -189,11 +189,11 @@ static int command_run(int argc, char *argv[])
 	/* Make the arguments for "main()". */
 	arg_count = argc - file_arg - 1;
 	if (arg_count > 0) {
-		arg_value = malloc(sizeof(struct rt_value) * arg_count);
+		arg_value = malloc(sizeof(NoctValue) * arg_count);
 		if (arg_value == NULL)
 			return 1;
 		for (i = 0; i < arg_count; i++) {
-			if (!noct_make_string(rt, &arg_value[i], argv[file_arg + i + 1]))
+			if (!noct_make_string(env, &arg_value[i], argv[file_arg + i + 1]))
 				return 1;
 		}
 	} else {
@@ -201,18 +201,33 @@ static int command_run(int argc, char *argv[])
 	}
 
 	/* Run the "main()" function. */
-	if (!noct_call_with_name(rt, "main", arg_count, arg_value, &ret)) {
-		wide_printf(_("%s:%d: Error: %s\n"),
-			      noct_get_error_file(rt),
-			      noct_get_error_line(rt),
-			      noct_get_error_message(rt));
+	if (!noct_enter_vm(env, "main", arg_count, arg_value, &ret)) {
+		const char *file, *msg;
+		int line;
+		noct_get_error_file(env, &file);
+		noct_get_error_line(env, &line);
+		noct_get_error_message(env, &msg);
+		wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 		return 1;
 	}
 
-	noct_deep_gc(rt);
+	/*
+	 * XXX: Testing
+	 */
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+	rt_gc_level1_gc(env);
+
+	struct rt_value zero = NOCT_ZERO;
+	rt_set_global(env, "b", &zero);
+
+	rt_gc_level2_gc(env);
 
 	/* Destroy the runtime. */
-	if (!noct_destroy(rt))
+	if (!noct_destroy_vm(vm))
 		return 1;
 
 	return 0;
@@ -526,17 +541,18 @@ static bool add_file_hook_elisp(const char *fname)
 
 int command_repl(void)
 {
-	NoctEnv *rt;
+	NoctVM *vm;
+	NoctEnv *env;
 
 	/* Turn off JIT. */
 	/* noct_conf_use_jit = false; */
 
 	/* Create a runtime. */
-	if (!noct_create(&rt))
+	if (!noct_create_vm(&vm, &env))
 		return 1;
 
 	/* Register FFI functions. */
-	if (!register_ffi(rt))
+	if (!register_ffi(env))
 		return 1;
 
 	wide_printf(_("Noct Programming Language "));
@@ -574,20 +590,24 @@ int command_repl(void)
 			strncat(entire, "; }", sizeof(entire) - 1);
 
 			/* Compile the source. */
-			if (!noct_register_source(rt, "REPL", entire)) {
-				wide_printf(_("%s:%d: Error: %s\n"),
-					    noct_get_error_file(rt),
-					    noct_get_error_line(rt),
-					    noct_get_error_message(rt));
+			if (!noct_register_source(env, "REPL", entire)) {
+				const char *file, *msg;
+				int line;
+				noct_get_error_file(env, &file);
+				noct_get_error_line(env, &line);
+				noct_get_error_message(env, &msg);
+				wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 				continue;
 			}
 
 			/* Run the "repl()" function. */
-			if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
-				wide_printf(_("%s:%d: Error: %s\n"),
-					    noct_get_error_file(rt),
-					    noct_get_error_line(rt),
-					    noct_get_error_message(rt));
+			if (!noct_enter_vm(env, "repl", 0, NULL, &ret)) {
+				const char *file, *msg;
+				int line;
+				noct_get_error_file(env, &file);
+				noct_get_error_line(env, &line);
+				noct_get_error_message(env, &msg);
+				wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 				continue;
 			}
 		} else {
@@ -614,35 +634,39 @@ int command_repl(void)
 				strncat(entire, "}", sizeof(entire) - 1);
 
 			/* Compile the source. */
-			if (!noct_register_source(rt, "REPL", entire)) {
-				wide_printf(_("%s:%d: Error: %s\n"),
-					    noct_get_error_file(rt),
-					    noct_get_error_line(rt),
-					    noct_get_error_message(rt));
+			if (!noct_register_source(env, "REPL", entire)) {
+				const char *file, *msg;
+				int line;
+				noct_get_error_file(env, &file);
+				noct_get_error_line(env, &line);
+				noct_get_error_message(env, &msg);
+				wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 				continue;
 			}
 
 			/* If the block is not a function, run the synthetic function. */
 			if (!is_func) {
 				/* Run the "repl()" function. */
-				if (!noct_call_with_name(rt, "repl", 0, NULL, &ret)) {
-					wide_printf(_("%s:%d: Error: %s\n"),
-						    noct_get_error_file(rt),
-						    noct_get_error_line(rt),
-						    noct_get_error_message(rt));
+				if (!noct_enter_vm(env, "repl", 0, NULL, &ret)) {
+					const char *file, *msg;
+					int line;
+					noct_get_error_file(env, &file);
+					noct_get_error_line(env, &line);
+					noct_get_error_message(env, &msg);
+					wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 					continue;
 				}
 			}
 		}
 
 		/* Make the "repl()" function updatable. */
-		noct_make_int(&zero, 0);
-		if (!noct_set_global(rt, "repl", &zero))
+		noct_make_int(env, &zero, 0);
+		if (!noct_set_global(env, "repl", &zero))
 			return 1;
 	}
 
 	/* Destroy the runtime. */
-	if (!noct_destroy(rt))
+	if (!noct_destroy_vm(vm))
 		return 1;
 
 	return 0;
@@ -891,6 +915,7 @@ static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 #endif	/* !defined(_WIN32) */
 
 /*
+<<<<<<< HEAD
  * Pseudo gettext support.
  */
 
@@ -977,6 +1002,8 @@ static void init_locale(void)
 #endif	/* defined(USE_GETTEXT_COMPAT) */
 
 /*
+=======
+>>>>>>> 35cb732 (Implemented generational GC)
  * Windows Quirk
  */
 
@@ -1003,13 +1030,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
  */
 
 /* FFI function implementation. */
-static bool cfunc_import(struct rt_env *rt);
-static bool cfunc_print(struct rt_env *rt);
-static bool cfunc_readline(struct rt_env *rt);
-static bool cfunc_readint(struct rt_env *rt);
-static bool cfunc_readfilelines(struct rt_env *rt);
-static bool cfunc_writefilelines(struct rt_env *rt);
-static bool cfunc_shell(struct rt_env *rt);
+static bool cfunc_import(NoctEnv *env);
+static bool cfunc_print(NoctEnv *env);
+static bool cfunc_readline(NoctEnv *env);
+static bool cfunc_readint(NoctEnv *env);
+static bool cfunc_readfilelines(NoctEnv *env);
+static bool cfunc_writefilelines(NoctEnv *env);
+static bool cfunc_shell(NoctEnv *env);
 
 /* FFI table. */
 struct ffi_item {
@@ -1050,13 +1077,14 @@ register_ffi(
 /* Implementation of import() */
 static bool
 cfunc_import(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
+	NoctValue tmp;
 	const char *file;
 	char *data;
 	size_t len;
 
-	if (!noct_get_arg_string(rt, 0, &file))
+	if (!noct_get_arg_check_string(env, 0, &tmp, &file))
 		return false;
 
 	/* Load a source file content. */
@@ -1066,20 +1094,24 @@ cfunc_import(
 	/* Check for the bytecode header. */
 	if (strncmp(data, BYTECODE_HEADER, strlen(BYTECODE_HEADER)) != 0) {
 		/* It's a source file. */
-		if (!noct_register_source(rt, file, data)) {
-			wide_printf("%s:%d: Error: %s\n",
-				    noct_get_error_file(rt),
-				    noct_get_error_line(rt),
-				    noct_get_error_message(rt));
+		if (!noct_register_source(env, file, data)) {
+			const char *file, *msg;
+			int line;
+			noct_get_error_file(env, &file);
+			noct_get_error_line(env, &line);
+			noct_get_error_message(env, &msg);
+			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 			return false;
 		}
 	} else {
 		/* It's a bytecode file. */
-		if (!noct_register_bytecode(rt, len, data)) {
-			wide_printf("%s:%d: Error: %s\n",
-				    noct_get_error_file(rt),
-				    noct_get_error_line(rt),
-				    noct_get_error_message(rt));
+		if (!noct_register_bytecode(env, (void *)data, len)) {
+			const char *file, *msg;
+			int line;
+			noct_get_error_file(env, &file);
+			noct_get_error_line(env, &line);
+			noct_get_error_message(env, &msg);
+			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
 			return false;
 		}
 	}
@@ -1090,33 +1122,34 @@ cfunc_import(
 /* Implementation of print() */
 static bool
 cfunc_print(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
-	struct rt_value msg;
+	NoctValue msg;
 	const char *s;
+	size_t len;
 	float f;
 	int i;
 	int type;
 
-	if (!noct_get_arg(rt, 0, &msg))
+	if (!noct_get_arg(env, 0, &msg))
 		return false;
 
-	if (!noct_get_value_type(rt, &msg, &type))
+	if (!noct_get_value_type(env, &msg, &type))
 		return false;
 
 	switch (type) {
 	case NOCT_VALUE_INT:
-		if (!noct_get_int(rt, &msg, &i))
+		if (!noct_get_int(env, &msg, &i))
 			return false;
 		wide_printf("%i\n", i);
 		break;
 	case NOCT_VALUE_FLOAT:
-		if (!noct_get_float(rt, &msg, &f))
+		if (!noct_get_float(env, &msg, &f))
 			return false;
 		wide_printf("%f\n", f);
 		break;
 	case NOCT_VALUE_STRING:
-		if (!noct_get_string(rt, &msg, &s))
+		if (!noct_get_string(env, &msg, &s))
 			return false;
 		wide_printf("%s\n", s);
 		break;
@@ -1157,7 +1190,8 @@ cfunc_readline(
 /* Implementation of readint() */
 static bool cfunc_readint(struct rt_env *rt)
 {
-	struct rt_value ret;
+	NoctValue tmp;
+	NoctValue ret;
 	char buf[1024];
 
 	memset(buf, 0, sizeof(buf));
@@ -1165,7 +1199,7 @@ static bool cfunc_readint(struct rt_env *rt)
 	if (fgets(buf, sizeof(buf) - 1, stdin) == NULL)
 		strcpy(buf, "");
 	
-	if (!noct_set_return_int(rt, atoi(buf)))
+	if (!noct_set_return_make_int(rt, &tmp, atoi(buf)))
 		return false;
 
 	return true;
@@ -1182,8 +1216,9 @@ cfunc_readfilelines(
 	struct rt_value array;
 	struct rt_value line;
 	int index;
+	NoctValue tmp;
 
-	if (!noct_get_arg_string(rt, 0, &file))
+	if (!noct_get_arg_check_string(rt, 0, &tmp, &file))
 		return false;
 
 	fp = fopen(file, "r");
@@ -1226,13 +1261,13 @@ cfunc_writefilelines(
 	struct rt_env *rt)
 {
 	const char *file;
-	struct rt_value array;
+	NoctValue array, tmp;
 	FILE *fp;
 	int i, size;
 
-	if (!noct_get_arg_string(rt, 0, &file))
+	if (!noct_get_arg_check_string(rt, 0, &tmp, &file))
 		return false;
-	if (!noct_get_arg_array(rt, 1, &array))
+	if (!noct_get_arg_check_array(rt, 1, &array))
 		return false;
 
 	fp = fopen(file, "wb");
@@ -1247,7 +1282,7 @@ cfunc_writefilelines(
 	for (i = 0; i < size; i++) {
 		const char *line;
 
-		if (!noct_get_array_elem_string(rt, &array, i, &line))
+		if (!noct_get_array_elem_check_string(rt, &array, i, &tmp, &line))
 			return false;
 
 		fprintf(fp, "%s\n", line);
@@ -1255,7 +1290,7 @@ cfunc_writefilelines(
 
 	fclose(fp);
 
-	if (!noct_set_return_int(rt, 1))
+	if (!noct_set_return_make_int(rt, &tmp, 1))
 		return false;
 
 	return true;
@@ -1266,20 +1301,20 @@ static bool
 cfunc_shell(
 	struct rt_env *rt)
 {
-	struct rt_value ret;
+	NoctValue tmp, ret;
 	const char *s;
 	int type;
 	int cmd_ret;
 
 	/* Get a "cmd" parameer. */
-	if (!noct_get_arg_string(rt, 0, &s))
+	if (!noct_get_arg_check_string(rt, 0, &tmp, &s))
 		return false;
 
 	/* Run a command. */
 	cmd_ret = system(s);
 
 	/* Make a return value. */
-	if (!noct_set_return_int(rt, cmd_ret))
+	if (!noct_set_return_make_int(rt, &tmp, cmd_ret))
 		return false;
 
 	return true;

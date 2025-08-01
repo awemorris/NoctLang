@@ -5,7 +5,7 @@
  */
 
 /*
- * NoctLang
+ * Runtime
  */
 
 #ifndef NOCT_RUNTIME_H
@@ -13,6 +13,7 @@
 
 #include <noct/noct.h>
 #include "c89compat.h"
+#include "gc.h"
 
 /*
  * Butecode OP definition.
@@ -62,33 +63,63 @@ enum rt_bytecode {
 };
 
 /*
- * Runtime environment.
+ * Definition for SYSV ABI quirk on x86_64 MS ABI compilation.
  */
-struct rt_env {
-	/* Stack. (Do not move. JIT assumes the offset 0.) */
-	struct rt_frame *frame;
+#if defined(__GNUC__) && defined(_WIN32) && defined(__x86_64__)
+#define SYSVABI __attribute__((sysv_abi))
+#else
+#define SYSVABI
+#endif
 
-	/* Execution line. (Do not move. JIT assumes the offset 8.) */
-	int line;
+/*
+ * Maximum number of C pinned variables.
+ */
+#define RT_GLOBAL_PIN_MAX	64
+#define RT_LOCAL_PIN_MAX	32
 
+struct rt_env;
+struct rt_frame;
+struct rt_value;
+struct rt_object_header;
+struct rt_string;
+struct rt_array;
+struct rt_dict;
+struct rt_func;
+struct rt_bindglobal;
+
+/*
+ * VM.
+ */
+struct rt_vm {
 	/* Global symbols. */
 	struct rt_bindglobal *global;
 
 	/* Function list. */
 	struct rt_func *func_list;
 
-	/* Heap usage in bytes. */
-	size_t heap_usage;
+	/* GC. */
+	struct rt_gc_info gc;
 
-	/* Deep object list. */
-	struct rt_string *deep_str_list;
-	struct rt_array *deep_arr_list;
-	struct rt_dict *deep_dict_list;
+	/* Env list. */
+	struct rt_env *env_list;
 
-	/* Garbage object list. */
-	struct rt_string *garbage_str_list;
-	struct rt_array *garbage_arr_list;
-	struct rt_dict *garbage_dict_list;
+	/* Pinned C global variables. */
+	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
+	int pinned_count;
+};
+
+/*
+ * Runtime environment.
+ */
+struct rt_env {
+	/* Stack. (Do not move this. JIT assumes its offset is 0.) */
+	struct rt_frame *frame;
+
+	/* Execution line. (Do not move. JIT assumes the offset 8.) */
+	int line;
+
+	/* VM. */
+	struct rt_vm *vm;
 
 	/* Execution file. */
 	char file_name[1024];
@@ -96,20 +127,7 @@ struct rt_env {
 	/* Error message. */
 	char error_message[4096];
 
-#if defined(CONF_DEBUGGER)
-	/* Last file and line. */
-	char dbg_last_file_name[1024];
-	int dbg_last_line;
-
-	/* Stop flag. */
-	volatile bool dbg_stop_flag;
-
-	/* Single step flag. */
-	bool dbg_single_step_flag;
-
-	/* Error flag. */
-	bool dbg_error_flag;
-#endif
+	struct rt_env *next;
 };
 
 /*
@@ -123,14 +141,9 @@ struct rt_frame {
 	/* function */
 	struct rt_func *func;
 
-	/* Shallow string list. */
-	struct rt_string *shallow_str_list;
-
-	/* Shallow array list. */
-	struct rt_array *shallow_arr_list;
-
-	/* Shallow dictionary list. */
-	struct rt_dict *shallow_dict_list;
+	/* Pinned C local variables. */
+	struct rt_value *pinned[RT_LOCAL_PIN_MAX];
+	int pinned_count;
 
 	/* Next frame. */
 	struct rt_frame *next;
@@ -140,65 +153,41 @@ struct rt_frame {
  * String object.
  */
 struct rt_string {
-	char *s;
+	struct rt_gc_object head;
 
-	/* String list (shallow or deep). */
-	struct rt_string *prev;
-	struct rt_string *next;
-	bool is_deep;
-
-	/* Is marked? (for mark-and-sweep GC). */
-	bool is_marked;
-
-	/* Is referenced by native code? */
-	bool has_native_ref;
+	char *data;
+	size_t len;
 };
 
 /*
  * Array object.
  */
 struct rt_array {
-	int alloc_size;
-	int size;
+	struct rt_gc_object head;
+
+	size_t alloc_size;
+	size_t size;
 	struct rt_value *table;
-
-	/* Array list (shallow or deep). */
-	struct rt_array *prev;
-	struct rt_array *next;
-	bool is_deep;
-
-	/* Is marked? (for mark-and-sweep GC). */
-	bool is_marked;
-
-	/* Is referenced by native code? */
-	bool has_native_ref;
 };
 
 /*
  * Dictionary object.
  */
 struct rt_dict {
-	int alloc_size;
-	int size;
-	char **key;
+	struct rt_gc_object head;
+
+	size_t alloc_size;
+	size_t size;
+	struct rt_value *key;
 	struct rt_value *value;
-
-	/* Dict list (shallow or deep). */
-	struct rt_dict *prev;
-	struct rt_dict *next;
-	bool is_deep;
-
-	/* Is marked? (for mark-and-sweep GC). */
-	bool is_marked;
-
-	/* Is referenced by native code? */
-	bool has_native_ref;
 };
 
 /*
  * Function object.
  */
 struct rt_func {
+	struct rt_gc_object head;
+
 	char *name;
 	int param_count;
 	char *param_name[NOCT_ARG_MAX];
@@ -226,56 +215,109 @@ struct rt_func {
 struct rt_bindglobal {
 	char *name;
 	struct rt_value val;
-
-	/* XXX: */
 	struct rt_bindglobal *next;
 };
 
-/*
- * Runtime Internal Functions
- */
+/* Create a runtime environment. */
+bool rt_create_vm(struct rt_vm **vm, struct rt_env **default_env);
 
-/* Output an out-of-memory message. */
-void
-rt_out_of_memory(
-	struct rt_env *rt);
+/* Destroy a runtime environment. */
+bool rt_destroy_vm(struct rt_vm *vm);
+
+/* Create an environment for the current thread. */
+bool rt_create_thread_env(NoctVM *vm, NoctEnv **env);
+
+/* Get an error message. */
+const char *rt_get_error_message(struct rt_env *env);
+
+/* Get an error file name. */
+const char *rt_get_error_file(struct rt_env *env);
+
+/* Get an error line number. */
+int rt_get_error_line(struct rt_env *env);
+
+/* Register functions from a souce text. */
+bool rt_register_source(struct rt_env *env, const char *file_name, const char *source_text);
+
+/* Register functions from a souce text. */
+bool rt_register_source(struct rt_env *env, const char *file_name, const char *source_text);
+
+/* Register functions from bytecode data. */
+bool rt_register_bytecode(struct rt_env *env, uint32_t size, uint8_t *data);
+
+/* Register an FFI C function. */
+bool rt_register_cfunc(struct rt_env *env, const char *name, int param_count, const char *param_name[], bool (*cfunc)(struct rt_env *env), struct rt_func **ret_func);
+
+/* Call a function with a name. */
+bool rt_call_with_name(struct rt_env *env, const char *func_name, int arg_count, struct rt_value *arg, struct rt_value *ret);
+
+/* Call a function. */
+bool rt_call(struct rt_env *env, struct rt_func *func, int arg_count, struct rt_value *arg, struct rt_value *ret);
 
 /* Enter a new calling frame. */
-bool
-rt_enter_frame(
-	struct rt_env *rt,
-	struct rt_func *func);
+bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 
 /* Leave the current calling frame. */
-void
-rt_leave_frame(
-	struct rt_env *rt,
-	struct rt_value *ret);
+void rt_leave_frame(struct rt_env *env, struct rt_value *ret);
 
-/* Add a global variable. */
-bool
-rt_add_global(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindglobal **global);
+/* Make a string value. */
+SYSVABI bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data);
+
+/* Make a string value. */
+bool rt_make_string_binary(struct rt_env *env, struct rt_value *val, const char *data, size_t len);
+
+/* Make an empty array value. */
+SYSVABI bool rt_make_empty_array(struct rt_env *env, struct rt_value *val);
+
+/* Make an empty dictionary value. */
+SYSVABI bool rt_make_empty_dict(struct rt_env *env, struct rt_value *val);
+
+/* Retrieves an array element. */
+bool rt_get_array_elem(struct rt_env *env, struct rt_array *array, int index, struct rt_value *val);
+
+/* Stores an value to an array. */
+bool rt_set_array_elem(struct rt_env *env, struct rt_array *arr, int index, struct rt_value *val);
+
+/* Resizes an array. */
+bool rt_resize_array(struct rt_env *env, struct rt_array *arr, int size);
+
+/* Checks if a key exists in a dictionary. */
+bool rt_check_dict_key(struct rt_env *env, struct rt_dict *dict, const char *key, bool *ret);
+
+/* Retrieves the value by a key in a dictionary. */
+bool rt_get_dict_elem(struct rt_env *env, struct rt_dict *dict, const char *key, struct rt_value *val);
+
+/* Stores a key-value-pair to a dictionary. */
+bool rt_set_dict_elem(struct rt_env *env, struct rt_dict *dict, const char *key, struct rt_value *val);
+
+/* Get a global variable. */
+bool rt_get_global(struct rt_env *env, const char *name, struct rt_value *val);
 
 /* Find a global variable. */
-bool
-rt_find_global(
-	struct rt_env *rt,
-	const char *name,
-	struct rt_bindglobal **global);
+bool rt_find_global(struct rt_env *env, const char *name, struct rt_bindglobal **global);
 
-/* Get a return value. */
-bool
-rt_get_return(
-	struct rt_env *rt,
-	struct rt_value *val);
+/* Set a global variable. */
+bool rt_set_global(struct rt_env *env, const char *name, struct rt_value *val);
 
-/* Make a strong reference. */
-void
-rt_make_deep_reference(
-	struct rt_env *rt,
-	struct rt_value *val);
+/* Add a global variable. */
+bool rt_add_global(struct rt_env *env, const char *name, struct rt_bindglobal **global);
+
+/* Pin a C global variable. */
+bool rt_pin_global(struct rt_env *env, struct rt_value *val);
+
+/* Pin a C global variable. */
+bool rt_unpin_global(struct rt_env *env, struct rt_value *val);
+
+/* Pin a C local variable. */
+bool rt_pin_local(struct rt_env *env, struct rt_value *val);
+
+/* Retrieves the approximate memory usage, in bytes. */
+bool rt_get_heap_usage(struct rt_env *env, size_t *ret);
+
+/* Output an error message.*/
+void rt_error(struct rt_env *env, const char *msg, ...);
+
+/* Output an out-of-memory message. */
+void rt_out_of_memory(struct rt_env *env);
 
 #endif

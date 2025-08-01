@@ -62,7 +62,7 @@ rt_register_intrinsics(
 
 bool
 rt_get_intrin_thiscall_func(
-	struct rt_env *rt,
+	struct rt_env *env,
 	const char *name,
 	struct rt_func **func)
 {
@@ -87,33 +87,23 @@ rt_get_intrin_thiscall_func(
 /* push() */
 static bool
 rt_intrin_push(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
 	struct rt_value arr, val;
+	int size;
 
-	if (!noct_get_arg(rt, 0, &arr))
+	noct_pin_local(env, 2, &arr, &val);
+
+	if (!noct_get_arg_check_array(env, 0, &arr))
 		return false;
-	if (!noct_get_arg(rt, 1, &val))
+	if (!noct_get_arg(env, 1, &val))
 		return false;
 
-	switch (arr.type) {
-	case NOCT_VALUE_INT:
-	case NOCT_VALUE_FLOAT:
-	case NOCT_VALUE_FUNC:
-	case NOCT_VALUE_STRING:
-	case NOCT_VALUE_DICT:
-		noct_error(rt, "Not an array.");
-		break;
-	case NOCT_VALUE_ARRAY:
-		if (!noct_set_array_elem(rt, &arr, arr.val.arr->size, &val))
-			return false;
-		break;
-	default:
-		assert(NEVER_COME_HERE);
-		break;
-	}
-
-	if (!noct_set_return(rt, &arr))
+	if (!noct_get_array_size(env, &arr, &size))
+		return false;
+	if (!noct_set_array_elem(env, &arr, size, &val))
+		return false;
+	if (!noct_set_return(env, &arr))
 		return false;
 
 	return true;
@@ -122,42 +112,29 @@ rt_intrin_push(
 /* pop() */
 static bool
 rt_intrin_pop(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
 	struct rt_value arr, val;
 	int size;
 
-	if (!noct_get_arg(rt, 0, &arr))
-		return false;
-	if (!noct_get_arg(rt, 1, &val))
+	noct_pin_local(env, 2, &arr, &val);
+
+	if (!noct_get_arg_check_array(env, 0, &arr))
 		return false;
 
-	switch (arr.type) {
-	case NOCT_VALUE_INT:
-	case NOCT_VALUE_FLOAT:
-	case NOCT_VALUE_FUNC:
-	case NOCT_VALUE_STRING:
-	case NOCT_VALUE_DICT:
-		noct_error(rt, "Not an array.");
+	if (!noct_get_array_size(env, &arr, &size))
 		return false;
-	case NOCT_VALUE_ARRAY:
-		if (!noct_get_array_size(rt, &arr, &size))
-			return false;
-		if (size == 0) {
-			noct_error(rt, "Empty array.");
-			return false;
-		}
-		if (!noct_get_array_elem(rt, &arr, size - 1, &val))
-			return false;
-		if (!noct_resize_array(rt, &arr, size - 1))
-			return false;
-		break;
-	default:
-		assert(NEVER_COME_HERE);
-		break;
+	if (size == 0) {
+		noct_error(env, _("Empty array."));
+		return false;
 	}
 
-	if (!noct_set_return(rt, &val))
+	if (!noct_get_array_elem(env, &arr, size - 1, &val))
+		return false;
+	if (!noct_resize_array(env, &arr, size - 1))
+		return false;
+
+	if (!noct_set_return(env, &val))
 		return false;
 
 	return true;
@@ -166,36 +143,19 @@ rt_intrin_pop(
 /* unset() */
 static bool
 rt_intrin_unset(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
 	struct rt_value arr, val;
+	const char *val_s;
 
-	if (!noct_get_arg(rt, 0, &arr))
+	noct_pin_local(env, 2, &arr, &val);
+
+	if (!noct_get_arg_check_dict(env, 0, &arr))
 		return false;
-	if (!noct_get_arg(rt, 1, &val))
+	if (!noct_get_arg_check_string(env, 1, &val, &val_s))
 		return false;
 
-	switch (arr.type) {
-	case NOCT_VALUE_INT:
-	case NOCT_VALUE_FLOAT:
-	case NOCT_VALUE_FUNC:
-	case NOCT_VALUE_STRING:
-	case NOCT_VALUE_DICT:
-		noct_error(rt, _("Not a dictionary."));
-		break;
-	case NOCT_VALUE_ARRAY:
-		break;
-	default:
-		assert(NEVER_COME_HERE);
-		break;
-	}
-
-	if (val.type != NOCT_VALUE_STRING) {
-		noct_error(rt, _("Subscript not a string."));
-		return false;
-	}
-
-	if (!noct_remove_dict_elem(rt, &arr, val.val.str->s))
+	if (!noct_remove_dict_elem(env, &arr, val_s))
 		return false;
 
 	return true;
@@ -204,36 +164,19 @@ rt_intrin_unset(
 /* resize() */
 static bool
 rt_intrin_resize(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
 	struct rt_value arr, size;
+	int size_i;
 
-	if (!noct_get_arg(rt, 0, &arr))
+	noct_pin_local(env, 2, &arr, &size);
+
+	if (!noct_get_arg_check_array(env, 0, &arr))
 		return false;
-	if (!noct_get_arg(rt, 1, &size))
+	if (!noct_get_arg_check_int(env, 1, &size, &size_i))
 		return false;
 
-	switch (arr.type) {
-	case NOCT_VALUE_INT:
-	case NOCT_VALUE_FLOAT:
-	case NOCT_VALUE_FUNC:
-	case NOCT_VALUE_STRING:
-	case NOCT_VALUE_DICT:
-		noct_error(rt, _("Not an array."));
-		break;
-	case NOCT_VALUE_ARRAY:
-		break;
-	default:
-		assert(NEVER_COME_HERE);
-		break;
-	}
-
-	if (size.type != NOCT_VALUE_INT) {
-		noct_error(rt, _("Value is not an integer."));
-		return false;
-	}
-
-	if (!noct_resize_array(rt, &arr, size.val.i))
+	if (!noct_resize_array(env, &arr, size_i))
 		return false;
 
 	return true;
@@ -242,38 +185,24 @@ rt_intrin_resize(
 /* substring() */
 static bool
 rt_intrin_substring(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
-	struct rt_value str_v, start_v, len_v, ret_v;
+	struct rt_value str, start, len, ret;
+	const char *str_s;
 	int start_i, len_i, slen;
 	char *s;
 
-	if (!noct_get_arg(rt, 0, &str_v))
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
 		return false;
-	if (!noct_get_arg(rt, 1, &start_v))
+	if (!noct_get_arg_check_int(env, 1, &start, &start_i))
 		return false;
-	if (!noct_get_arg(rt, 2, &len_v))
+	if (!noct_get_arg_check_int(env, 2, &len, &len_i))
 		return false;
 
-	if (str_v.type != NOCT_VALUE_STRING) {
-		noct_error(rt, "Not a string.");
-		return false;
-	}
-	if (start_v.type != NOCT_VALUE_INT) {
-		noct_error(rt, "Not an integer.");
-		return false;
-	}
-	if (len_v.type != NOCT_VALUE_INT) {
-		noct_error(rt, "Not an integer.");
-		return false;
-	}
-
-	start_i = start_v.val.i;
 	if (start_i == -1)
 		start_i = 0;
 
-	slen = (int)strlen(str_v.val.str->s);
-	len_i = len_v.val.i;
+	slen = (int)strlen(str_s);
 	if (len_i < 0)
 		len_i = slen;
 	if (start_i + len_i > slen)
@@ -281,19 +210,16 @@ rt_intrin_substring(
 
 	s = malloc((size_t)(len_i + 1));
 	if (s == NULL) {
-		rt_out_of_memory(rt);
+		rt_out_of_memory(env);
 		return false;
 	}
 
-	strncpy(s, str_v.val.str->s + start_i, (size_t)len_i);
+	strncpy(s, str_s + start_i, (size_t)len_i);
 
-	if (!noct_make_string(rt, &ret_v, s))
+	if (!noct_set_return_make_string(env, &ret, s))
 		return false;
 
 	free(s);
-
-	if (!noct_set_return(rt, &ret_v))
-		return false;
 
 	return true;
 }

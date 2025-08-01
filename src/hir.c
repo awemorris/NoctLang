@@ -52,7 +52,7 @@ struct hir_block *hir_func_tbl[HIR_FUNC_MAX];
  */
 
 static int hir_error_line;
-static char hir_error_message[65536];
+static char hir_error_message[1024];
 
 /*
  * Block id top.

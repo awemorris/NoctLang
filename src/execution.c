@@ -22,7 +22,7 @@
 SYSVABI
 bool
 rt_add_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -31,9 +31,9 @@ rt_add_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -47,11 +47,11 @@ rt_add_helper(
 			dst_val->val.f = (float)src1_val->val.i + src2_val->val.f;
 			break;
 		case NOCT_VALUE_STRING:
-			if (!noct_make_string_format(rt, dst_val, "%d%s", src1_val->val.i, src2_val->val.str->s))
+			if (!noct_make_string_format(env, dst_val, "%d%s", src1_val->val.i, src2_val->val.str->data))
 				return false;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number or a string."));
+			rt_error(env, _("Value is not a number or a string."));
 			return false;
 		}
 		break;
@@ -66,35 +66,35 @@ rt_add_helper(
 			dst_val->val.f = src1_val->val.f + src2_val->val.f;
 			break;
 		case NOCT_VALUE_STRING:
-			if (!noct_make_string_format(rt, dst_val, "%f%s", src1_val->val.f, src2_val->val.str->s))
+			if (!noct_make_string_format(env, dst_val, "%f%s", src1_val->val.f, src2_val->val.str->data))
 				return false;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number or a string."));
+			rt_error(env, _("Value is not a number or a string."));
 			return false;
 		}
 		break;
 	case NOCT_VALUE_STRING:
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
-			if (!noct_make_string_format(rt, dst_val, "%s%d", src1_val->val.str->s, src2_val->val.i))
+			if (!noct_make_string_format(env, dst_val, "%s%d", src1_val->val.str->data, src2_val->val.i))
 				return false;
 			break;
 		case NOCT_VALUE_FLOAT:
-			if (!noct_make_string_format(rt, dst_val, "%s%f", src1_val->val.str->s, src2_val->val.f))
+			if (!noct_make_string_format(env, dst_val, "%s%f", src1_val->val.str->data, src2_val->val.f))
 				return false;
 			break;
 		case NOCT_VALUE_STRING:
-			if (!noct_make_string_format(rt, dst_val, "%s%s", src1_val->val.str->s, src2_val->val.str->s))
+			if (!noct_make_string_format(env, dst_val, "%s%s", src1_val->val.str->data, src2_val->val.str->data))
 				return false;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number or a string."));
+			rt_error(env, _("Value is not a number or a string."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -107,7 +107,7 @@ rt_add_helper(
 SYSVABI
 bool
 rt_sub_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -116,9 +116,9 @@ rt_sub_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -132,7 +132,7 @@ rt_sub_helper(
 			dst_val->val.f = (float)src1_val->val.i - src2_val->val.f;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -147,12 +147,12 @@ rt_sub_helper(
 			dst_val->val.f = src1_val->val.f - src2_val->val.f;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -165,7 +165,7 @@ rt_sub_helper(
 SYSVABI
 bool
 rt_mul_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -174,9 +174,9 @@ rt_mul_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -190,7 +190,7 @@ rt_mul_helper(
 			dst_val->val.f = (float)src1_val->val.i * src2_val->val.f;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -205,12 +205,12 @@ rt_mul_helper(
 			dst_val->val.f = src1_val->val.f * src2_val->val.f;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -223,7 +223,7 @@ rt_mul_helper(
 SYSVABI
 bool
 rt_div_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -232,16 +232,16 @@ rt_div_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			if (src2_val->val.i == 0) {
-				noct_error(rt, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_INT;
@@ -249,14 +249,14 @@ rt_div_helper(
 			break;
 		case NOCT_VALUE_FLOAT:
 			if (src2_val->val.f == 0) {
-				noct_error(rt, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = (float)src1_val->val.i / src2_val->val.f;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -264,7 +264,7 @@ rt_div_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			if (src2_val->val.i == 0) {
-				noct_error(rt, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_FLOAT;
@@ -272,19 +272,19 @@ rt_div_helper(
 			break;
 		case NOCT_VALUE_FLOAT:
 			if (src2_val->val.f == 0) {
-				noct_error(rt, _("Division by zero."));
+				rt_error(env, _("Division by zero."));
 				return false;
 			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = src1_val->val.f / src2_val->val.f;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -297,7 +297,7 @@ rt_div_helper(
 SYSVABI
 bool
 rt_mod_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -306,9 +306,9 @@ rt_mod_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -318,12 +318,12 @@ rt_mod_helper(
 			dst_val->val.i = src1_val->val.i % src2_val->val.i;
 			break;
 		default:
-			noct_error(rt, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -336,7 +336,7 @@ rt_mod_helper(
 SYSVABI
 bool
 rt_and_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -345,9 +345,9 @@ rt_and_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -357,12 +357,12 @@ rt_and_helper(
 			dst_val->val.i = src1_val->val.i & src2_val->val.i;
 			break;
 		default:
-			noct_error(rt, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -375,7 +375,7 @@ rt_and_helper(
 SYSVABI
 bool
 rt_or_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -384,9 +384,9 @@ rt_or_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -396,12 +396,12 @@ rt_or_helper(
 			dst_val->val.i = src1_val->val.i | src2_val->val.i;
 			break;
 		default:
-			noct_error(rt, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -414,7 +414,7 @@ rt_or_helper(
 SYSVABI
 bool
 rt_xor_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -423,9 +423,9 @@ rt_xor_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -435,12 +435,12 @@ rt_xor_helper(
 			dst_val->val.i = src1_val->val.i ^ src2_val->val.i;
 			break;
 		default:
-			noct_error(rt, _("Value is not an integer."));
+			rt_error(env, _("Value is not an integer."));
 			return false;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -453,15 +453,15 @@ rt_xor_helper(
 SYSVABI
 bool
 rt_neg_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src)
 {
 	struct rt_value *dst_val;
 	struct rt_value *src_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src_val = &rt->frame->tmpvar[src];
+	dst_val = &env->frame->tmpvar[dst];
+	src_val = &env->frame->tmpvar[src];
 
 	switch (src_val->type) {
 	case NOCT_VALUE_INT:
@@ -473,7 +473,7 @@ rt_neg_helper(
 		dst_val->val.f = -src_val->val.f;
 		break;
 	default:
-		noct_error(rt, _("Value is not a number."));
+		rt_error(env, _("Value is not a number."));
 		return false;
 	}
 
@@ -486,15 +486,15 @@ rt_neg_helper(
 SYSVABI
 bool
 rt_not_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src)
 {
 	struct rt_value *dst_val;
 	struct rt_value *src_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src_val = &rt->frame->tmpvar[src];
+	dst_val = &env->frame->tmpvar[dst];
+	src_val = &env->frame->tmpvar[src];
 
 	switch (src_val->type) {
 	case NOCT_VALUE_INT:
@@ -502,7 +502,7 @@ rt_not_helper(
 		dst_val->val.i = src_val->val.i == 0 ? 1 : 0;
 		break;
 	default:
-		noct_error(rt, _("Value is not an integer."));
+		rt_error(env, _("Value is not an integer."));
 		return false;
 	}
 
@@ -515,7 +515,7 @@ rt_not_helper(
 SYSVABI
 bool
 rt_lt_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -524,9 +524,9 @@ rt_lt_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -540,7 +540,7 @@ rt_lt_helper(
 			dst_val->val.i = ((float)src1_val->val.i < src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -555,7 +555,7 @@ rt_lt_helper(
 			dst_val->val.i = (src1_val->val.f < src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -563,15 +563,15 @@ rt_lt_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) < 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) < 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -584,7 +584,7 @@ rt_lt_helper(
 SYSVABI
 bool
 rt_lte_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -593,9 +593,9 @@ rt_lte_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -609,7 +609,7 @@ rt_lte_helper(
 			dst_val->val.i = ((float)src1_val->val.i <= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -624,7 +624,7 @@ rt_lte_helper(
 			dst_val->val.i = (src1_val->val.f <= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -632,15 +632,15 @@ rt_lte_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) <= 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) <= 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -653,7 +653,7 @@ rt_lte_helper(
 SYSVABI
 bool
 rt_gt_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -662,9 +662,9 @@ rt_gt_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -678,7 +678,7 @@ rt_gt_helper(
 			dst_val->val.i = ((float)src1_val->val.i > src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -693,7 +693,7 @@ rt_gt_helper(
 			dst_val->val.i = (src1_val->val.f > src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -701,15 +701,15 @@ rt_gt_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) > 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) > 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -722,7 +722,7 @@ rt_gt_helper(
 SYSVABI
 bool
 rt_gte_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -731,9 +731,9 @@ rt_gte_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -747,7 +747,7 @@ rt_gte_helper(
 			dst_val->val.i = ((float)src1_val->val.i >= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -762,7 +762,7 @@ rt_gte_helper(
 			dst_val->val.i = (src1_val->val.f >= src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -770,15 +770,15 @@ rt_gte_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) >= 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) >= 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -791,7 +791,7 @@ rt_gte_helper(
 SYSVABI
 bool
 rt_eq_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -800,9 +800,9 @@ rt_eq_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -816,7 +816,7 @@ rt_eq_helper(
 			dst_val->val.i = ((float)src1_val->val.i == src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -831,7 +831,7 @@ rt_eq_helper(
 			dst_val->val.i = (src1_val->val.f == src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -839,15 +839,15 @@ rt_eq_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) == 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) == 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -858,7 +858,7 @@ rt_eq_helper(
 SYSVABI
 bool
 rt_neq_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src1,
 	int src2)
@@ -867,9 +867,9 @@ rt_neq_helper(
 	struct rt_value *src1_val;
 	struct rt_value *src2_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src1_val = &rt->frame->tmpvar[src1];
-	src2_val = &rt->frame->tmpvar[src2];
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
 
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
@@ -883,7 +883,7 @@ rt_neq_helper(
 			dst_val->val.i = ((float)src1_val->val.i != src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -898,7 +898,7 @@ rt_neq_helper(
 			dst_val->val.i = (src1_val->val.f != src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a number."));
+			rt_error(env, _("Value is not a number."));
 			return false;
 		}
 		break;
@@ -906,15 +906,15 @@ rt_neq_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->s, src2_val->val.str->s) != 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) != 0 ? 1 : 0;
 			break;
 		default:
-			noct_error(rt, _("Value is not a string."));
+			rt_error(env, _("Value is not a string."));
 			break;
 		}
 		break;
 	default:
-		noct_error(rt, _("Value is not a number or a string."));
+		rt_error(env, _("Value is not a number or a string."));
 		return false;
 	}
 
@@ -927,7 +927,7 @@ rt_neq_helper(
 SYSVABI
 bool
 rt_storearray_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int arr,
 	int subscr,
 	int val)
@@ -939,45 +939,46 @@ rt_storearray_helper(
 	const char *key;
 	bool is_dict;
 
-	arr_val = &rt->frame->tmpvar[arr];
+	/* Get the container. */
+	arr_val = &env->frame->tmpvar[arr];
 	if (arr_val->type == NOCT_VALUE_ARRAY) {
 		is_dict = false;
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
 		is_dict = true;
 	} else {
-		noct_error(rt, _("Not an array or a dictionary."));
+		rt_error(env, _("Not an array or a dictionary."));
 		return false;
 	}
 
-	subscr_val = &rt->frame->tmpvar[subscr];
+	/* Get the subscription. */
+	subscr_val = &env->frame->tmpvar[subscr];
 	if (!is_dict) {
 		if (subscr_val->type != NOCT_VALUE_INT) {
-			noct_error(rt, _("Subscript not an integer."));
+			rt_error(env, _("Subscript not an integer."));
 			return false;
 		}
 		subscript = subscr_val->val.i;
 		key = NULL;
 	} else {
 		if (subscr_val->type != NOCT_VALUE_STRING) {
-			noct_error(rt, _("Subscript not a string."));
+			rt_error(env, _("Subscript not a string."));
 			return false;
 		}
 		subscript = -1;
-		key = subscr_val->val.str->s;
+		key = subscr_val->val.str->data;
 	}
 
-	val_val = &rt->frame->tmpvar[val];
+	/* Get the value to assign. */
+	val_val = &env->frame->tmpvar[val];
 
-	/* Store the element. */
+	/* Store the value as a container element. */
 	if (!is_dict) {
-		if (!noct_set_array_elem(rt, arr_val, subscript, val_val))
+		if (!rt_set_array_elem(env, arr_val->val.arr, subscript, val_val))
 			return false;
 	} else {
-		if (!noct_set_dict_elem(rt, arr_val, key, val_val))
+		if (!rt_set_dict_elem(env, arr_val->val.dict, key, val_val))
 			return false;
 	}
-
-	rt_make_deep_reference(rt, val_val);
 
 	return true;
 }
@@ -988,7 +989,7 @@ rt_storearray_helper(
 SYSVABI
 bool
 rt_loadarray_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int arr,
 	int subscr)
@@ -1000,9 +1001,9 @@ rt_loadarray_helper(
 	const char *key;
 	bool is_dict;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	arr_val = &rt->frame->tmpvar[arr];
-	subscr_val = &rt->frame->tmpvar[subscr];
+	dst_val = &env->frame->tmpvar[dst];
+	arr_val = &env->frame->tmpvar[arr];
+	subscr_val = &env->frame->tmpvar[subscr];
 
 	/* Check the array type. */
 	if (arr_val->type == NOCT_VALUE_ARRAY) {
@@ -1010,33 +1011,33 @@ rt_loadarray_helper(
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
 		is_dict = true;
 	} else {
-		noct_error(rt, _("Not an array or a dictionary."));
+		rt_error(env, _("Not an array or a dictionary."));
 		return false;
 	}
 
 	/* Check the subscript type. */
 	if (!is_dict) {
 		if (subscr_val->type != NOCT_VALUE_INT) {
-			noct_error(rt, _("Subscript not an integer."));
+			rt_error(env, _("Subscript not an integer."));
 			return false;
 		}
 		subscript = subscr_val->val.i;
 		key = NULL;
 	} else {
 		if (subscr_val->type != NOCT_VALUE_STRING) {
-			noct_error(rt, _("Subscript not a string."));
+			rt_error(env, _("Subscript not a string."));
 			return false;
 		}
 		subscript = -1;;
-		key = subscr_val->val.str->s;
+		key = subscr_val->val.str->data;
 	}
 
 	/* Load the element. */
 	if (!is_dict) {
-		if (!noct_get_array_elem(rt, arr_val, subscript, dst_val))
+		if (!rt_get_array_elem(env, arr_val->val.arr, subscript, dst_val))
 			return false;
 	} else {
-		if (!noct_get_dict_elem(rt, arr_val, key, dst_val))
+		if (!rt_get_dict_elem(env, arr_val->val.dict, key, dst_val))
 			return false;
 	}
 
@@ -1049,20 +1050,20 @@ rt_loadarray_helper(
 SYSVABI
 bool
 rt_len_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int src)
 {
 	struct rt_value *dst_val;
 	struct rt_value *src_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	src_val = &rt->frame->tmpvar[src];
+	dst_val = &env->frame->tmpvar[dst];
+	src_val = &env->frame->tmpvar[src];
 
 	switch (src_val->type) {
 	case NOCT_VALUE_STRING:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = (int)strlen(src_val->val.str->s);
+		dst_val->val.i = (int)strlen(src_val->val.str->data);
 		break;
 	case NOCT_VALUE_ARRAY:
 		dst_val->type = NOCT_VALUE_INT;
@@ -1073,7 +1074,7 @@ rt_len_helper(
 		dst_val->val.i = src_val->val.dict->size;
 		break;
 	default:
-		noct_error(rt, _("Value is not a string, an array, or a dictionary."));
+		rt_error(env, _("Value is not a string, an array, or a dictionary."));
 		return false;
 	}
 
@@ -1084,7 +1085,7 @@ rt_len_helper(
 SYSVABI
 bool
 rt_getdictkeybyindex_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int dict,
 	int subscr)
@@ -1093,26 +1094,25 @@ rt_getdictkeybyindex_helper(
 	struct rt_value *dict_val;
 	struct rt_value *subscr_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	dict_val = &rt->frame->tmpvar[dict];
-	subscr_val = &rt->frame->tmpvar[subscr];
+	dst_val = &env->frame->tmpvar[dst];
+	dict_val = &env->frame->tmpvar[dict];
+	subscr_val = &env->frame->tmpvar[subscr];
 
 	if (dict_val->type != NOCT_VALUE_DICT) {
-		noct_error(rt, _("Not a dictionary."));
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 	if (subscr_val->type != NOCT_VALUE_INT) {
-		noct_error(rt, _("Subscript not an integer."));
+		rt_error(env, _("Subscript not an integer."));
 		return false;
 	}
 	if (subscr_val->val.i >= dict_val->val.dict->size) {
-		noct_error(rt, _("Dictionary index out-of-range."));
+		rt_error(env, _("Dictionary index out-of-range."));
 		return false;
 	}
 
 	/* Load the element. */
-	if (!noct_make_string(rt, dst_val, dict_val->val.dict->key[subscr_val->val.i]))
-		return false;
+	*dst_val = dict_val->val.dict->key[subscr_val->val.i];
 
 	return true;
 }
@@ -1123,7 +1123,7 @@ rt_getdictkeybyindex_helper(
 SYSVABI
 bool
 rt_getdictvalbyindex_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int dict,
 	int subscr)
@@ -1132,20 +1132,20 @@ rt_getdictvalbyindex_helper(
 	struct rt_value *dict_val;
 	struct rt_value *subscr_val;
 
-	dst_val = &rt->frame->tmpvar[dst];
-	dict_val = &rt->frame->tmpvar[dict];
-	subscr_val = &rt->frame->tmpvar[subscr];
+	dst_val = &env->frame->tmpvar[dst];
+	dict_val = &env->frame->tmpvar[dict];
+	subscr_val = &env->frame->tmpvar[subscr];
 
 	if (dict_val->type != NOCT_VALUE_DICT) {
-		noct_error(rt, _("Not a dictionary."));
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 	if (subscr_val->type != NOCT_VALUE_INT) {
-		noct_error(rt, _("Subscript not an integer."));
+		rt_error(env, _("Subscript not an integer."));
 		return false;
 	}
 	if (subscr_val->val.i >= dict_val->val.dict->size) {
-		noct_error(rt, _("Dictionary index out-of-range."));
+		rt_error(env, _("Dictionary index out-of-range."));
 		return false;
 	}
 
@@ -1161,17 +1161,17 @@ rt_getdictvalbyindex_helper(
 SYSVABI
 bool
 rt_loadsymbol_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	const char *symbol)
 {
 	struct rt_bindglobal *global;
 
 	/* Search a global variable. */
-	if (rt_find_global(rt, symbol, &global)) {
-		rt->frame->tmpvar[dst] = global->val;
+	if (rt_find_global(env, symbol, &global)) {
+		env->frame->tmpvar[dst] = global->val;
 	} else {
-		noct_error(rt, _("Symbol \"%s\" not found."), symbol);
+		rt_error(env, _("Symbol \"%s\" not found."), symbol);
 		return false;
 	}
 
@@ -1184,23 +1184,22 @@ rt_loadsymbol_helper(
 SYSVABI
 bool
 rt_storesymbol_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	const char *symbol,
 	int src)
 {
 	struct rt_bindglobal *global;
 
 	/* Search a global variable. */
-	if (rt_find_global(rt, symbol, &global)) {
+	if (rt_find_global(env, symbol, &global)) {
 		/* Found. */
-		global->val = rt->frame->tmpvar[src];
-		rt_make_deep_reference(rt, &global->val);
+		global->val = env->frame->tmpvar[src];
 	} else {
 		/* Not found. Bind a global variable. */
 		assert(global == NULL);
-		if (!rt_add_global(rt, symbol, &global))
+		if (!rt_add_global(env, symbol, &global))
 			return false;
-		global->val = rt->frame->tmpvar[src];
+		global->val = env->frame->tmpvar[src];
 	}
 
 	return true;
@@ -1212,40 +1211,42 @@ rt_storesymbol_helper(
 SYSVABI
 bool
 rt_loaddot_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int dict,
 	const char *field)
 {
 	/* Special field "length". */
 	if (strcmp(field, "length") == 0) {
-		if (rt->frame->tmpvar[dict].type == NOCT_VALUE_DICT) {
+		if (env->frame->tmpvar[dict].type == NOCT_VALUE_DICT) {
 			int size;
-			if (!noct_get_dict_size(rt, &rt->frame->tmpvar[dict], &size))
+			if (!noct_get_dict_size(env, &env->frame->tmpvar[dict], &size))
 				return false;
 
-			noct_make_int(&rt->frame->tmpvar[dst], size);
+			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
+			env->frame->tmpvar[dst].val.i = size;
 			return true;
-		} else if (rt->frame->tmpvar[dict].type == NOCT_VALUE_ARRAY) {
+		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_ARRAY) {
 			int size;
-			if (!noct_get_array_size(rt, &rt->frame->tmpvar[dict], &size))
+			if (!noct_get_array_size(env, &env->frame->tmpvar[dict], &size))
 				return false;
 
-			noct_make_int(&rt->frame->tmpvar[dst], size);
+			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
+			env->frame->tmpvar[dst].val.i = size;
 			return true;
-		} else if (rt->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
-			noct_make_int(&rt->frame->tmpvar[dst],
-				    strlen(rt->frame->tmpvar[dict].val.str->s));
+		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
+			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
+			env->frame->tmpvar[dst].val.i = strlen(env->frame->tmpvar[dict].val.str->data);
 			return true;
 		}
 	}
 
-	if (rt->frame->tmpvar[dict].type != NOCT_VALUE_DICT) {
-		noct_error(rt, _("Not a dictionary."));
+	if (env->frame->tmpvar[dict].type != NOCT_VALUE_DICT) {
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 
-	if (!noct_get_dict_elem(rt, &rt->frame->tmpvar[dict], field, &rt->frame->tmpvar[dst]))
+	if (!rt_get_dict_elem(env, env->frame->tmpvar[dict].val.dict, field, &env->frame->tmpvar[dst]))
 		return false;
 
 	return true;
@@ -1257,21 +1258,26 @@ rt_loaddot_helper(
 SYSVABI
 bool
 rt_storedot_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dict,
 	const char *field,
 	int src)
 {
-	if (rt->frame->tmpvar[dict].type != NOCT_VALUE_DICT) {
-		noct_error(rt, _("Not a dictionary."));
+	struct rt_value *dict_val, *val;
+
+	/* Get the dictionary. */
+	dict_val = &env->frame->tmpvar[dict];
+	if (dict_val->type != NOCT_VALUE_DICT) {
+		rt_error(env, _("Not a dictionary."));
 		return false;
 	}
 
-	/* Store. */
-	if (!noct_set_dict_elem(rt, &rt->frame->tmpvar[dict], field, &rt->frame->tmpvar[src]))
-		return false;
+	/* Get the source value. */
+	val = &env->frame->tmpvar[src];
 
-	rt_make_deep_reference(rt, &rt->frame->tmpvar[src]);
+	/* Store the source value to the dictionary with the key. */
+	if (!rt_set_dict_elem(env, dict_val->val.dict, field, val))
+		return false;
 
 	return true;
 }
@@ -1280,7 +1286,7 @@ rt_storedot_helper(
 SYSVABI
 bool
 rt_call_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int func,
 	int arg_count,
@@ -1292,29 +1298,22 @@ rt_call_helper(
 	int i;
 
 	/* Get a function. */
-	if (rt->frame->tmpvar[func].type != NOCT_VALUE_FUNC) {
-		noct_error(rt, _("Not a function."));
+	if (env->frame->tmpvar[func].type != NOCT_VALUE_FUNC) {
+		rt_error(env, _("Not a function."));
 		return false;
 	}
-	callee = rt->frame->tmpvar[func].val.func;
+	callee = env->frame->tmpvar[func].val.func;
 
 	/* Get values of arguments. */
 	for (i = 0; i < arg_count; i++)
-		arg_val[i] = rt->frame->tmpvar[arg[i]];
-
-	/* Make a callframe. */
-	if (!rt_enter_frame(rt, callee))
-		return false;
+		arg_val[i] = env->frame->tmpvar[arg[i]];
 
 	/* Do call. */
-	if (!noct_call(rt, callee, arg_count, &arg_val[0], &ret))
+	if (!rt_call(env, callee, arg_count, &arg_val[0], &ret))
 		return false;
 
-	/* Destroy a callframe. */
-	rt_leave_frame(rt, &ret);
-
 	/* Store a return value. */
-	rt->frame->tmpvar[dst] = ret;
+	env->frame->tmpvar[dst] = ret;
 
 	return true;
 }
@@ -1325,7 +1324,7 @@ rt_call_helper(
 SYSVABI
 bool
 rt_thiscall_helper(
-	struct rt_env *rt,
+	struct rt_env *env,
 	int dst,
 	int obj,
 	const char *name,
@@ -1340,23 +1339,23 @@ rt_thiscall_helper(
 	int i;
 
 	/* Get a receiver object. */
-	obj_val = &rt->frame->tmpvar[obj];
+	obj_val = &env->frame->tmpvar[obj];
 
 	/* Check for an intrinsic. (callee == NULL is not found.)*/
-	if (!rt_get_intrin_thiscall_func(rt, name, &callee))
+	if (!rt_get_intrin_thiscall_func(env, name, &callee))
 		return false;
 	if (callee == NULL) {
 		/* If not an intrinsic call, object must be a dictionary. */
-		if (rt->frame->tmpvar[obj].type != NOCT_VALUE_DICT) {
-			noct_error(rt, _("Not a dictionary."));
+		if (env->frame->tmpvar[obj].type != NOCT_VALUE_DICT) {
+			rt_error(env, _("Not a dictionary."));
 			return false;
 		}
 
 		/* Get a function from a receiver object. */
-		if (!noct_get_dict_elem(rt, &rt->frame->tmpvar[obj], name, &callee_value))
+		if (!noct_get_dict_elem(env, &env->frame->tmpvar[obj], name, &callee_value))
 			return false;
 		if (callee_value.type != NOCT_VALUE_FUNC) {
-			noct_error(rt, _("Not a function."));
+			rt_error(env, _("Not a function."));
 			return false;
 		}
 		callee = callee_value.val.func;
@@ -1366,21 +1365,21 @@ rt_thiscall_helper(
 	arg_count++;
 	arg_val[0] = *obj_val;
 	for (i = 1; i < arg_count; i++)
-		arg_val[i] = rt->frame->tmpvar[arg[i - 1]];
+		arg_val[i] = env->frame->tmpvar[arg[i - 1]];
 
 	/* Make a callframe. */
-	if (!rt_enter_frame(rt, callee))
+	if (!rt_enter_frame(env, callee))
 		return false;
 
 	/* Do call. */
-	if (!noct_call(rt, callee, arg_count, &arg_val[0], &ret))
+	if (!rt_call(env, callee, arg_count, &arg_val[0], &ret))
 		return false;
 
 	/* Destroy a callframe. */
-	rt_leave_frame(rt, &ret);
+	rt_leave_frame(env, &ret);
 
 	/* Store a return value. */
-	rt->frame->tmpvar[dst] = ret;
+	env->frame->tmpvar[dst] = ret;
 
 	return true;
 }

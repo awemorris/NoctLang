@@ -82,7 +82,7 @@ static int loc_count;
 
 static char *lir_file_name;
 static int lir_error_line;
-static char lir_error_message[65536];
+static char lir_error_message[1024];
 
 /*
  * Forward declaration.

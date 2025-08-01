@@ -1,16 +1,17 @@
 NoctLang
 ========
 
-`Noct` is a lightweight, embeddable scripting language — designed for
-clarity, control, and above all, *learnability*.
+NoctLang is a fast, powerful, yet tiny scripting language runtime that
+combines:
 
-It offers a shared space in a world of increasingly complex languages:
-a language small enough to learn in a single session, yet rich enough
-to express real-world structure.
+- Baseline JIT
+- Generational GC (Semi-Space Copy + Mark-Sweep-Compact)
+- Easy-to-use FFI
+- Only 118 KB on x86_64
 
-Noct is written in standard ANSI C with no external dependencies, and
-compiles on virtually any ANSI C compiler.  As open-source software,
-it respects your freedom to run, study, modify, and share.
+Written entirely in ANSI C, NoctLang builds and runs reliably on
+virtually any platform — making it easy to integrate into your own
+games and embedded projects.
 
 Try it now — launch the REPL or write your first script.  It might
 take less time than you think.
@@ -24,19 +25,21 @@ take less time than you think.
 _"If a programming language could be learned in a single classroom
 session, how would the world change?"_
 
-Noct was born from this question — a desire to create a language
-that’s minimal, meaningful, and truly accessible.
+_"What if that very first language could also power fun game
+programming — how many more children would smile?"_
 
-If learners can grasp a language in under an hour, they can start
-building right away.  And when more people start building, more ideas
-come to life.  We believe this kind of accessibility can spark a
-global wave of creativity — accelerating the evolution of computing,
-and opening up its possibilities to everyone.
+_"And if it could also become a tool to earn a living, what kind of
+future would that create?"_
+
+Noct was born from these questions: a desire to create a language
+that’s minimal yet meaningful, accessible yet powerful — a tool
+simple enough for learning, but strong enough to build real games and
+professional applications.  It bridges the gap between **play** and
+**production**, between **education** and **industry**.
 
 ---
 
 ## Key Features
-
 
 - **C-like Syntax** — Clean and familiar to most programmers.
 - **Arrays & Dictionaries** — Built-in, expressive data structures.
@@ -94,71 +97,59 @@ To run a script:
 
 ## Technical Motivations
 
+Noct is designed to strike a balance between **simplicity** and
+**performance**, with five core goals:
 
-Noct was designed to strike a balance between clarity and performance,
-with three core goals:
+1. **Learnability** — Easy to pick up and reason about, even for beginners
+2. **High Speed** —  JIT execution, competitive with Java VMs
+3. **Robustness** — Generational GC (copy + mark-sweep-compact)
+4. **Portability** — Pure ANSI C implementation, with no dependencies
+5. **Small Footprint** — Complete runtime with JIT and GC in under 256 KB
 
-1. **Understandability** — Easy to learn and reason about
-2. **Analyzability** — Friendly to AOT/JIT with predictable semantics
-3. **Portability** — No dependencies, runs anywhere C can
-
-Most scripting languages fall short on at least one of these.  They
-drift from C-style semantics, rely on hidden state, or demand heavy
-runtimes.
-
-Noct stays lean and explicit:
-
-- **C-like and Minimal** — Syntax that feels familiar and readable
-- **No Hidden State** — Closures are explicit, not magical
-- **Pure ANSI C** — Embeddable and dependency-free
-- **Flexible Execution** — JIT by default, AOT when needed
-
-Whether you’re targeting embedded systems or locked-down
-environments, Noct’s design keeps you in control — without giving up
-power.
+While most scripting languages fall short on at least one of these,
+Noct stays lean — delivering **modern GC and JIT techniques** in a
+runtime small enough for games, embedded systems, and teaching tools.
 
 ---
 
 ## Philosophy and Intent
 
-Noct isn’t a showcase of novelty — it’s a reinvention through
-rethinking.  A language distilled from decades of experience, reshaped
-for clarity and control.
+Noct brings commercial-grade VM technology — once reserved for
+large-scale industrial runtimes — into the open-source world.  Its
+design doesn’t rely on experimental tricks, but on battle-tested
+techniques proven in modern language engines like Java, .NET, and
+LuaJIT.
 
-It reexamines familiar ideas across languages, and rebuilds them with
-a fresh, structural lens — favoring simplicity, explicitness, and
-analyzability.
-
-This isn’t minimalism as limitation, but as intent: a belief that
-precision beats complexity.
-
-Noct stands for the idea that rethinking is invention — and that real
-progress begins by rediscovering what truly matters.  This reflects
-the author’s systems programming background.
+With Noct, the strengths of commercial runtimes are now available to
+every developer — without cost, without heavy dependencies, and
+without compromise.
 
 ---
 
 ## Educational Vision
 
-Even young learners have used Noct successfully in classroom trials.
+Noct proves that industrial-grade technology can also be easy to
+learn.  Its syntax and semantics were intentionally designed so that
+even complete beginners can grasp the core concepts in a single
+classroom session — yet the runtime itself is powerful enough for
+professional applications.
 
-Its syntax was designed to be introduced, understood, and applied
-within a single classroom session — even by complete beginners.
+By removing hidden behaviors and enforcing explicit structure, Noct
+helps learners build accurate mental models from day one. The same
+qualities that make it clear for education — predictable control flow
+— also make it reliable for games and embedded systems.
 
-By removing implicit behaviors and enforcing explicit structure, Noct
-helps learners form accurate mental models from day one.
+This dual nature means Noct is more than just a teaching tool: it
+provides an approachable first step into programming, while remaining
+a practical language for real-world software development.
 
-It serves both as a practical system language and as a clear,
-approachable path into the world of structured programming.
-
-Noct doesn't just teach you how to write code — it teaches what code
-*is*.
+Noct doesn’t just teach how to write code — it teaches how code works.
 
 ---
 
 ## Examples
 
-Noct scripts consist of functions, expressions, and control structures
+Noct programs consist of functions, expressions, and control structures
 similar to C and JavaScript. The `main` function is the entry point.
 
 ### Arrays
@@ -218,19 +209,17 @@ func main() {
 
 func new_apple() {
    return {
-      getName: lambda (this) => {
-          return "Apple";
-      },
-      getPrice: lambda (this) => {
-          return 100;
-      }
+      name: "Apple",
+      price: 100,
+      getName: (this) => { return this.name; },
+      getPrice: (this) => { return this.price; }
    };
 }
 ```
 
 ---
 
-## Embedding API
+## FFI API
 
 The Noct runtime can be embedded in C applications. This allows you to
 load, compile, and execute scripts directly within your software.
@@ -238,24 +227,25 @@ load, compile, and execute scripts directly within your software.
 ```
 void call_noct(const char *file_name, const char *file_text)
 {
-    /* Create a runtime. */
-    struct rt_env rt;
-    rt_create(&rt);
+    // Create a VM.
+    NoctVM *vm;
+    NoctEnv *env
+    noct_create_vm(&vm, &env);
 
-    /* Compile source. */
-    rt_register_source(rt, file_name, file_text);
+    // Compile source.
+    noct_register_source(env, file_name, file_text);
 
-    /* Call the main() function. */
-    struct rt_value ret;
-    rt_call_with_name(rt, "main", NULL, 0, NULL, &ret);
+    // Call the main() function.
+    NoctValue ret = NOCT_ZERO;
+    noct_enter_vm(env, "main", 0, NULL, &ret);
 
-    /* Destroy the runtime. */
-    rt_destroy(rt);
+    // Destroy the runtime.
+    noct_destroy_vm(rt);
 }
 ```
 
 This API requires linking against the Noct runtime and including the
-appropriate header (`noct/runtime.h`).
+appropriate header (`noct/noct.h`).
 
 Error handling and result introspection are left to the host
 application, giving full control over integration.
@@ -280,10 +270,6 @@ analyzable architecture.
 ## Roadmap
 
 Ongoing work focuses on performance, portability, and expressiveness.
-
-**Language Internals**
-- Binary operations
-- File I/O FFI extensions
 
 **JIT Architecture Support**
 

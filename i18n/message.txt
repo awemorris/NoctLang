@@ -253,6 +253,8 @@ tw:陣列索引 %d 超出範圍。
 ja:配列の添字 %d は範囲外です。
 ca:L'índex %d de l'array es troba fora del rang.
 ---
+ID:Dictionary index %d is out-of-range.
+---
 ID:Dictionary key "%s" not found.
 es:La llave "%s" no se encontró en el diccionario.
 fr:La clé "%s" du dictionnaire est introuvable.
@@ -656,6 +658,8 @@ tw:不是函式。
 ja:関数ではありません。
 ca:No és una funció.
 ---
+ID:Empty array.
+---
 ID:Out of memory.
 es:Memoria insuficiente.
 fr:Mémoire insuffisante.
@@ -667,6 +671,10 @@ zh:内存不足。
 tw:記憶體不足。
 ja:メモリが足りません。
 ca:Memòria insuficient.
+---
+ID:Too many pinned global variables.
+---
+ID:Too many pinned local variables.
 ---
 ID:Cannot open file %s.\n
 es:No se puede abrir el archivo %s.\n

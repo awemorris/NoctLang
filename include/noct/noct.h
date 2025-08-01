@@ -5,7 +5,7 @@
  */
 
 /*
- * NoctLang Public Interface
+ * NoctVM Public Interface
  */
 
 #ifndef NOCT_NOCT_H
@@ -13,7 +13,9 @@
 
 #include <stddef.h>
 
-/* bool */
+/*
+ * Definition of the bool type.
+ */
 #ifndef __cplusplus
 #if defined(HAVE_STDBOOL_H)
 #include <stdbool.h>
@@ -27,7 +29,9 @@ enum { false = 0, true = 1 };
 #endif
 #endif
 
-/* intN_t, uintN_t */
+/*
+ * Definitions of the intN_t and uintN_t types.
+ */
 #if defined(HAVE_STDINT_H)
 #include <stdint.h>
 #elif defined(HAVE_INTTYPES_H)
@@ -47,7 +51,9 @@ typedef unsigned int uint32_t;
 typedef unsigned long long uint64_t;
 #endif
 
-/* inline */
+/*
+ * Definition of the inline keyword.
+ */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 #define NOCT_INLINE		inline		/* C99 */
 #elif defined(__GNUC__)
@@ -62,44 +68,70 @@ typedef unsigned long long uint64_t;
 #define NOCT_INLINE
 #endif
 
-/* SYSV ABI */
-#if defined(__GNUC__) && defined(_WIN32) && defined(__x86_64__)
-#define SYSVABI __attribute__((sysv_abi))
+/*
+ * Definition of the import/export keyword.
+ */
+#if defined(USE_DLL)
+#if defined(__GNUC__)
+#define NOCT_DLL		__attribute__((visibility("default")))
+#elif defined(_MSC_VER)
+#define NOCT_DLL		__declspec(dllexport)
+#endif
 #else
-#define SYSVABI
+#if defined(__GNUC__)
+#define NOCT_DLL
+#elif defined(_MSC_VER)
+#define NOCT_DLL		__declspec(dllimport)
+#endif
 #endif
 
-/* Maximum arguments of a call. */
+/*
+ * Maximum arguments of a call.
+ */
 #define NOCT_ARG_MAX	32
 
-/* Forward declaration */
+/*
+ * Forward declaration of internal structs.
+ */
+struct rt_runtime;
 struct rt_env;
 struct rt_frame;
+struct rt_gc_object;
 struct rt_value;
 struct rt_string;
 struct rt_array;
 struct rt_dict;
 struct rt_func;
 
-/* Friendly-names. */
-typedef struct rt_env NoctEnv;
-typedef struct rt_frame NoctFrame;
-typedef struct rt_value NoctValue;
-typedef struct rt_func NoctFunc;
+/*
+ * Friendly-names.
+ */
+typedef struct rt_vm     NoctVM;
+typedef struct rt_env    NoctEnv;
+typedef struct rt_frame  NoctFrame;
+typedef struct rt_value  NoctValue;
+typedef struct rt_func   NoctFunc;
 typedef struct rt_string NoctString;
 
-/* Value type. */
+/*
+ * Value type.
+ */
 enum noct_value_type {
-	NOCT_VALUE_INT,
-	NOCT_VALUE_FLOAT,
-	NOCT_VALUE_STRING,
-	NOCT_VALUE_ARRAY,
-	NOCT_VALUE_DICT,
-	NOCT_VALUE_FUNC,
+	NOCT_VALUE_INT    = 0,
+	NOCT_VALUE_FLOAT  = 1,
+	NOCT_VALUE_STRING = 2,
+	NOCT_VALUE_ARRAY  = 3,
+	NOCT_VALUE_DICT   = 4,
+	NOCT_VALUE_FUNC   = 5,
 };
 
 /*
- * Variable value.
+ * Zero value.
+ */
+#define NOCT_ZERO	{0, 0}
+
+/*
+ * NoctValue implementation.
  *  - If a value is zero-cleared, it shows an integer zero.
  *  - This struct has 8 bytes on 32-bit architecture and 16 bytes on 64-bit architecture.
  */
@@ -120,511 +152,1080 @@ struct rt_value {
 		struct rt_array *arr;
 		struct rt_dict *dict;
 		struct rt_func *func;
+		struct rt_gc_object *obj;
 	} val;
 };
 
-/* Create a runtime environment. */
+/*
+ * Core Functions
+ */
+
+/*
+ * Creates a new VM instance.
+ *
+ * Also returns a pointer to an environment for the calling thread.
+ */
+NOCT_DLL
 bool
-noct_create(
-	NoctEnv **rt);
+noct_create_vm(
+	NoctVM **vm,
+	NoctEnv **default_env);
 
-/* Destroy a runtime environment. */
+/*
+ * Destroys the given VM instance and releases associated resources.
+ */
+NOCT_DLL
 bool
-noct_destroy(
-	NoctEnv *rt);
+noct_destroy_vm(
+	NoctVM *vm);
 
-/* Get a file name. */
-const char *
-noct_get_error_file(
-	NoctEnv *rt);
-
-/* Get an error line number. */
-int
-noct_get_error_line(
-	NoctEnv *rt);
-
-/* Get an error message. */
-const char *
-noct_get_error_message(
-	NoctEnv *rt);
-
-/* Output an error message. */
-void
-noct_error(
-	NoctEnv *rt,
-	const char *msg,
-	...);
-
-/* Register functions from a souce text. */
+/*
+ * Registers functions from a source code text.
+ */
+NOCT_DLL
 bool
 noct_register_source(
-	NoctEnv *rt,
+	NoctEnv *env,
 	const char *file_name,
 	const char *source_text);
 
-/* Register functions from bytecode data. */
+/*
+ * Registers functions from compiled bytecode data.
+ */
+NOCT_DLL
 bool
 noct_register_bytecode(
-	NoctEnv *rt,
-	uint32_t size,
-	uint8_t *data);
+	NoctEnv *env,
+	uint8_t *data,
+	size_t size);
 
-/* Register a C function.. */
+/*
+ * Registers an FFI function.
+ */
+NOCT_DLL
 bool
 noct_register_cfunc(
-	NoctEnv *rt,
+	NoctEnv *env,
 	const char *name,
 	int param_count,
 	const char *param_name[],
 	bool (*cfunc)(NoctEnv *env),
 	NoctFunc **ret_func);
 
-/* Call a function. */
-bool
-noct_call(
-	NoctEnv *rt,
-	NoctFunc *func,
-	int arg_count,
-	NoctValue *arg,
-	NoctValue *ret);
+/*
+ * Creates a thread-local environment for the current thread.
+ *
+ * If the calling thread is the one that created the VM,
+ * the default environment will be returned.
+ */
+NOCT_DLL
+bool noct_create_thread_env(
+	NoctVM *vm,
+	NoctEnv **env);
 
-/* Call a function with a name. */
+/*
+ * Enters the VM in the current thread and invokes a function by name.
+ *
+ * Executes the specified function with the given arguments and stores
+ * the results in the provided return value slot.
+ */
+NOCT_DLL
 bool
-noct_call_with_name(
-	NoctEnv *rt,
+noct_enter_vm(
+	NoctEnv *env,
 	const char *func_name,
 	int arg_count,
 	NoctValue *arg,
 	NoctValue *ret);
 
-/* Make an integer value. */
-void
+/*
+ * Retrieves the file name where the last error occurred.
+ */
+NOCT_DLL
+bool
+noct_get_error_file(
+	NoctEnv *env,
+	const char **msg);
+
+/*
+ * Retrieves the line number where the last error occurred.
+ */
+NOCT_DLL
+bool
+noct_get_error_line(
+	NoctEnv *env,
+	int *line);
+
+/*
+ * Retrieves the error message where the last error occurred.
+ */
+NOCT_DLL
+bool
+noct_get_error_message(
+	NoctEnv *env,
+	const char **msg);
+
+/*
+ * Calls a function.
+ */
+NOCT_DLL
+bool
+noct_call(
+	NoctEnv *env,
+	NoctFunc *func,
+	int arg_count,
+	NoctValue *arg,
+	NoctValue *ret);
+
+/*
+ * Assigns an value.
+ */
+NOCT_DLL
+bool
+noct_assign(
+	NoctEnv *env,
+	NoctValue *dst,
+	NoctValue *src);
+
+/*
+ * Creates an integer value.
+ */
+NOCT_DLL
+bool
 noct_make_int(
+	NoctEnv *env,
 	NoctValue *val,
 	int i);
 
-static NOCT_INLINE struct rt_value noct_int(int i)
-{
-	struct rt_value v;
-	v.type = NOCT_VALUE_INT;
-	v.val.i = i;
-	return v;
-}
-
-/* Make a floating-point value. */
-void
+/*
+ * Makes a float value.
+ */
+NOCT_DLL
+bool
 noct_make_float(
+	NoctEnv *env,
 	NoctValue *val,
 	float f);
 
-static NOCT_INLINE struct rt_value noct_float(float f)
-{
-	struct rt_value v;
-	v.type = NOCT_VALUE_FLOAT;
-	v.val.f = f;
-	return v;
-}
-
-/* Make a string value. */
-SYSVABI
+/*
+ * Makes a string value.
+ */
+NOCT_DLL
 bool
 noct_make_string(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
-	const char *s);
+	const char *data);
 
-/* Make a string value with a format. */
+/*
+ * Makes a string value with a format.
+ */
+NOCT_DLL
 bool
 noct_make_string_format(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
 	const char *s,
 	...);
 
-/* Make an empty array value. */
-SYSVABI
+/*
+ * Makes an empty array value.
+ */
+NOCT_DLL
 bool
 noct_make_empty_array(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val);
 
-/* Make an empty dictionary value */
-SYSVABI
+/*
+ * Makes an empty dictionary value.
+ */
+NOCT_DLL
 bool
 noct_make_empty_dict(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val);
 
-/* Get a value type. */
+/*
+ * Retrieves the type tag of a value.
+ *
+ * The result is one of the NOCT_VALUE_* constants.
+ */
+NOCT_DLL
 bool
 noct_get_value_type(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
 	int *type);
 
-/* Get an integer value. */
+/*
+ * Retrieves an integer from a value with type checking.
+ *
+ * Fails if the given value is not of integer type.
+ */
+NOCT_DLL
 bool
 noct_get_int(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
-	int *ret);
+	int *i);
 
-/* Get a floating-point value. */
+/*
+ * Retrieves a float from a value with type checking.
+ *
+ * Fails if the given value is not of float type.
+ */
+NOCT_DLL
 bool
 noct_get_float(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
-	float *ret);
+	float *f);
 
-/* Get a string value. */
+/*
+ * Retrieves the length of the string in a value with type checking.
+ *
+ * Fails if the given value is not of string type.
+ */
+NOCT_DLL
+bool
+noct_get_string_len(
+	NoctEnv *env,
+	NoctValue *val,
+	size_t *len);
+
+/*
+ * Retrieves the string from a value with type checking.
+ *
+ * Fails if the given value is not of string type.
+ */
+NOCT_DLL
 bool
 noct_get_string(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
-	const char **ret);
+	const char **s);
 
-/* Get a function value. */
+/*
+ * Retrieves the function from a value with type checking.
+ *
+ * Fails if the given value is not of function type.
+ */
+NOCT_DLL
 bool
 noct_get_func(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
 	NoctFunc **ret);
 
-/* Get an array size. */
+/*
+ * Arrays
+ */
+
+/*
+ * Retrieves the number of elements in an array.
+ *
+ * Fails if the given value is not an array.
+ */
+NOCT_DLL
 bool
 noct_get_array_size(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val,
 	int *size);
 
-/* Get an array element. */
+/*
+ * Retrieves an element from an array without type checking.
+ *
+ * The element at the given index is returned as a NoctValue,
+ * regardless of its actual type.
+ */
+NOCT_DLL
 bool
 noct_get_array_elem(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *array,
 	int index,
 	NoctValue *val);
 
-/* Get an integer-type array element. */
-bool
-noct_get_array_elem_int(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	int *val);
-
-/* Get a float-type array element. */
-bool
-noct_get_array_elem_float(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	float *val);
-
-/* Get a string-type array element. */
-bool
-noct_get_array_elem_string(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	const char **val);
-
-/* Get an array-type array element. */
-bool
-noct_get_array_elem_array(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	NoctValue *val);
-
-/* Get an dictionary-type array element. */
-bool
-noct_get_array_elem_dict(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	NoctValue *val);
-
-/* Get a function-type array element. */
-bool
-noct_get_array_elem_func(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	NoctFunc **val);
-
-/* Set an array element. */
+/*
+ * Sets an element in an array at the specified index.
+ *
+ * The value is passed as a NoctValue and may be of any type.
+ * If the index is out of bounds, the array is automatically expanded.
+ * The existing element at the index, if any, will be overwritten.
+ */
+NOCT_DLL
 bool
 noct_set_array_elem(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *array,
 	int index,
 	NoctValue *val);
 
-/* Set an integer-type array element. */
-bool
-noct_set_array_elem_int(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	int val);
-
-/* Set a float-type array element. */
-bool
-noct_set_array_elem_float(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	float val);
-
-/* Set a string-type array element. */
-bool
-noct_set_array_elem_string(
-	NoctEnv *rt,
-	NoctValue *array,
-	int index,
-	const char *val);
-
-/* Resize an array. */
+/*
+ * Resizes an array to the specified size.
+ *
+ * If the array is shrunk, elements beyond the new size are removed.
+ * If the array is expanded, new elements are initialized to integer zero.
+ */
+NOCT_DLL
 bool
 noct_resize_array(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *arr,
 	int size);
 
-/* Get a dictionary size. */
+/*
+ * Creates a shallow copy of an array.
+ */
+NOCT_DLL
+bool
+noct_make_array_copy(
+	NoctEnv *env,
+	NoctValue *dst,
+	NoctValue *src);
+
+/*
+ * Retrieves the number of key-value pairs in a dictionary.
+ */
+NOCT_DLL
 bool
 noct_get_dict_size(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *dict,
 	int *size);
 
-/* Get a dictionary value by an index. (For traverse) */
-bool
-noct_get_dict_value_by_index(
-	NoctEnv *rt,
-	NoctValue *dict,
-	int index,
-	NoctValue *val);
-
-/* Get a dictionary key by an index. (For traverse) */
+/*
+ * Retrieves a dictionary key by index.
+ *
+ * This function can be used to traverse dictionary entries in order.
+ */
+NOCT_DLL
 bool
 noct_get_dict_key_by_index(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *dict,
 	int index,
 	const char **key);
 
-/* Get a dictionary element. */
+/*
+ * Retrieves a dictionary value by index.
+ *
+ * This function can be used to traverse dictionary entries in order.
+ */
+NOCT_DLL
+bool
+noct_get_dict_value_by_index(
+	NoctEnv *env,
+	NoctValue *dict,
+	int index,
+	NoctValue *val);
+
+/*
+ * Checks whether a key exists in a dictionary.
+ */
+NOCT_DLL
+bool
+noct_check_dict_key(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	bool *ret);
+
+/*
+ * Retrieves a value associated with a key in a dictionary without type checking.
+ *
+ * The returned value is wrapped by NoctValue and may be of any type.
+ * Fails if the key does not exist.
+ */
+NOCT_DLL
 bool
 noct_get_dict_elem(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val);
 
-/* Get an integer-type dictionary element. */
-bool
-noct_get_dict_elem_int(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	int *val);
-
-/* Get a float-type dictionary element. */
-bool
-noct_get_dict_elem_float(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	float *val);
-
-/* Get a string-type dictionary element. */
-bool
-noct_get_dict_elem_string(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	const char **val);
-
-/* Get an array-type dictionary element. */
-bool
-noct_get_dict_elem_array(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	NoctValue *val);
-
-/* Get a dictionary-type dictionary element. */
-bool
-noct_get_dict_elem_dict(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	NoctValue *val);
-
-/* Get a dictionary-type dictionary element. */
-bool
-noct_get_dict_elem_func(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	NoctFunc **val);
-
-/* Set a dictionary element. */
+/*
+ * Sets a value for a key in a dictionary.
+ */
+NOCT_DLL
 bool
 noct_set_dict_elem(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val);
 
-/* Set an integer dictionary element. */
-bool
-noct_set_dict_elem_int(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	int val);
-
-/* Set a float dictionary element. */
-bool
-noct_set_dict_elem_float(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	float val);
-
-/* Set a string dictionary element. */
-bool
-noct_set_dict_elem_string(
-	NoctEnv *rt,
-	NoctValue *dict,
-	const char *key,
-	const char *val);
-
-/* Remove a dictionary element. */
+/*
+ * Removes a key-value pair from a dictionary by key.
+ */
+NOCT_DLL
 bool
 noct_remove_dict_elem(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *dict,
 	const char *key);
 
-/* Make a copy of a dictionary. */
+/*
+ * Creates a shallow copy of a dictionary.
+ */
+NOCT_DLL
 bool
 noct_make_dict_copy(
-	NoctEnv *rt,
-	NoctValue *src,
-	NoctValue *dst);
+	NoctEnv *env,
+	NoctValue *dst,
+	NoctValue *src);
 
-/* Get a call argument. */
+/*
+ * Retrieves a function argument from the current stack frame.
+ */
+NOCT_DLL
 bool
 noct_get_arg(
-	NoctEnv *rt,
+	NoctEnv *env,
 	int index,
 	NoctValue *val);
 
-/* Get an integer-type call argument. */
-bool
-noct_get_arg_int(
-	NoctEnv *rt,
-	int index,
-	int *val);
-
-/* Get a float-type call argument. */
-bool
-noct_get_arg_float(
-	NoctEnv *rt,
-	int index,
-	float *val);
-
-/* Get a string-type call argument. */
-bool
-noct_get_arg_string(
-	NoctEnv *rt,
-	int index,
-	const char **val);
-
-/* Get an array-type call argument. */
-bool
-noct_get_arg_array(
-	NoctEnv *rt,
-	int index,
-	NoctValue *val);
-
-/* Get a dictionary-type call argument. */
-bool
-noct_get_arg_dict(
-	NoctEnv *rt,
-	int index,
-	NoctValue *val);
-
-/* Get a function-type call argument. */
-bool
-noct_get_arg_func(
-	NoctEnv *rt,
-	int index,
-	NoctFunc **val);
-
-/* Set a return value. */
+/*
+ * Sets the return value for the current stack frame.
+ */
+NOCT_DLL
 bool
 noct_set_return(
-	NoctEnv *rt,
+	NoctEnv *env,
 	NoctValue *val);
 
-/* Set an integer-type return value. */
-bool
-noct_set_return_int(
-	NoctEnv *rt,
-	int val);
-
-/* Set a float-type return value. */
-bool
-noct_set_return_float(
-	NoctEnv *rt,
-	int val);
-
-/* Set a string-type return value. */
-bool
-noct_set_return_string(
-	NoctEnv *rt,
-	const char *val);
-
-/* Get a global variable. */
+/*
+ * Retrieves the value of a global variable by name.
+ *
+ * Fails if the global variable with the given name does not exist.
+ */
+NOCT_DLL
 bool
 noct_get_global(
-	NoctEnv *rt,
+	NoctEnv *env,
 	const char *name,
 	NoctValue *val);
 
-/* Make a variable global. */
+/*
+ * Sets a global variable by name.
+ */
+NOCT_DLL
 bool
 noct_set_global(
-	NoctEnv *rt,
+	NoctEnv *env,
 	const char *name,
 	NoctValue *val);
 
-/* Set a native reference status of an object. */
+/*
+ * Declare a native global variable for use within an FFI function.
+ *
+ * This informs the GC that the given NoctValue variable is
+ * in use and should not be collected during GC.
+ */
+NOCT_DLL
 bool
-noct_set_native_reference(
-	NoctEnv *rt,
-	NoctValue *val,
-	bool is_enabled);
+noct_pin_global(
+	NoctEnv *env,
+	NoctValue *val);
 
-/* Do a shallow GC for nursery space. */
+/*
+ * Undeclare a native global variable for use within an FFI function.
+ */
+NOCT_DLL
 bool
-noct_shallow_gc(
-	NoctEnv *rt);
+noct_unpin_global(
+	NoctEnv *env,
+	NoctValue *val);
 
-/* Do a deep GC for tenured space. */
+/*
+ * Declare native local variables for use within an FFI function.
+ *
+ * This informs the GC that the given stack-local NoctValue variables
+ * are in use and should not be collected during GC. Returning from an
+ * FFI function undeclares the local variables in the current stack.
+ *
+ * This function should be called with the number of variables,
+ * followed by that many NoctValue* arguments.
+ */
+NOCT_DLL
 bool
-noct_deep_gc(
-	NoctEnv *rt);
+noct_pin_local(
+	NoctEnv *env,
+	int count,
+	...);
 
-/* Get an approximate memory usage in bytes. */
+/*
+ * Triggers a fast garbage collection pass, typically during a
+ * periodic pause such as VSync.
+ *
+ * This performs a collection of the young generation only.
+ */
+NOCT_DLL
+void
+noct_fast_gc(
+	NoctEnv *env);
+
+/*
+ * Triggers a full, stop-the-world garbage collection.
+ *
+ * This collects both young and old generations, but does not perform
+ * memory compaction.
+ */
+NOCT_DLL
+void
+noct_full_gc(
+	NoctEnv *env);
+
+/*
+ * Triggers a full garbage collection followed by memory compaction.
+ *
+ * This pass eliminates fragmentation by sliding live objects to
+ * create a contiguous free space in the old generation.
+ */
+NOCT_DLL
+void
+noct_compact_gc(
+	NoctEnv *env);
+
+/*
+ * Retrieves the current heap usage, in bytes.
+ */
+NOCT_DLL
 bool
-rt_get_heap_usage(
-	NoctEnv *rt,
+noct_get_heap_usage(
+	NoctEnv *env,
 	size_t *ret);
+
+/*
+ * Writes an error message to the internal buffer.
+ *
+ * The message can be retrieved later using noct_get_error_message().
+ */
+NOCT_DLL
+void
+noct_error(
+	NoctEnv *env,
+	const char *msg,
+	...);
+
+/*
+ * Convenience Functions
+ */
+
+/* Array Getters */
+
+/*
+ * Convenience function to retrieve an integer element from an array
+ * with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the element at the given index is not of integer type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_int(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val,
+	int *i);
+
+/*
+ * Convenience function to retrieve a float element from an array with
+ * type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the element at the given index is not of float type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_float(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val,
+	float *f);
+
+
+/*
+ * Convenience function to retrieve a string element from an array
+ * with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the element at the given index is not of string type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_string(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val,
+	const char **data);
+
+/*
+ * Convenience function to retrieve an array element from an array
+ * with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the element at the given index is not of array type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_array(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val);
+
+/*
+ * Convenience function to retrieve an array element from a dictionary
+ * with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the element at the given index is not of dictionary type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_dict(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val);
+
+/*
+ * Convenience function to retrieve a function element from a
+ * dictionary with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the element at the given index is not of function type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_func(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val,
+	NoctFunc **f);
+
+/*
+ * Convenience function to set an integer element in an array.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Semantically equivalent to wrapping the integer in a NoctValue
+ * and calling noct_set_array_elem().
+ */
+NOCT_DLL
+bool
+noct_set_array_elem_make_int(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val,
+	int i);
+
+/*
+ * Convenience function to set a float element in an array.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Semantically equivalent to wrapping the float in a NoctValue
+ * and calling noct_set_array_elem().
+ */
+NOCT_DLL
+bool
+noct_set_array_elem_make_float(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val,
+	float f);
+
+/*
+ * Convenience function to set a string element in an array.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Semantically equivalent to creating a string NoctValue with
+ * noct_make_string() and passing it to noct_set_array_elem().
+ */
+NOCT_DLL
+bool
+noct_set_array_elem_make_string(
+	NoctEnv *env,
+	NoctValue *array,
+	int index,
+	NoctValue *val,
+	const char *data);
+
+/* Dictionaries */
+
+/*
+ * Convenience function to retrieve an integer value associated with a
+ * key in a dictionary with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of integer type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_int(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	int *i);
+
+/*
+ * Convenience function to retrieve a float value associated with a
+ * key in a dictionary with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of float type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_float(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	float *f);
+
+/*
+ * Convenience function to retrieve a string value associated with a
+ * key in a dictionary with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of string type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_string(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	const char **data);
+
+/*
+ * Convenience function to retrieve an array value associated with a
+ * key in a dictionary with type checking.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of array type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_array(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val);
+
+/*
+ * Convenience function to retrieve a dictionary value associated with a
+ * key in a dictionary with type checking.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of dictionary type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_dict(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val);
+
+/*
+ * Convenience function to retrieve a function value associated with a
+ * key in a dictionary with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of function type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_func(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	NoctFunc **f);
+
+/*
+ * Convenience function to set an integer value for a key in a dictionary.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_set_dict_elem_make_int(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	int i);
+
+/*
+ * Convenience function to set a float value for a key in a dictionary.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_set_dict_elem_make_float(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	float f);
+
+/*
+ * Convenience function to set a string value for a key in a dictionary.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_set_dict_elem_make_string(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	const char *data);
+
+/* Arguments */
+
+/*
+ * Convenience function to retrieve an integer function argument with
+ * type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_int(
+	NoctEnv *env,
+	int index,
+	NoctValue *val,
+	int *i);
+
+/*
+ * Convenience function to retrieve a float function argument with
+ * type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_float(
+	NoctEnv *env,
+	int index,
+	NoctValue *val,
+	float *f);
+
+/*
+ * Convenience function to retrieve a string function argument with
+ * type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_string(
+	NoctEnv *env,
+	int index,
+	NoctValue *val,
+	const char **data);
+
+/*
+ * Convenience function to retrieve an array function argument with
+ * type checking.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_array(
+	NoctEnv *env,
+	int index,
+	NoctValue *val);
+
+/*
+ * Convenience function to retrieve a dictionary function argument with
+ * type checking.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_dict(
+	NoctEnv *env,
+	int index,
+	NoctValue *val);
+
+/*
+ * Convenience function to retrieve a function argument of function
+ * type with type checking.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_func(
+	NoctEnv *env,
+	int index,
+	NoctValue *val,
+	NoctFunc **f);
+
+/* Return Values */
+
+/*
+ * Convenience function to set an integer return value for the current
+ * stack frame.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_set_return_make_int(
+	NoctEnv *env,
+	NoctValue *val,
+	int i);
+
+/*
+ * Convenience function to set a float return value for the current
+ * stack frame.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_set_return_make_float(
+	NoctEnv *env,
+	NoctValue *val,
+	float f);
+
+/*
+ * Convenience function to set a string return value for the current
+ * stack frame.
+ *
+ * The `backing_val` parameter must point to a variable previously
+ * declared via `noct_declare_c_local()`. This variable serves as a
+ * pinned storage location: during the call, it temporarily holds the
+ * element's value so that, even if a parallel GC is triggered midway,
+ * the value remains protected and stable.
+ */
+NOCT_DLL
+bool
+noct_set_return_make_string(
+	NoctEnv *env,
+	NoctValue *val,
+	const char *data);
 
 #endif

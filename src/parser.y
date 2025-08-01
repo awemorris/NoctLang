@@ -496,9 +496,9 @@ expr		: term
 			$$ = ast_accept_dict_expr($2);
 			debug("expr: dict");
 		}
-		| TOKEN_LAMBDA TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK
+		| TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func_expr($3, $7);
+			$$ = ast_accept_func_expr($2, $6);
 			debug("expr: func param_list stmt_list");
 		}
 		| TOKEN_LAMBDA TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK

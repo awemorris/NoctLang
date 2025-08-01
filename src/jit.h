@@ -17,13 +17,13 @@
 /* Generate a JIT-compiled code for a function. */
 bool
 jit_build(
-	struct rt_env *rt,
+	struct rt_env *env,
 	struct rt_func *func);
 
 /* Free a JIT-compiled code for a function. */
 void
 jit_free(
-	struct rt_env *rt,
+	struct rt_env *env,
 	struct rt_func *func);
 
 /*
@@ -47,7 +47,7 @@ jit_free(
  * JIT codegen context
  */
 struct jit_context {
-	struct rt_env *rt;
+	struct rt_env *env;
 	struct rt_func *func;
 
 	/* Top of the mapped code area. */
@@ -108,7 +108,7 @@ jit_get_opcode(
 	uint8_t *opcode)
 {
 	if (ctx->lpc + 1 > ctx->func->bytecode_size) {
-		noct_error(ctx->rt, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		*opcode = 0;
 		return false;
 	}
@@ -130,7 +130,7 @@ jit_get_opr_imm32(
 	uint32_t *d)
 {
 	if (ctx->lpc + 4 > ctx->func->bytecode_size) {
-		noct_error(ctx->rt, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		*d = 0;
 		return false;
 	}
@@ -155,7 +155,7 @@ jit_get_opr_tmpvar(
 	int *d)
 {
 	if (ctx->lpc + 2 > ctx->func->bytecode_size) {
-		noct_error(ctx->rt, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		*d = 0;
 		return false;
 	}
@@ -163,7 +163,7 @@ jit_get_opr_tmpvar(
 	*d = (ctx->func->bytecode[ctx->lpc] << 8) |
 	      ctx->func->bytecode[ctx->lpc + 1];
 	if (*d >= ctx->func->tmpvar_size) {
-		noct_error(ctx->rt, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -182,7 +182,7 @@ jit_get_imm8(
 	int *imm8)
 {
 	if (ctx->lpc + 1 > ctx->func->bytecode_size) {
-		noct_error(ctx->rt, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		*imm8 = 0;
 		return false;
 	}
@@ -207,7 +207,7 @@ jit_get_opr_string(
 
 	len = (int)strlen((const char *)&ctx->func->bytecode[ctx->lpc]);
 	if (ctx->lpc + len + 1 > ctx->func->bytecode_size) {
-		noct_error(ctx->rt, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		*d = NULL;
 		return false;
 	}
