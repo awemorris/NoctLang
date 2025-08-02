@@ -709,7 +709,7 @@ static void
 rt_gc_young_gc(
 	struct rt_env *env)
 {
-	rt_gc_multithread_gc_wrapper(env, rt_gc_young_gc);
+	rt_gc_multithread_gc_wrapper(env, rt_gc_young_gc_body);
 }
 
 /* Executes a young GC. */
@@ -1299,7 +1299,7 @@ static void
 rt_gc_old_gc(
 	struct rt_env *env)
 {
-	rt_gc_multithread_gc_wrapper(env, rt_gc_old_gc);
+	rt_gc_multithread_gc_wrapper(env, rt_gc_old_gc_body);
 }
 
 /* Executes an old GC. */
