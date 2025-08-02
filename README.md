@@ -129,11 +129,11 @@ func main() {
 ```
 func main() {
     // Lambda notation.
-    var f = lambda (x) => { return x + 1; }
+    var f = (x) => { return x + 1; }
     print(f(1));
 
     // No closures. Use the 'with' argument explicitly.
-    var g = lambda (x, with) => {
+    var g = (x, with) => {
         return x + with.y;
     };
     var y = 2;
