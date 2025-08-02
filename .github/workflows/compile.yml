@@ -47,7 +47,7 @@ jobs:
           bison --version
           flex --version
       - name: Configure
-        run: cmake -B build -S . -G "MinGW Makefiles"
+        run: cmake -B build -S . -G "MinGW Makefiles" -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686-toolchain.cmake
       - name: Build
         run: cmake --build build --config Release
       - name: Upload binary
