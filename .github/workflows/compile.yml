@@ -29,24 +29,16 @@ jobs:
           path: build/noct-linux
 
   build-windows-mingw:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Install MinGW
+      - name: Set up dependencies
         run: |
-          choco install winflexbison3 -y
-          echo 'win_bison.exe %*' > 'C:\ProgramData\chocolatey\bin\bison.bat'
-          echo 'win_flex.exe %*' > 'C:\ProgramData\chocolatey\bin\flex.bat'
-          echo 'C:\ProgramData\chocolatey\bin' >> $GITHUB_PATH
-      - name: Verify compiler
-        run: |
-          gcc --version
-          g++ --version
-          bison --version
-          flex --version
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 cmake bison flex
       - name: Configure
-        run: cmake -B build -S . -G "MinGW Makefiles" '-DCMAKE_TOOLCHAIN_FILE=cmake\mingw-i686-toolchain.cmake'
+        run: cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686-toolchain.cmake
       - name: Build
         run: cmake --build build --config Release
       - name: Upload binary
