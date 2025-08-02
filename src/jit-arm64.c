@@ -73,8 +73,10 @@ jit_build(
 	ctx.func = func;
 
 	/* Make code writable and non-executable. */
-	if (!is_writable)
+	if (!is_writable) {
 		jit_map_writable(jit_code_region, JIT_CODE_MAX);
+		is_writable = true;
+	}
 
 	/* Visit over the bytecode. */
 	if (!jit_visit_bytecode(&ctx))
@@ -87,9 +89,6 @@ jit_build(
 		if (!jit_patch_branch(&ctx, i))
 			return false;
 	}
-
-	/* Make code executable and non-writable. */
-	jit_map_executable(jit_code_region, JIT_CODE_MAX);
 
 	func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
 
