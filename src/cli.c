@@ -787,6 +787,7 @@ static int wide_printf(const char *format, ...)
 	/* Use wprintf() and wide-string. (Otherwise, we'll see garbages.) */
 	static wchar_t wbuf[4096];
 	DWORD dwWritten;
+	memset(wbuf, 0, sizeof(wbuf));
 	MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, sizeof(wbuf) / sizeof(wchar_t));
 	WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), wbuf, lstrlenW(wbuf), &dwWritten, NULL);
 	return size;
