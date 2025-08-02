@@ -547,7 +547,7 @@ noct_resize_array(
 	struct rt_array *arr;
 
 	assert(env != NULL);
-	assert(arr != NULL);
+	assert(array != NULL);
 
 	/* Check the type. */
 	if (array->type != NOCT_VALUE_ARRAY) {

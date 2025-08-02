@@ -1556,7 +1556,7 @@ rt_gc_compact_gc(
 
 		/* Fill the reminder. */
 		if (i == env->vm->gc.compact_count - 1) {
-			memset(env->vm->gc.compact_after[i] + obj_size,
+			memset((char *)env->vm->gc.compact_after[i] + obj_size,
 			       0,
 			       env->vm->gc.tenure_freelist.end - ((char *)env->vm->gc.compact_after[i] + obj_size));
 		}

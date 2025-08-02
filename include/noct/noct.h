@@ -75,14 +75,14 @@ typedef unsigned long long uint64_t;
 #if defined(__GNUC__)
 #define NOCT_DLL		__attribute__((visibility("default")))
 #elif defined(_MSC_VER)
+#if defined(DLL_IMPL)
 #define NOCT_DLL		__declspec(dllexport)
-#endif
 #else
-#if defined(__GNUC__)
-#define NOCT_DLL
-#elif defined(_MSC_VER)
 #define NOCT_DLL		__declspec(dllimport)
 #endif
+#endif
+#else
+#define NOCT_DLL
 #endif
 
 /*
