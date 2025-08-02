@@ -180,6 +180,16 @@ noct_destroy_vm(
 	NoctVM *vm);
 
 /*
+ * Creates a thread-local environment for the current thread.
+ */
+#if defined(USE_MULTITHREAD)
+NOCT_DLL
+bool noct_create_thread_env(
+	NoctEnv *prev_evm,
+	NoctEnv **new_env);
+#endif
+
+/*
  * Registers functions from a source code text.
  */
 NOCT_DLL
@@ -211,17 +221,6 @@ noct_register_cfunc(
 	const char *param_name[],
 	bool (*cfunc)(NoctEnv *env),
 	NoctFunc **ret_func);
-
-/*
- * Creates a thread-local environment for the current thread.
- *
- * If the calling thread is the one that created the VM,
- * the default environment will be returned.
- */
-NOCT_DLL
-bool noct_create_thread_env(
-	NoctVM *vm,
-	NoctEnv **env);
 
 /*
  * Enters the VM in the current thread and invokes a function by name.

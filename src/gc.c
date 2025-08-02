@@ -78,6 +78,7 @@ static struct rt_array *rt_gc_alloc_array_tenure(struct rt_env *env, size_t size
 static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
 static void rt_gc_young_gc(struct rt_env *env);
+static void rt_gc_young_gc_body(struct rt_env *env);
 static bool rt_gc_copy_young_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
 static struct rt_gc_object *rt_gc_promote_object(struct rt_env *env, struct rt_gc_object *obj);
 static struct rt_gc_object *rt_gc_promote_string(struct rt_env *env, struct rt_gc_object *obj);
@@ -87,6 +88,7 @@ struct rt_gc_object *rt_gc_copy_string_to_graduate(struct rt_env *env, struct rt
 struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_array *old_obj);
 struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
 static void rt_gc_old_gc(struct rt_env *env);
+static void rt_gc_old_gc_body(struct rt_env *env);
 static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
 static bool rt_gc_compact_gc(struct rt_env *env);
@@ -95,6 +97,9 @@ static void *nursery_alloc(struct rt_env *env, size_t size);
 static void *graduate_alloc(struct rt_env *env, size_t size);
 static void *rt_gc_tenure_alloc(struct rt_env *env, size_t size);
 static void rt_gc_tenure_free(struct rt_env *env, void *p);
+#if defined(USE_MULTITHREAD)
+static void rt_gc_multithread_gc_wrapper(struct rt_env *env, void (*gc)(struct rt_env *));
+#endif
 
 /*
  * Initializes the garbage collector and allocate memory regions.
@@ -699,9 +704,21 @@ rt_gc_dict_write_barrier(
 	}
 }
 
-/* Executes a young GC. */
+/* Executes a young GC in the multithreaded manner. */
 static void
 rt_gc_young_gc(
+	struct rt_env *env)
+{
+#if defined(USE_MULTITHREAD)
+	rt_gc_multithread_gc_wrapper(env, rt_gc_young_gc_body);
+#else
+	rt_gc_young_gc_body(env);
+#endif
+}
+
+/* Executes a young GC. */
+static void
+rt_gc_young_gc_body(
 	struct rt_env *env)
 {
 	struct rt_gc_object *obj;
@@ -1281,9 +1298,21 @@ rt_gc_copy_dict_to_graduate(
 	return &new_obj->head;
 }
 
-/* Executes an old GC. */
+/* Executes an old GC in the multithreaded manner. */
 static void
 rt_gc_old_gc(
+	struct rt_env *env)
+{
+#if defined(USE_MULTITHREAD)
+	rt_gc_multithread_gc_wrapper(env, rt_gc_old_gc_body);
+#else
+	rt_gc_old_gc_body(env);
+#endif
+}
+
+/* Executes an old GC. */
+static void
+rt_gc_old_gc_body(
 	struct rt_env *env)
 {
 	struct rt_gc_object *obj, *next_obj;
@@ -1832,3 +1861,162 @@ rt_gc_tenure_free(
 	/* Erase the used bit. */
 	*header = size & RT_GC_FREELIST_SIZE_MASK;
 }
+
+/*
+ * Multithread Support
+ */
+
+#if defined(USE_MULTITHREAD)
+
+#include "atomic.h"
+
+/*
+ * Initialize an environment.
+ */
+void
+rt_gc_init_env(
+	struct rt_env *env)
+{
+	env->gc_in_progress_counter = 0;
+
+	/* Make this thread inflight. */
+	while (1) {
+		/* Try acquire. */
+		atomic_increment(&env->vm->in_flight_counter);
+		if (atomic_read(&env->vm->gc_stw_counter) == 0)
+			break;
+
+		/* Failed, release. */
+		atomic_decrement(&env->vm->in_flight_counter);
+
+		/* Wait for GC. */
+		while (atomic_read(&env->vm->gc_stw_counter) > 0)
+			cpu_relax();
+	}
+}
+
+/*
+ * Make a GC safe point.
+ */
+void
+rt_gc_safepoint(
+	struct rt_env *env)
+{
+	/* Make this thread non-inflight. */
+	atomic_decrement(&env->vm->in_flight_counter);
+
+	/* Allow other threads to run GC in this point. */
+
+	/* Make this thread inflight again. */
+	while (1) {
+		/* Try acquire. */
+		atomic_increment(&env->vm->in_flight_counter);
+		if (!env->vm->gc_stw_counter)
+			break;
+
+		/* Failed, release. */
+		atomic_decrement(&env->vm->in_flight_counter);
+
+		/* Wait for GC. */
+		while (env->vm->gc_stw_counter > 0)
+			cpu_relax();
+	}
+}
+
+/*
+ * Run a GC in a multithreaded manner.
+ */
+static void
+rt_gc_multithread_gc_wrapper(
+	struct rt_env *env,
+	void (*gc)(struct rt_env *))
+{
+	bool is_executor = false;
+
+	/* This thread is inflight at this moment. */
+
+	/* If this is not a recursive GC call. */
+	if (atomic_read(&env->gc_in_progress_counter) == 0) {
+		// Make this thread non-inflight, and enter a GC safe point.
+		atomic_decrement(&env->vm->in_flight_counter);
+
+		/* Wait for all other threads entering GC safe points. */
+		while (1) {
+			/* Try acquire the right to execute GC. */
+			int old = atomic_increment(&env->vm->gc_stw_counter);
+			if (env->vm->in_flight_counter == 0 && old == 0) {
+				/* Succeeded, entering the GC section. */
+				is_executor = true;
+				break;
+			}
+
+			/* Failed, release.*/
+			atomic_decrement(&env->vm->gc_stw_counter);
+
+			/* If another thread got the right to execute GC. */
+			if (old > 0) {
+				/* Wait for the GC finishes. */
+				while (env->vm->gc_stw_counter > 0)
+					cpu_relax();
+
+				/* Don't execute a GC in this thread this time. */
+				goto back_to_inflight;
+			}
+
+			/* Wait for all other threads get non-inflight. */
+			while (env->vm->in_flight_counter > 0)
+				cpu_relax();
+		}
+	} else {
+		/*
+		 * Recursive call, this thread is non-inflight, and in
+		 * the GC section.
+		 */
+	}
+
+	/* Count-up for recursive GC calls. */
+	atomic_increment(&env->gc_in_progress_counter);
+
+	/* Run GC. */
+	gc(env);
+
+	/* Count-down for recursive GC calls. */
+	atomic_decrement(&env->gc_in_progress_counter);
+
+back_to_inflight:
+	/* If this is not a recursive GC call. */
+	if (env->gc_in_progress_counter == 0) {
+		if (is_executor) {
+			/* Exit a GC. */
+			atomic_decrement(&env->vm->gc_stw_counter);
+		}
+
+		/* At this moment, another thread may execute GC. */
+
+		/* Wait for GC, and make this thread inflight again. */
+		while (1) {
+			/* Try acquire. */
+			atomic_increment(&env->vm->in_flight_counter);
+			if (!env->vm->gc_stw_counter) {
+				/* Succeeded. */
+				break;
+			}
+
+			/* Failed, release. */
+			atomic_decrement(&env->vm->in_flight_counter);
+
+			/* Wait for GC. */
+			while (atomic_read(&env->vm->gc_stw_counter) > 0)
+				cpu_relax();
+		}
+
+		/* Now this thread is infligh. */
+        } else {
+		/*
+		 * Recursive call, this thread is still non-inflight,
+		 * and in the GC section.
+		 */
+	}
+}
+
+#endif /* defined(USE_MULTITHREAD) */

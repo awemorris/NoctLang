@@ -75,6 +75,11 @@ rt_create_vm(
 	(*default_env)->vm = *vm;
 	(*vm)->env_list = *default_env;
 
+#if defined(USE_MULTITHREAD)
+	/* Initialize the environment. */
+	rt_gc_init_env(*default_env);
+#endif
+
 	/* Initialize the garbage collector. */
 	if (!rt_gc_init(*vm)) {
 		free(*default_env);
@@ -166,17 +171,40 @@ rt_free_func(
 	}
 }
 
+#if defined(USE_MULTITHREAD)
+
 /*
  * Create an environment for the current thread.
  */
 bool
 rt_create_thread_env(
-	struct rt_vm *vm,
-	struct rt_env **env)
+	struct rt_env *prev_env,
+	struct rt_env **new_env)
 {
-	/* TODO: */
-	return false;
+	struct rt_env *env;
+
+	/* Allocate a struct rt_env. */
+	env = malloc(sizeof(struct rt_env));
+	if (env == NULL) {
+		rt_out_of_memory(prev_env);
+		return false;
+	}
+	memset(env, 0, sizeof(struct rt_env));
+	env->vm = prev_env->vm;
+
+	/* Link to the VM. */
+	env->next = prev_env->vm->env_list;
+	prev_env->vm->env_list = env;
+
+	/* Initialize for GC. */
+	rt_gc_init_env(env);
+
+	/* Succeeded. */
+	*new_env = env;
+	return true;
 }
+
+#endif /* defined(USE_MULTITHREAD) */
 
 /*
  * Get an error message.
@@ -663,6 +691,11 @@ rt_call(
 	struct rt_value *ret)
 {
 	int i;
+
+#if defined(USE_MULTITHREAD)
+	/* Make a GC safe point. */
+	rt_gc_safepoint(env);
+#endif
 
 	/* Allocate a frame for this call. */
 	if (!rt_enter_frame(env, func))

@@ -10,9 +10,10 @@ endif()
 # Configuration
 #
 
-option(ENABLE_SHARED "Enable shared library" OFF)
-option(ENABLE_JIT    "Enable JIT"            ON)
-option(ENABLE_I18N   "Enable translation"    OFF)
+option(ENABLE_SHARED      "Enable shared library" OFF)
+option(ENABLE_JIT         "Enable JIT"            ON)
+option(ENABLE_MULTITHREAD "Enable multithread"    ON)
+option(ENABLE_I18N        "Enable translation"    OFF)
 
 #
 # FLEX
