@@ -106,6 +106,12 @@ struct rt_vm {
 	/* Pinned C global variables. */
 	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
 	int pinned_count;
+
+	/* In-flight counter for GC exclusion. */
+	int in_flight_counter;
+
+	/* GC stop-the-world counter. */
+	int gc_stw_counter;
 };
 
 /*
@@ -121,7 +127,10 @@ struct rt_env {
 	/* VM. */
 	struct rt_vm *vm;
 
-	/* Execution file. */
+	/* A counter for GC. */
+	int gc_in_progress_counter;
+
+	/* execution file. */
 	char file_name[1024];
 
 	/* Error message. */
@@ -225,7 +234,7 @@ bool rt_create_vm(struct rt_vm **vm, struct rt_env **default_env);
 bool rt_destroy_vm(struct rt_vm *vm);
 
 /* Create an environment for the current thread. */
-bool rt_create_thread_env(NoctVM *vm, NoctEnv **env);
+bool rt_create_thread_env(struct rt_env *prev_env, struct rt_env **new_env);
 
 /* Get an error message. */
 const char *rt_get_error_message(struct rt_env *env);

@@ -212,4 +212,14 @@ void rt_gc_level2_gc(struct rt_env *env);
 /* Manually triggers a full GC. (tenure, nursery + graduate) */
 void rt_gc_level3_gc(struct rt_env *env);
 
+/*
+ * Multithread Support
+ */
+
+/* Initialize an environment. */
+void rt_gc_init_env(struct rt_env *env);
+
+/* Make a GC safe point. */
+void rt_gc_safepoint(struct rt_env *env);
+
 #endif

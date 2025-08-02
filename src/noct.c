@@ -101,13 +101,13 @@ noct_register_cfunc(
 NOCT_DLL
 bool
 noct_create_thread_env(
-	NoctVM *vm,
-	NoctEnv **env)
+	NoctEnv *prev_env,
+	NoctEnv **new_env)
 {
-	assert(vm != NULL);
-	assert(env != NULL);
+	assert(prev_env != NULL);
+	assert(new_env != NULL);
 
-	if (!rt_create_thread_env(vm, env))
+	if (!rt_create_thread_env(prev_env, new_env))
 		return false;
 
 	return true;

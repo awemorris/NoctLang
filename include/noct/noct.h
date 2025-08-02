@@ -220,8 +220,8 @@ noct_register_cfunc(
  */
 NOCT_DLL
 bool noct_create_thread_env(
-	NoctVM *vm,
-	NoctEnv **env);
+	NoctEnv *prev_evm,
+	NoctEnv **new_env);
 
 /*
  * Enters the VM in the current thread and invokes a function by name.
