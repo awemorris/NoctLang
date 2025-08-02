@@ -1,51 +1,53 @@
 NoctLang
 ========
 
-NoctLang is a fast, powerful, yet tiny scripting language runtime that
-combines:
+Noct is a tiny yet mighty scripting language for game scripting.
+Small enough to learn today, powerful enough to ship tomorrow!
 
-- Baseline JIT
-- Generational GC (Semi-Space Copy + Mark-Sweep-Compact)
-- Easy-to-use FFI
-- Only 118 KB on x86_64
+Just 154 KB — featuring a fast JIT compiler, robust generational GC,
+and clean C-like syntax.
 
-Written entirely in ANSI C, NoctLang builds and runs reliably on
-virtually any platform — making it easy to integrate into your own
-games and embedded projects.
+Written in portable ANSI C with no external dependencies, it runs
+everywhere — from desktop PCs down to single-chip environments.
 
-Try it now — launch the REPL or write your first script.  It might
-take less time than you think.
+Try it now — launch the REPL or write your first program.
+It might take less time than you think.
 
 **Status**: Actively developed and constantly evolving.
 
 ---
 
-## Why Noct?
+## Core Design & Features
 
-_"If a programming language could be learned in a single classroom
-session, how would the world change?"_
+Noct combines simplicity, speed, and portability — traits rarely
+found together in scripting languages:
 
-_"What if that very first language could also power fun game
-programming — how many more children would smile?"_
+- **Familiar Syntax** — C/JS-like and easy to learn.
+- **Lightweight JIT** — Fast execution in a tiny runtime.
+- **Generational GC** — Semi-space copy + mark-sweep-compact.
+- **Portable ANSI C** — No dependencies; runs everywhere.
+- **Tiny Footprint** — Runtime fits in 154 KB.
+- **AOT Compilation** — Translate to C for JIT-restricted platforms.
 
-_"And if it could also become a tool to earn a living, what kind of
-future would that create?"_
-
-Noct was born from these questions: a desire to create a language
-that’s minimal yet meaningful, accessible yet powerful — a tool
-simple enough for learning, but strong enough to build real games and
-professional applications.  It bridges the gap between **play** and
-**production**, between **education** and **industry**.
+While most languages compromise on at least one of these,  
+Noct delivers all without sacrificing clarity or speed.
 
 ---
 
-## Key Features
+## Why Noct?
 
-- **C-like Syntax** — Clean and familiar to most programmers.
-- **Arrays & Dictionaries** — Built-in, expressive data structures.
-- **Lambda Functions** — First-class, with explicit environments.
-- **Efficient Execution** — Powered by a lightweight JIT compiler.
-- **Translation Backend** — Translates to both C and Emacs Lisp.
+_"What if a programming language could be learned in a single
+afternoon — and used the next day to create real games?"_
+
+Noct was born from this question: a desire to create a language
+that’s minimal yet meaningful — **simple enough for beginners, fast
+enough for production**.  It bridges the gap between **play** and
+**production**, letting you focus on making games, not fighting tools.
+
+At the same time, Noct brings **commercial-grade VM technology** —
+once limited to large industrial runtimes — into a form small enough
+for game projects, built on proven techniques from engines like Java
+and .NET.
 
 ---
 
@@ -69,9 +71,9 @@ That’s it. You’ve written your first Noct program.
 
 ## Download Prebuild Binaries
 
-Visit [the release
-page](https://github.com/awemorris/NoctLang/releases) to obtain the
-latest prebuilt binaries.
+Visit
+[the release page](https://github.com/awemorris/NoctLang/releases)
+to obtain the latest prebuilt binaries.
 
 ## Or Manually Build from Source
 
@@ -92,58 +94,6 @@ To run a script:
 ```
 ./noct script.noct
 ```
-
----
-
-## Technical Motivations
-
-Noct is designed to strike a balance between **simplicity** and
-**performance**, with five core goals:
-
-1. **Learnability** — Easy to pick up and reason about, even for beginners
-2. **High Speed** —  JIT execution, competitive with Java VMs
-3. **Robustness** — Generational GC (copy + mark-sweep-compact)
-4. **Portability** — Pure ANSI C implementation, with no dependencies
-5. **Small Footprint** — Complete runtime with JIT and GC in under 256 KB
-
-While most scripting languages fall short on at least one of these,
-Noct stays lean — delivering **modern GC and JIT techniques** in a
-runtime small enough for games, embedded systems, and teaching tools.
-
----
-
-## Philosophy and Intent
-
-Noct brings commercial-grade VM technology — once reserved for
-large-scale industrial runtimes — into the open-source world.  Its
-design doesn’t rely on experimental tricks, but on battle-tested
-techniques proven in modern language engines like Java, .NET, and
-LuaJIT.
-
-With Noct, the strengths of commercial runtimes are now available to
-every developer — without cost, without heavy dependencies, and
-without compromise.
-
----
-
-## Educational Vision
-
-Noct proves that industrial-grade technology can also be easy to
-learn.  Its syntax and semantics were intentionally designed so that
-even complete beginners can grasp the core concepts in a single
-classroom session — yet the runtime itself is powerful enough for
-professional applications.
-
-By removing hidden behaviors and enforcing explicit structure, Noct
-helps learners build accurate mental models from day one. The same
-qualities that make it clear for education — predictable control flow
-— also make it reliable for games and embedded systems.
-
-This dual nature means Noct is more than just a teaching tool: it
-provides an approachable first step into programming, while remaining
-a practical language for real-world software development.
-
-Noct doesn’t just teach how to write code — it teaches how code works.
 
 ---
 
@@ -290,18 +240,6 @@ Ongoing work focuses on performance, portability, and expressiveness.
 |SPARC 32bit     |Soon       |
 |SPARC 64bit     |Soon       |
 |s390x           |Planned    |
-
----
-
-## IDE
-
-[NoctScript IDE](https://github.com/awemorris/NoctScriptIDE) is a
-lightweight editor for writing and running Noct scripts. It supports
-syntax highlighting, REPL integration, and runs on Windows, macOS, and
-Linux.
-
-Designed for classroom use, it works out of the box — no installation
-needed, just unzip and start coding.
 
 ---
 
