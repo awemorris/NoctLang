@@ -17,6 +17,7 @@
 #include "runtime.h"
 #include "gc.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -128,7 +129,6 @@ rt_gc_init(
 		return false;
 	memset(vm->gc.tenure_freelist.top, 0, RT_GC_TENURE_SIZE);
 	vm->gc.tenure_freelist.end = vm->gc.tenure_freelist.top + RT_GC_TENURE_SIZE;
-	vm->gc.tenure_freelist.cur = vm->gc.tenure_freelist.top;
 
 	return true;
 }
@@ -1066,7 +1066,6 @@ rt_gc_promote_object(
 	struct rt_gc_object *obj)
 {
 	struct rt_gc_object *ret;
-
 	switch (obj->type) {
 	case RT_GC_TYPE_STRING:
 		ret = rt_gc_promote_string(env, obj);
@@ -1535,9 +1534,6 @@ rt_gc_compact_gc(
 	assert(cur_blk < env->vm->gc.tenure_freelist.end);
 	assert(index == env->vm->gc.compact_count);
 
-	/* Update the free list top. */
-	env->vm->gc.tenure_freelist.cur = remap_top;
-
 	/*
 	 * Slide tenure objects.
 	 */
@@ -1808,9 +1804,8 @@ rt_gc_tenure_alloc(
 	cur = env->vm->gc.tenure_freelist.top;
 
 	/* Search for the first match. */
-	while (*cur) {
+        while (*(size_t *)cur) {
 		size_t blk_size = *(size_t *)cur;
-
 		/* Check for the end of the list. */
 		if (blk_size == 0)
 			break;
@@ -1836,7 +1831,6 @@ rt_gc_tenure_alloc(
 
 	/* Allocate at the end of the free list. */
 	*(size_t *)cur = size | RT_GC_FREELIST_USED_BIT;
-	env->vm->gc.tenure_freelist.cur += size + sizeof(size_t);
 	return cur + sizeof(size_t);
 }
 

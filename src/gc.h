@@ -79,7 +79,7 @@ enum rt_gc_object_type {
  */
 #define RT_GC_FREELIST_ALIGN		(sizeof(void *))
 #define RT_GC_FREELIST_USED_BIT		0x1
-#define RT_GC_FREELIST_SIZE_MASK	((size_t)-1)
+#define RT_GC_FREELIST_SIZE_MASK	(~(size_t)1)
 
 /*
  * Garbage Collector state structure that is embedded to struct rt_vm.
@@ -100,7 +100,6 @@ struct rt_gc_info {
 	struct freelist {
 		char *top;
 		char *end;
-		char *cur;
 	} tenure_freelist;
 
 	/* Linked list of objects in the nursery generation. */
