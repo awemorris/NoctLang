@@ -20,11 +20,15 @@ jit_build(
 	struct rt_env *env,
 	struct rt_func *func);
 
-/* Free a JIT-compiled code for a function. */
+/* Commit written code. */
+void
+jit_commit(
+	struct rt_env *env);
+
+/* Free all JIT-compiled code. */
 void
 jit_free(
-	struct rt_env *env,
-	struct rt_func *func);
+	struct rt_env *env);
 
 /*
  * If JIT is enabled.
@@ -91,6 +95,9 @@ struct jit_context {
 
 /* Map a region. */
 bool jit_map_memory_region(void **region, size_t size);
+
+/* Unmap a region. */
+void jit_unmap_memory_region(void *region, size_t size);
 
 /* Make a region writable. */
 void jit_map_writable(void *region, size_t size);

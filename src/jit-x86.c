@@ -64,6 +64,7 @@ jit_build(
 		}
 		jit_code_region_cur = jit_code_region;
 		jit_code_region_tail = jit_code_region + JIT_CODE_MAX;
+		is_writable = true;
 	}
 
 	/* Make a context. */

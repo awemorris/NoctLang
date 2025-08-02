@@ -107,6 +107,9 @@ struct rt_vm {
 	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
 	int pinned_count;
 
+	/* Is JIT code written and not commited? */
+	bool is_jit_dirty;
+
 #if defined(USE_MULTITHREAD)
 	/* In-flight counter for GC exclusion. */
 	int in_flight_counter;

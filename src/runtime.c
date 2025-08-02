@@ -109,6 +109,9 @@ rt_destroy_vm(
 	struct rt_object_header *obj, *next_obj;
 	struct rt_func *func, *next_func;
 
+	/* Free the JIT region. */
+	jit_free(vm->env_list);
+
 	/* Free thread environments. */
 	env = vm->env_list;
 	while (env != NULL) {
@@ -165,10 +168,8 @@ rt_free_func(
 	free(func->file_name);
 	free(func->bytecode);
 
-	if (func->jit_code != NULL) {
-		jit_free(env, func);
+	if (func->jit_code != NULL)
 		func->jit_code = NULL;
-	}
 }
 
 #if defined(USE_MULTITHREAD)
@@ -367,8 +368,11 @@ rt_register_lir(
 
 	/* Do JIT compilation */
 	if (noct_conf_use_jit) {
-		if (!jit_build(env, func))
-			return false;
+		/* Write code. */
+		jit_build(env, func);
+
+		/* Need to commit before call. */
+		env->vm->is_jit_dirty = true;
 	}
 
 	/* Link. */
@@ -696,6 +700,12 @@ rt_call(
 	/* Make a GC safe point. */
 	rt_gc_safepoint(env);
 #endif
+
+	/* Commit JIT-compiled code. */
+	if (noct_conf_use_jit && env->vm->is_jit_dirty) {
+		jit_commit(env);
+		env->vm->is_jit_dirty = false;
+	}
 
 	/* Allocate a frame for this call. */
 	if (!rt_enter_frame(env, func))

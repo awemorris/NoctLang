@@ -8,6 +8,8 @@
  * JIT (common): Just-In-Time native code generation
  */
 
+#include "c89compat.h"
+
 /*
  * Use the architecture specific source.
  */
@@ -56,7 +58,7 @@
 #endif
 
 /*
- * Map a memory region for the generated code.
+ * Map the memory region for the generated code.
  */
 bool
 jit_map_memory_region(
@@ -85,6 +87,21 @@ jit_map_memory_region(
 	memset(*region, 0, size);
 
 	return true;
+}
+
+/*
+ * Unmap the memory region for the generated code.
+ */
+void
+jit_unmap_memory_region(
+	void *region,
+	size_t size)
+{
+#if defined(_WIN32)
+	VirtualFree(region, size, MEM_RELEASE);
+#else
+	munmap(region, size);
+#endif
 }
 
 /*
