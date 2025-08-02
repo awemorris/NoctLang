@@ -1353,39 +1353,3 @@ rt_out_of_memory(
 {
 	noct_error(env, _("Out of memory."));
 }
-
-/*
- * Stub for non-JIT build.
- */
-#if !defined(USE_JIT)
-
-/*
- * Generate a JIT-compiled code for a function.
- */
-bool
-jit_build(
-	struct rt_env *rt,
-	struct rt_func *func)
-{
-	UNUSED_PARAMETER(rt);
-	UNUSED_PARAMETER(func);
-
-	/* stub */
-	return true;
-}
-
-/*
- * Free a JIT-compiled code for a function.
- */
-void
-jit_free(
-	struct rt_env *rt,
-	struct rt_func *func)
-{
-	UNUSED_PARAMETER(rt);
-	UNUSED_PARAMETER(func);
-
-	/* stub */
-}
-
-#endif
