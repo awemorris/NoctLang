@@ -35,7 +35,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Install MinGW
         run: |
-          choco install mingw-w64 -y
           choco install winflexbison3 -y
           echo 'win_bison.exe %*' > 'C:\ProgramData\chocolatey\bin\bison.bat'
           echo 'win_flex.exe %*' > 'C:\ProgramData\chocolatey\bin\flex.bat'
@@ -47,7 +46,7 @@ jobs:
           bison --version
           flex --version
       - name: Configure
-        run: cmake -B build -S . -G "MinGW Makefiles" -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-i686-toolchain.cmake
+        run: cmake -B build -S . -G "MinGW Makefiles" '-DCMAKE_TOOLCHAIN_FILE=cmake\mingw-i686-toolchain.cmake'
       - name: Build
         run: cmake --build build --config Release
       - name: Upload binary
