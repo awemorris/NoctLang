@@ -62,7 +62,7 @@ jit_build(
 	/* If the first call, map a memory region for the generated code. */
 	if (jit_code_region == NULL) {
 		if (!jit_map_memory_region((void **)&jit_code_region, JIT_CODE_MAX)) {
-			rt_error(rt, "Memory mapping failed.");
+			rt_error(env, "Memory mapping failed.");
 			return false;
 		}
 		jit_code_region_cur = jit_code_region;
@@ -79,8 +79,10 @@ jit_build(
 	ctx.func = func;
 
 	/* Make code writable and non-executable. */
-	if (!is_writable)
+	if (!is_writable) {
 		jit_map_writable(jit_code_region, JIT_CODE_MAX);
+		is_writable = true;
+	}
 
 	/* Visit over the bytecode. */
 	if (!jit_visit_bytecode(&ctx))
@@ -108,11 +110,13 @@ jit_free(
 {
 	UNUSED_PARAMETER(env);
 
-	jit_unmap_memory_region(jit_code_region, JIT_CODE_MAX);
+	if (jit_code_region != NULL) {
+		jit_unmap_memory_region(jit_code_region, JIT_CODE_MAX);
 
-	jit_code_region = NULL;
-	jit_code_region_cur = NULL;
-	jit_code_region_tail = NULL;
+		jit_code_region = NULL;
+		jit_code_region_cur = NULL;
+		jit_code_region_tail = NULL;
+	}
 }
 
 /*

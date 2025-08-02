@@ -214,6 +214,7 @@ static int command_run(int argc, char *argv[])
 	/*
 	 * XXX: Testing
 	 */
+#if 0
 	rt_gc_level1_gc(env);
 	rt_gc_level1_gc(env);
 	rt_gc_level1_gc(env);
@@ -225,6 +226,7 @@ static int command_run(int argc, char *argv[])
 	rt_set_global(env, "b", &zero);
 
 	rt_gc_level2_gc(env);
+#endif
 
 	/* Destroy the runtime. */
 	if (!noct_destroy_vm(vm))

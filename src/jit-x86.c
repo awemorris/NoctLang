@@ -41,6 +41,9 @@ static uint8_t *jit_code_region;
 static uint8_t *jit_code_region_cur;
 static uint8_t *jit_code_region_tail;
 
+/* Write mapped? */
+static bool is_writable;
+
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
@@ -96,17 +99,34 @@ jit_build(
 }
 
 /*
- * Free a JIT-compiled code for a function.
+ * Free all JIT-compiled code.
  */
 void
 jit_free(
-	 struct rt_env *rt,
-	 struct rt_func *func)
+	 struct rt_env *env)
 {
-	UNUSED_PARAMETER(rt);
-	UNUSED_PARAMETER(func);
+	UNUSED_PARAMETER(env);
 
-	/* XXX: */
+	if (jit_code_region != NULL) {
+		jit_unmap_memory_region(jit_code_region, JIT_CODE_MAX);
+
+		jit_code_region = NULL;
+		jit_code_region_cur = NULL;
+		jit_code_region_tail = NULL;
+	}
+}
+
+/*
+ * Commit written code.
+ */
+void
+jit_commit(
+	struct rt_env *env)
+{
+	/* Make code executable and non-writable. */
+	jit_map_executable(jit_code_region, JIT_CODE_MAX);
+
+	is_writable = false;
 }
 
 /*

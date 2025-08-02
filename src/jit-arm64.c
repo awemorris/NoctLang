@@ -100,15 +100,17 @@ jit_build(
  */
 void
 jit_free(
-	 struct rt_env *rt)
+	 struct rt_env *env)
 {
-	UNUSED_PARAMETER(rt);
+	UNUSED_PARAMETER(env);
 
-	jit_unmap_memory_region(jit_code_region, JIT_CODE_MAX);
+	if (jit_code_region != NULL) {
+		jit_unmap_memory_region(jit_code_region, JIT_CODE_MAX);
 
-	jit_code_region = NULL;
-	jit_code_region_cur = NULL;
-	jit_code_region_tail = NULL;
+		jit_code_region = NULL;
+		jit_code_region_cur = NULL;
+		jit_code_region_tail = NULL;
+	}
 }
 
 /*

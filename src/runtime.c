@@ -110,7 +110,8 @@ rt_destroy_vm(
 	struct rt_func *func, *next_func;
 
 	/* Free the JIT region. */
-	jit_free(vm->env_list);
+	if (noct_conf_use_jit)
+		jit_free(vm->env_list);
 
 	/* Free thread environments. */
 	env = vm->env_list;
