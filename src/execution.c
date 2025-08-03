@@ -19,7 +19,6 @@
 /*
  * Add helper.
  */
-SYSVABI
 bool
 rt_add_helper(
 	struct rt_env *env,
@@ -104,7 +103,6 @@ rt_add_helper(
 /*
  * Subtract helper.
  */
-SYSVABI
 bool
 rt_sub_helper(
 	struct rt_env *env,
@@ -162,7 +160,6 @@ rt_sub_helper(
 /*
  * Multiply helper.
  */
-SYSVABI
 bool
 rt_mul_helper(
 	struct rt_env *env,
@@ -220,7 +217,6 @@ rt_mul_helper(
 /*
  * Multiply helper.
  */
-SYSVABI
 bool
 rt_div_helper(
 	struct rt_env *env,
@@ -294,7 +290,6 @@ rt_div_helper(
 /*
  * Modulo helper.
  */
-SYSVABI
 bool
 rt_mod_helper(
 	struct rt_env *env,
@@ -333,7 +328,6 @@ rt_mod_helper(
 /*
  * AND helper.
  */
-SYSVABI
 bool
 rt_and_helper(
 	struct rt_env *env,
@@ -372,7 +366,6 @@ rt_and_helper(
 /*
  * OR helper.
  */
-SYSVABI
 bool
 rt_or_helper(
 	struct rt_env *env,
@@ -411,7 +404,6 @@ rt_or_helper(
 /*
  * XOR helper.
  */
-SYSVABI
 bool
 rt_xor_helper(
 	struct rt_env *env,
@@ -450,7 +442,6 @@ rt_xor_helper(
 /*
  * NEG helper.
  */
-SYSVABI
 bool
 rt_neg_helper(
 	struct rt_env *env,
@@ -483,7 +474,6 @@ rt_neg_helper(
 /*
  * NEG helper.
  */
-SYSVABI
 bool
 rt_not_helper(
 	struct rt_env *env,
@@ -512,7 +502,6 @@ rt_not_helper(
 /*
  * LT helper.
  */
-SYSVABI
 bool
 rt_lt_helper(
 	struct rt_env *env,
@@ -581,7 +570,6 @@ rt_lt_helper(
 /*
  * LTE helper.
  */
-SYSVABI
 bool
 rt_lte_helper(
 	struct rt_env *env,
@@ -650,7 +638,6 @@ rt_lte_helper(
 /*
  * GT helper.
  */
-SYSVABI
 bool
 rt_gt_helper(
 	struct rt_env *env,
@@ -719,7 +706,6 @@ rt_gt_helper(
 /*
  * GTE helper.
  */
-SYSVABI
 bool
 rt_gte_helper(
 	struct rt_env *env,
@@ -788,7 +774,6 @@ rt_gte_helper(
 /*
  * EQ helper.
  */
-SYSVABI
 bool
 rt_eq_helper(
 	struct rt_env *env,
@@ -855,7 +840,6 @@ rt_eq_helper(
 }
 
 /* NEQ helper. */
-SYSVABI
 bool
 rt_neq_helper(
 	struct rt_env *env,
@@ -924,7 +908,6 @@ rt_neq_helper(
 /*
  * STOREARRAY helper.
  */
-SYSVABI
 bool
 rt_storearray_helper(
 	struct rt_env *env,
@@ -986,7 +969,6 @@ rt_storearray_helper(
 /*
  * loadarray helper.
  */
-SYSVABI
 bool
 rt_loadarray_helper(
 	struct rt_env *env,
@@ -1047,7 +1029,6 @@ rt_loadarray_helper(
 /*
  * LEN helper.
  */
-SYSVABI
 bool
 rt_len_helper(
 	struct rt_env *env,
@@ -1082,7 +1063,6 @@ rt_len_helper(
 }
 
 /* getdictkeybyindex helper. */
-SYSVABI
 bool
 rt_getdictkeybyindex_helper(
 	struct rt_env *env,
@@ -1120,7 +1100,6 @@ rt_getdictkeybyindex_helper(
 /*
  * getdictvalbyindex helper.
  */
-SYSVABI
 bool
 rt_getdictvalbyindex_helper(
 	struct rt_env *env,
@@ -1158,7 +1137,6 @@ rt_getdictvalbyindex_helper(
 /*
  * loadsymbol helper.
  */
-SYSVABI
 bool
 rt_loadsymbol_helper(
 	struct rt_env *env,
@@ -1181,7 +1159,6 @@ rt_loadsymbol_helper(
 /*
  * storesymbol helper.
  */
-SYSVABI
 bool
 rt_storesymbol_helper(
 	struct rt_env *env,
@@ -1208,7 +1185,6 @@ rt_storesymbol_helper(
 /*
  * loaddot helper.
  */
-SYSVABI
 bool
 rt_loaddot_helper(
 	struct rt_env *env,
@@ -1255,7 +1231,6 @@ rt_loaddot_helper(
 /*
  * STOREDOT helper.
  */
-SYSVABI
 bool
 rt_storedot_helper(
 	struct rt_env *env,
@@ -1283,7 +1258,6 @@ rt_storedot_helper(
 }
 
 /* CALL helper. */
-SYSVABI
 bool
 rt_call_helper(
 	struct rt_env *env,
@@ -1321,7 +1295,6 @@ rt_call_helper(
 /*
  * THISCALL helper.
  */
-SYSVABI
 bool
 rt_thiscall_helper(
 	struct rt_env *env,

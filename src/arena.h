@@ -59,8 +59,9 @@ arena_alloc(
 {
 	void *p;
 	size = (size + ARENA_ALIGN - 1) & ~(ARENA_ALIGN - 1);
-	if (arena->cur + size >= arena->top + arena->size)
+	if (arena->cur + size >= arena->top + arena->size) {
 		return NULL;
+	}
 	p = arena->cur;
 	arena->cur += size;
 	return p;

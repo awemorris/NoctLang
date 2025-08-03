@@ -63,15 +63,6 @@ enum rt_bytecode {
 };
 
 /*
- * Definition for SYSV ABI quirk on x86_64 MS ABI compilation.
- */
-#if defined(__GNUC__) && defined(_WIN32) && defined(__x86_64__)
-#define SYSVABI __attribute__((sysv_abi))
-#else
-#define SYSVABI
-#endif
-
-/*
  * Maximum number of C pinned variables.
  */
 #define RT_GLOBAL_PIN_MAX	64
@@ -128,6 +119,9 @@ struct rt_env {
 
 	/* Execution line. (Do not move. JIT assumes the offset 8.) */
 	int line;
+
+	/* Do not move. */
+	int _dummy;
 
 	/* VM. */
 	struct rt_vm *vm;
@@ -216,7 +210,7 @@ struct rt_func {
 	int tmpvar_size;
 
 	/* JIT-generated code. */
-	SYSVABI bool (*jit_code)(struct rt_env *env);
+	bool (*jit_code)(struct rt_env *env);
 
 	/* Function pointer. (if a cfunc) */
 	bool (*cfunc)(struct rt_env *env);
@@ -277,16 +271,16 @@ bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 void rt_leave_frame(struct rt_env *env, struct rt_value *ret);
 
 /* Make a string value. */
-SYSVABI bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data);
+bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data);
 
 /* Make a string value. */
 bool rt_make_string_binary(struct rt_env *env, struct rt_value *val, const char *data, size_t len);
 
 /* Make an empty array value. */
-SYSVABI bool rt_make_empty_array(struct rt_env *env, struct rt_value *val);
+bool rt_make_empty_array(struct rt_env *env, struct rt_value *val);
 
 /* Make an empty dictionary value. */
-SYSVABI bool rt_make_empty_dict(struct rt_env *env, struct rt_value *val);
+bool rt_make_empty_dict(struct rt_env *env, struct rt_value *val);
 
 /* Retrieves an array element. */
 bool rt_get_array_elem(struct rt_env *env, struct rt_array *array, int index, struct rt_value *val);

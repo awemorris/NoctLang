@@ -807,7 +807,6 @@ rt_leave_frame(
 /*
  * Make a string value.
  */
-SYSVABI
 bool
 rt_make_string(
 	struct rt_env *env,
@@ -833,7 +832,6 @@ rt_make_string(
 /*
  * Make an empty array value.
  */
-SYSVABI
 bool
 rt_make_empty_array(
 	struct rt_env *env,
@@ -860,7 +858,6 @@ rt_make_empty_array(
 /*
  * Make an empty dictionary value.
  */
-SYSVABI
 bool
 rt_make_empty_dict(
 	struct rt_env *env,
