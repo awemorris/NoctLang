@@ -106,7 +106,6 @@ rt_destroy_vm(
 	struct rt_vm *vm)
 {
 	struct rt_env *env, *next_env;
-	struct rt_object_header *obj, *next_obj;
 	struct rt_func *func, *next_func;
 
 	/* Free the JIT region. */
@@ -891,8 +890,6 @@ rt_get_array_elem(
 	int index,
 	struct rt_value *val)
 {
-	int type;
-
 	assert(env != NULL);
 	assert(arr != NULL);
 	assert(index >= 0);
@@ -1061,7 +1058,6 @@ rt_set_dict_elem(
 	struct rt_value *val)
 {
 	int i;
-	size_t len;
 
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1157,8 +1153,6 @@ rt_get_return(
 	struct rt_env *env,
 	struct rt_value *val)
 {
-	int ret_index;
-
 	*val = env->frame->tmpvar[0];
 
 	return true;

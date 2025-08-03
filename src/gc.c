@@ -427,7 +427,6 @@ rt_gc_alloc_array_tenure(
 	size_t size)
 {
 	struct rt_array *arr;
-	size_t len;
 	struct rt_value *table;
 	int retry;
 
@@ -480,7 +479,6 @@ rt_gc_alloc_dict(
 	size_t size)
 {
 	struct rt_dict *dict;
-	size_t len;
 	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
@@ -1141,8 +1139,6 @@ rt_gc_promote_dict(
 	struct rt_gc_object *obj)
 {
 	struct rt_dict *old_dict, *new_dict;
-	int i;
-	size_t len;
 
 	/* Allocate a dictionary object. */
 	old_dict = (struct rt_dict *)obj;
@@ -1170,7 +1166,6 @@ rt_gc_copy_string_to_graduate(
 	struct rt_string *old_obj)
 {
 	struct rt_string *new_obj;
-	char *s;
 
 	/*
 	 * Strings larger than RT_GC_LOP_THRESHOLD must not be in the
@@ -1316,7 +1311,6 @@ rt_gc_old_gc_body(
 	struct rt_gc_object *obj, *next_obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
-	int tenure_count;
 	int i;
 
 	/*
@@ -1424,8 +1418,6 @@ rt_gc_free_old_object(
 	struct rt_env *env,
 	struct rt_gc_object *obj)
 {
-	int i;
-
 	assert(obj->region == RT_GC_REGION_TENURE);
 
 	/*
@@ -1504,7 +1496,7 @@ rt_gc_compact_gc(
 	remap_top = env->vm->gc.tenure_freelist.top;
 	index = 0;
 	while (cur_blk < env->vm->gc.tenure_freelist.end) {
-		size_t blk_size, real_size;
+		size_t blk_size;
 		bool blk_used;
 		struct rt_gc_object *obj;
 
@@ -1790,7 +1782,6 @@ rt_gc_tenure_alloc(
 	size_t size)
 {
 	char *cur;
-	char *p;
 
 	assert(size > 0);
 	if (size == 0)

@@ -523,7 +523,6 @@ static bool add_file_hook_elisp(const char *fname)
 	func_count = hir_get_function_count();
 	for (j = 0; j < func_count; j++) {
 		struct hir_block *hfunc;
-		struct lir_func *lfunc;
 
 		/* Put Emacs Lisp. */
 		hfunc = hir_get_function(j);
@@ -737,7 +736,6 @@ static bool accept_multiline(const char *text)
 static bool load_file_content(const char *fname, char **data, size_t *size)
 {
 	FILE *fp;
-	long pos;
 
 	/* Open the file. */
 	fp = fopen(fname, "rb");
@@ -1040,7 +1038,6 @@ cfunc_print(
 {
 	NoctValue msg;
 	const char *s;
-	size_t len;
 	float f;
 	int i;
 	int type;
@@ -1105,7 +1102,6 @@ cfunc_readline(
 static bool cfunc_readint(struct rt_env *rt)
 {
 	NoctValue tmp;
-	NoctValue ret;
 	char buf[1024];
 
 	memset(buf, 0, sizeof(buf));
@@ -1215,9 +1211,8 @@ static bool
 cfunc_shell(
 	struct rt_env *rt)
 {
-	NoctValue tmp, ret;
+	NoctValue tmp;
 	const char *s;
-	int type;
 	int cmd_ret;
 
 	/* Get a "cmd" parameer. */

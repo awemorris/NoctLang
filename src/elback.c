@@ -273,7 +273,6 @@ static bool
 elback_visit_if_block(
 	struct hir_block *block)
 {
-	bool is_else;
 	struct hir_block *b;
 
 	assert(block != NULL);
@@ -565,10 +564,6 @@ static bool
 elback_visit_stmt(
 	struct hir_stmt *stmt)
 {
-	bool is_lhs_local;
-	bool is_lhs_array;
-	bool is_lhs_dot;
-
 	assert(stmt != NULL);
 	assert(stmt->rhs != NULL);
 
