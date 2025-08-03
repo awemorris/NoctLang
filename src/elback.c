@@ -572,8 +572,8 @@ elback_visit_stmt(
 	assert(stmt != NULL);
 	assert(stmt->rhs != NULL);
 
-	/* Visit LHS if LHS is not an explicit local variable. */
-	if (stmt->lhs != NULL && !is_lhs_local) {
+	/* Visit LHS. */
+	if (stmt->lhs != NULL) {
 		if (stmt->lhs->type == HIR_EXPR_TERM) {
 			assert(stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL);
 
