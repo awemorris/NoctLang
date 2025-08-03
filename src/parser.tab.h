@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_AST_YY_USERS_TABATA_SRC_NOCTLANG_SRC_PARSER_TAB_H_INCLUDED
-# define YY_AST_YY_USERS_TABATA_SRC_NOCTLANG_SRC_PARSER_TAB_H_INCLUDED
+#ifndef YY_AST_YY_HOME_TABATA_SRC_NOCTLANG_BUILD_PARSER_TAB_H_INCLUDED
+# define YY_AST_YY_HOME_TABATA_SRC_NOCTLANG_BUILD_PARSER_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -96,7 +96,8 @@ extern int ast_yydebug;
     TOKEN_AND = 297,               /* TOKEN_AND  */
     TOKEN_OR = 298,                /* TOKEN_OR  */
     TOKEN_VAR = 299,               /* TOKEN_VAR  */
-    UNARYMINUS = 300               /* UNARYMINUS  */
+    UNARYMINUS = 300,              /* UNARYMINUS  */
+    TOKEN_NOT = 301                /* TOKEN_NOT  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -105,7 +106,7 @@ extern int ast_yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 90 "/Users/tabata/src/NoctLang/src/parser.y"
+#line 91 "/home/tabata/src/NoctLang/src/parser.y"
 
 	int ival;
 	double fval;
@@ -122,7 +123,7 @@ union YYSTYPE
 	struct ast_kv_list *kv_list;
 	struct ast_kv *kv;
 
-#line 126 "/Users/tabata/src/NoctLang/src/parser.tab.h"
+#line 127 "/home/tabata/src/NoctLang/build/parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -151,10 +152,10 @@ extern YYLTYPE ast_yylloc;
 int ast_yyparse (void *scanner);
 
 /* "%code provides" blocks.  */
-#line 86 "/Users/tabata/src/NoctLang/src/parser.y"
+#line 87 "/home/tabata/src/NoctLang/src/parser.y"
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 
-#line 159 "/Users/tabata/src/NoctLang/src/parser.tab.h"
+#line 160 "/home/tabata/src/NoctLang/build/parser.tab.h"
 
-#endif /* !YY_AST_YY_USERS_TABATA_SRC_NOCTLANG_SRC_PARSER_TAB_H_INCLUDED  */
+#endif /* !YY_AST_YY_HOME_TABATA_SRC_NOCTLANG_BUILD_PARSER_TAB_H_INCLUDED  */
