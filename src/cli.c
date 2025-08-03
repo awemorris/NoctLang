@@ -786,7 +786,7 @@ static int wide_printf(const char *format, ...)
 #if !defined(_WIN32)
 	return printf("%s", buf);
 #else
-	/* Use wprintf() and wide-string. (Otherwise, we'll see garbages.) */
+	/* MSVC or MinGW: Use wprintf() and wide-string. (Otherwise, we'll see garbages.) */
 	static wchar_t wbuf[4096];
 	DWORD dwWritten;
 	memset(wbuf, 0, sizeof(wbuf));

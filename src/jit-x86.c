@@ -404,7 +404,7 @@ jit_visit_sconst_op(
 		/* pushl %eax */			IB(0x50);
 		/* movl -8(%ebp), %eax */		IB(0x8b); IB(0x45); IB(0xf8);
 		/* pushl %eax */			IB(0x50);
-		/* movl $noct_make_string, %eax */	IB(0xb8); ID((uint32_t)noct_make_string);
+		/* movl $rt_make_string, %eax */	IB(0xb8); ID((uint32_t)rt_make_string);
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $12, %esp */			IB(0x83); IB(0xc4); IB(12);
 
@@ -439,7 +439,7 @@ jit_visit_aconst_op(
 		/* pushl %eax */			IB(0x50);
 		/* movl -8(%ebp), %eax */		IB(0x8b); IB(0x45); IB(0xf8);
 		/* pushl %eax */			IB(0x50);
-		/* movl $noct_make_empty_array, %eax */	IB(0xb8); ID((uint32_t)noct_make_empty_array);
+		/* movl $rt_make_empty_array, %eax */	IB(0xb8); ID((uint32_t)rt_make_empty_array);
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $8, %esp */			IB(0x83); IB(0xc4); IB(8);
 
@@ -475,7 +475,7 @@ jit_visit_dconst_op(
 		/* pushl %eax */			IB(0x50);
 		/* movl -8(%ebp), %eax */		IB(0x8b); IB(0x45); IB(0xf8);
 		/* pushl %eax */			IB(0x50);
-		/* movl $noct_make_empty_dict, %eax */	IB(0xb8); ID((uint32_t)noct_make_empty_dict);
+		/* movl $rt_make_empty_dict, %eax */	IB(0xb8); ID((uint32_t)rt_make_empty_dict);
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $8, %esp */			IB(0x83); IB(0xc4); IB(8);
 
@@ -970,10 +970,10 @@ jit_visit_loadsymbol_op(
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $12, %esp */			IB(0x83); IB(0xc4); IB(12);
 
-		/* cmpl $0, %eax */		IB(0x83); IB(0xf8); IB(0x00);					\
-		/* jne next */			IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */		IB(0xff); IB(0x65); IB(0x08);					\
-		/* next:*/											\
+		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* jne next */				IB(0x75); IB(0x03);
+		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+	/* next:*/
 	}
 
 	return true;
@@ -1006,10 +1006,10 @@ jit_visit_storesymbol_op(
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $12, %esp */			IB(0x83); IB(0xc4); IB(12);
 
-		/* cmpl $0, %eax */		IB(0x83); IB(0xf8); IB(0x00);					\
-		/* jne next */			IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */		IB(0xff); IB(0x65); IB(0x08);					\
-		/* next:*/											\
+		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* jne next */				IB(0x75); IB(0x03);
+		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+	/* next:*/
 	}
 
 	return true;
@@ -1046,10 +1046,10 @@ jit_visit_loaddot_op(
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $16, %esp */			IB(0x83); IB(0xc4); IB(16);
 
-		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);					\
-		/* jne next */				IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);					\
-		/* next:*/											\
+		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* jne next */				IB(0x75); IB(0x03);
+		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+	/* next:*/
 	}
 
 	return true;
@@ -1086,10 +1086,10 @@ jit_visit_storedot_op(
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $16, %esp */			IB(0x83); IB(0xc4); IB(16);
 
-		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);					\
-		/* jne next */				IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);					\
-		/* next:*/											\
+		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* jne next */				IB(0x75); IB(0x03);
+		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+	/* next:*/
 	}
 
 	return true;

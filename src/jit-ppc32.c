@@ -431,10 +431,10 @@ jit_visit_sconst_op(
 	CONSUME_TMPVAR(dst);
 	CONSUME_STRING(val);
 
-	f = (uint32_t)noct_make_string;
+	f = (uint32_t)rt_make_string;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_string(rt, &rt->frame->tmpvar[dst], val); */
+	/* rt_make_string(rt, &rt->frame->tmpvar[dst], val); */
 	ASM {
 		/* R14: rt */
 		/* R15: &rt->frame->tmpvar[0] */
@@ -477,10 +477,10 @@ jit_visit_aconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint32_t)noct_make_empty_array;
+	f = (uint32_t)rt_make_empty_array;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+	/* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
 	ASM {
 		/* R14: rt */
 		/* R15: &rt->frame->tmpvar[0] */
@@ -493,7 +493,7 @@ jit_visit_aconst_op(
 		/* li r4, dst */		IW(0x00008038 | lo16((uint32_t)dst));
 		/* add r4, r4, r15 */		IW(0x147a847c);
 
-		/* Call noct_make_empty_array(). */
+		/* Call rt_make_empty_array(). */
 		/* lis  r12, f[31:16] */	IW(0x0000803d | hi16(f));
 		/* ori  r12, r12, f[15:0] */	IW(0x00008c61 | lo16(f));
 		/* mflr r31 */			IW(0xa602e87f);
@@ -519,10 +519,10 @@ jit_visit_dconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint32_t)noct_make_empty_dict;
+	f = (uint32_t)rt_make_empty_dict;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+	/* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
 	ASM {
 		/* R14: rt */
 		/* R15: &rt->frame->tmpvar[0] */
@@ -535,7 +535,7 @@ jit_visit_dconst_op(
 		/* li r4, dst */		IW(0x00008038 | lo16((uint32_t)dst));
 		/* add r4, r4, r15 */		IW(0x147a847c);
 
-		/* Call noct_make_empty_dict(). */
+		/* Call rt_make_empty_dict(). */
 		/* lis  r12, f[31:16] */	IW(0x0000803d | hi16(f));
 		/* ori  r12, r12, f[15:0] */	IW(0x00008c61 | lo16(f));
 		/* mflr r31 */			IW(0xa602e87f);

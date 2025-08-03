@@ -439,10 +439,10 @@ jit_visit_sconst_op(
 	CONSUME_TMPVAR(dst);
 	CONSUME_STRING(val);
 
-	f = (uint64_t)noct_make_string;
+	f = (uint64_t)rt_make_string;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_string(rt, &rt->frame->tmpvar[dst], val); */
+	/* rt_make_string(rt, &rt->frame->tmpvar[dst], val); */
 	ASM {
 		/* $s0: rt */
 		/* $s1: &rt->frame->tmpvar[0] */
@@ -492,10 +492,10 @@ jit_visit_aconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint64_t)noct_make_empty_array;
+	f = (uint64_t)rt_make_empty_array;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+	/* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
 	ASM {
 		/* $s0: rt */
 		/* $s1: &rt->frame->tmpvar[0] */
@@ -507,7 +507,7 @@ jit_visit_aconst_op(
 		/* li    $a1, dst */		IW(0x24050000 | lo16((uint32_t)dst));
 		/* daddu $a1, $a1, $s1 */	IW(0x00b1282d);
 
-		/* Call noct_make_empty_array(). */
+		/* Call rt_make_empty_array(). */
 		/* lui  $t9, f@hh */		IW(0x3c190000 | hihi16(f));
 		/* ori  $t9, f@hl */		IW(0x37390000 | hilo16(f));
 		/* dsll $t9, $t9, 16 */		IW(0x0019cc38);
@@ -537,10 +537,10 @@ jit_visit_dconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint64_t)noct_make_empty_dict;
+	f = (uint64_t)rt_make_empty_dict;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+	/* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
 	ASM {
 		/* $s0: rt */
 		/* $s1: &rt->frame->tmpvar[0] */

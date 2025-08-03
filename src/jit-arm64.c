@@ -680,10 +680,10 @@ jit_visit_sconst_op(
 		MOVK		(REG_X2, IMM16((((uint64_t)val >> 48)) & 0xffff), LSL_48);
 
 		/* Call rt_make_string(). */
-		MOVZ		(REG_X3, IMM16(((uint64_t)noct_make_string) & 0xffff), LSL_0);
-		MOVK		(REG_X3, IMM16((((uint64_t)noct_make_string) >> 16) & 0xffff), LSL_16);
-		MOVK		(REG_X3, IMM16((((uint64_t)noct_make_string) >> 32) & 0xffff), LSL_32);
-		MOVK		(REG_X3, IMM16((((uint64_t)noct_make_string) >> 48) & 0xffff), LSL_48);
+		MOVZ		(REG_X3, IMM16(((uint64_t)rt_make_string) & 0xffff), LSL_0);
+		MOVK		(REG_X3, IMM16((((uint64_t)rt_make_string) >> 16) & 0xffff), LSL_16);
+		MOVK		(REG_X3, IMM16((((uint64_t)rt_make_string) >> 32) & 0xffff), LSL_32);
+		MOVK		(REG_X3, IMM16((((uint64_t)rt_make_string) >> 48) & 0xffff), LSL_48);
 		BLR		(REG_X3);
 
 		/* If failed: */
@@ -719,10 +719,10 @@ jit_visit_aconst_op(
 		ADD		(REG_X1, REG_X1, REG_X2);
 
 		/* Call rt_make_empty_array(). */
-		MOVZ		(REG_X2, IMM16(((uint64_t)noct_make_empty_array) & 0xffff), LSL_0);
-		MOVK		(REG_X2, IMM16((((uint64_t)noct_make_empty_array) >> 16) & 0xffff), LSL_16);
-		MOVK		(REG_X2, IMM16((((uint64_t)noct_make_empty_array) >> 32) & 0xffff), LSL_32);
-		MOVK		(REG_X2, IMM16((((uint64_t)noct_make_empty_array) >> 48) & 0xffff), LSL_48);
+		MOVZ		(REG_X2, IMM16(((uint64_t)rt_make_empty_array) & 0xffff), LSL_0);
+		MOVK		(REG_X2, IMM16((((uint64_t)rt_make_empty_array) >> 16) & 0xffff), LSL_16);
+		MOVK		(REG_X2, IMM16((((uint64_t)rt_make_empty_array) >> 32) & 0xffff), LSL_32);
+		MOVK		(REG_X2, IMM16((((uint64_t)rt_make_empty_array) >> 48) & 0xffff), LSL_48);
 		BLR		(REG_X2);
 
 		/* If failed: */
@@ -758,10 +758,10 @@ jit_visit_dconst_op(
 		ADD		(REG_X1, REG_X1, REG_X2);
 
 		/* Call rt_make_empty_dict(). */
-		MOVZ		(REG_X2, IMM16(((uint64_t)noct_make_empty_dict) & 0xffff), LSL_0);
-		MOVK		(REG_X2, IMM16((((uint64_t)noct_make_empty_dict) >> 16) & 0xffff), LSL_16);
-		MOVK		(REG_X2, IMM16((((uint64_t)noct_make_empty_dict) >> 32) & 0xffff), LSL_32);
-		MOVK		(REG_X2, IMM16((((uint64_t)noct_make_empty_dict) >> 48) & 0xffff), LSL_48);
+		MOVZ		(REG_X2, IMM16(((uint64_t)rt_make_empty_dict) & 0xffff), LSL_0);
+		MOVK		(REG_X2, IMM16((((uint64_t)rt_make_empty_dict) >> 16) & 0xffff), LSL_16);
+		MOVK		(REG_X2, IMM16((((uint64_t)rt_make_empty_dict) >> 32) & 0xffff), LSL_32);
+		MOVK		(REG_X2, IMM16((((uint64_t)rt_make_empty_dict) >> 48) & 0xffff), LSL_48);
 		BLR		(REG_X2);
 
 		/* If failed: */

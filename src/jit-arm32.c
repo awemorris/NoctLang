@@ -684,9 +684,9 @@ jit_visit_sconst_op(
 		MOVW		(REG_R2, (uint32_t)val & 0xffff);
 		MOVT		(REG_R2, ((uint32_t)val >> 16) & 0xffff);
 	
-		/* Call noct_make_string(). */
-		MOVW		(REG_R3, ((uint32_t)noct_make_string) & 0xffff);
-		MOVT		(REG_R3, (((uint32_t)noct_make_string) >> 16) & 0xffff);
+		/* Call rt_make_string(). */
+		MOVW		(REG_R3, ((uint32_t)rt_make_string) & 0xffff);
+		MOVT		(REG_R3, (((uint32_t)rt_make_string) >> 16) & 0xffff);
 		BLX		(REG_R3);
 	
 		/* If failed: */
@@ -726,9 +726,9 @@ jit_visit_aconst_op(
 		MOVW		(REG_R1, (uint32_t)dst);	/* dst */
 		ADD		(REG_R1, REG_R1, REG_R12);
 
-		/* Call noct_make_empty_array(). */
-		MOVW		(REG_R3, ((uint32_t)noct_make_empty_array) & 0xffff);
-		MOVT		(REG_R3, (((uint32_t)noct_make_empty_array) >> 16) & 0xffff);
+		/* Call rt_make_empty_array(). */
+		MOVW		(REG_R3, ((uint32_t)rt_make_empty_array) & 0xffff);
+		MOVT		(REG_R3, (((uint32_t)rt_make_empty_array) >> 16) & 0xffff);
 		BLX		(REG_R3);
 
 		/* If failed: */
@@ -768,9 +768,9 @@ jit_visit_dconst_op(
 		MOVW		(REG_R1, (uint32_t)dst);	/* dst */
 		ADD		(REG_R1, REG_R1, REG_R12);
 
-		/* Call noct_make_empty_array(). */
-		MOVW		(REG_R3, ((uint32_t)noct_make_empty_dict) & 0xffff);
-		MOVT		(REG_R3, (((uint32_t)noct_make_empty_dict) >> 16) & 0xffff);
+		/* Call rt_make_empty_array(). */
+		MOVW		(REG_R3, ((uint32_t)rt_make_empty_dict) & 0xffff);
+		MOVT		(REG_R3, (((uint32_t)rt_make_empty_dict) >> 16) & 0xffff);
 		BLX		(REG_R3);
 
 		/* If failed: */

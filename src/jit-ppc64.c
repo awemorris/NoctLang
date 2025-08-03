@@ -465,10 +465,10 @@ jit_visit_sconst_op(
 	CONSUME_TMPVAR(dst);
 	CONSUME_STRING(val);
 
-	f = (uint64_t)noct_make_string;
+	f = (uint64_t)rt_make_string;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_string(rt, &rt->frame->tmpvar[dst], val); */
+	/* rt_make_string(rt, &rt->frame->tmpvar[dst], val); */
 	ASM {
 		/* R14: rt */
 		/* R15: &rt->frame->tmpvar[0] */
@@ -488,7 +488,7 @@ jit_visit_sconst_op(
 		/* oris r5, r5, val[31:16] */	IW(0x0000a564 | lohi16((uint64_t)val));
 		/* ori  r5, r5, val[15:0] */	IW(0x0000a560 | lolo16((uint64_t)val));
 
-		/* Call noct_make_string(). */
+		/* Call rt_make_string(). */
 		/* lis  r12, f[63:48] */	IW(0x0000803d | hihi16(f));
 		/* ori  r12, r12, f[47:32] */	IW(0x00008c61 | hilo16(f));
 		/* sldi r12, r12, 32 */		IW(0xc6078c79);
@@ -517,10 +517,10 @@ jit_visit_aconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint64_t)noct_make_empty_array;
+	f = (uint64_t)rt_make_empty_array;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+	/* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
 	ASM {
 		/* R14: rt */
 		/* R15: &rt->frame->tmpvar[0] */
@@ -533,7 +533,7 @@ jit_visit_aconst_op(
 		/* li r4, dst */		IW(0x00008038 | lo16((uint32_t)dst));
 		/* add r4, r4, r15 */		IW(0x147a847c);
 
-		/* Call noct_make_empty_array(). */
+		/* Call rt_make_empty_array(). */
 		/* lis  r12, f[63:48] */	IW(0x0000803d | hihi16(f));
 		/* ori  r12, r12, f[47:32] */	IW(0x00008c61 | hilo16(f));
 		/* sldi r12, r12, 32 */		IW(0xc6078c79);
@@ -562,10 +562,10 @@ jit_visit_dconst_op(
 
 	CONSUME_TMPVAR(dst);
 
-	f = (uint64_t)noct_make_empty_dict;
+	f = (uint64_t)rt_make_empty_dict;
 	dst *= (int)sizeof(struct rt_value);
 
-	/* noct_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+	/* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
 	ASM {
 		/* R14: rt */
 		/* R15: &rt->frame->tmpvar[0] */
@@ -578,7 +578,7 @@ jit_visit_dconst_op(
 		/* li r4, dst */		IW(0x00008038 | lo16((uint32_t)dst));
 		/* add r4, r4, r15 */		IW(0x147a847c);
 
-		/* Call noct_make_empty_dict(). */
+		/* Call rt_make_empty_dict(). */
 		/* lis  r12, f[63:48] */	IW(0x0000803d | hihi16(f));
 		/* ori  r12, r12, f[47:32] */	IW(0x00008c61 | hilo16(f));
 		/* sldi r12, r12, 32 */		IW(0xc6078c79);
