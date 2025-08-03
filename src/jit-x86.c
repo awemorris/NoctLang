@@ -230,7 +230,7 @@ jit_put_dword(
 														\
 		/* cmpl $0, %eax */		IB(0x83); IB(0xf8); IB(0x00);					\
 		/* jne next */			IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */		IB(0xff); IB(0x65); IB(0x08);					\
+		/* jmp -12(%ebp) */		IB(0xff); IB(0x65); IB(0xf4);					\
 		/* next:*/											\
 	}
 
@@ -256,8 +256,8 @@ jit_put_dword(
 														\
 		/* cmpl $0, %eax */		IB(0x83); IB(0xf8); IB(0x00);					\
 		/* jne next */			IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */		IB(0xff); IB(0x65); IB(0x08);					\
-		/* next:*/											\
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);		\
+/* next:*/											\
 	}
 
 /*
@@ -445,7 +445,7 @@ jit_visit_aconst_op(
 
 		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
 		/* jne next */				IB(0x75); IB(0x03);
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
 		/* next:*/
 	/* next: */
 	}
@@ -481,7 +481,7 @@ jit_visit_dconst_op(
 
 		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
 		/* jne next */				IB(0x75); IB(0x03);
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
 		/* next:*/
 	/* next: */
 	}
@@ -972,7 +972,7 @@ jit_visit_loadsymbol_op(
 
 		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
 		/* jne next */				IB(0x75); IB(0x03);
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
 	/* next:*/
 	}
 
@@ -1008,7 +1008,7 @@ jit_visit_storesymbol_op(
 
 		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
 		/* jne next */				IB(0x75); IB(0x03);
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
 	/* next:*/
 	}
 
@@ -1048,7 +1048,7 @@ jit_visit_loaddot_op(
 
 		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
 		/* jne next */				IB(0x75); IB(0x03);
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
 	/* next:*/
 	}
 
@@ -1088,7 +1088,7 @@ jit_visit_storedot_op(
 
 		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
 		/* jne next */				IB(0x75); IB(0x03);
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
 	/* next:*/
 	}
 
@@ -1152,10 +1152,10 @@ jit_visit_call_op(
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $20, %esp */			IB(0x83); IB(0xc4); IB(20);
 
-		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);					\
-		/* jne next */				IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);					\
-		/* next:*/											\
+		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* jne next */				IB(0x75); IB(0x03);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
+		/* next:*/
 	}
 	
 	return true;
@@ -1218,10 +1218,10 @@ jit_visit_thiscall_op(
 		/* call *%eax */			IB(0xff); IB(0xd0);
 		/* addl $24, %esp */			IB(0x83); IB(0xc4); IB(24);
 
-		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);					\
-		/* jne next */				IB(0x75); IB(0x03);						\
-		/* jmp 8(%ebp) */			IB(0xff); IB(0x65); IB(0x08);					\
-		/* next:*/											\
+		/* cmpl $0, %eax */			IB(0x83); IB(0xf8); IB(0x00);
+		/* jne next */				IB(0x75); IB(0x03);
+		/* jmp -12(%ebp) */			IB(0xff); IB(0x65); IB(0xf4);
+		/* next:*/
 	}
 
 	return true;
@@ -1400,7 +1400,7 @@ jit_visit_bytecode(
 		/* movl %eax, -4(%ebp) */		IB(0x89); IB(0x45); IB(0xfc);
 
 		/* (ebp-12): exception_handler */
-		/* movl $(ctx->code + 10), -12(%ebp) */	IB(0xc7); IB(0x45); IB(0xf4); ID((uint32_t)((uint8_t *)ctx->code + 10));
+		/* movl $(ctx->code + 6), -12(%ebp) */	IB(0xc7); IB(0x45); IB(0xf4); ID((uint32_t)((uint8_t *)ctx->code + 6));
 
 		/* Skip an exception handler. */
 		/* jmp exception_handler_end */		IB(0xeb); IB(0x0f);

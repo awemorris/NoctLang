@@ -678,7 +678,7 @@ rt_call_with_name(
 	func = global->val.val.func;
 
 	/* Call. */
-	if (!noct_call(env, func, arg_count, arg, ret))
+	if (!rt_call(env, func, arg_count, arg, ret))
 		return false;
 
 	return true;
