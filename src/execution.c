@@ -1340,16 +1340,9 @@ rt_thiscall_helper(
 	for (i = 1; i < arg_count; i++)
 		arg_val[i] = env->frame->tmpvar[arg[i - 1]];
 
-	/* Make a callframe. */
-	if (!rt_enter_frame(env, callee))
-		return false;
-
 	/* Do call. */
 	if (!rt_call(env, callee, arg_count, &arg_val[0], &ret))
 		return false;
-
-	/* Destroy a callframe. */
-	rt_leave_frame(env, &ret);
 
 	/* Store a return value. */
 	env->frame->tmpvar[dst] = ret;

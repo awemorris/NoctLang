@@ -1377,12 +1377,12 @@ jit_visit_thiscall_op(
 		/* mov obj -> r8 (3rd arg) */                  IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)obj);
 		/* mov symbol -> r9 (4th arg) */               IB(0x49); IB(0xB9); IQ((uint64_t)symbol);
 		/* shadow space */                             IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
-		/* movabs rax, arg_addr */                     IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
-		/* push rax (6th arg) */                       IB(0x50);
-		/* push 5th arg (arg_count) */                 IB(0x68); ID((uint32_t)arg_count);
+		/* mov arg_count -> [rsp+0x20] (5th arg) */    IB(0xC7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)arg_count);
+		/* movabs arg_addr -> rax */                   IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
+		/* mov  rax -> [rsp+0x28] (6th arg) */         IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x28);
 		/* movabs rt_thiscall_helper -> rax */         IB(0x48); IB(0xB8); IQ((uint64_t)rt_thiscall_helper);
 		/* call rax */                                 IB(0xFF); IB(0xD0);
-		/* add rsp, 32 + 16 (shadow + 2 stack args) */ IB(0x48); IB(0x83); IB(0xC4); IB(0x30);
+		/* add rsp, 32 (shadow) */                     IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
 
 		/* test eax, eax */                            IB(0x83); IB(0xF8); IB(0x00);
 		/* jne 8 <next> */                             IB(0x75); IB(0x03);
