@@ -1342,7 +1342,7 @@ rt_error(
 	va_list ap;
 
 	va_start(ap, msg);
-	vsnprintf(env->error_message, sizeof(env->error_message), msg, ap);
+	vsnprintf(env->error_message, sizeof(env->error_message) - 1, msg, ap);
 	va_end(ap);
 }
 

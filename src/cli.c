@@ -959,8 +959,8 @@ struct ffi_item {
 } ffi_items[] = {
 	{"import", 1, {"file"}, cfunc_import},
 	{"print", 1, {"msg"}, cfunc_print},
-	{"readline", 0, {}, cfunc_readline},
-	{"readint", 0, {}, cfunc_readint},
+	{"readline", 0, {NULL}, cfunc_readline},
+	{"readint", 0, {NULL}, cfunc_readint},
 	{"readfilelines", 1, {"file"}, cfunc_readfilelines},
 	{"writefilelines", 2, {"file", "lines"}, cfunc_writefilelines},
 	{"shell", 1, {"cmd"}, cfunc_shell},

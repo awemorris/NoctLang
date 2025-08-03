@@ -927,6 +927,7 @@ rt_gc_copy_young_object_recursively(
 
 	/* Copy or promote. */
 	is_promoted = false;
+	new_obj = NULL;
 	if ((*obj)->region != RT_GC_REGION_TENURE) {
 		/* Check for the promotion. */
 		if ((*obj)->promotion_count < RT_GC_PROMOTION_THRESHOLD) {
