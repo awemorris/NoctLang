@@ -20,6 +20,8 @@ jobs:
         run: cmake -B build -S .
       - name: Build
         run: cmake --build build --config Release
+      - name: Strip
+        run: strip build/noct
       - name: Rename binary
         run: mv build/noct build/noct-linux
       - name: Upload binary
@@ -41,6 +43,8 @@ jobs:
         run: cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-x86_64-toolchain.cmake
       - name: Build
         run: cmake --build build --config Release
+      - name: Strip
+        run: x86_64-w64-mingw32-strip build/noct.exe
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
