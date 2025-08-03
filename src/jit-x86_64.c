@@ -1603,7 +1603,7 @@ jit_visit_bytecode(
 	                /* movq (%rax), %r15 */                 IB(0x4c); IB(0x8b); IB(0x38);
 
 	                /* r13 = exception_handler */
-	                /* movabs (ctx->code + 12), %r13 */     IB(0x49); IB(0xbd); IQ((uint64_t)(intptr_t)((uint8_t*)ctx->code + 10));
+	                /* movabs (ctx->code + 10), %r13 */     IB(0x49); IB(0xbd); IQ((uint64_t)(intptr_t)((uint8_t*)ctx->code + 10));
 
 	                /* Skip an exception handler. */
 	                /* jmp exception_handler_end */         IB(0xeb); IB(0x18);
@@ -1649,7 +1649,7 @@ jit_visit_bytecode(
 	                /* movq (%rax), %r15 */                 IB(0x4c); IB(0x8b); IB(0x38);
 
 	                /* r13 = exception_handler */
-	                /* movabs (ctx->code + 12), %r13 */     IB(0x49); IB(0xbd); IQ((uint64_t)(intptr_t)((uint8_t*)ctx->code + 12));
+	                /* movabs (ctx->code + 10), %r13 */     IB(0x49); IB(0xbd); IQ((uint64_t)(intptr_t)((uint8_t*)ctx->code + 10));
 
 	                /* Skip an exception handler. */
 	                /* jmp exception_handler_end */         IB(0xeb); IB(0x14);
