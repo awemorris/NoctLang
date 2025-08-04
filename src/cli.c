@@ -969,12 +969,12 @@ struct ffi_item {
 /* Register FFI functions. */
 static bool
 register_ffi(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
 	int i;
 
 	for (i = 0; i < (int)(sizeof(ffi_items) / sizeof(struct ffi_item)); i++) {
-		if (!noct_register_cfunc(rt,
+		if (!noct_register_cfunc(env,
 					 ffi_items[i].name,
 					 ffi_items[i].param_count,
 					 ffi_items[i].param,
@@ -982,6 +982,13 @@ register_ffi(
 					 NULL))
 			return false;
 	}
+
+	/* Add a global variable "App". */
+	NoctValue dict;
+	if (!noct_make_empty_dict(env, &dict))
+		return false;
+	if (!noct_set_global(env, "App", &dict))
+		return false;
 
 	return true;
 }

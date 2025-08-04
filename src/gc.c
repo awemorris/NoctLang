@@ -328,6 +328,9 @@ rt_gc_alloc_array(
 	struct rt_value *table;
 	int retry;
 
+	assert(env != NULL);
+	assert(size > 0);
+
 	/*
 	 * [Large Object Promotion]
 	 *  - If the array is large, allocate in the tenure region.
@@ -380,6 +383,10 @@ rt_gc_alloc_array_graduate(
 	size_t size)
 {
 	struct rt_array *arr;
+	struct rt_value *table;
+
+	assert(env != NULL);
+	assert(size > 0);
 
 	/*
 	 * This function is only called from the young GC,
@@ -394,7 +401,7 @@ rt_gc_alloc_array_graduate(
 			break;
 
 		/* Get the address of the table. */
-		arr->table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
+		table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
 
 		/* Setup the struct. */
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
@@ -402,7 +409,9 @@ rt_gc_alloc_array_graduate(
 		arr->head.region = RT_GC_REGION_GRADUATE;
 		arr->head.size = sizeof(struct rt_array) + size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&arr->head, env->vm->gc.graduate_new_list, prev, next);
-		arr->size = size;
+		arr->alloc_size = size;
+		arr->size = 0;
+		arr->table = table;
 
 		/* Succeeded. (graduate) */
 		return arr;
@@ -429,6 +438,9 @@ rt_gc_alloc_array_tenure(
 	struct rt_array *arr;
 	struct rt_value *table;
 	int retry;
+
+	assert(env != NULL);
+	assert(size > 0);
 
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
@@ -482,6 +494,9 @@ rt_gc_alloc_dict(
 	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
+
+	assert(env != NULL);
+	assert(size > 0);
 
 	/*
 	 * [Large Object Promotion]
@@ -541,6 +556,11 @@ rt_gc_alloc_dict_graduate(
 	size_t size)
 {
 	struct rt_dict *dict;
+	struct rt_value *key_table;
+	struct rt_value *value_table;
+
+	assert(env != NULL);
+	assert(size > 0);
 
 	/*
 	 * This function is only called from the young GC,
@@ -558,10 +578,10 @@ rt_gc_alloc_dict_graduate(
 			break;
 
 		/* Get the address of the key array block. */
-		dict->key = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
+		key_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
 
 		/* Get the address of the value array block. */
-		dict->value = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
+		value_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
 
 		/* Setup a struct. */
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
@@ -569,7 +589,10 @@ rt_gc_alloc_dict_graduate(
 		dict->head.region = RT_GC_REGION_GRADUATE;
 		dict->head.size = sizeof(struct rt_dict) + 2 * size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&dict->head, env->vm->gc.graduate_new_list, prev, next);
-		dict->size = size;
+		dict->alloc_size = size;
+		dict->size = 0;
+		dict->key = key_table;
+		dict->value = value_table;
 
 		/* Succeeded. (graduate) */
 		return dict;
@@ -597,6 +620,9 @@ rt_gc_alloc_dict_tenure(
 	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
+
+	assert(env != NULL);
+	assert(size > 0);
 
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
@@ -1191,15 +1217,24 @@ rt_gc_copy_array_to_graduate(
 {
 	struct rt_array *new_obj;
 	int i;
+	int size;
+
+	assert(env != NULL);
+	assert(old_obj != NULL);
+	assert(old_obj->alloc_size > 0);
+
+	size = old_obj->size;
+	if (size == 0)
+		size = old_obj->alloc_size;
 
 	/*
 	 * Arrays larger than RT_GC_LOP_THRESHOLD/sizeof(struct rt_value *) must not be in the
 	 * nursery or graduate regions.
 	 */
-	assert(old_obj->size < RT_GC_LOP_THRESHOLD / sizeof(struct rt_value *));
+	assert(size < RT_GC_LOP_THRESHOLD / sizeof(struct rt_value *));
 
 	/* Allocate in the graduate region. (If failed, in the tenure region.) */
-	new_obj = rt_gc_alloc_array_graduate(env, old_obj->size);
+	new_obj = rt_gc_alloc_array_graduate(env, size);
 	if (new_obj == NULL)
 		return NULL;
 
@@ -1229,60 +1264,51 @@ rt_gc_copy_dict_to_graduate(
 	struct rt_dict *old_obj)
 {
 	struct rt_dict *new_obj;
-	bool retry;
 	int i;
+	int size;
+
+	assert(env != NULL);
+	assert(old_obj != NULL);
+	assert(old_obj->alloc_size > 0);
+
+	size = old_obj->size;
+	if (size == 0)
+		size = old_obj->alloc_size;
 
 	/*
 	 * Arrays larger than RT_GC_LOP_THRESHOLD/sizeof(struct rt_value *)/2 must not be in the
 	 * nursery or graduate regions.
 	 */
-	assert(old_obj->size < RT_GC_LOP_THRESHOLD / sizeof(struct rt_value *) / 2);
+	assert(size < RT_GC_LOP_THRESHOLD / sizeof(struct rt_value *) / 2);
 
-	retry = false;
-	do {
-		/* Allocate in the graduate region. (If failed, in the tenure region.) */
-		if (!retry) {
-			new_obj = rt_gc_alloc_dict_graduate(env, old_obj->size);
-		} else {
-			new_obj = rt_gc_alloc_dict_tenure(env, old_obj->size);
-			if (new_obj == NULL) {
-				/* Tenure is full. Retry. */
-				rt_gc_level2_gc(env);
-				new_obj = rt_gc_alloc_dict_tenure(env, old_obj->size);
+	/* Allocate in the graduate region. (If failed, in the tenure region.) */
+	new_obj = rt_gc_alloc_dict_graduate(env, size);
+	if (new_obj == NULL)
+		return NULL;
+
+	/* Copy the keys. */
+	new_obj->size = old_obj->size;
+	memcpy(new_obj->key, old_obj->key, old_obj->size * sizeof(struct rt_value));
+
+	/* Copy the value. */
+	memcpy(new_obj->value, old_obj->value, old_obj->size * sizeof(struct rt_value));
+
+	/* Check for cross-generation references. */
+	if (new_obj->head.region == RT_GC_REGION_TENURE) {
+		for (i = 0; i < new_obj->size; i++) {
+			if (IS_YOUNG_OBJ(new_obj->key[i].val.obj)) {
+				new_obj->head.rem_flg = true;
+				INSERT_TO_LIST(&new_obj->head, env->vm->gc.remember_set,rem_prev, rem_next);
+				break;
+			}
+			if (IS_REF_VAL(&new_obj->value[i]) &&
+			    IS_YOUNG_OBJ(new_obj->value[i].val.obj)) {
+				new_obj->head.rem_flg = true;
+				INSERT_TO_LIST(&new_obj->head, env->vm->gc.remember_set,rem_prev, rem_next);
+				break;
 			}
 		}
-		if (new_obj == NULL)
-			return NULL;
-
-		/* When fallback to the tenure on the first time, go with retry mode. */
-		if (!retry && new_obj->head.region == RT_GC_REGION_TENURE)
-			retry = true;
-
-		/* Copy the keys. */
-		new_obj->size = old_obj->size;
-		memcpy(new_obj->key, old_obj->key, old_obj->size * sizeof(struct rt_value));
-
-		/* Copy the value. */
-		memcpy(new_obj->value, old_obj->value, old_obj->size * sizeof(struct rt_value));
-
-		/* Check for cross-generation references. */
-		if (new_obj->head.region == RT_GC_REGION_TENURE) {
-			for (i = 0; i < new_obj->size; i++) {
-				if (IS_YOUNG_OBJ(new_obj->key[i].val.obj)) {
-					new_obj->head.rem_flg = true;
-					INSERT_TO_LIST(&new_obj->head, env->vm->gc.remember_set,rem_prev, rem_next);
-					break;
-				}
-
-				if (IS_REF_VAL(&new_obj->value[i]) &&
-				    IS_YOUNG_OBJ(new_obj->value[i].val.obj)) {
-					new_obj->head.rem_flg = true;
-					INSERT_TO_LIST(&new_obj->head, env->vm->gc.remember_set,rem_prev, rem_next);
-					break;
-				}
-			}
-		}
-	} while (0);
+	}
 
 	/* Check for failure. */
 	if (new_obj == NULL)

@@ -24,6 +24,9 @@ static bool rt_intrin_pop(struct rt_env *rt);
 static bool rt_intrin_unset(struct rt_env *rt);
 static bool rt_intrin_resize(struct rt_env *rt);
 static bool rt_intrin_substring(struct rt_env *rt);
+static bool rt_intrin_fast_gc(struct rt_env *rt);
+static bool rt_intrin_full_gc(struct rt_env *rt);
+static bool rt_intrin_compact_gc(struct rt_env *rt);
 
 struct intrin_item {
 	const char *field_name;
@@ -34,11 +37,14 @@ struct intrin_item {
 	bool is_thiscall;
 	struct rt_func *func;
 } intrin_items[] = {
-	{"push",      "__push",      2, {"this", "val"         }, rt_intrin_push,      true, NULL},
-	{"pop",       "__pop",       1, {"this"                }, rt_intrin_pop,       true, NULL},
-	{"unset",     "__unset",     2, {"this", "key"         }, rt_intrin_unset,     true, NULL},
-	{"resize",    "__resize",    2, {"this", "size"        }, rt_intrin_resize,    true, NULL},
-	{"substring", "__substring", 3, {"this", "start", "len"}, rt_intrin_substring, true, NULL},
+	{"push",       "__push",      2, {"this", "val"         }, rt_intrin_push,       true, NULL},
+	{"pop",        "__pop",       1, {"this"                }, rt_intrin_pop,        true, NULL},
+	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true, NULL},
+	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true, NULL},
+	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true, NULL},
+	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    true, NULL},
+	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    true, NULL},
+	{"compact_gc", "compact_gc",  0, {NULL},                   rt_intrin_compact_gc, true, NULL},
 };
 
 bool
@@ -221,5 +227,32 @@ rt_intrin_substring(
 
 	free(s);
 
+	return true;
+}
+
+/* fast_gc() */
+static bool
+rt_intrin_fast_gc(
+	struct rt_env *env)
+{
+	noct_fast_gc(env);
+	return true;
+}
+
+/* full_gc() */
+static bool
+rt_intrin_full_gc(
+	struct rt_env *env)
+{
+	noct_full_gc(env);
+	return true;
+}
+
+/* compact_gc() */
+static bool
+rt_intrin_compact_gc(
+	struct rt_env *env)
+{
+	noct_compact_gc(env);
 	return true;
 }
