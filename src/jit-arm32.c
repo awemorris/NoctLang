@@ -8,7 +8,7 @@
  * JIT (arm32): Just-In-Time native code generation
  */
 
-#include "c89compat.h"	/* ARCH_ARM64 */
+#include <noct/c89compat.h>	/* ARCH_ARM64 */
 
 #if defined(ARCH_ARM32) && defined(USE_JIT)
 

@@ -8,7 +8,7 @@
  * JIT (ppc64): Just-In-Time native code generation
  */
 
-#include "c89compat.h"	/* ARCH_PPC64 */
+#include <notc/c89compat.h>	/* ARCH_PPC64 */
 
 #if defined(ARCH_PPC64) && defined(USE_JIT)
 

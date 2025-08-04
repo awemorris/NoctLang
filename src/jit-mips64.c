@@ -8,7 +8,7 @@
  * JIT (mips64): Just-In-Time native code generation
  */
 
-#include "c89compat.h"	/* ARCH_MIPS64 */
+#include <noct/c89compat.h>	/* ARCH_MIPS64 */
 
 #if defined(ARCH_MIPS64) && defined(USE_JIT)
 

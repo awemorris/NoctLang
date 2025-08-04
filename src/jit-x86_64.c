@@ -8,7 +8,7 @@
  * JIT (x86_64): Just-In-Time native code generation
  */
 
-#include "c89compat.h"        /* ARCH_X86_64 */
+#include <noct/c89compat.h>        /* ARCH_X86_64 */
 
 #if defined(ARCH_X86_64) && defined(USE_JIT)
 
