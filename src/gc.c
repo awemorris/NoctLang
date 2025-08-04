@@ -1580,6 +1580,20 @@ rt_gc_compact_gc(
 	 * Rewrite all references.
 	 */
 
+	/* For all tenure list references. */
+	objpp = &env->vm->gc.tenure_list;
+	while (*obj != NULL) {
+		rt_gc_update_tenure_ref(env, obj);
+		objpp = &(*obj)->next;
+	}
+
+	/* For all remember set references. */
+	objpp = &env->vm->gc.remember_set;
+	while (*obj != NULL) {
+		rt_gc_update_tenure_ref_recursively(env, obj);
+		objpp = &(*obj)->rem_next;
+	}
+
 	/* For all global variables. */
 	global = env->vm->global;
 	while (global != NULL) {
@@ -1612,13 +1626,6 @@ rt_gc_compact_gc(
 			rt_gc_update_tenure_ref_recursively(env, &env->vm->pinned[i]->val.obj);
 	}
 
-	/* For all remember set reference. */
-	objpp = &env->vm->gc.remember_set;
-	while (*obj != NULL) {
-		rt_gc_update_tenure_ref_recursively(env, obj);
-		objpp = &(*obj)->next;
-	}
-
 	/*
 	 * Cleanup the compaction table.
 	 */
@@ -1633,6 +1640,26 @@ rt_gc_compact_gc(
 	}
 
 	return true;
+}
+
+/* Recursively update the tenure references for compaction. */
+static void
+rt_gc_update_tenure_ref(
+	struct rt_env *env,
+	struct rt_gc_object **obj)
+{
+	int i;
+
+	/* Search in the compaction table. */
+	for (i = 0; i < env->vm->gc.compact_count; i++) {
+		if (env->vm->gc.compact_before[i] == *obj)
+			break;
+	}
+	if (i == env->vm->gc.compact_count)
+		return;	/* Not found. */
+
+	/* Update the reference. */
+	*obj = env->vm->gc.compact_after[i];
 }
 
 /* Recursively update the tenure references for compaction. */
