@@ -92,6 +92,7 @@ static void rt_gc_old_gc_body(struct rt_env *env);
 static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
 static bool rt_gc_compact_gc(struct rt_env *env);
+static void rt_gc_update_tenure_ref(struct rt_env *env, struct rt_gc_object **obj);
 static void rt_gc_update_tenure_ref_recursively(struct rt_env *env, struct rt_gc_object **obj);
 static void *nursery_alloc(struct rt_env *env, size_t size);
 static void *graduate_alloc(struct rt_env *env, size_t size);
@@ -1582,16 +1583,20 @@ rt_gc_compact_gc(
 
 	/* For all tenure list references. */
 	objpp = &env->vm->gc.tenure_list;
-	while (*obj != NULL) {
-		rt_gc_update_tenure_ref(env, obj);
-		objpp = &(*obj)->next;
+	while (*objpp != NULL) {
+		rt_gc_update_tenure_ref(env, objpp);
+		if ((*objpp)->prev != NULL)
+			rt_gc_update_tenure_ref(env, &(*objpp)->prev);
+		objpp = &(*objpp)->next;
 	}
 
 	/* For all remember set references. */
 	objpp = &env->vm->gc.remember_set;
-	while (*obj != NULL) {
-		rt_gc_update_tenure_ref_recursively(env, obj);
-		objpp = &(*obj)->rem_next;
+	while (*objpp != NULL) {
+		rt_gc_update_tenure_ref_recursively(env, objpp);
+		if ((*objpp)->rem_prev != NULL)
+			rt_gc_update_tenure_ref(env, &(*objpp)->rem_prev);
+		objpp = &(*objpp)->rem_next;
 	}
 
 	/* For all global variables. */
