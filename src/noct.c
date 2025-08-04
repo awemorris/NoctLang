@@ -1004,6 +1004,14 @@ void
 noct_full_gc(
 	NoctEnv *env)
 {
+	rt_gc_level2_gc(env);
+}
+
+NOCT_DLL
+void
+noct_compact_gc(
+	NoctEnv *env)
+{
 	rt_gc_level3_gc(env);
 }
 
