@@ -59,6 +59,27 @@ elseif(CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "GNU"
 endif()
 
 #
+# Checks
+#
+
+include(CheckIncludeFile)
+
+check_include_file("stdint.h" HAVE_STDINT_H)
+if(HAVE_STDINT_H)
+  add_definitions(-DHAVE_STDINT_H=1)
+endif()
+
+check_include_file("inttypes.h" HAVE_INTTYPES_H)
+if(HAVE_INTTYPES_H)
+  add_definitions(-DHAVE_INTTYPES_H=1)
+endif()
+
+check_include_file("sys/types.h" HAVE_SYS_TYPES_H)
+if(HAVE_SYS_TYPES_H)
+  add_definitions(-DHAVE_SYS_TYPES_H=1)
+endif()
+
+#
 # FLEX
 #
 
