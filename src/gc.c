@@ -1482,7 +1482,7 @@ static bool
 rt_gc_compact_gc(
 	struct rt_env *env)
 {
-	struct rt_gc_object *obj;
+	struct rt_gc_object *obj, **objpp;
 	char *cur_blk, *remap_top;
 	int i, index;
 	struct rt_bindglobal *global;
@@ -1610,6 +1610,13 @@ rt_gc_compact_gc(
 	for (i = 0; i < env->vm->pinned_count; i++) {
 		if (IS_REF_VAL(env->vm->pinned[i]))
 			rt_gc_update_tenure_ref_recursively(env, &env->vm->pinned[i]->val.obj);
+	}
+
+	/* For all remember set reference. */
+	objpp = &env->vm->gc.remember_set;
+	while (*obj != NULL) {
+		rt_gc_update_tenure_ref_recursively(env, obj);
+		objpp = &(*obj)->next;
 	}
 
 	/*
