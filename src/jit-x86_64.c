@@ -144,7 +144,7 @@ jit_commit(
 
 /* Put a instruction byte. */
 #define IB(b)                        if (!jit_put_byte(ctx, b)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_put_byte(
         struct jit_context *ctx,
         uint8_t b)
@@ -162,7 +162,7 @@ jit_put_byte(
 
 /* Put a instruction double word. */
 #define ID(d)                        if (!jit_put_dword(ctx, d)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_put_dword(
         struct jit_context *ctx,
         uint32_t dw)
@@ -186,7 +186,7 @@ jit_put_dword(
 
 /* Put a instruction word. */
 #define IQ(q)                        if (!jit_put_qword(ctx, q)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_put_qword(
         struct jit_context *ctx,
         uint64_t qw)
@@ -308,7 +308,7 @@ jit_put_qword(
  */
 
 /* Visit a ROP_LINEINFO instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_lineinfo_op(
         struct jit_context *ctx)
 {
@@ -328,7 +328,7 @@ jit_visit_lineinfo_op(
 }
 
 /* Visit a ROP_ASSIGN instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_assign_op(
         struct jit_context *ctx)
 {
@@ -359,7 +359,7 @@ jit_visit_assign_op(
 }
 
 /* Visit a ROP_ICONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_iconst_op(
         struct jit_context *ctx)
 {
@@ -386,7 +386,7 @@ jit_visit_iconst_op(
 }
 
 /* Visit a ROP_FCONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_fconst_op(
         struct jit_context *ctx)
 {
@@ -413,7 +413,7 @@ jit_visit_fconst_op(
 }
 
 /* Visit a ROP_SCONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_sconst_op(
         struct jit_context *ctx)
 {
@@ -471,7 +471,7 @@ jit_visit_sconst_op(
 }
 
 /* Visit a ROP_ACONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_aconst_op(
         struct jit_context *ctx)
 {
@@ -525,7 +525,7 @@ jit_visit_aconst_op(
 }
 
 /* Visit a ROP_DCONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_dconst_op(
         struct jit_context *ctx)
 {
@@ -579,7 +579,7 @@ jit_visit_dconst_op(
 }
 
 /* Visit a ROP_INC instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_inc_op(
         struct jit_context *ctx)
 {
@@ -602,7 +602,7 @@ jit_visit_inc_op(
 }
 
 /* Visit a ROP_ADD instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_add_op(
         struct jit_context *ctx)
 {
@@ -621,7 +621,7 @@ jit_visit_add_op(
 }
 
 /* Visit a ROP_SUB instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_sub_op(
         struct jit_context *ctx)
 {
@@ -640,7 +640,7 @@ jit_visit_sub_op(
 }
 
 /* Visit a ROP_MUL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_mul_op(
         struct jit_context *ctx)
 {
@@ -659,7 +659,7 @@ jit_visit_mul_op(
 }
 
 /* Visit a ROP_DIV instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_div_op(
         struct jit_context *ctx)
 {
@@ -678,7 +678,7 @@ jit_visit_div_op(
 }
 
 /* Visit a ROP_MOD instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_mod_op(
         struct jit_context *ctx)
 {
@@ -697,7 +697,7 @@ jit_visit_mod_op(
 }
 
 /* Visit a ROP_AND instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_and_op(
         struct jit_context *ctx)
 {
@@ -716,7 +716,7 @@ jit_visit_and_op(
 }
 
 /* Visit a ROP_OR instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_or_op(
         struct jit_context *ctx)
 {
@@ -735,7 +735,7 @@ jit_visit_or_op(
 }
 
 /* Visit a ROP_XOR instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_xor_op(
         struct jit_context *ctx)
 {
@@ -754,7 +754,7 @@ jit_visit_xor_op(
 }
 
 /* Visit a ROP_NEG instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_neg_op(
         struct jit_context *ctx)
 {
@@ -771,7 +771,7 @@ jit_visit_neg_op(
 }
 
 /* Visit a ROP_NOT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_not_op(
         struct jit_context *ctx)
 {
@@ -788,7 +788,7 @@ jit_visit_not_op(
 }
 
 /* Visit a ROP_LT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_lt_op(
         struct jit_context *ctx)
 {
@@ -807,7 +807,7 @@ jit_visit_lt_op(
 }
 
 /* Visit a ROP_LTE instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_lte_op(
         struct jit_context *ctx)
 {
@@ -826,7 +826,7 @@ jit_visit_lte_op(
 }
 
 /* Visit a ROP_EQ instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_eq_op(
         struct jit_context *ctx)
 {
@@ -845,7 +845,7 @@ jit_visit_eq_op(
 }
 
 /* Visit a ROP_NEQ instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_neq_op(
         struct jit_context *ctx)
 {
@@ -864,7 +864,7 @@ jit_visit_neq_op(
 }
 
 /* Visit a ROP_GTE instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_gte_op(
         struct jit_context *ctx)
 {
@@ -883,7 +883,7 @@ jit_visit_gte_op(
 }
 
 /* Visit a ROP_EQI instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_eqi_op(
         struct jit_context *ctx)
 {
@@ -919,7 +919,7 @@ jit_visit_eqi_op(
 }
 
 /* Visit a ROP_GT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_gt_op(
         struct jit_context *ctx)
 {
@@ -938,7 +938,7 @@ jit_visit_gt_op(
 }
 
 /* Visit a ROP_LOADARRAY instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_loadarray_op(
         struct jit_context *ctx)
 {
@@ -957,7 +957,7 @@ jit_visit_loadarray_op(
 }
 
 /* Visit a ROP_STOREARRAY instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_storearray_op(
         struct jit_context *ctx)
 {
@@ -976,7 +976,7 @@ jit_visit_storearray_op(
 }
 
 /* Visit a ROP_LEN instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_len_op(
         struct jit_context *ctx)
 {
@@ -993,7 +993,7 @@ jit_visit_len_op(
 }
 
 /* Visit a ROP_GETDICTKEYBYINDEX instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_getdictkeybyindex_op(
         struct jit_context *ctx)
 {
@@ -1012,7 +1012,7 @@ jit_visit_getdictkeybyindex_op(
 }
 
 /* Visit a ROP_GETDICTVALBYINDEX instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_getdictvalbyindex_op(
         struct jit_context *ctx)
 {
@@ -1031,7 +1031,7 @@ jit_visit_getdictvalbyindex_op(
 }
 
 /* Visit a ROP_LOADSYMBOL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_loadsymbol_op(
         struct jit_context *ctx)
 {
@@ -1088,7 +1088,7 @@ jit_visit_loadsymbol_op(
 }
 
 /* Visit a ROP_STORESYMBOL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_storesymbol_op(
         struct jit_context *ctx)
 {
@@ -1144,7 +1144,7 @@ jit_visit_storesymbol_op(
 }
 
 /* Visit a ROP_LOADDOT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_loaddot_op(
         struct jit_context *ctx)
 {
@@ -1204,7 +1204,7 @@ jit_visit_loaddot_op(
 }
 
 /* Visit a ROP_STOREDOT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 jit_visit_storedot_op(
         struct jit_context *ctx)
 {
