@@ -11,7 +11,7 @@
 #ifndef NOCT_EXECUTION_H
 #define NOCT_EXECUTION_H
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 
 bool
 rt_assign_helper(

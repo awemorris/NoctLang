@@ -11,7 +11,7 @@
 #ifndef NOCT_INTERPRETER_H
 #define NOCT_INTERPRETER_H
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 
 /* Visit bytecode. */
 bool

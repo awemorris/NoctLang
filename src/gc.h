@@ -33,7 +33,6 @@
 #define NOCT_GC_H
 
 #include <noct/noct.h>
-#include "c89compat.h"
 #include "arena.h"
 
 /*

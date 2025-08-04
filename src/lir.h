@@ -11,7 +11,7 @@
 #ifndef NOCT_LIR_H
 #define NOCT_LIR_H
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 
 #define LIR_PARAM_SIZE		32
 

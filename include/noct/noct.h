@@ -11,62 +11,7 @@
 #ifndef NOCT_NOCT_H
 #define NOCT_NOCT_H
 
-#include <stddef.h>
-
-/*
- * Definition of the bool type.
- */
-#ifndef __cplusplus
-#if defined(HAVE_STDBOOL_H)
-#include <stdbool.h>
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-#include <stdbool.h>
-#else
-#ifndef bool
-typedef int bool;
-enum { false = 0, true = 1 };
-#endif
-#endif
-#endif
-
-/*
- * Definitions of the intN_t and uintN_t types.
- */
-#if defined(HAVE_STDINT_H)
-#include <stdint.h>
-#elif defined(HAVE_INTTYPES_H)
-#include <inttypes.h>
-#elif defined(HAVE_SYS_TYPES_H)
-#include <sys/types.h>
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-#include <stdint.h>
-#else
-typedef char int8_t;
-typedef short int16_t;
-typedef int int32_t;
-typedef long long int64_t;
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned int uint32_t;
-typedef unsigned long long uint64_t;
-#endif
-
-/*
- * Definition of the inline keyword.
- */
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-#define NOCT_INLINE		inline		/* C99 */
-#elif defined(__GNUC__)
-#define NOCT_INLINE		__inline__	/* GCC */
-#elif defined(__xlc__)
-#define NOCT_INLINE		__inline	/* IBM (PPC64) */
-#elif defined(_MSC_VER)
-#define NOCT_INLINE		__inline	/* MSVC (x86, x64, arm64) */
-#elif defined(INLINE)
-#define NOCT_INLINE		INLINE
-#else
-#define NOCT_INLINE
-#endif
+#include <noct/c89compat.h>
 
 /*
  * Definition of the import/export keyword.

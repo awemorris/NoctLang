@@ -8,7 +8,7 @@
  * Execution Helpers
  */
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 #include "runtime.h"
 #include "execution.h"
 #include "intrinsics.h"

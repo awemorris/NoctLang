@@ -2001,7 +2001,7 @@ lir_out_of_memory(void)
 
 /* IMM 1-byte */
 #define IMM1(d) imm1(&pc, &d)
-static NOCT_INLINE void imm1(uint8_t **pc, uint8_t *ret)
+static INLINE void imm1(uint8_t **pc, uint8_t *ret)
 {
 	*ret = **pc;
 	(*pc) += 1;
@@ -2009,7 +2009,7 @@ static NOCT_INLINE void imm1(uint8_t **pc, uint8_t *ret)
 
 /* IMM 2-byte */
 #define IMM2(d) imm2(&pc, &d)
-static NOCT_INLINE void imm2(uint8_t **pc, uint16_t *ret)
+static INLINE void imm2(uint8_t **pc, uint16_t *ret)
 {
 	uint32_t b0;
 	uint32_t b1;
@@ -2024,7 +2024,7 @@ static NOCT_INLINE void imm2(uint8_t **pc, uint16_t *ret)
 
 /* IMM 4-byte */
 #define IMM4(d) imm4(&pc, &d)
-static NOCT_INLINE void imm4(uint8_t **pc, uint32_t *ret)
+static INLINE void imm4(uint8_t **pc, uint32_t *ret)
 {
 	uint32_t b0;
 	uint32_t b1;
@@ -2043,7 +2043,7 @@ static NOCT_INLINE void imm4(uint8_t **pc, uint32_t *ret)
 
 /* IMM string */
 #define IMMS(d) imms(&pc, &d)
-static NOCT_INLINE void imms(uint8_t **pc, const char **ret)
+static INLINE void imms(uint8_t **pc, const char **ret)
 {
 	*ret = (const char *)*pc;
 	(*pc) += strlen((const char *)*pc) + 1;

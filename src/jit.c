@@ -8,7 +8,7 @@
  * JIT (common): Just-In-Time native code generation
  */
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 
 /*
  * Use the architecture specific source.

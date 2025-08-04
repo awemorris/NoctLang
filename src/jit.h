@@ -11,7 +11,7 @@
 #ifndef NOCT_JIT_H
 #define NOCT_JIT_H
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 #include <string.h>
 
 /* Generate a JIT-compiled code for a function. */
@@ -109,7 +109,7 @@ void jit_map_executable(void * region, size_t size);
  * Get an opcode.
  */
 #define CONSUME_OPCODE(d)	if (!jit_get_opcode(ctx, &d)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_get_opcode(
 	struct jit_context *ctx,
 	uint8_t *opcode)
@@ -131,7 +131,7 @@ jit_get_opcode(
  * Get an imm32 operand.
  */
 #define CONSUME_IMM32(d)	if (!jit_get_opr_imm32(ctx, &d)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_get_opr_imm32(
 	struct jit_context *ctx,
 	uint32_t *d)
@@ -156,7 +156,7 @@ jit_get_opr_imm32(
  * Get an imm16 operand that represents tmpvar index.
  */
 #define CONSUME_TMPVAR(d)	if (!jit_get_opr_tmpvar(ctx, &d)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_get_opr_tmpvar(
 	struct jit_context *ctx,
 	int *d)
@@ -183,7 +183,7 @@ jit_get_opr_tmpvar(
  * Get an imm8 operand.
  */
 #define CONSUME_IMM8(d)		if (!jit_get_imm8(ctx, &d)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_get_imm8(
 	struct jit_context *ctx,
 	int *imm8)
@@ -205,7 +205,7 @@ jit_get_imm8(
  * Get a string operand.
  */
 #define CONSUME_STRING(d)	if (!jit_get_opr_string(ctx, &d)) return false
-static NOCT_INLINE bool
+static INLINE bool
 jit_get_opr_string(
 	struct jit_context *ctx,
 	const char **d)

@@ -11,8 +11,7 @@
 #ifndef NOCT_ELBACK_H
 #define NOCT_ELBACK_H
 
-#include "c89compat.h"
-
+#include <noct/c89compat.h>
 #include <stdio.h>
 
 struct hir_block;

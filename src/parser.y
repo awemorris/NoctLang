@@ -2,7 +2,8 @@
 /*
  * Copyright (c) 2025, Awe Morris. All rights reserved.
  */
-#include "c89compat.h"
+
+#include <noct/c89compat.h>
 #include "ast.h"
 
 #include <stdio.h>

@@ -11,7 +11,7 @@
 #ifndef NOCT_AST_H
 #define NOCT_AST_H
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 
 /*
  * AST

@@ -11,7 +11,7 @@
 #ifndef NOCT_INTRINSICS_H
 #define NOCT_INTRINSICS_H
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 
 /*
  * Intrinsics

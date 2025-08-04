@@ -11,7 +11,7 @@
 #ifndef NOCT_HIR_H
 #define NOCT_HIR_H
 
-#include "c89compat.h"
+#include <noct/c89compat.h>
 
 /* HIR Block Type */
 enum hir_block_type {

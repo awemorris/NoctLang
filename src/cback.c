@@ -202,7 +202,7 @@ cback_visit_bytecode(
 	fprintf(fp, "    return false;\n");
 
 /* Visit a LOP_LINEINFO instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_lineinfo_op(
 	struct lir_func *func,
 	int *pc)
@@ -226,7 +226,7 @@ cback_visit_lineinfo_op(
 }
 
 /* Visit a LOP_ASSIGN instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_assign_op(
 	struct lir_func *func,
 	int *pc)
@@ -263,7 +263,7 @@ cback_visit_assign_op(
 }
 
 /* Visit a LOP_ICONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_iconst_op(
 	struct lir_func *func,
 	int *pc)
@@ -299,7 +299,7 @@ cback_visit_iconst_op(
 }
 
 /* Visit a LOP_FCONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_fconst_op(
 	struct lir_func *func,
 	int *pc)
@@ -338,7 +338,7 @@ cback_visit_fconst_op(
 }
 
 /* Visit a LOP_SCONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_sconst_op(
 	struct lir_func *func,
 	int *pc)
@@ -377,7 +377,7 @@ cback_visit_sconst_op(
 }
 
 /* Visit a LOP_ACONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_aconst_op(
 	struct lir_func *func,
 	int *pc)
@@ -407,7 +407,7 @@ cback_visit_aconst_op(
 }
 
 /* Visit a LOP_DCONST instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_dconst_op(
 	struct lir_func *func,
 	int *pc)
@@ -437,7 +437,7 @@ cback_visit_dconst_op(
 }
 
 /* Visit a LOP_INC instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_inc_op(
 	struct lir_func *func,
 	int *pc)
@@ -466,7 +466,7 @@ cback_visit_inc_op(
 }
 
 /* Visit a LOP_ADD instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_add_op(
 	struct lir_func *func,
 	int *pc)
@@ -477,7 +477,7 @@ cback_visit_add_op(
 }
 
 /* Visit a LOP_SUB instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_sub_op(
 	struct lir_func *func,
 	int *pc)
@@ -488,7 +488,7 @@ cback_visit_sub_op(
 }
 
 /* Visit a LOP_MUL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_mul_op(
 	struct lir_func *func,
 	int *pc)
@@ -499,7 +499,7 @@ cback_visit_mul_op(
 }
 
 /* Visit a LOP_DIV instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_div_op(
 	struct lir_func *func,
 	int *pc)
@@ -510,7 +510,7 @@ cback_visit_div_op(
 }
 
 /* Visit a LOP_MOD instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_mod_op(
 	struct lir_func *func,
 	int *pc)
@@ -521,7 +521,7 @@ cback_visit_mod_op(
 }
 
 /* Visit a LOP_AND instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_and_op(
 	struct lir_func *func,
 	int *pc)
@@ -532,7 +532,7 @@ cback_visit_and_op(
 }
 
 /* Visit a LOP_OR instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_or_op(
 	struct lir_func *func,
 	int *pc)
@@ -543,7 +543,7 @@ cback_visit_or_op(
 }
 
 /* Visit a LOP_XOR instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_xor_op(
 	struct lir_func *func,
 	int *pc)
@@ -554,7 +554,7 @@ cback_visit_xor_op(
 }
 
 /* Visit a LOP_NEG instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_neg_op(
 	struct lir_func *func,
 	int *pc)
@@ -565,7 +565,7 @@ cback_visit_neg_op(
 }
 
 /* Visit a LOP_LT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_lt_op(
 	struct lir_func *func,
 	int *pc)
@@ -576,7 +576,7 @@ cback_visit_lt_op(
 }
 
 /* Visit a LOP_LTE instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_lte_op(
 	struct lir_func *func,
 	int *pc)
@@ -587,7 +587,7 @@ cback_visit_lte_op(
 }
 
 /* Visit a LOP_GT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_gt_op(
 	struct lir_func *func,
 	int *pc)
@@ -598,7 +598,7 @@ cback_visit_gt_op(
 }
 
 /* Visit a LOP_GTE instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_gte_op(
 	struct lir_func *func,
 	int *pc)
@@ -609,7 +609,7 @@ cback_visit_gte_op(
 }
 
 /* Visit a LOP_EQ instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_eq_op(
 	struct lir_func *func,
 	int *pc)
@@ -620,7 +620,7 @@ cback_visit_eq_op(
 }
 
 /* Visit a LOP_NEQ instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_neq_op(
 	struct lir_func *func,
 	int *pc)
@@ -631,7 +631,7 @@ cback_visit_neq_op(
 }
 
 /* Visit a LOP_STOREARRAY instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_storearray_op(
 	struct lir_func *func,
 	int *pc)
@@ -642,7 +642,7 @@ cback_visit_storearray_op(
 }
 
 /* Visit a LOP_LOADARRAY instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_loadarray_op(
 	struct lir_func *func,
 	int *pc)
@@ -653,7 +653,7 @@ cback_visit_loadarray_op(
 }
 
 /* Visit a LOP_LEN instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_len_op(
 	struct lir_func *func,
 	int *pc)
@@ -664,7 +664,7 @@ cback_visit_len_op(
 }
 
 /* Visit a LOP_GETDICTKEYBYINDEX instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_getdictkeybyindex_op(
 	struct lir_func *func,
 	int *pc)
@@ -675,7 +675,7 @@ cback_visit_getdictkeybyindex_op(
 }
 
 /* Visit a LOP_GETDICTVALBYINDEX instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_getdictvalbyindex_op(
 	struct lir_func *func,
 	int *pc)
@@ -686,7 +686,7 @@ cback_visit_getdictvalbyindex_op(
 }
 
 /* Visit a LOP_LOADYMBOL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_loadsymbol_op(
 	struct lir_func *func,
 	int *pc)
@@ -720,7 +720,7 @@ cback_visit_loadsymbol_op(
 }
 
 /* Visit a LOP_STORESYMBOL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_storesymbol_op(
 	struct lir_func *func,
 	int *pc)
@@ -750,7 +750,7 @@ cback_visit_storesymbol_op(
 }
 
 /* Visit a LOP_LOADDOT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_loaddot_op(
 	struct lir_func *func,
 	int *pc)
@@ -797,7 +797,7 @@ cback_visit_loaddot_op(
 }
 
 /* Visit a LOP_STOREDOT instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_storedot_op(
 	struct lir_func *func,
 	int *pc)
@@ -844,7 +844,7 @@ cback_visit_storedot_op(
 }
 
 /* Visit a LOP_CALL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_call_op(
 	struct lir_func *func,
 	int *pc)
@@ -892,7 +892,7 @@ cback_visit_call_op(
 }
 
 /* Visit a LOP_THISCALL instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_thiscall_op(
 	struct lir_func *func,
 	int *pc)
@@ -1025,7 +1025,7 @@ cback_visit_jmpiftrue_op(
 }
 
 /* Visit a LOP_JMPIFFALSE instruction. */
-static NOCT_INLINE bool
+static INLINE bool
 cback_visit_jmpiffalse_op(
 	struct lir_func *func,
 	int *pc)

@@ -11,8 +11,7 @@
 #ifndef NOCT_CBACK_H
 #define NOCT_CBACK_H
 
-#include "c89compat.h"
-
+#include <noct/c89compat.h>
 #include <stdio.h>
 
 struct lir_func;

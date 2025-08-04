@@ -25,7 +25,7 @@ struct arena_info {
 /*
  * Initialize the arena allocator.
  */
-static NOCT_INLINE bool
+static INLINE bool
 arena_init(
 	struct arena_info *arena,
 	size_t size)
@@ -42,7 +42,7 @@ arena_init(
 /*
  * Cleanup the arena allocator.
  */
-static NOCT_INLINE void
+static INLINE void
 arena_cleanup(
 	struct arena_info *arena)
 {
@@ -52,7 +52,7 @@ arena_cleanup(
 /*
  * Allocate a block.
  */
-static NOCT_INLINE void *
+static INLINE void *
 arena_alloc(
 	struct arena_info *arena,
 	size_t size)
@@ -70,7 +70,7 @@ arena_alloc(
 /*
  * Unwind the arena.
  */
-static NOCT_INLINE void
+static INLINE void
 arena_unwind(
 	struct arena_info *arena)
 {

@@ -12,7 +12,6 @@
 #define NOCT_RUNTIME_H
 
 #include <noct/noct.h>
-#include "c89compat.h"
 #include "gc.h"
 
 /*
