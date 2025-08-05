@@ -5,7 +5,7 @@
  */
 
 /*
- * Intrinsics implementation
+ * Intrinsics Implementation
  */
 
 #include "runtime.h"

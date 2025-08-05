@@ -5,13 +5,7 @@
  */
 
 /*
- * Language Runtime
- */
-
-/*
- * [configuration]
- *  - NO_COMPILATION ... No source compilation features.
- *  - USE_DEBUGGER   ... gdb-like debugger feature.
+ * Garbage Collector
  */
 
 #include "runtime.h"

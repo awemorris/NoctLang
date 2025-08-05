@@ -14,12 +14,6 @@
 #include "jit.h"
 #include "gc.h"
 
-#if !defined(NO_COMPILATION)
-#include "ast.h"
-#include "hir.h"
-#include "lir.h"
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -19,8 +19,8 @@
  *   Uses semi-space copying GC with two 256KB regions (from and to spaces).
  *
  * - Tenure Region:
- *   For long-lived, large, or native-referenced objects.
- *   Collected using mark-and-sweep GC.
+ *   For long-lived, or large objects. Collected using Mark-Sweep GC,
+ *   and compacted using Slide Compaction.
  *
  * - Remember Set:
  *   Tracks tenure-region arrays or dictionaries that reference
