@@ -22,7 +22,7 @@
 #define UNIMPLEMENTED		(0)
 
 /* Arena allocator size. */
-#define ARENA_SIZE		(32 * 1024 * 1024)
+#define ARENA_SIZE		(4 * 1024 * 1024)
 
 /* List operation. */
 #define AST_ADD_TO_LAST(type, list, p)			\
@@ -103,6 +103,14 @@ ast_build(
 
 	/* Copy the file name. */
 	ast_file_name = ast_strdup(file_name);
+	if (ast_file_name == NULL) {
+>>>>>>> rollback2
+		ast_out_of_memory();
+		return false;
+	}
+
+	/* Copy the file name. */
+	ast_file_name = ast_strdup(file_name);
 	if (ast_file_name == NULL)
 		return false;
 
@@ -124,6 +132,7 @@ ast_build(
 void
 ast_cleanup(void)
 {
+#if 0
 	if (ast_func_list != NULL) {
 		ast_free_func_list(ast_func_list);
 		ast_func_list = NULL;
@@ -132,6 +141,7 @@ ast_cleanup(void)
 		ast_free(ast_file_name);
 		ast_file_name = NULL;
 	}
+#endif
 	arena_cleanup(&ast_arena);
 }
 
@@ -1621,10 +1631,8 @@ char *ast_strdup(const char *s)
 	char *ret;
 
 	ret = arena_alloc(&ast_arena, strlen(s) + 1);
-	if (ret == NULL) {
-		ast_out_of_memory();
+	if (ret == NULL)
 		return NULL;
-	}
 
 	strcpy(ret, s);
 	return ret;

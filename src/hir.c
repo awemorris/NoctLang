@@ -26,7 +26,7 @@
 #undef DEBUG_DUMP
 
 /* Arena allocator size. */
-#define ARENA_SIZE		(32 * 1024 * 1024)
+#define ARENA_SIZE		(4 * 1024 * 1024)
 
 /* List-add function. */
 #define HIR_ADD_TO_LAST(type, list, p)			\
@@ -79,7 +79,9 @@ static struct ast_stmt_list *hir_anon_func_stmt_list[ANON_FUNC_SIZE];
  */
 static struct arena_info hir_arena;
 
-/* Forward Declaration */
+/*
+ * Forward Declaration
+ */
 static bool hir_visit_func(struct ast_func *afunc);
 static bool hir_visit_stmt_list(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt_list *stmt_list);
 static bool hir_visit_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
@@ -131,6 +133,15 @@ hir_build(void)
 
 	/* Initialize the arena allocator. */
 	if (!arena_init(&hir_arena, ARENA_SIZE)) {
+		hir_out_of_memory();
+		return false;
+	}
+
+	hir_anon_func_count = 0;
+
+	/* Copy a file name. */
+	hir_file_name = hir_strdup(ast_get_file_name());
+	if (hir_file_name == NULL) {
 		hir_out_of_memory();
 		return false;
 	}
@@ -250,14 +261,17 @@ hir_visit_func(
 	func_block->id = block_id_top++;
 	func_block->type = HIR_BLOCK_FUNC;
 	func_block->val.func.file_name = hir_strdup(hir_file_name);
-	if (func_block->val.func.file_name == NULL)
+	if (func_block->val.func.file_name == NULL) {
+		hir_out_of_memory();
 		return false;
 
 	do {
 		/* Set a func name. */
 		func_block->val.func.name = hir_strdup(afunc->name);
-		if (func_block->val.func.name == NULL)
+		if (func_block->val.func.name == NULL) {
+			hir_out_of_memory();
 			break;
+		}
 
 		/* Parse the parameters. */
 		hir_visit_param_list(func_block, afunc);
@@ -710,8 +724,10 @@ hir_add_local(
 		return false;
 	}
 	local->symbol = hir_strdup(symbol);
-	if (local->symbol == NULL)
-		return false;
+	if (local->symbol == NULL) {
+		hir_out_of_memory();
+		hir_free(local);
+	}
 	local->index = index;
 	local->next = func->val.func.local;
 	func->val.func.local = local;
@@ -1157,22 +1173,28 @@ hir_visit_for_stmt(
 	if (cur_astmt->val.for_.counter_symbol) {
 		for_block->val.for_.is_ranged = true;
 		for_block->val.for_.counter_symbol = hir_strdup(cur_astmt->val.for_.counter_symbol);
-		if (for_block->val.for_.counter_symbol == NULL)
+		if (for_block->val.for_.counter_symbol == NULL) {
+			hir_out_of_memory();
 			return false;
+		}
 		if (!hir_add_local(*cur_block, for_block->val.for_.counter_symbol))
 			return false;
 	}
 	if (cur_astmt->val.for_.key_symbol) {
 		for_block->val.for_.key_symbol = hir_strdup(cur_astmt->val.for_.key_symbol);
-		if (for_block->val.for_.key_symbol == NULL)
+		if (for_block->val.for_.key_symbol == NULL) {
+			hir_out_of_memory();
 			return false;
+		}
 		if (!hir_add_local(*cur_block, for_block->val.for_.key_symbol))
 			return false;
 	}
 	if (cur_astmt->val.for_.value_symbol) {
 		for_block->val.for_.value_symbol = hir_strdup(cur_astmt->val.for_.value_symbol);
-		if (for_block->val.for_.value_symbol == NULL)
+		if (for_block->val.for_.value_symbol == NULL) {
+			hir_out_of_memory();
 			return false;
+		}
 		if (!hir_add_local(*cur_block, for_block->val.for_.value_symbol))
 			return false;
 	}
@@ -1263,8 +1285,10 @@ hir_visit_return_stmt(
 	memset(hstmt->lhs->val.term.term, 0, sizeof(struct hir_term));
 	hstmt->lhs->val.term.term->type = HIR_TERM_SYMBOL;
 	hstmt->lhs->val.term.term->val.symbol = hir_strdup("$return");
-	if (hstmt->lhs->val.term.term->val.symbol == NULL)
+	if (hstmt->lhs->val.term.term->val.symbol == NULL) {
+		hir_out_of_memory();
 		return false;
+	}
 
 	/* Visit an expr. */
 	if (!hir_visit_expr(&hstmt->rhs, cur_astmt->val.return_.expr)) {
@@ -1511,8 +1535,10 @@ hir_visit_dot_expr(
 
 	/* Copy the member symbol. */
 	e->val.dot.symbol = hir_strdup(aexpr->val.dot.symbol);
-	if (e->val.dot.symbol == NULL)
+	if (e->val.dot.symbol == NULL) {
+		hir_free_expr(e);
 		return false;
+	}
 
 	*hexpr = e;
 
@@ -1703,8 +1729,10 @@ hir_visit_dict_expr(
 
 			/* Copy the key. */
 			e->val.dict.key[index] = hir_strdup(kv->key);
-			if (e->val.dict.key[index] == NULL)
+			if (e->val.dict.key[index] == NULL) {
+				hir_out_of_memory();
 				return false;
+			}
 
 			/* Copy the value. */
 			if (!hir_visit_expr(&e->val.dict.value[index], kv->value)) {
@@ -1793,8 +1821,10 @@ hir_visit_term(
 	case AST_TERM_SYMBOL:
 		t->type = HIR_TERM_SYMBOL;
 		t->val.symbol = hir_strdup(aterm->val.symbol);
-		if (t->val.symbol == NULL)
+		if (t->val.symbol == NULL) {
+			hir_out_of_memory();
 			return false;
+		}
 		break;
 	case AST_TERM_INT:
 		t->type = HIR_TERM_INT;
@@ -1807,8 +1837,10 @@ hir_visit_term(
 	case AST_TERM_STRING:
 		t->type = HIR_TERM_STRING;
 		t->val.s = hir_strdup(aterm->val.s);
-		if (t->val.symbol == NULL)
+		if (t->val.symbol == NULL) {
+			hir_out_of_memory();
 			return false;
+		}
 		break;
 	case AST_TERM_EMPTY_ARRAY:
 		t->type = HIR_TERM_EMPTY_ARRAY;
@@ -1850,8 +1882,10 @@ hir_visit_param_list(
 	while (param != NULL) {
 		/* Copy names and count parameters. */
 		hfunc->val.func.param_name[param_count] = hir_strdup(param->name);
-		if (param->name == NULL)
+		if (param->name == NULL) {
+			hir_out_of_memory();
 			return false;
+		}
 		param_count++;
 
 		/* Add to a local variable list. */
@@ -1875,8 +1909,10 @@ hir_defer_anon_func(
 
 	snprintf(name, sizeof(name), "$anon.%s.%d", hir_file_name, hir_anon_func_count);
 	*symbol = hir_strdup(name);
-	if (*symbol == NULL)
+	if (*symbol == NULL) {
+		hir_out_of_memory();
 		return false;
+	}
 
 	hir_anon_func_name[hir_anon_func_count] = *symbol;
 	hir_anon_func_param_list[hir_anon_func_count] = aexpr->val.func.param_list;
@@ -2321,10 +2357,8 @@ static char *hir_strdup(const char *s)
 	char *ret;
 
 	ret = arena_alloc(&hir_arena, strlen(s) + 1);
-	if (ret == NULL) {
-		hir_out_of_memory();
+	if (ret == NULL)
 		return NULL;
-	}
 
 	strcpy(ret, s);
 	return ret;

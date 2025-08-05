@@ -156,7 +156,7 @@ rt_free_func(
 	func->name = NULL;
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		if (func->param_name[i] != NULL) {
-			free(func->param_name[i]);
+			noct_free(func->param_name[i]);
 			func->param_name[i] = NULL;
 		}
 	}

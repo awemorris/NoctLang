@@ -344,10 +344,8 @@ static bool compile_source(const char *file_name)
 
 	fclose(fp);
 
-	/* Free entire HIR. */
+	/* Free intermediates. */
 	hir_cleanup();
-
-	/* Free entire AST. */
 	ast_cleanup();
 
 	return true;
@@ -447,10 +445,8 @@ static bool add_file_hook_c(const char *fname)
 		lir_cleanup(lfunc);
 	}
 
-	/* Free entire HIR. */
+	/* Free intermediated. */
 	hir_cleanup();
-
-	/* Free entire AST. */
 	ast_cleanup();
 
 	return true;
@@ -539,7 +535,8 @@ static bool add_file_hook_elisp(const char *fname)
 	/* Free entire HIR. */
 	hir_cleanup();
 
-	/* Free entire AST. */
+	/* Free intermediates. */
+	hir_cleanup();
 	ast_cleanup();
 
 	return true;
