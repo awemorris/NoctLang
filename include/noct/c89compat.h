@@ -419,13 +419,11 @@ inline void strlcat(char *d, const char *s, size_t len)
 /*
  * Message Translation
  */
-#if !defined(N_TR)
 #if defined(USE_TRANSLATION)
 #define N_TR(s)	noct_gettext(s)
 const char *noct_gettext(const char *s);
 #else
 #define N_TR(s)	(s)
-#endif
 #endif
 
 #endif

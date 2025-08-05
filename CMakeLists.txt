@@ -204,7 +204,7 @@ if(ENABLE_CLI)
   endif()
 
   if(ENABLE_I18N)
-    target_compile_definitions(noct PRIVATE USE_GETTEXT_COMPAT)
+    target_compile_definitions(noct PRIVATE USE_TRANSLATION)
   endif()  
 
   if(WIN32)

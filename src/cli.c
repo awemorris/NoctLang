@@ -37,7 +37,7 @@
 extern bool noct_conf_use_jit;
 
 /* i18n.c */
-#if defined(USE_GETTEXT_COMPAT)
+#if defined(USE_TRANSLATION)
 void noct_init_locale(void);
 #endif
 
@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
 {
 	char *first_arg;
 
-#if defined(USE_GETTEXT_COMPAT)
+#if defined(USE_TRANSLATION)
 	noct_init_locale();
 #endif
 

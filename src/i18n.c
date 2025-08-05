@@ -10,6 +10,7 @@
 
 #if defined(USE_TRANSLATION)
 
+#include <stdio.h>
 #include <string.h>
 #include <locale.h>
 
@@ -62,7 +63,6 @@ void noct_init_locale(void)
 		lang_code = "ja";
 	else
 		lang_code = "en";
-
 	setlocale(LC_ALL, "C");
 #else
 	DWORD dwLang = GetUserDefaultLCID() & 0x3ff;
@@ -104,4 +104,4 @@ void noct_init_locale(void)
 #endif	/* !defined(_WIN32) */
 }
 
-#endif	/* defined(USE_GETTEXT_COMPAT) */
+#endif	/* defined(USE_TRANSLATION) */
