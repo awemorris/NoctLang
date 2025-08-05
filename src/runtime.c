@@ -80,6 +80,7 @@ rt_create_vm(
 	(*default_env)->frame = &(*default_env)->frame_alloc[0];
 	(*default_env)->frame->tmpvar = &(*default_env)->frame->tmpvar_alloc[0];
 	(*default_env)->frame->tmpvar_size = RT_TMPVAR_MAX;
+	memset((*default_env)->frame->tmpvar, 0, sizeof(struct rt_value) * RT_TMPVAR_MAX);
 
 #if defined(USE_MULTITHREAD)
 	/* Initialize for GC. */
