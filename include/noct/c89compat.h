@@ -56,15 +56,27 @@
 
 /* Arm32 */
 #define ARCH_ARM32
+
 #elif defined(_ARCH_PPC64)
 
 /* PowerPC 64 / POWER */
 #define ARCH_PPC64
+
 #elif defined(_ARCH_PPC)
 
 /* PowerPC */
 #define ARCH_PPC32
 #define ARCH_BE
+
+#elif defined(__mips64) || defined(__mips64__)
+
+/* MIPS64 */
+#define ARCH_MIPS64
+
+#elif defined(__mips__)
+
+/* MIPS32 */
+#define ARCH_MIPS32
 
 #elif defined(__riscv) && (__riscv_xlen == 64)
 
