@@ -9,6 +9,7 @@
  */
 
 #include "ast.h"
+#include "arena.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,9 @@
 /* False assertions. */
 #define NEVER_COME_HERE		(0)
 #define UNIMPLEMENTED		(0)
+
+/* Arena allocator size. */
+#define ARENA_SIZE		(4 * 1024 * 1024)
 
 /* List operation. */
 #define AST_ADD_TO_LAST(type, list, p)			\
@@ -47,6 +51,11 @@ int ast_error_column;
 char ast_error_message[1024];
 
 /*
+ * Arena allocator.
+ */
+static struct arena_info ast_arena;
+
+/*
  * Lexer and Parser
  */
 typedef void *yyscan_t;
@@ -68,6 +77,10 @@ static void ast_free_kv(struct ast_kv *kv);
 static void ast_free_term(struct ast_term *term);
 static void ast_printf(const char *format, ...);
 static void ast_out_of_memory(void);
+void *ast_malloc(size_t size);
+void *ast_realloc(void *p, size_t size);
+char *ast_strdup(const char *s);
+void ast_free(void *p);
 
 /*
  * Build an AST from a script string.
@@ -82,8 +95,14 @@ ast_build(
 	assert(file_name != NULL);
 	assert(text != NULL);
 
+	/* Initialize the arena allocator. */
+	if (!arena_init(&ast_arena, ARENA_SIZE)) {
+		ast_out_of_memory();
+		return false;
+	}
+
 	/* Copy the file name. */
-	ast_file_name = strdup(file_name);
+	ast_file_name = ast_strdup(file_name);
 	if (ast_file_name == NULL) {
 		ast_out_of_memory();
 		return false;
@@ -105,16 +124,19 @@ ast_build(
  * Free an AST.
  */
 void
-ast_free(void)
+ast_cleanup(void)
 {
+#if 0
 	if (ast_func_list != NULL) {
 		ast_free_func_list(ast_func_list);
 		ast_func_list = NULL;
 	}
 	if (ast_file_name != NULL) {
-		free(ast_file_name);
+		ast_free(ast_file_name);
 		ast_file_name = NULL;
 	}
+#endif
+	arena_cleanup(&ast_arena);
 }
 
 /*
@@ -149,7 +171,7 @@ ast_accept_func_list(
 
 	if (func_list == NULL) {
 		/* If this is the first element, allocate a list. */
-		func_list = malloc(sizeof(struct ast_func_list));
+		func_list = ast_malloc(sizeof(struct ast_func_list));
 		if (func_list == NULL) {
 			ast_out_of_memory();
 			return NULL;
@@ -181,7 +203,7 @@ ast_accept_func(
 	assert(name != NULL);
 
 	/* Allocate a func. */
-	f = malloc(sizeof(struct ast_func));
+	f = ast_malloc(sizeof(struct ast_func));
 	if (f == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -204,7 +226,7 @@ ast_accept_param_list(
 
 	assert(name != NULL);
 
-	param = malloc(sizeof(struct ast_param));
+	param = ast_malloc(sizeof(struct ast_param));
 	if (param == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -214,9 +236,9 @@ ast_accept_param_list(
 
 	if (param_list == NULL) {
 		/* If this is a top param, allocate a list. */
-		param_list = malloc(sizeof(struct ast_param_list));
+		param_list = ast_malloc(sizeof(struct ast_param_list));
 		if (param_list == NULL) {
-			free(param);
+			ast_free(param);
 			ast_out_of_memory();
 			return NULL;
 		}
@@ -240,7 +262,7 @@ ast_accept_stmt_list(
 
 	if (stmt_list == NULL) {
 		/* If this is a top element, allocate a list. */
-		stmt_list = malloc(sizeof(struct ast_stmt_list));
+		stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
 		if (stmt_list == NULL) {
 			ast_out_of_memory();
 			return NULL;
@@ -265,7 +287,7 @@ ast_accept_expr_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -288,7 +310,7 @@ ast_accept_assign_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -312,7 +334,7 @@ ast_accept_if_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -335,7 +357,7 @@ ast_accept_elif_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -357,7 +379,7 @@ ast_accept_else_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -379,7 +401,7 @@ ast_accept_while_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -403,7 +425,7 @@ ast_accept_for_v_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -430,7 +452,7 @@ ast_accept_for_kv_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -458,7 +480,7 @@ ast_accept_for_range_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -483,7 +505,7 @@ ast_accept_return_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -503,7 +525,7 @@ ast_accept_break_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -522,7 +544,7 @@ ast_accept_continue_stmt(
 {
 	struct ast_stmt *stmt;
 
-	stmt = malloc(sizeof(struct ast_stmt));
+	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -541,7 +563,7 @@ ast_accept_term_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -561,7 +583,7 @@ ast_accept_lt_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -582,7 +604,7 @@ ast_accept_lte_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -603,7 +625,7 @@ ast_accept_eq_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -624,7 +646,7 @@ ast_accept_neq_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -645,7 +667,7 @@ ast_accept_gte_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -666,7 +688,7 @@ ast_accept_gt_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -687,7 +709,7 @@ ast_accept_plus_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -708,7 +730,7 @@ ast_accept_minus_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -729,7 +751,7 @@ ast_accept_mul_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -750,7 +772,7 @@ ast_accept_div_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -771,7 +793,7 @@ ast_accept_mod_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -792,7 +814,7 @@ ast_accept_and_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -813,7 +835,7 @@ ast_accept_or_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -833,7 +855,7 @@ ast_accept_neg_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -852,7 +874,7 @@ ast_accept_not_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -871,7 +893,7 @@ ast_accept_par_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -891,7 +913,7 @@ ast_accept_subscr_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -912,7 +934,7 @@ ast_accept_dot_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -933,7 +955,7 @@ ast_accept_call_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -955,7 +977,7 @@ ast_accept_thiscall_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -976,7 +998,7 @@ ast_accept_array_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -995,7 +1017,7 @@ ast_accept_dict_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1015,7 +1037,7 @@ ast_accept_func_expr(
 {
 	struct ast_expr *expr;
 
-	expr = malloc(sizeof(struct ast_expr));
+	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1035,7 +1057,7 @@ ast_accept_kv_list(
 	struct ast_kv *kv)
 {
 	if (kv_list == NULL) {
-		kv_list = malloc(sizeof(struct ast_kv_list));
+		kv_list = ast_malloc(sizeof(struct ast_kv_list));
 		if (kv_list == NULL) {
 			ast_out_of_memory();
 			return NULL;
@@ -1057,7 +1079,7 @@ ast_accept_kv(
 {
 	struct ast_kv *kv;
 
-	kv = malloc(sizeof(struct ast_kv));
+	kv = ast_malloc(sizeof(struct ast_kv));
 	if (kv == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1076,7 +1098,7 @@ ast_accept_int_term(
 {
 	struct ast_term *term;
 
-	term = malloc(sizeof(struct ast_term));
+	term = ast_malloc(sizeof(struct ast_term));
 	if (term == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1095,7 +1117,7 @@ ast_accept_float_term(
 {
 	struct ast_term *term;
 
-	term = malloc(sizeof(struct ast_term));
+	term = ast_malloc(sizeof(struct ast_term));
 	if (term == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1114,7 +1136,7 @@ ast_accept_str_term(
 {
 	struct ast_term *term;
 
-	term = malloc(sizeof(struct ast_term));
+	term = ast_malloc(sizeof(struct ast_term));
 	if (term == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1133,7 +1155,7 @@ ast_accept_symbol_term(
 {
 	struct ast_term *term;
 
-	term = malloc(sizeof(struct ast_term));
+	term = ast_malloc(sizeof(struct ast_term));
 	if (term == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1151,7 +1173,7 @@ ast_accept_empty_array_term(void)
 {
 	struct ast_term *term;
 
-	term = malloc(sizeof(struct ast_term));
+	term = ast_malloc(sizeof(struct ast_term));
 	if (term == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1168,7 +1190,7 @@ ast_accept_empty_dict_term(void)
 {
 	struct ast_term *term;
 
-	term = malloc(sizeof(struct ast_term));
+	term = ast_malloc(sizeof(struct ast_term));
 	if (term == NULL) {
 		ast_out_of_memory();
 		return NULL;
@@ -1190,7 +1212,7 @@ ast_accept_arg_list(
 
 	if (arg_list == NULL) {
 		/* Alloc an arg_list. */
-		arg_list = malloc(sizeof(struct ast_arg_list));
+		arg_list = ast_malloc(sizeof(struct ast_arg_list));
 		if (arg_list == NULL) {
 			ast_out_of_memory();
 			return NULL;
@@ -1215,7 +1237,7 @@ ast_free_func_list(
 	assert(func_list->list != NULL);
 
 	ast_free_func(func_list->list);
-	free(func_list);
+	ast_free(func_list);
 	func_list = NULL;
 }
 
@@ -1230,19 +1252,19 @@ ast_free_func(
 	if (func->next != NULL)
 		ast_free_func(func->next);
 
-	free(func->name);
+	ast_free(func->name);
 	if (func->param_list != NULL) {
 		assert(func->param_list->list != NULL);
 
 		ast_free_param(func->param_list->list);
 
-		free(func->param_list);
+		ast_free(func->param_list);
 	}
 	if (func->stmt_list != NULL) {
 		ast_free_stmt_list(func->stmt_list);
 		func->stmt_list = NULL;
 	}
-	free(func);
+	ast_free(func);
 }
 
 /* Free an AST arg_list. */
@@ -1267,8 +1289,8 @@ ast_free_param(
 	if (param->next != NULL)
 		ast_free_param(param->next);
 
-	free(param->name);
-	free(param);
+	ast_free(param->name);
+	ast_free(param);
 }
 
 /* Free an AST stmt. */
@@ -1279,7 +1301,7 @@ ast_free_stmt_list(
 	assert(stmt_list != NULL);
 
 	ast_free_stmt(stmt_list->list);
-	free(stmt_list);
+	ast_free(stmt_list);
 }
 
 /* Free an AST stmt. */
@@ -1347,15 +1369,15 @@ ast_free_stmt(
 		break;
 	case AST_STMT_FOR:
 		if (stmt->val.for_.counter_symbol != NULL) {
-			free(stmt->val.for_.counter_symbol);
+			ast_free(stmt->val.for_.counter_symbol);
 			stmt->val.for_.counter_symbol = NULL;
 		}
 		if (stmt->val.for_.key_symbol != NULL) {
-			free(stmt->val.for_.key_symbol);
+			ast_free(stmt->val.for_.key_symbol);
 			stmt->val.for_.key_symbol = NULL;
 		}
 		if (stmt->val.for_.value_symbol != NULL) {
-			free(stmt->val.for_.value_symbol);
+			ast_free(stmt->val.for_.value_symbol);
 			stmt->val.for_.value_symbol = NULL;
 		}
 		if (stmt->val.for_.collection != NULL) {
@@ -1382,7 +1404,7 @@ ast_free_stmt(
 		break;
 	}
 
-	free(stmt);
+	ast_free(stmt);
 	stmt = NULL;
 }
 
@@ -1440,7 +1462,7 @@ ast_free_expr(
 			expr->val.dot.obj = NULL;
 		}
 		if (expr->val.dot.symbol != NULL) {
-			free(expr->val.dot.symbol);
+			ast_free(expr->val.dot.symbol);
 			expr->val.dot.symbol = NULL;
 		}
 		break;
@@ -1478,7 +1500,7 @@ ast_free_expr(
 		break;
 	}
 
-	free(expr);
+	ast_free(expr);
 	expr = NULL;
 }
 
@@ -1490,7 +1512,7 @@ ast_free_kv_list(
 	ast_free_kv(kv_list->list);
 	kv_list->list = NULL;
 
-	free(kv_list);
+	ast_free(kv_list);
 }
 
 /* Free a key-value pair. */
@@ -1503,13 +1525,13 @@ ast_free_kv(
 		kv->next = NULL;
 	}
 
-	free(kv->key);
+	ast_free(kv->key);
 	kv->key = NULL;
 
 	ast_free_expr(kv->value);
 	kv->value = NULL;
 
-	free(kv);
+	ast_free(kv);
 	kv = NULL;
 }
 
@@ -1521,13 +1543,13 @@ ast_free_term(
 	switch (term->type) {
 	case AST_TERM_STRING:
 		if (term->val.s != NULL) {
-			free(term->val.s);
+			ast_free(term->val.s);
 			term->val.s = NULL;
 		}
 		break;
 	case AST_TERM_SYMBOL:
 		if (term->val.symbol != NULL) {
-			free(term->val.symbol);
+			ast_free(term->val.symbol);
 			term->val.symbol = NULL;
 		}
 		break;
@@ -1536,7 +1558,7 @@ ast_free_term(
 		break;
 	}
 
-	free(term);
+	ast_free(term);
 	term = NULL;
 }
 
@@ -1566,4 +1588,50 @@ const char *ast_get_error_message(void)
 int ast_get_error_line(void)
 {
 	return ast_error_line;
+}
+
+void *ast_malloc(size_t size)
+{
+	void *ret;
+
+	ret = arena_alloc(&ast_arena, size);
+	if (ret == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+
+	return ret;
+}
+
+void *ast_realloc(void *p, size_t size)
+{
+	size_t orig_size;
+	void *ret;
+
+	orig_size = arena_get_block_size(p);
+	ret = arena_alloc(&ast_arena, size);
+	if (ret == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+
+	memcpy(ret, p, orig_size);
+
+	return ret;	
+}
+
+char *ast_strdup(const char *s)
+{
+	char *ret;
+
+	ret = arena_alloc(&ast_arena, strlen(s) + 1);
+	if (ret == NULL)
+		return NULL;
+
+	strcpy(ret, s);
+	return ret;
+}
+
+void ast_free(void *p)
+{
 }

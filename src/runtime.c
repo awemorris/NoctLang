@@ -284,7 +284,7 @@ rt_register_source(
 				break;
 
 			/* Free a LIR. */
-			lir_free(lfunc);
+			lir_cleanup(lfunc);
 		}
 		if (i != func_count)
 			break;
@@ -293,8 +293,8 @@ rt_register_source(
 	} while (0);
 
 	/* Free intermediates. */
-	hir_free();
-	ast_free();
+	hir_cleanup();
+	ast_cleanup();
 
 	/* If failed. */
 	if (!is_succeeded)

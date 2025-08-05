@@ -102,6 +102,13 @@ struct rt_value {
 };
 
 /*
+ * Custom Allocators
+ */
+
+extern void *(*noct_malloc)(size_t size);
+extern void (*noct_free)(void *p);
+
+/*
  * Core Functions
  */
 

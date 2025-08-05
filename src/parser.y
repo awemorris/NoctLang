@@ -17,11 +17,14 @@ static void print_debug(const char *s);
 #define debug(s)
 #endif
 
+#define YYMALLOC ast_malloc
+
 extern int ast_error_line;
 extern int ast_error_column;
 
 int ast_yylex(void *);
 void ast_yyerror(void *, char *s);
+void *ast_malloc(size_t size); 
 
 /* Internal: called back from the parser. */
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);

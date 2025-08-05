@@ -329,7 +329,7 @@ struct ast_arg_list {
  * Public
  */
 bool ast_build(const char *file_name, const char *text);
-void ast_free(void);
+void ast_cleanup(void);
 struct ast_func_list *ast_get_func_list(void);
 const char *ast_get_file_name(void);
 const char *ast_get_error_message(void);

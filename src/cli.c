@@ -339,13 +339,14 @@ static bool compile_source(const char *file_name)
 		fprintf(fp, "\nEnd Function\n");
 
 		/* Free a single LIR. */
-		lir_free(lfunc);
+		lir_cleanup(lfunc);
 	}
 
 	fclose(fp);
 
-	/* Free entire HIR. */
-	hir_free();
+	/* Free intermediates. */
+	hir_cleanup();
+	ast_cleanup();
 
 	return true;
 }
@@ -441,11 +442,12 @@ static bool add_file_hook_c(const char *fname)
 			return false;
 
 		/* Free a single LIR. */
-		lir_free(lfunc);
+		lir_cleanup(lfunc);
 	}
 
-	/* Free entire HIR. */
-	hir_free();
+	/* Free intermediated. */
+	hir_cleanup();
+	ast_cleanup();
 
 	return true;
 }
@@ -530,8 +532,9 @@ static bool add_file_hook_elisp(const char *fname)
 			return false;
 	}
 
-	/* Free entire HIR. */
-	hir_free();
+	/* Free intermediates. */
+	hir_cleanup();
+	ast_cleanup();
 
 	return true;
 }

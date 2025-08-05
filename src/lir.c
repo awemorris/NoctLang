@@ -8,6 +8,7 @@
  * LIR: Low-level intermediate representation
  */
 
+#include <noct/noct.h>
 #include "lir.h"
 #include "hir.h"
 #include "bytecode.h"
@@ -189,7 +190,7 @@ lir_build(
 	patch_block_address();
 
 	/* Make an lir_func. */
-	*lir_func = malloc(sizeof(struct lir_func));
+	*lir_func = noct_malloc(sizeof(struct lir_func));
 	if (lir_func == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -213,7 +214,7 @@ lir_build(
 	}
 
 	/* Copy the bytecode. */
-	(*lir_func)->bytecode = malloc((size_t)bytecode_top);
+	(*lir_func)->bytecode = noct_malloc((size_t)bytecode_top);
 	if ((*lir_func)->bytecode == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -1930,7 +1931,7 @@ patch_block_address(void)
  * Free a constructed LIR.
  */
 void
-lir_free(struct lir_func *func)
+lir_cleanup(struct lir_func *func)
 {
 	int i;
 
@@ -1938,7 +1939,7 @@ lir_free(struct lir_func *func)
 
 	free(func->func_name);
 	for (i = 0; i < func->param_count; i++)
-		free(func->param_name[i]);
+		noct_free(func->param_name[i]);
 	free(func->bytecode);
 	memset(func, 0, sizeof(struct lir_func));
 }

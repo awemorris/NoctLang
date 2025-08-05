@@ -31,7 +31,7 @@ struct lir_func {
 bool lir_build(struct hir_block *hir_func, struct lir_func **lir_func);
 
 /* Free a constructed LIR. */
-void lir_free(struct lir_func *func);
+void lir_cleanup(struct lir_func *func);
 
 /* Get a file name. */
 const char *lir_get_file_name(void);
