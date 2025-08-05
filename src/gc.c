@@ -1712,7 +1712,7 @@ rt_gc_pin_global(
 	assert(val != NULL);
 
 	if (env->vm->pinned_count == RT_GLOBAL_PIN_MAX) {
-		rt_error(env, _("Too many pinned global variables."));
+		rt_error(env, N_TR("Too many pinned global variables."));
 		return false;
 	}
 
@@ -1760,7 +1760,7 @@ rt_gc_pin_local(
 	assert(val != NULL);
 
 	if (env->frame->pinned_count == RT_LOCAL_PIN_MAX) {
-		rt_error(env, _("Too many pinned local variables."));
+		rt_error(env, N_TR("Too many pinned local variables."));
 		return false;
 	}
 

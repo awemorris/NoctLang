@@ -1582,7 +1582,7 @@ static void ast_printf(const char *format, ...)
 
 static void ast_out_of_memory(void)
 {
-	ast_printf(_("%s: Out of memory while parsing."), ast_file_name);
+	ast_printf(N_TR("%s: Out of memory while parsing."), ast_file_name);
 }
 
 const char *ast_get_error_message(void)

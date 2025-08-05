@@ -92,7 +92,7 @@ elback_init(const char *fname)
 
 	fp = fopen(fname, "w");
 	if (fp == NULL) {
-		elback_fatal(_("Cannot open file %s."));
+		elback_fatal(N_TR("Cannot open file %s."));
 		return false;
 	}
 	return true;
@@ -608,7 +608,7 @@ elback_visit_stmt(
 				return false;
 			PUT(")");
 		} else {
-			elback_fatal(_("LHS is not a symbol or an array element."));
+			elback_fatal(N_TR("LHS is not a symbol or an array element."));
 			return false;
 		}
 	} else {

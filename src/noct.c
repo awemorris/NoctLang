@@ -324,7 +324,7 @@ noct_get_int(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_INT) {
-		rt_error(env, _("Value is not an integer."));
+		rt_error(env, N_TR("Value is not an integer."));
 		return false;
 	}
 
@@ -352,7 +352,7 @@ noct_get_float(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_FLOAT) {
-		rt_error(env, _("Value is not a float."));
+		rt_error(env, N_TR("Value is not a float."));
 		return false;
 	}
 
@@ -380,7 +380,7 @@ noct_get_string_len(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_STRING) {
-		rt_error(env, _("Value is not a string."));
+		rt_error(env, N_TR("Value is not a string."));
 		return false;
 	}
 
@@ -409,7 +409,7 @@ noct_get_string(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_STRING) {
-		rt_error(env, _("Value is not a string."));
+		rt_error(env, N_TR("Value is not a string."));
 		return false;
 	}
 
@@ -437,7 +437,7 @@ noct_get_func(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_FUNC) {
-		rt_error(env, _("Value is not a function."));
+		rt_error(env, N_TR("Value is not a function."));
 		return false;
 	}
 
@@ -465,7 +465,7 @@ noct_get_array_size(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Value is not an array."));
+		rt_error(env, N_TR("Value is not an array."));
 		return false;
 	}
 
@@ -495,13 +495,13 @@ noct_get_array_elem(
 
 	/* Check the type. */
 	if (type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Value is not an array."));
+		rt_error(env, N_TR("Value is not an array."));
 		return false;
 	}
 
 	/* Check the array boundary. */
 	if (index < 0 || index >= array->val.arr->size) {
-		rt_error(env, _("Array index %d is out-of-range."), index);
+		rt_error(env, N_TR("Array index %d is out-of-range."), index);
 		return false;
 	}
 	
@@ -526,7 +526,7 @@ noct_set_array_elem(
 
 	/* Check the type. */
 	if (array->type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Not an array."));
+		rt_error(env, N_TR("Not an array."));
 		return false;
 	}
 
@@ -551,7 +551,7 @@ noct_resize_array(
 
 	/* Check the type. */
 	if (array->type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Not an array."));
+		rt_error(env, N_TR("Not an array."));
 		return false;
 	}
 
@@ -578,7 +578,7 @@ noct_make_array_copy(
 
 	/* Check the type. */
 	if (src->type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Not an array."));
+		rt_error(env, N_TR("Not an array."));
 		return false;
 	}
 
@@ -616,7 +616,7 @@ noct_get_dict_size(
 
 	/* Check the type. */
 	if (dict->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
@@ -641,13 +641,13 @@ noct_get_dict_key_by_index(
 	
 	/* Check the type. */
 	if (dict->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
 	/* Check the boundary. */
 	if (index < 0 || index >= dict->val.dict->size) {
-		rt_error(env, _("Dictionary index %d is out-of-range."), index);
+		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
 		return false;
 	}
 
@@ -672,13 +672,13 @@ noct_get_dict_value_by_index(
 	
 	/* Check the type. */
 	if (dict->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
 	/* Check the boundary. */
 	if (index < 0 || index >= dict->val.dict->size) {
-		rt_error(env, _("Dictionary index %d is out-of-range."), index);
+		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
 		return false;
 	}
 
@@ -705,7 +705,7 @@ noct_check_dict_key(
 	
 	/* Check the type. */
 	if (dict->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
@@ -740,7 +740,7 @@ noct_get_dict_elem(
 	
 	/* Check the type. */
 	if (dict->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
@@ -769,7 +769,7 @@ noct_set_dict_elem(
 	
 	/* Check the type. */
 	if (dict->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
@@ -796,7 +796,7 @@ noct_remove_dict_elem(
 	
 	/* Check the type. */
 	if (dict->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
@@ -823,7 +823,7 @@ noct_remove_dict_elem(
 	}
 
 	/* Failed. */
-	rt_error(env, _("Dictionary key \"%s\" not found."), key);
+	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
 	return false;
 }
 
@@ -843,7 +843,7 @@ noct_make_dict_copy(
 
 	/* Check the type. */
 	if (src->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Not a dictionary."));
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
@@ -1105,7 +1105,7 @@ noct_get_array_elem_check_int(
 	if (!noct_get_value_type(env, val, &type))
 		return false;
 	if (type != NOCT_VALUE_INT) {
-		rt_error(env, _("Element %d is not an integer."), index);
+		rt_error(env, N_TR("Element %d is not an integer."), index);
 		return false;
 	}
 
@@ -1139,7 +1139,7 @@ noct_get_array_elem_check_float(
 	if (!noct_get_value_type(env, val, &type))
 		return false;
 	if (type != NOCT_VALUE_FLOAT) {
-		rt_error(env, _("Element %d is not a float."), index);
+		rt_error(env, N_TR("Element %d is not a float."), index);
 		return false;
 	}
 
@@ -1174,7 +1174,7 @@ noct_get_array_elem_check_string(
 	if (!noct_get_value_type(env, val, &type))
 		return false;
 	if (type != NOCT_VALUE_FLOAT) {
-		rt_error(env, _("Element %d is not a float."), index);
+		rt_error(env, N_TR("Element %d is not a float."), index);
 		return false;
 	}
 
@@ -1203,7 +1203,7 @@ noct_get_array_elem_check_array(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Element %d is not an array."), index);
+		rt_error(env, N_TR("Element %d is not an array."), index);
 		return false;
 	}
 
@@ -1229,7 +1229,7 @@ noct_get_array_elem_dict(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Element %d is not a dictionary."), index);
+		rt_error(env, N_TR("Element %d is not a dictionary."), index);
 		return false;
 	}
 
@@ -1256,7 +1256,7 @@ noct_get_array_elem_check_func(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_FUNC) {
-		rt_error(env, _("Element %d is not a function."), index);
+		rt_error(env, N_TR("Element %d is not a function."), index);
 		return false;
 	}
 
@@ -1373,7 +1373,7 @@ noct_get_dict_elem_check_int(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_INT) {
-		rt_error(env, _("Element %d is not an integer."), i);
+		rt_error(env, N_TR("Element %d is not an integer."), i);
 		return false;
 	}
 
@@ -1404,7 +1404,7 @@ noct_get_dict_elem_check_float(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_FLOAT) {
-		rt_error(env, _("Value for key %s is not a float."), key);
+		rt_error(env, N_TR("Value for key %s is not a float."), key);
 		return false;
 	}
 
@@ -1435,7 +1435,7 @@ noct_get_dict_elem_check_string(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_STRING) {
-		rt_error(env, _("Value for key %s is not a string."), key);
+		rt_error(env, N_TR("Value for key %s is not a string."), key);
 		return false;
 	}
 
@@ -1464,7 +1464,7 @@ noct_get_dict_elem_check_array(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Value for key %s is not an array."), key);
+		rt_error(env, N_TR("Value for key %s is not an array."), key);
 		return false;
 	}
 
@@ -1490,7 +1490,7 @@ noct_get_dict_elem_check_dict(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Value for key %s is not a dictionary."), key);
+		rt_error(env, N_TR("Value for key %s is not a dictionary."), key);
 		return false;
 	}
 
@@ -1518,7 +1518,7 @@ noct_get_dict_elem_check_func(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_FUNC) {
-		rt_error(env, _("Value for key %s is not a function."), key);
+		rt_error(env, N_TR("Value for key %s is not a function."), key);
 		return false;
 	}
 
@@ -1631,7 +1631,7 @@ noct_get_arg_check_int(
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_INT) {
-		rt_error(env, _("Argument (%d: %s) not an integer."),
+		rt_error(env, N_TR("Argument (%d: %s) not an integer."),
 			 index,
 			 env->frame->func->param_name[index]);
 		return false;
@@ -1662,7 +1662,7 @@ noct_get_arg_float(
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_FLOAT) {
-		rt_error(env, _("Argument (%d: %s) not a float."),
+		rt_error(env, N_TR("Argument (%d: %s) not a float."),
 			 index,
 			 env->frame->func->param_name[index]);
 		return false;
@@ -1693,7 +1693,7 @@ noct_get_arg_check_string(
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_STRING) {
-		rt_error(env, _("Argument (%d: %s) not a string."),
+		rt_error(env, N_TR("Argument (%d: %s) not a string."),
 			 index,
 			 env->frame->func->param_name[index]);
 		return false;
@@ -1722,7 +1722,7 @@ noct_get_arg_check_array(
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_ARRAY) {
-		rt_error(env, _("Argument (%d: %s) not an array."),
+		rt_error(env, N_TR("Argument (%d: %s) not an array."),
 			 index,
 			 env->frame->func->param_name[index]);
 		return false;
@@ -1749,7 +1749,7 @@ noct_get_arg_check_dict(
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_DICT) {
-		rt_error(env, _("Argument (%d: %s) not a dictionary."),
+		rt_error(env, N_TR("Argument (%d: %s) not a dictionary."),
 			 index,
 			 env->frame->func->param_name[index]);
 		return false;
@@ -1777,7 +1777,7 @@ noct_get_arg_func(
 
 	/* Check the value type. */
 	if (val->type != NOCT_VALUE_FUNC) {
-		rt_error(env, _("Argument (%d: %s) not a function."),
+		rt_error(env, N_TR("Argument (%d: %s) not a function."),
 			 index,
 			 env->frame->func->param_name[index]);
 		return false;

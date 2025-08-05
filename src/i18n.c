@@ -8,7 +8,7 @@
  * Pseudo gettext support.
  */
 
-#if defined(USE_GETTEXT_COMPAT)
+#if defined(USE_TRANSLATION)
 
 #include <string.h>
 #include <locale.h>

@@ -100,14 +100,14 @@ int main(int argc, char *argv[])
 /* Show the usage message. */
 static void show_usage(void)
 {
-	wide_printf(_("Noct Programming Language "));
-	wide_printf(_("Version %s\n"), VERSION);
+	wide_printf(N_TR("Noct Programming Language "));
+	wide_printf(N_TR("Version %s\n"), VERSION);
 	wide_printf("\n");
-	wide_printf(_("Usage\n"));
-	wide_printf(_("  noct <file>                        ... run a program\n"));
-	wide_printf(_("  noct --compile <files>             ... convert to bytecode files\n"));
-	wide_printf(_("  noct --ansic <out file> <in files> ... convert to a C source file\n"));
-	wide_printf(_("  noct --elisp <out file> <in files> ... convert to an Emacs Lisp source file\n"));
+	wide_printf(N_TR("Usage\n"));
+	wide_printf(N_TR("  noct <file>                        ... run a program\n"));
+	wide_printf(N_TR("  noct --compile <files>             ... convert to bytecode files\n"));
+	wide_printf(N_TR("  noct --ansic <out file> <in files> ... convert to a C source file\n"));
+	wide_printf(N_TR("  noct --elisp <out file> <in files> ... convert to an Emacs Lisp source file\n"));
 }
 
 /*
@@ -139,13 +139,13 @@ static int command_run(int argc, char *argv[])
 			continue;
 		}
 
-		wide_printf(_("Unknown option %s.\n"), argv[1]);
+		wide_printf(N_TR("Unknown option %s.\n"), argv[1]);
 		return 1;
 	}
 
 	/* Check if a file is specified. */
 	if (file_arg == argc) {
-		wide_printf(_("Specify a file.\n"));
+		wide_printf(N_TR("Specify a file.\n"));
 		return 1;
 	}
 
@@ -170,7 +170,7 @@ static int command_run(int argc, char *argv[])
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 			return 1;
 		}
 	} else {
@@ -181,7 +181,7 @@ static int command_run(int argc, char *argv[])
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 			return 1;
 		}
 	}
@@ -207,7 +207,7 @@ static int command_run(int argc, char *argv[])
 		noct_get_error_file(env, &file);
 		noct_get_error_line(env, &line);
 		noct_get_error_message(env, &msg);
-		wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+		wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 		return 1;
 	}
 
@@ -269,7 +269,7 @@ static bool compile_source(const char *file_name)
 
 	/* Do parse, build AST. */
 	if (!ast_build(file_name, source_data)) {
-		wide_printf(_("Error: %s: %d: %s\n"),
+		wide_printf(N_TR("Error: %s: %d: %s\n"),
 			    ast_get_file_name(),
 			    ast_get_error_line(),
 			    ast_get_error_message());
@@ -278,7 +278,7 @@ static bool compile_source(const char *file_name)
 
 	/* Transform AST to HIR. */
 	if (!hir_build()) {
-		wide_printf(_("Error: %s: %d: %s\n"),
+		wide_printf(N_TR("Error: %s: %d: %s\n"),
 			    hir_get_file_name(),
 			    hir_get_error_line(),
 			    hir_get_error_message());
@@ -296,7 +296,7 @@ static bool compile_source(const char *file_name)
 	/* Open an output .nb bytecode file. */
 	fp = fopen(bc_fname, "wb");
 	if (fp == NULL) {
-		wide_printf(_("Cannot open file %s.\n"), bc_fname);
+		wide_printf(N_TR("Cannot open file %s.\n"), bc_fname);
 		return false;
 	}
 
@@ -316,7 +316,7 @@ static bool compile_source(const char *file_name)
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(i);
 		if (!lir_build(hfunc, &lfunc)) {
-			wide_printf(_("Error: %s: %d: %s\n"),
+			wide_printf(N_TR("Error: %s: %d: %s\n"),
 				    lir_get_file_name(),
 				    lir_get_error_line(),
 				    lir_get_error_message());
@@ -405,7 +405,7 @@ static bool add_file_hook_c(const char *fname)
 
 	/* Do parse, build AST. */
 	if (!ast_build(fname, data)) {
-		wide_printf(_("Error: %s: %d: %s\n"),
+		wide_printf(N_TR("Error: %s: %d: %s\n"),
 			    ast_get_file_name(),
 			    ast_get_error_line(),
 			    ast_get_error_message());
@@ -414,7 +414,7 @@ static bool add_file_hook_c(const char *fname)
 
 	/* Transform AST to HIR. */
 	if (!hir_build()) {
-		wide_printf(_("Error: %s: %d: %s\n"),
+		wide_printf(N_TR("Error: %s: %d: %s\n"),
 			    hir_get_file_name(),
 			    hir_get_error_line(),
 			    hir_get_error_message());
@@ -430,7 +430,7 @@ static bool add_file_hook_c(const char *fname)
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(j);
 		if (!lir_build(hfunc, &lfunc)) {
-			wide_printf(_("Error: %s: %d: %s\n"),
+			wide_printf(N_TR("Error: %s: %d: %s\n"),
 				    lir_get_file_name(),
 				    lir_get_error_line(),
 				    lir_get_error_message());
@@ -505,7 +505,7 @@ static bool add_file_hook_elisp(const char *fname)
 
 	/* Do parse, build AST. */
 	if (!ast_build(fname, data)) {
-		wide_printf(_("Error: %s: %d: %s\n"),
+		wide_printf(N_TR("Error: %s: %d: %s\n"),
 			    ast_get_file_name(),
 			    ast_get_error_line(),
 			    ast_get_error_message());
@@ -514,7 +514,7 @@ static bool add_file_hook_elisp(const char *fname)
 
 	/* Transform AST to HIR. */
 	if (!hir_build()) {
-		wide_printf(_("Error: %s: %d: %s\n"),
+		wide_printf(N_TR("Error: %s: %d: %s\n"),
 			    hir_get_file_name(),
 			    hir_get_error_line(),
 			    hir_get_error_message());
@@ -562,13 +562,13 @@ int command_repl(void)
 	if (!register_ffi(env))
 		return 1;
 
-	wide_printf(_("Noct Programming Language "));
-	wide_printf(_("Version %s\n"), VERSION);
+	wide_printf(N_TR("Noct Programming Language "));
+	wide_printf(N_TR("Version %s\n"), VERSION);
 #ifdef USE_JIT
 	if (noct_conf_use_jit)
-		wide_printf(_("JIT compilation is enabled. Starting the fast VM...\n"));
+		wide_printf(N_TR("JIT compilation is enabled. Starting the fast VM...\n"));
 #endif
-	wide_printf(_("Entering REPL mode.\n"));
+	wide_printf(N_TR("Entering REPL mode.\n"));
 	wide_printf("\n");
 
 	/* Prompt. */
@@ -603,7 +603,7 @@ int command_repl(void)
 				noct_get_error_file(env, &file);
 				noct_get_error_line(env, &line);
 				noct_get_error_message(env, &msg);
-				wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+				wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 				continue;
 			}
 
@@ -614,7 +614,7 @@ int command_repl(void)
 				noct_get_error_file(env, &file);
 				noct_get_error_line(env, &line);
 				noct_get_error_message(env, &msg);
-				wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+				wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 				continue;
 			}
 		} else {
@@ -647,7 +647,7 @@ int command_repl(void)
 				noct_get_error_file(env, &file);
 				noct_get_error_line(env, &line);
 				noct_get_error_message(env, &msg);
-				wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+				wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 				continue;
 			}
 
@@ -660,7 +660,7 @@ int command_repl(void)
 					noct_get_error_file(env, &file);
 					noct_get_error_line(env, &line);
 					noct_get_error_message(env, &msg);
-					wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+					wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 					continue;
 				}
 			}
@@ -746,7 +746,7 @@ static bool load_file_content(const char *fname, char **data, size_t *size)
 	/* Open the file. */
 	fp = fopen(fname, "rb");
 	if (fp == NULL) {
-		wide_printf(_("Cannot open file %s.\n"), fname);
+		wide_printf(N_TR("Cannot open file %s.\n"), fname);
 		return false;
 	}
 
@@ -758,13 +758,13 @@ static bool load_file_content(const char *fname, char **data, size_t *size)
 	/* Allocate a buffer. */
 	*data = malloc(*size + 1);
 	if (*data == NULL) {
-		wide_printf(_("Out of memory.\n"));
+		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
 
 	/* Read the data. */
 	if (fread(*data, 1, *size, fp) != *size) {
-		wide_printf(_("Cannot read file %s.\n"), fname);
+		wide_printf(N_TR("Cannot read file %s.\n"), fname);
 		return false;
 	}
 
@@ -811,7 +811,7 @@ static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 	struct stat st;
 
 	if (stat(fname, &st) != 0) {
-		printf(_("Cannot find %s.\n"), fname);
+		printf(N_TR("Cannot find %s.\n"), fname);
 		return false;
 	}
 	if (S_ISDIR(st.st_mode)) {
@@ -819,12 +819,12 @@ static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 		int count;
 		int i;
 
-		printf(_("Searching directory %s.\n"), fname);
+		printf(N_TR("Searching directory %s.\n"), fname);
 
 		/* Get directory content. */
 		count = scandir(fname, &names, NULL, alphasort);
 		if (count < 0) {
-			wide_printf(_("Skipping empty directory %s.\n"), fname);
+			wide_printf(N_TR("Skipping empty directory %s.\n"), fname);
 			return false;
 		}
 
@@ -841,7 +841,7 @@ static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 				return false;
 		}
 	} else if(S_ISREG(st.st_mode)) {
-		wide_printf(_("Adding file %s.\n"), fname);
+		wide_printf(N_TR("Adding file %s.\n"), fname);
 		if (!add_file_hook(fname))
 			return false;
 	}
@@ -911,7 +911,7 @@ static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 	}
 	else
 	{
-		wide_printf(_("Adding file %s\n"), fname);
+		wide_printf(N_TR("Adding file %s\n"), fname);
 		if (!add_file_hook(fname))
 			return false;
 	}
@@ -1025,7 +1025,7 @@ cfunc_import(
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 			return false;
 		}
 	} else {
@@ -1036,7 +1036,7 @@ cfunc_import(
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(_("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
 			return false;
 		}
 	}
@@ -1146,7 +1146,7 @@ cfunc_readfilelines(
 
 	fp = fopen(file, "r");
 	if (fp == NULL) {
-		noct_error(rt, _("Cannon open file %s."), file);
+		noct_error(rt, N_TR("Cannon open file %s."), file);
 		return false;
 	}
 
@@ -1195,7 +1195,7 @@ cfunc_writefilelines(
 
 	fp = fopen(file, "wb");
 	if (fp == NULL) {
-		noct_error(rt, _("Cannon open file %s."), file);
+		noct_error(rt, N_TR("Cannon open file %s."), file);
 		return false;
 	}
 

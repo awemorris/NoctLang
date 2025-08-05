@@ -8,6 +8,10 @@
  * Language Runtime
  */
 
+#include <noct/noct.h>
+#include "ast.h"
+#include "hir.h"
+#include "lir.h"
 #include "runtime.h"
 #include "intrinsics.h"
 #include "interpreter.h"
@@ -435,7 +439,7 @@ rt_register_bytecode(
 		noct_free(file_name);
 
 	if (!succeeded) {
-		rt_error(env, _("Failed to load bytecode."));
+		rt_error(env, N_TR("Failed to load bytecode."));
 		return false;
 	}
 
@@ -547,7 +551,7 @@ rt_register_bytecode_function(
 	}
 
 	if (!succeeded) {
-		noct_error(env, _("Failed to load bytecode data."));
+		noct_error(env, N_TR("Failed to load bytecode data."));
 		return false;
 	}
 
@@ -664,7 +668,7 @@ rt_call_with_name(
 		func_ok = true;
 	} while (0);
 	if (!func_ok) {
-		noct_error(env, _("Cannot find function %s."), func_name);
+		noct_error(env, N_TR("Cannot find function %s."), func_name);
 		return false;
 	}
 	func = global->val.val.func;
@@ -706,7 +710,7 @@ rt_call(
 
 	/* Pass args. */
 	if (arg_count != func->param_count) {
-		noct_error(env, _("Function arguments not match."));
+		noct_error(env, N_TR("Function arguments not match."));
 		return false;
 	}
 	for (i = 0; i < arg_count; i++)
@@ -757,7 +761,7 @@ rt_enter_frame(
 	struct rt_frame *frame;
 
 	if (++env->cur_frame_index >= RT_FRAME_MAX) {
-		rt_error(env, _("Stack overflow."));
+		rt_error(env, N_TR("Stack overflow."));
 		return false;
 	}
 
@@ -784,7 +788,7 @@ rt_leave_frame(
 	struct rt_frame *frame;
 
 	if (--env->cur_frame_index < 0) {
-		rt_error(env, _("Stack underflow."));
+		rt_error(env, N_TR("Stack underflow."));
 		abort();
 	}
 
@@ -1031,7 +1035,7 @@ rt_get_dict_elem(
 	}
 
 	/* Failed. */
-	rt_error(env, _("Dictionary key \"%s\" not found."), key);
+	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
 	return false;
 }
 
@@ -1164,7 +1168,7 @@ rt_get_global(
 		global = global->next;
 	}
 	if (global == NULL) {
-		noct_error(env, _("Global variable \"%s\" not found."), name);
+		noct_error(env, N_TR("Global variable \"%s\" not found."), name);
 		return false;
 	}
 
@@ -1341,5 +1345,5 @@ void
 rt_out_of_memory(
 	struct rt_env *env)
 {
-	noct_error(env, _("Out of memory."));
+	noct_error(env, N_TR("Out of memory."));
 }

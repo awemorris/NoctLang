@@ -8,8 +8,8 @@
  * C89 Compatibility
  */
 
-#ifndef C89COMPAT_H
-#define C89COMPAT_H
+#ifndef NOCT_C89COMPAT_H
+#define NOCT_C89COMPAT_H
 
 /*
  * Here, we define two macros that indicates the target architecture
@@ -419,11 +419,12 @@ inline void strlcat(char *d, const char *s, size_t len)
 /*
  * Message Translation
  */
-#if !defined(_)
-#if defined(USE_GETTEXT_COMPAT)
-#define _(s)	gettextcompat_gettext(
+#if !defined(N_TR)
+#if defined(USE_TRANSLATION)
+#define N_TR(s)	noct_gettext(s)
+const char *noct_gettext(const char *s);
 #else
-#define _(s)	(s)
+#define N_TR(s)	(s)
 #endif
 #endif
 

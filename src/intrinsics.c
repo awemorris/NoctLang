@@ -131,7 +131,7 @@ rt_intrin_pop(
 	if (!noct_get_array_size(env, &arr, &size))
 		return false;
 	if (size == 0) {
-		noct_error(env, _("Empty array."));
+		noct_error(env, N_TR("Empty array."));
 		return false;
 	}
 

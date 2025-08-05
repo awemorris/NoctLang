@@ -1008,7 +1008,7 @@ lir_visit_stmt(
 
 			lir_decrement_tmpvar(obj_tmpvar);
 		} else {
-			lir_fatal(_("LHS is not a term or an array element."));
+			lir_fatal(N_TR("LHS is not a term or an array element."));
 			return false;
 		}
 	}
@@ -1723,7 +1723,7 @@ lir_increment_tmpvar(
 	int *tmpvar_index)
 {
 	if (tmpvar_top >= TMPVAR_MAX) {
-		lir_fatal(_("Too many local variables."));
+		lir_fatal(N_TR("Too many local variables."));
 		return false;
 	}
 
@@ -1795,7 +1795,7 @@ static bool lir_put_branch_addr(
 	assert(block != NULL);
 
 	if (loc_count >= LOC_MAX) {
-		lir_fatal(_("Too many jumps."));
+		lir_fatal(N_TR("Too many jumps."));
 		return false;
 	}
 
@@ -1820,7 +1820,7 @@ static bool lir_put_incrementer_addr(
 	assert(block->type == HIR_BLOCK_FOR);
 
 	if (loc_count >= LOC_MAX) {
-		lir_fatal(_("Too many jumps."));
+		lir_fatal(N_TR("Too many jumps."));
 		return false;
 	}
 
@@ -1999,12 +1999,14 @@ lir_out_of_memory(void)
 	snprintf(lir_error_message,
 		 sizeof(lir_error_message),
 		 "%s",
-		 _("LIR: Out of memory error."));
+		 N_TR("LIR: Out of memory error."));
 }
 
 /*
  * Dump
  */
+
+#ifdef DEBUG_DUMP_LIR
 
 /* IMM 1-byte */
 #define IMM1(d) imm1(&pc, &d)
@@ -2329,3 +2331,5 @@ lir_dump(
 		}
 	}
 }
+
+#endif /* DEBUG_DUMP_LIR */

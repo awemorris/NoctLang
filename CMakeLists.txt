@@ -157,7 +157,7 @@ if(ENABLE_JIT)
 endif()
 
 if(ENABLE_I18N)
-  target_compile_definitions(noctlang PRIVATE USE_GETTEXT_COMPAT)
+  target_compile_definitions(noctlang PRIVATE USE_TRANSLATION)
 endif()  
 
 if(WIN32)

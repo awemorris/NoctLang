@@ -38,7 +38,7 @@ jit_free(
 #if defined(USE_JIT)
 
 /* Error message. */
-#define BROKEN_BYTECODE		_("Broken bytecode.")
+#define BROKEN_BYTECODE		N_TR("Broken bytecode.")
 
 /* Code size. */
 #define JIT_CODE_MAX	(16 * 1024 * 1024)
