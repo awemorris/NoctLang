@@ -87,6 +87,11 @@ static int lir_error_line;
 static char lir_error_message[1024];
 
 /*
+ * noct.c
+ */
+char *noct_strdup(const char *s);
+
+/*
  * Forward declaration.
  */
 static int lir_count_local(struct hir_block *func);
@@ -150,7 +155,7 @@ lir_build(
 	assert(hir_func->type == HIR_BLOCK_FUNC);
 
 	/* Copy the file name. */
-	lir_file_name = strdup(hir_func->val.func.file_name);
+	lir_file_name = noct_strdup(hir_func->val.func.file_name);
 	if (lir_file_name == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -197,7 +202,7 @@ lir_build(
 	}
 
 	/* Copy the function name. */
-	(*lir_func)->func_name = strdup(hir_func->val.func.name);
+	(*lir_func)->func_name = noct_strdup(hir_func->val.func.name);
 	if ((*lir_func)->func_name == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -206,7 +211,7 @@ lir_build(
 	/* Copy the parameter names.  */
 	(*lir_func)->param_count = hir_func->val.func.param_count;
 	for (i = 0; i < hir_func->val.func.param_count; i++) {
-		(*lir_func)->param_name[i] = strdup(hir_func->val.func.param_name[i]);
+		(*lir_func)->param_name[i] = noct_strdup(hir_func->val.func.param_name[i]);
 		if ((*lir_func)->param_name[i] == NULL) {
 			lir_out_of_memory();
 			return false;
@@ -223,7 +228,7 @@ lir_build(
 	memcpy((*lir_func)->bytecode, bytecode, (size_t)bytecode_top);
 
 	/* Copy the file name. */
-	(*lir_func)->file_name = strdup(hir_func->val.func.file_name);
+	(*lir_func)->file_name = noct_strdup(hir_func->val.func.file_name);
 	if ((*lir_func)->file_name == NULL) {
 		lir_out_of_memory();
 		return false;

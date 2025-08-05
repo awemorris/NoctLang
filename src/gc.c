@@ -124,7 +124,7 @@ rt_gc_init(
 	vm->gc.cur_grad_to = 1;
 
 	/* Initialize the tenure allocator.  */
-	vm->gc.tenure_freelist.top = malloc(RT_GC_TENURE_SIZE);
+	vm->gc.tenure_freelist.top = noct_malloc(RT_GC_TENURE_SIZE);
 	if (vm->gc.tenure_freelist.top == NULL)
 		return false;
 	memset(vm->gc.tenure_freelist.top, 0, RT_GC_TENURE_SIZE);
