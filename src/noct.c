@@ -15,9 +15,6 @@
 #include <stdarg.h>
 #include <assert.h>
 
-NOCT_DLL void *(*noct_malloc)(size_t size) = malloc;
-NOCT_DLL void (*noct_free)(void *p) = free;
-
 NOCT_DLL
 bool
 noct_create_vm(

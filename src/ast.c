@@ -104,7 +104,6 @@ ast_build(
 	/* Copy the file name. */
 	ast_file_name = ast_strdup(file_name);
 	if (ast_file_name == NULL) {
->>>>>>> rollback2
 		ast_out_of_memory();
 		return false;
 	}

@@ -264,6 +264,7 @@ hir_visit_func(
 	if (func_block->val.func.file_name == NULL) {
 		hir_out_of_memory();
 		return false;
+	}
 
 	do {
 		/* Set a func name. */
