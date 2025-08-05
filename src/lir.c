@@ -8,6 +8,7 @@
  * LIR: Low-level intermediate representation
  */
 
+#include <noct/noct.h>
 #include "lir.h"
 #include "hir.h"
 #include "bytecode.h"
@@ -86,6 +87,11 @@ static int lir_error_line;
 static char lir_error_message[1024];
 
 /*
+ * noct.c
+ */
+char *noct_strdup(const char *s);
+
+/*
  * Forward declaration.
  */
 static int lir_count_local(struct hir_block *func);
@@ -149,7 +155,7 @@ lir_build(
 	assert(hir_func->type == HIR_BLOCK_FUNC);
 
 	/* Copy the file name. */
-	lir_file_name = strdup(hir_func->val.func.file_name);
+	lir_file_name = noct_strdup(hir_func->val.func.file_name);
 	if (lir_file_name == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -189,14 +195,14 @@ lir_build(
 	patch_block_address();
 
 	/* Make an lir_func. */
-	*lir_func = malloc(sizeof(struct lir_func));
+	*lir_func = noct_malloc(sizeof(struct lir_func));
 	if (lir_func == NULL) {
 		lir_out_of_memory();
 		return false;
 	}
 
 	/* Copy the function name. */
-	(*lir_func)->func_name = strdup(hir_func->val.func.name);
+	(*lir_func)->func_name = noct_strdup(hir_func->val.func.name);
 	if ((*lir_func)->func_name == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -205,7 +211,7 @@ lir_build(
 	/* Copy the parameter names.  */
 	(*lir_func)->param_count = hir_func->val.func.param_count;
 	for (i = 0; i < hir_func->val.func.param_count; i++) {
-		(*lir_func)->param_name[i] = strdup(hir_func->val.func.param_name[i]);
+		(*lir_func)->param_name[i] = noct_strdup(hir_func->val.func.param_name[i]);
 		if ((*lir_func)->param_name[i] == NULL) {
 			lir_out_of_memory();
 			return false;
@@ -213,7 +219,7 @@ lir_build(
 	}
 
 	/* Copy the bytecode. */
-	(*lir_func)->bytecode = malloc((size_t)bytecode_top);
+	(*lir_func)->bytecode = noct_malloc((size_t)bytecode_top);
 	if ((*lir_func)->bytecode == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -222,7 +228,7 @@ lir_build(
 	memcpy((*lir_func)->bytecode, bytecode, (size_t)bytecode_top);
 
 	/* Copy the file name. */
-	(*lir_func)->file_name = strdup(hir_func->val.func.file_name);
+	(*lir_func)->file_name = noct_strdup(hir_func->val.func.file_name);
 	if ((*lir_func)->file_name == NULL) {
 		lir_out_of_memory();
 		return false;
@@ -1930,16 +1936,16 @@ patch_block_address(void)
  * Free a constructed LIR.
  */
 void
-lir_free(struct lir_func *func)
+lir_cleanup(struct lir_func *func)
 {
 	int i;
 
 	assert(func != NULL);
 
-	free(func->func_name);
+	noct_free(func->func_name);
 	for (i = 0; i < func->param_count; i++)
-		free(func->param_name[i]);
-	free(func->bytecode);
+		noct_free(func->param_name[i]);
+	noct_free(func->bytecode);
 	memset(func, 0, sizeof(struct lir_func));
 }
 

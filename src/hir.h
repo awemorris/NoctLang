@@ -312,7 +312,7 @@ struct hir_local {
 bool hir_build(void);
 
 /* Free constructed HIR functions. */
-void hir_free(void);
+void hir_cleanup(void);
 
 /* Get a number of constructed HIR functions. */
 int hir_get_function_count(void);

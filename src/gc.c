@@ -124,7 +124,7 @@ rt_gc_init(
 	vm->gc.cur_grad_to = 1;
 
 	/* Initialize the tenure allocator.  */
-	vm->gc.tenure_freelist.top = malloc(RT_GC_TENURE_SIZE);
+	vm->gc.tenure_freelist.top = noct_malloc(RT_GC_TENURE_SIZE);
 	if (vm->gc.tenure_freelist.top == NULL)
 		return false;
 	memset(vm->gc.tenure_freelist.top, 0, RT_GC_TENURE_SIZE);
@@ -152,7 +152,7 @@ void env_gc_cleanup(struct rt_vm *vm)
 	arena_cleanup(&vm->gc.graduate_arena[1]);
 
 	/* Cleanup the tenure allocator. */
-	free(vm->gc.tenure_freelist.top);
+	noct_free(vm->gc.tenure_freelist.top);
 }
 
 /*
@@ -1505,14 +1505,14 @@ rt_gc_compact_gc(
 	 */
 
 	/* Allocate the compaction table. */
-	env->vm->gc.compact_before = malloc(env->vm->gc.compact_count * sizeof(void *));
+	env->vm->gc.compact_before = noct_malloc(env->vm->gc.compact_count * sizeof(void *));
 	if (env->vm->gc.compact_before == NULL) {
 		rt_out_of_memory(env);
 		return false;
 	}
-	env->vm->gc.compact_after = malloc(env->vm->gc.compact_count * sizeof(void *));
+	env->vm->gc.compact_after = noct_malloc(env->vm->gc.compact_count * sizeof(void *));
 	if (env->vm->gc.compact_after == NULL) {
-		free(env->vm->gc.compact_before);
+		noct_free(env->vm->gc.compact_before);
 		rt_out_of_memory(env);
 		return false;
 	}
@@ -1639,11 +1639,11 @@ rt_gc_compact_gc(
 	 */
 
 	if (env->vm->gc.compact_before != NULL) {
-		free(env->vm->gc.compact_before);
+		noct_free(env->vm->gc.compact_before);
 		env->vm->gc.compact_before = NULL;
 	}
 	if (env->vm->gc.compact_after != NULL) {
-		free(env->vm->gc.compact_after);
+		noct_free(env->vm->gc.compact_after);
 		env->vm->gc.compact_after = NULL;
 	}
 

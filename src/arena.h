@@ -59,12 +59,23 @@ arena_alloc(
 {
 	void *p;
 	size = (size + ARENA_ALIGN - 1) & ~(ARENA_ALIGN - 1);
-	if (arena->cur + size >= arena->top + arena->size) {
+	if (arena->cur + sizeof(size_t) + size >= arena->top + arena->size) {
 		return NULL;
 	}
-	p = arena->cur;
-	arena->cur += size;
+	p = arena->cur + sizeof(size_t);
+	*(size_t *)arena->cur = size;
+	arena->cur += sizeof(size_t) + size;
 	return p;
+}
+
+/*
+ * Get the size of a block.
+ */
+static INLINE size_t
+arena_get_block_size(
+	const void *p)
+{
+	return *(size_t *)((const char *)p - sizeof(size_t));
 }
 
 /*

@@ -53,10 +53,8 @@ struct rt_func;
  */
 typedef struct rt_vm     NoctVM;
 typedef struct rt_env    NoctEnv;
-typedef struct rt_frame  NoctFrame;
 typedef struct rt_value  NoctValue;
 typedef struct rt_func   NoctFunc;
-typedef struct rt_string NoctString;
 
 /*
  * Value type.
@@ -100,6 +98,15 @@ struct rt_value {
 		struct rt_gc_object *obj;
 	} val;
 };
+
+/*
+ * Custom Allocators
+ */
+
+extern void *(*noct_malloc)(size_t size);
+extern void (*noct_free)(void *p);
+
+char *noct_strdup(const char *s);
 
 /*
  * Core Functions

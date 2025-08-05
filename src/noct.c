@@ -15,6 +15,9 @@
 #include <stdarg.h>
 #include <assert.h>
 
+NOCT_DLL void *(*noct_malloc)(size_t size) = malloc;
+NOCT_DLL void (*noct_free)(void *p) = free;
+
 NOCT_DLL
 bool
 noct_create_vm(
@@ -1855,4 +1858,17 @@ noct_set_return_make_string(
 		return false;
 
 	return true;
+}
+
+char *noct_strdup(const char *s)
+{
+	char *ret;
+
+	ret = noct_malloc(strlen(s) + 1);
+	if (ret == NULL)
+		return NULL;
+
+	strcpy(ret, s);
+
+	return ret;
 }

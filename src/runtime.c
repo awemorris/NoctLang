@@ -57,7 +57,7 @@ rt_create_vm(
 	struct rt_env **default_env)
 {
 	/* Allocate a struct rt_vm. */
-	*vm = malloc(sizeof(struct rt_vm));
+	*vm = noct_malloc(sizeof(struct rt_vm));
 	if (*vm == NULL) {
 		*default_env = NULL;
 		return false;
@@ -65,9 +65,9 @@ rt_create_vm(
 	memset(*vm, 0, sizeof(struct rt_vm));
 
 	/* Allocate a struct rt_env. */
-	*default_env = malloc(sizeof(struct rt_env));
+	*default_env = noct_malloc(sizeof(struct rt_env));
 	if (*default_env == NULL) {
-		free(*vm);
+		noct_free(*vm);
 		*vm = NULL;
 		return false;
 	}
@@ -88,16 +88,16 @@ rt_create_vm(
 
 	/* Initialize the garbage collector. */
 	if (!rt_gc_init(*vm)) {
-		free(*default_env);
-		free(*vm);
+		noct_free(*default_env);
+		noct_free(*vm);
 		return false;
 	}
 
 	/* Register the intrinsics. */
 	if (!rt_register_intrinsics(*default_env)) {
 		rt_gc_cleanup(*vm);
-		free(*default_env);
-		free(*vm);
+		noct_free(*default_env);
+		noct_free(*vm);
 		return false;
 	}
 
@@ -122,7 +122,7 @@ rt_destroy_vm(
 	env = vm->env_list;
 	while (env != NULL) {
 		next_env = env->next;
-		free(env);
+		noct_free(env);
 		env = next_env;
 	}
 
@@ -138,7 +138,7 @@ rt_destroy_vm(
 	}
 
 	/* Free rt_env. */
-	free(vm);
+	noct_free(vm);
 
 	return true;
 }
@@ -151,7 +151,7 @@ rt_free_func(
 {
 	int i;
 
-	free(func->name);
+	noct_free(func->name);
 	func->name = NULL;
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		if (func->param_name[i] != NULL) {
@@ -159,8 +159,8 @@ rt_free_func(
 			func->param_name[i] = NULL;
 		}
 	}
-	free(func->file_name);
-	free(func->bytecode);
+	noct_free(func->file_name);
+	noct_free(func->bytecode);
 
 	if (func->jit_code != NULL)
 		func->jit_code = NULL;
@@ -178,7 +178,7 @@ rt_create_thread_env(
 	struct rt_env *env;
 
 	/* Allocate a struct rt_env. */
-	env = malloc(sizeof(struct rt_env));
+	env = noct_malloc(sizeof(struct rt_env));
 	if (env == NULL) {
 		rt_out_of_memory(prev_env);
 		return false;
@@ -284,7 +284,7 @@ rt_register_source(
 				break;
 
 			/* Free a LIR. */
-			lir_free(lfunc);
+			lir_cleanup(lfunc);
 		}
 		if (i != func_count)
 			break;
@@ -293,8 +293,8 @@ rt_register_source(
 	} while (0);
 
 	/* Free intermediates. */
-	hir_free();
-	ast_free();
+	hir_cleanup();
+	ast_cleanup();
 
 	/* If failed. */
 	if (!is_succeeded)
@@ -314,7 +314,7 @@ rt_register_lir(
 	struct rt_bindglobal *global;
 	int i;
 
-	func = malloc(sizeof(struct rt_func));
+	func = noct_malloc(sizeof(struct rt_func));
 	if (func == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -335,7 +335,7 @@ rt_register_lir(
 		}
 	}
 	func->bytecode_size = lir->bytecode_size;
-	func->bytecode = malloc((size_t)lir->bytecode_size);
+	func->bytecode = noct_malloc((size_t)lir->bytecode_size);
 	if (func->bytecode == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -349,7 +349,7 @@ rt_register_lir(
 	}
 
 	/* Insert a bindglobal. */
-	global = malloc(sizeof(struct rt_bindglobal));
+	global = noct_malloc(sizeof(struct rt_bindglobal));
 	if (global == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -437,7 +437,7 @@ rt_register_bytecode(
 	} while (0);
 
 	if (file_name != NULL)
-		free(file_name);
+		noct_free(file_name);
 
 	if (!succeeded) {
 		rt_error(env, _("Failed to load bytecode."));
@@ -544,11 +544,11 @@ rt_register_bytecode_function(
 	} while (0);
 
 	if (lfunc.func_name != NULL)
-		free(lfunc.func_name);
+		noct_free(lfunc.func_name);
 
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		if (lfunc.param_name[i] != NULL)
-			free(lfunc.param_name[i]);
+			noct_free(lfunc.param_name[i]);
 	}
 
 	if (!succeeded) {
@@ -599,7 +599,7 @@ rt_register_cfunc(
 	struct rt_bindglobal *global;
 	int i;
 
-	func = malloc(sizeof(struct rt_func));
+	func = noct_malloc(sizeof(struct rt_func));
 	if (func == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -622,7 +622,7 @@ rt_register_cfunc(
 	func->cfunc = cfunc;
 	func->tmpvar_size = param_count + 1;
 
-	global = malloc(sizeof(struct rt_bindglobal));
+	global = noct_malloc(sizeof(struct rt_bindglobal));
 	if (global == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -1236,7 +1236,7 @@ rt_add_global(
 {
 	struct rt_bindglobal *g;
 
-	g = malloc(sizeof(struct rt_bindglobal));
+	g = noct_malloc(sizeof(struct rt_bindglobal));
 	if (g == NULL) {
 		rt_out_of_memory(env);
 		return false;

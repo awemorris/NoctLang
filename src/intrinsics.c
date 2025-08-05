@@ -214,7 +214,7 @@ rt_intrin_substring(
 	if (start_i + len_i > slen)
 		len_i = slen - start_i;
 
-	s = malloc((size_t)(len_i + 1));
+	s = noct_malloc((size_t)(len_i + 1));
 	if (s == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -225,7 +225,7 @@ rt_intrin_substring(
 	if (!noct_set_return_make_string(env, &ret, s))
 		return false;
 
-	free(s);
+	noct_free(s);
 
 	return true;
 }

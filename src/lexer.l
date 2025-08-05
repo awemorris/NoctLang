@@ -14,6 +14,15 @@
 #define YY_NO_UNPUT
 #define YY_NO_UNISTD_H
 
+#define malloc   ast_malloc
+#define realloc  ast_realloc
+#define free     ast_free
+
+void *ast_malloc(size_t size);
+void *ast_realloc(void *p, size_t size);
+char *ast_strdup(const char *s);
+void ast_free(void *p);
+
 extern YYLTYPE yylloc;
 %}
 
@@ -42,7 +51,7 @@ extern YYLTYPE yylloc;
 			return TOKEN_INT;
 		}
 ["]([^"\\\n]|\\(.|\n))*["] {
-			ast_yylval.sval = strdup(yytext + 1);
+			ast_yylval.sval = ast_strdup(yytext + 1);
 			ast_yylval.sval[yyleng - 2] = '\0';
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -295,7 +304,7 @@ extern YYLTYPE yylloc;
 			ast_yylloc.last_column = 0;
 		}
 [a-zA-Z_0-9]+	{
-			ast_yylval.sval = strdup(yytext);
+			ast_yylval.sval = ast_strdup(yytext);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;

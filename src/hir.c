@@ -10,6 +10,7 @@
 
 #include "hir.h"
 #include "ast.h"
+#include "arena.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,9 @@
 
 /* Debug dump */
 #undef DEBUG_DUMP
+
+/* Arena allocator size. */
+#define ARENA_SIZE		(32 * 1024 * 1024)
 
 /* List-add function. */
 #define HIR_ADD_TO_LAST(type, list, p)			\
@@ -70,6 +74,11 @@ static char *hir_anon_func_name[ANON_FUNC_SIZE];
 static struct ast_param_list *hir_anon_func_param_list[ANON_FUNC_SIZE];
 static struct ast_stmt_list *hir_anon_func_stmt_list[ANON_FUNC_SIZE];
 
+/*
+ * Arena allocator.
+ */
+static struct arena_info hir_arena;
+
 /* Forward Declaration */
 static bool hir_visit_func(struct ast_func *afunc);
 static bool hir_visit_stmt_list(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt_list *stmt_list);
@@ -103,6 +112,9 @@ static void hir_free_term(struct hir_term *t);
 static void hir_free_local(struct hir_local *local);
 static void hir_fatal(int line, const char *msg);
 static void hir_out_of_memory(void);
+static void *hir_malloc(size_t size);
+static char *hir_strdup(const char *s);
+static void hir_free(void *p);
 
 /*
  * Construct an HIR from an AST.
@@ -117,14 +129,18 @@ hir_build(void)
 	assert(hir_file_name == NULL);
 	assert(hir_func_count == 0);
 
-	hir_anon_func_count = 0;
-
-	/* Copy a file name. */
-	hir_file_name = strdup(ast_get_file_name());
-	if (hir_file_name == NULL) {
+	/* Initialize the arena allocator. */
+	if (!arena_init(&hir_arena, ARENA_SIZE)) {
 		hir_out_of_memory();
 		return false;
 	}
+
+	hir_anon_func_count = 0;
+
+	/* Copy a file name. */
+	hir_file_name = hir_strdup(ast_get_file_name());
+	if (hir_file_name == NULL)
+		return false;
 
 	/* Construct a HIR func for each AST func: */
 	func_list = ast_get_func_list();
@@ -166,12 +182,12 @@ hir_build(void)
  * Free constructed HIR functions.
  */
 void
-hir_free(void)
+hir_cleanup(void)
 {
 	int i;
 
 	if (hir_file_name != NULL) {
-		free(hir_file_name);
+		hir_free(hir_file_name);
 		hir_file_name = NULL;
 	}
 
@@ -225,7 +241,7 @@ hir_visit_func(
 	}
 
 	/* Alloc a func block. */
-	func_block = malloc(sizeof(struct hir_block));
+	func_block = hir_malloc(sizeof(struct hir_block));
 	if (func_block == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -233,25 +249,21 @@ hir_visit_func(
 	memset(func_block, 0, sizeof(struct hir_block));
 	func_block->id = block_id_top++;
 	func_block->type = HIR_BLOCK_FUNC;
-	func_block->val.func.file_name = strdup(hir_file_name);
-	if (func_block->val.func.file_name == NULL) {
-		hir_out_of_memory();
+	func_block->val.func.file_name = hir_strdup(hir_file_name);
+	if (func_block->val.func.file_name == NULL)
 		return false;
-	}
 
 	do {
 		/* Set a func name. */
-		func_block->val.func.name = strdup(afunc->name);
-		if (func_block->val.func.name == NULL) {
-			hir_out_of_memory();
+		func_block->val.func.name = hir_strdup(afunc->name);
+		if (func_block->val.func.name == NULL)
 			break;
-		}
 
 		/* Parse the parameters. */
 		hir_visit_param_list(func_block, afunc);
 
 		/* Alloc an end block. */
-		end_block = malloc(sizeof(struct hir_block));
+		end_block = hir_malloc(sizeof(struct hir_block));
 		if (end_block == NULL) {
 			hir_out_of_memory();
 			break;
@@ -266,7 +278,7 @@ hir_visit_func(
 		/* Visit the stmt_list. */
 		if (afunc->stmt_list != NULL) {
 			/* Pre-allocate a first inner basic block. */
-			func_block->val.func.inner = malloc(sizeof(struct hir_block));
+			func_block->val.func.inner = hir_malloc(sizeof(struct hir_block));
 			if (func_block->val.func.inner == NULL) {
 				hir_out_of_memory();
 				break;
@@ -556,7 +568,7 @@ hir_visit_expr_stmt(
 	assert((*cur_block)->type == HIR_BLOCK_BASIC);
 
 	/* Allocate an hstmt. */
-	hstmt = malloc(sizeof(struct hir_stmt));
+	hstmt = hir_malloc(sizeof(struct hir_stmt));
 	if (hstmt == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -605,7 +617,7 @@ hir_visit_assign_stmt(
 	assert(cur_astmt->type == AST_STMT_ASSIGN);
 
 	/* Allocate an hstmt. */
-	hstmt = malloc(sizeof(struct hir_stmt));
+	hstmt = hir_malloc(sizeof(struct hir_stmt));
 	if (hstmt == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -692,17 +704,14 @@ hir_add_local(
 	}
 
 	/* Add a local variable symbol. */
-	local = malloc(sizeof(struct hir_local));
+	local = hir_malloc(sizeof(struct hir_local));
 	if (local == NULL) {
 		hir_out_of_memory();
 		return false;
 	}
-	local->symbol = strdup(symbol);
-	if (local->symbol == NULL) {
-		hir_out_of_memory();
-		free(local);
+	local->symbol = hir_strdup(symbol);
+	if (local->symbol == NULL)
 		return false;
-	}
 	local->index = index;
 	local->next = func->val.func.local;
 	func->val.func.local = local;
@@ -738,7 +747,7 @@ hir_visit_if_stmt(
 		if_block = *cur_block;
 	} else {
 		/* Simply allocate. */
-		if_block = malloc(sizeof(struct hir_block));
+		if_block = hir_malloc(sizeof(struct hir_block));
 		if (if_block == NULL) {
 			hir_out_of_memory();
 			return false;
@@ -752,7 +761,7 @@ hir_visit_if_stmt(
 	if_block->val.if_.chain_prev = NULL;
 
 	/* Alloc an inner block. */
-	if_block->val.if_.inner = malloc(sizeof(struct hir_block));
+	if_block->val.if_.inner = hir_malloc(sizeof(struct hir_block));
 	if (if_block->val.if_.inner == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -764,7 +773,7 @@ hir_visit_if_stmt(
 	if_block->val.if_.inner->parent = if_block;
 
 	/* Allocate an exit block. (This may be reused as a basic block.) */
-	exit_block = malloc(sizeof(struct hir_block));
+	exit_block = hir_malloc(sizeof(struct hir_block));
 	if (exit_block == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -840,7 +849,7 @@ hir_visit_elif_stmt(
 	assert(parent_block->succ != NULL);
 
 	/* Alloc an else-if block. */
-	elif_block = malloc(sizeof(struct hir_block));
+	elif_block = hir_malloc(sizeof(struct hir_block));
 	if (elif_block == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -860,7 +869,7 @@ hir_visit_elif_stmt(
 	elif_block->parent = b;
 
 	/* Alloc an inner block. */
-	elif_block->val.if_.inner = malloc(sizeof(struct hir_block));
+	elif_block->val.if_.inner = hir_malloc(sizeof(struct hir_block));
 	if (elif_block->val.if_.inner == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -933,7 +942,7 @@ hir_visit_else_stmt(
 	assert(parent_block->succ != NULL);
 
 	/* Alloc an else block. */
-	else_block = malloc(sizeof(struct hir_block));
+	else_block = hir_malloc(sizeof(struct hir_block));
 	if (else_block == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -955,7 +964,7 @@ hir_visit_else_stmt(
 	else_block->parent = b;
 
 	/* Alloc an inner block. */
-	else_block->val.if_.inner = malloc(sizeof(struct hir_block));
+	else_block->val.if_.inner = hir_malloc(sizeof(struct hir_block));
 	if (else_block->val.if_.inner == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1015,7 +1024,7 @@ hir_visit_while_stmt(
 		while_block->parent = parent_block;
 		while_block->line = cur_astmt->line;
 	} else {
-		while_block = malloc(sizeof(struct hir_block));
+		while_block = hir_malloc(sizeof(struct hir_block));
 		if (while_block == NULL) {
 			hir_out_of_memory();
 			return false;
@@ -1028,7 +1037,7 @@ hir_visit_while_stmt(
 	}
 
 	/* Alloc an inner block. */
-	while_block->val.while_.inner = malloc(sizeof(struct hir_block));
+	while_block->val.while_.inner = hir_malloc(sizeof(struct hir_block));
 	if (while_block->val.while_.inner == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1040,7 +1049,7 @@ hir_visit_while_stmt(
 	while_block->val.while_.inner->line = cur_astmt->line;
 
 	/* Alloc an exit-block. */
-	exit_block = malloc(sizeof(struct hir_block));
+	exit_block = hir_malloc(sizeof(struct hir_block));
 	if (exit_block == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1106,7 +1115,7 @@ hir_visit_for_stmt(
 		for_block->parent = parent_block;
 		for_block->line = cur_astmt->line;
 	} else {
-		for_block = malloc(sizeof(struct hir_block));
+		for_block = hir_malloc(sizeof(struct hir_block));
 		if (for_block == NULL) {
 			hir_out_of_memory();
 			return false;
@@ -1120,7 +1129,7 @@ hir_visit_for_stmt(
 	}
 
 	/* Alloc an inner block. */
-	for_block->val.for_.inner = malloc(sizeof(struct hir_block));
+	for_block->val.for_.inner = hir_malloc(sizeof(struct hir_block));
 	if (for_block->val.for_.inner == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1132,7 +1141,7 @@ hir_visit_for_stmt(
 	for_block->val.for_.inner->line = cur_astmt->line;
 
 	/* Alloc an exit-block. */
-	exit_block = malloc(sizeof(struct hir_block));
+	exit_block = hir_malloc(sizeof(struct hir_block));
 	if (exit_block == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1147,29 +1156,23 @@ hir_visit_for_stmt(
 	/* Copy the iterator, key, and value symbols. */
 	if (cur_astmt->val.for_.counter_symbol) {
 		for_block->val.for_.is_ranged = true;
-		for_block->val.for_.counter_symbol = strdup(cur_astmt->val.for_.counter_symbol);
-		if (for_block->val.for_.counter_symbol == NULL) {
-			hir_out_of_memory();
+		for_block->val.for_.counter_symbol = hir_strdup(cur_astmt->val.for_.counter_symbol);
+		if (for_block->val.for_.counter_symbol == NULL)
 			return false;
-		}
 		if (!hir_add_local(*cur_block, for_block->val.for_.counter_symbol))
 			return false;
 	}
 	if (cur_astmt->val.for_.key_symbol) {
-		for_block->val.for_.key_symbol = strdup(cur_astmt->val.for_.key_symbol);
-		if (for_block->val.for_.key_symbol == NULL) {
-			hir_out_of_memory();
+		for_block->val.for_.key_symbol = hir_strdup(cur_astmt->val.for_.key_symbol);
+		if (for_block->val.for_.key_symbol == NULL)
 			return false;
-		}
 		if (!hir_add_local(*cur_block, for_block->val.for_.key_symbol))
 			return false;
 	}
 	if (cur_astmt->val.for_.value_symbol) {
-		for_block->val.for_.value_symbol = strdup(cur_astmt->val.for_.value_symbol);
-		if (for_block->val.for_.value_symbol == NULL) {
-			hir_out_of_memory();
+		for_block->val.for_.value_symbol = hir_strdup(cur_astmt->val.for_.value_symbol);
+		if (for_block->val.for_.value_symbol == NULL)
 			return false;
-		}
 		if (!hir_add_local(*cur_block, for_block->val.for_.value_symbol))
 			return false;
 	}
@@ -1236,7 +1239,7 @@ hir_visit_return_stmt(
 	assert((*cur_block)->type == HIR_BLOCK_BASIC);
 
 	/* Allocate an hstmt. */
-	hstmt = malloc(sizeof(struct hir_stmt));
+	hstmt = hir_malloc(sizeof(struct hir_stmt));
 	if (hstmt == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1245,25 +1248,23 @@ hir_visit_return_stmt(
 	hstmt->line = cur_astmt->line;
 
 	/* Set LHS. */
-	hstmt->lhs = malloc(sizeof(struct hir_expr));
+	hstmt->lhs = hir_malloc(sizeof(struct hir_expr));
 	if (hstmt->lhs == NULL) {
 		hir_out_of_memory();
 		return false;
 	}
 	memset(hstmt->lhs, 0, sizeof(struct hir_expr));
 	hstmt->lhs->type = HIR_EXPR_TERM;
-	hstmt->lhs->val.term.term = malloc(sizeof(struct hir_term));
+	hstmt->lhs->val.term.term = hir_malloc(sizeof(struct hir_term));
 	if (hstmt->lhs->val.term.term == NULL) {
 		hir_out_of_memory();
 		return false;
 	}
 	memset(hstmt->lhs->val.term.term, 0, sizeof(struct hir_term));
 	hstmt->lhs->val.term.term->type = HIR_TERM_SYMBOL;
-	hstmt->lhs->val.term.term->val.symbol = strdup("$return");
-	if (hstmt->lhs->val.term.term->val.symbol == NULL) {
-		hir_out_of_memory();
+	hstmt->lhs->val.term.term->val.symbol = hir_strdup("$return");
+	if (hstmt->lhs->val.term.term->val.symbol == NULL)
 		return false;
-	}
 
 	/* Visit an expr. */
 	if (!hir_visit_expr(&hstmt->rhs, cur_astmt->val.return_.expr)) {
@@ -1388,7 +1389,7 @@ hir_visit_term_expr(
 	assert(aexpr->type == AST_EXPR_TERM);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1421,7 +1422,7 @@ hir_visit_binary_expr(
 	assert(aexpr != NULL);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1461,7 +1462,7 @@ hir_visit_unary_expr(
 	       aexpr->type == AST_EXPR_PAR);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1494,7 +1495,7 @@ hir_visit_dot_expr(
 	assert(aexpr->type == AST_EXPR_DOT);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1509,11 +1510,9 @@ hir_visit_dot_expr(
 	}
 
 	/* Copy the member symbol. */
-	e->val.dot.symbol = strdup(aexpr->val.dot.symbol);
-	if (e->val.dot.symbol == NULL) {
-		hir_free_expr(e);
+	e->val.dot.symbol = hir_strdup(aexpr->val.dot.symbol);
+	if (e->val.dot.symbol == NULL)
 		return false;
-	}
 
 	*hexpr = e;
 
@@ -1535,7 +1534,7 @@ hir_visit_call_expr(
 	assert(aexpr->type == AST_EXPR_CALL);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1586,7 +1585,7 @@ hir_visit_thiscall_expr(
 	assert(aexpr->type == AST_EXPR_THISCALL);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1601,9 +1600,8 @@ hir_visit_thiscall_expr(
 	}
 
 	/* Copy the function name. */
-	e->val.thiscall.func = strdup(aexpr->val.thiscall.func);
+	e->val.thiscall.func = hir_strdup(aexpr->val.thiscall.func);
 	if (e->val.thiscall.func == NULL) {
-		hir_out_of_memory();
 		hir_free_expr(e);
 		return false;
 	}
@@ -1641,7 +1639,7 @@ hir_visit_array_expr(
 	assert(aexpr->type == AST_EXPR_ARRAY);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1689,7 +1687,7 @@ hir_visit_dict_expr(
 	assert(aexpr->type == AST_EXPR_DICT);
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1704,11 +1702,9 @@ hir_visit_dict_expr(
 			index = e->val.dict.kv_count;
 
 			/* Copy the key. */
-			e->val.dict.key[index] = strdup(kv->key);
-			if (e->val.dict.key[index] == NULL) {
-				hir_out_of_memory();
+			e->val.dict.key[index] = hir_strdup(kv->key);
+			if (e->val.dict.key[index] == NULL)
 				return false;
-			}
 
 			/* Copy the value. */
 			if (!hir_visit_expr(&e->val.dict.value[index], kv->value)) {
@@ -1749,7 +1745,7 @@ hir_visit_func_expr(
 	/* Here, we replace an anonymous function to a symbol. */
 
 	/* Alocate an hterm. */
-	t = malloc(sizeof(struct hir_term));
+	t = hir_malloc(sizeof(struct hir_term));
 	if (t == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1758,7 +1754,7 @@ hir_visit_func_expr(
 	t->type = HIR_TERM_SYMBOL;
 
 	/* Allocate an hexpr. */
-	e = malloc(sizeof(struct hir_expr));
+	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1785,7 +1781,7 @@ hir_visit_term(
 	struct hir_term *t;
 
 	/* Allocate an hterm. */
-	t = malloc(sizeof(struct hir_term));
+	t = hir_malloc(sizeof(struct hir_term));
 	if (t == NULL) {
 		hir_out_of_memory();
 		return false;
@@ -1796,11 +1792,9 @@ hir_visit_term(
 	switch (aterm->type) {
 	case AST_TERM_SYMBOL:
 		t->type = HIR_TERM_SYMBOL;
-		t->val.symbol = strdup(aterm->val.symbol);
-		if (t->val.symbol == NULL) {
-			hir_out_of_memory();
+		t->val.symbol = hir_strdup(aterm->val.symbol);
+		if (t->val.symbol == NULL)
 			return false;
-		}
 		break;
 	case AST_TERM_INT:
 		t->type = HIR_TERM_INT;
@@ -1812,11 +1806,9 @@ hir_visit_term(
 		break;
 	case AST_TERM_STRING:
 		t->type = HIR_TERM_STRING;
-		t->val.s = strdup(aterm->val.s);
-		if (t->val.symbol == NULL) {
-			hir_out_of_memory();
+		t->val.s = hir_strdup(aterm->val.s);
+		if (t->val.symbol == NULL)
 			return false;
-		}
 		break;
 	case AST_TERM_EMPTY_ARRAY:
 		t->type = HIR_TERM_EMPTY_ARRAY;
@@ -1857,11 +1849,9 @@ hir_visit_param_list(
 	param_count = 0;
 	while (param != NULL) {
 		/* Copy names and count parameters. */
-		hfunc->val.func.param_name[param_count] = strdup(param->name);
-		if (param->name == NULL) {
-			hir_out_of_memory();
+		hfunc->val.func.param_name[param_count] = hir_strdup(param->name);
+		if (param->name == NULL)
 			return false;
-		}
 		param_count++;
 
 		/* Add to a local variable list. */
@@ -1884,11 +1874,9 @@ hir_defer_anon_func(
 	char name[1024];
 
 	snprintf(name, sizeof(name), "$anon.%s.%d", hir_file_name, hir_anon_func_count);
-	*symbol = strdup(name);
-	if (*symbol == NULL) {
-		hir_out_of_memory();
+	*symbol = hir_strdup(name);
+	if (*symbol == NULL)
 		return false;
-	}
 
 	hir_anon_func_name[hir_anon_func_count] = *symbol;
 	hir_anon_func_param_list[hir_anon_func_count] = aexpr->val.func.param_list;
@@ -1913,12 +1901,12 @@ hir_free_block(
 	switch (b->type) {
 	case HIR_BLOCK_FUNC:
 		if (b->val.func.name != NULL) {
-			free(b->val.func.name);
+			hir_free(b->val.func.name);
 			b->val.func.name = NULL;
 		}
 		for (i = 0; i < b->val.func.param_count; i++) {
 			if (b->val.func.param_name[i] != NULL) {
-				free(b->val.func.param_name[i]);
+				hir_free(b->val.func.param_name[i]);
 				b->val.func.param_name[i] = NULL;
 			}
 		}
@@ -1953,15 +1941,15 @@ hir_free_block(
 		break;
 	case HIR_BLOCK_FOR:
 		if (b->val.for_.counter_symbol != NULL) {
-			free(b->val.for_.counter_symbol);
+			hir_free(b->val.for_.counter_symbol);
 			b->val.for_.counter_symbol = NULL;
 		}
 		if (b->val.for_.key_symbol != NULL) {
-			free(b->val.for_.key_symbol);
+			hir_free(b->val.for_.key_symbol);
 			b->val.for_.key_symbol = NULL;
 		}
 		if (b->val.for_.value_symbol != NULL) {
-			free(b->val.for_.value_symbol);
+			hir_free(b->val.for_.value_symbol);
 			b->val.for_.value_symbol = NULL;
 		}
 		if (b->val.for_.collection != NULL) {
@@ -2069,7 +2057,7 @@ hir_free_expr(
 			e->val.dot.obj = NULL;
 		}
 		if (e->val.dot.symbol != NULL) {
-			free(e->val.dot.symbol);
+			hir_free(e->val.dot.symbol);
 			e->val.dot.symbol = NULL;
 		}
 		break;
@@ -2091,7 +2079,7 @@ hir_free_expr(
 			e->val.thiscall.obj = NULL;
 		}
 		if (e->val.thiscall.func != NULL) {
-			free(e->val.thiscall.func);
+			hir_free(e->val.thiscall.func);
 			e->val.thiscall.func = NULL;
 		}
 		for (i = 0; i < e->val.thiscall.arg_count; i++) {
@@ -2112,7 +2100,7 @@ hir_free_expr(
 	case HIR_EXPR_DICT:
 		for (i = 0; i < e->val.dict.kv_count; i++) {
 			if (e->val.dict.key[i] != NULL) {
-				free(e->val.dict.key[i]);
+				hir_free(e->val.dict.key[i]);
 				e->val.dict.key[i] = NULL;
 			}
 			if (e->val.dict.value[i] != NULL) {
@@ -2125,7 +2113,7 @@ hir_free_expr(
 		assert(NEVER_COME_HERE);
 		break;
 	}
-	free(e);
+	hir_free(e);
 }
 
 /* Free an hterm. */
@@ -2139,13 +2127,13 @@ hir_free_term(
 		break;
 	case HIR_TERM_SYMBOL:
 		if (t->val.symbol != NULL) {
-			free(t->val.symbol);
+			hir_free(t->val.symbol);
 			t->val.symbol = NULL;
 		}
 		break;
 	case HIR_TERM_STRING:
 		if (t->val.s != NULL) {
-			free(t->val.s);
+			hir_free(t->val.s);
 			t->val.s = NULL;
 		}
 		break;
@@ -2167,7 +2155,7 @@ hir_free_local(
 	if (local->next != NULL)
 		hir_free_local(local->next);
 
-	free(local->symbol);
+	hir_free(local->symbol);
 }
 
 /* Set a fatal error message. */
@@ -2321,4 +2309,27 @@ hir_dump_block_at_level(
 		}
 		block = block->succ;
 	}
+}
+
+static void *hir_malloc(size_t size)
+{
+	return arena_alloc(&hir_arena, size);
+}
+
+static char *hir_strdup(const char *s)
+{
+	char *ret;
+
+	ret = arena_alloc(&hir_arena, strlen(s) + 1);
+	if (ret == NULL) {
+		hir_out_of_memory();
+		return NULL;
+	}
+
+	strcpy(ret, s);
+	return ret;
+}
+
+static void hir_free(void *p)
+{
 }
