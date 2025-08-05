@@ -10,6 +10,7 @@
 
 #include "cback.h"
 #include "lir.h"
+#include "bytecode.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1071,164 +1072,164 @@ cback_visit_op(
 	int *pc)
 {
 	switch (func->bytecode[*pc]) {
-	case LOP_NOP:
+	case OP_NOP:
 		/* NOP */
 		(*pc)++;
 		break;
-	case LOP_LINEINFO:
+	case OP_LINEINFO:
 		if (!cback_visit_lineinfo_op(func, pc))
 			return false;
 		break;
-	case LOP_ASSIGN:
+	case OP_ASSIGN:
 		if (!cback_visit_assign_op(func, pc))
 			return false;
 		break;
-	case LOP_ICONST:
+	case OP_ICONST:
 		if (!cback_visit_iconst_op(func, pc))
 			return false;
 		break;
-	case LOP_FCONST:
+	case OP_FCONST:
 		if (!cback_visit_fconst_op(func, pc))
 			return false;
 		break;
-	case LOP_SCONST:
+	case OP_SCONST:
 		if (!cback_visit_sconst_op(func, pc))
 			return false;
 		break;
-	case LOP_ACONST:
+	case OP_ACONST:
 		if (!cback_visit_aconst_op(func, pc))
 			return false;
 		break;
-	case LOP_DCONST:
+	case OP_DCONST:
 		if (!cback_visit_dconst_op(func, pc))
 			return false;
 		break;
-	case LOP_INC:
+	case OP_INC:
 		if (!cback_visit_inc_op(func, pc))
 			return false;
 		break;
-	case LOP_ADD:
+	case OP_ADD:
 		if (!cback_visit_add_op(func, pc))
 			return false;
 		break;
-	case LOP_SUB:
+	case OP_SUB:
 		if (!cback_visit_sub_op(func, pc))
 			return false;
 		break;
-	case LOP_MUL:
+	case OP_MUL:
 		if (!cback_visit_mul_op(func, pc))
 			return false;
 		break;
-	case LOP_DIV:
+	case OP_DIV:
 		if (!cback_visit_div_op(func, pc))
 			return false;
 		break;
-	case LOP_MOD:
+	case OP_MOD:
 		if (!cback_visit_mod_op(func, pc))
 			return false;
 		break;
-	case LOP_AND:
+	case OP_AND:
 		if (!cback_visit_and_op(func, pc))
 			return false;
 		break;
-	case LOP_OR:
+	case OP_OR:
 		if (!cback_visit_or_op(func, pc))
 			return false;
 		break;
-	case LOP_XOR:
+	case OP_XOR:
 		if (!cback_visit_xor_op(func, pc))
 			return false;
 		break;
-	case LOP_NEG:
+	case OP_NEG:
 		if (!cback_visit_neg_op(func, pc))
 			return false;
 		break;
-	case LOP_LT:
+	case OP_LT:
 		if (!cback_visit_lt_op(func, pc))
 			return false;
 		break;
-	case LOP_LTE:
+	case OP_LTE:
 		if (!cback_visit_lte_op(func, pc))
 			return false;
 		break;
-	case LOP_GT:
+	case OP_GT:
 		if (!cback_visit_gt_op(func, pc))
 			return false;
 		break;
-	case LOP_GTE:
+	case OP_GTE:
 		if (!cback_visit_gte_op(func, pc))
 			return false;
 		break;
-	case LOP_EQ:
+	case OP_EQ:
 		if (!cback_visit_eq_op(func, pc))
 			return false;
 		break;
-	case LOP_EQI:
+	case OP_EQI:
 		/* Same as EQ. EQI is an optimization hint for JIT-compiler. */
 		if (!cback_visit_eq_op(func, pc))
 			return false;
 		break;
-	case LOP_NEQ:
+	case OP_NEQ:
 		if (!cback_visit_neq_op(func, pc))
 			return false;
 		break;
-	case LOP_STOREARRAY:
+	case OP_STOREARRAY:
 		if (!cback_visit_storearray_op(func, pc))
 			return false;
 		break;
-	case LOP_LOADARRAY:
+	case OP_LOADARRAY:
 		if (!cback_visit_loadarray_op(func, pc))
 			return false;
 		break;
-	case LOP_LEN:
+	case OP_LEN:
 		if (!cback_visit_len_op(func, pc))
 			return false;
 		break;
-	case LOP_GETDICTKEYBYINDEX:
+	case OP_GETDICTKEYBYINDEX:
 		if (!cback_visit_getdictkeybyindex_op(func, pc))
 			return false;
 		break;
-	case LOP_GETDICTVALBYINDEX:
+	case OP_GETDICTVALBYINDEX:
 		if (!cback_visit_getdictvalbyindex_op(func, pc))
 			return false;
 		break;
-	case LOP_LOADSYMBOL:
+	case OP_LOADSYMBOL:
 		if (!cback_visit_loadsymbol_op(func, pc))
 			return false;
 		break;
-	case LOP_STORESYMBOL:
+	case OP_STORESYMBOL:
 		if (!cback_visit_storesymbol_op(func, pc))
 			return false;
 		break;
-	case LOP_LOADDOT:
+	case OP_LOADDOT:
 		if (!cback_visit_loaddot_op(func, pc))
 			return false;
 		break;
-	case LOP_STOREDOT:
+	case OP_STOREDOT:
 		if (!cback_visit_storedot_op(func, pc))
 			return false;
 		break;
-	case LOP_CALL:
+	case OP_CALL:
 		if (!cback_visit_call_op(func, pc))
 			return false;
 		break;
-	case LOP_THISCALL:
+	case OP_THISCALL:
 		if (!cback_visit_thiscall_op(func, pc))
 			return false;
 		break;
-	case LOP_JMP:
+	case OP_JMP:
 		if (!cback_visit_jmp_op(func, pc))
 			return false;
 		break;
-	case LOP_JMPIFTRUE:
+	case OP_JMPIFTRUE:
 		if (!cback_visit_jmpiftrue_op(func, pc))
 			return false;
 		break;
-	case LOP_JMPIFFALSE:
+	case OP_JMPIFFALSE:
 		if (!cback_visit_jmpiffalse_op(func, pc))
 			return false;
 		break;
-	case LOP_JMPIFEQ:
+	case OP_JMPIFEQ:
 		/* Same as JMPIFTRUE. (JMPIFEQ is an optimization hint for JIT-compiler.) */
 		if (!cback_visit_jmpiftrue_op(func, pc))
 			return false;

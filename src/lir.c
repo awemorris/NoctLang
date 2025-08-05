@@ -10,6 +10,7 @@
 
 #include "lir.h"
 #include "hir.h"
+#include "bytecode.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,7 +47,7 @@ static int bytecode_top;
  * Variable table.
  */
 
-#define TMPVAR_MAX	1024
+#define TMPVAR_MAX	128
 
 static int tmpvar_top;
 static int tmpvar_count;
@@ -338,13 +339,13 @@ lir_visit_basic_block(
 		/* Check if succ is a loop head. */
 		if (lir_check_succ_loop_head(block, &loop)) {
 			/* Continue edge. */
-			if (!lir_put_opcode(LOP_JMP))
+			if (!lir_put_opcode(OP_JMP))
 				return false;
 			if (!lir_put_incrementer_addr(loop))
 				return false;
 		} else {
 			/* Break or return edge. */
-			if (!lir_put_opcode(LOP_JMP))
+			if (!lir_put_opcode(OP_JMP))
 				return false;
 			if (!lir_put_branch_addr(block->succ))
 				return false;
@@ -397,7 +398,7 @@ lir_visit_if_block(
 
 	/* Put a line number. */
 	if (noct_conf_optimize == 0) {
-		if (!lir_put_opcode(LOP_LINEINFO))
+		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
 			return false;
@@ -417,7 +418,7 @@ lir_visit_if_block(
 			return false;
 		if (!lir_visit_expr(cond_tmpvar, block->val.if_.cond, block))
 			return false;
-		if (!lir_put_opcode(LOP_JMPIFFALSE))
+		if (!lir_put_opcode(OP_JMPIFFALSE))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)cond_tmpvar))
 			return false;
@@ -453,7 +454,7 @@ lir_visit_if_block(
 	/* If this is an if-block or an else-if block. */
 	if (!is_else) {
 		/* Jump to a first non-if block. */
-		if (!lir_put_opcode(LOP_JMP))
+		if (!lir_put_opcode(OP_JMP))
 			return false;
 		if (block->succ != NULL) {
 			/* if-block */
@@ -520,7 +521,7 @@ lir_visit_for_range_block(
 
 	/* Put a line number. */
 	if (noct_conf_optimize == 0) {
-		if (!lir_put_opcode(LOP_LINEINFO))
+		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
 			return false;
@@ -540,7 +541,7 @@ lir_visit_for_range_block(
 
 	/* Put the start value to a loop variable. */
 	loop_tmpvar = lir_get_local_index(block, block->val.for_.counter_symbol);
-	if (!lir_put_opcode(LOP_ASSIGN))
+	if (!lir_put_opcode(OP_ASSIGN))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)loop_tmpvar))
 		return false;
@@ -551,7 +552,7 @@ lir_visit_for_range_block(
 	loop_addr = (uint32_t)bytecode_top;
 	if (!lir_increment_tmpvar(&cmp_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_EQI))
+	if (!lir_put_opcode(OP_EQI))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
 		return false;
@@ -559,7 +560,7 @@ lir_visit_for_range_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)stop_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_JMPIFEQ))
+	if (!lir_put_opcode(OP_JMPIFEQ))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
 		return false;
@@ -580,13 +581,13 @@ lir_visit_for_range_block(
 	block->val.for_.inc_addr = (uint32_t)bytecode_top;
 
 	/* Increment the loop variable. */
-	if (!lir_put_opcode(LOP_INC))
+	if (!lir_put_opcode(OP_INC))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)loop_tmpvar))
 		return false;
 
 	/* Put a back-edge jump. */
-	if (!lir_put_opcode(LOP_JMP))
+	if (!lir_put_opcode(OP_JMP))
 		return false;
 	if (!lir_put_imm32(loop_addr))
 		return false;
@@ -618,7 +619,7 @@ lir_visit_for_kv_block(
 
 	/* Put a line number. */
 	if (noct_conf_optimize == 0) {
-		if (!lir_put_opcode(LOP_LINEINFO))
+		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
 			return false;
@@ -633,7 +634,7 @@ lir_visit_for_kv_block(
 	/* Get a collection size. */
 	if (!lir_increment_tmpvar(&size_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_LEN))
+	if (!lir_put_opcode(OP_LEN))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)size_tmpvar))
 		return false;
@@ -643,7 +644,7 @@ lir_visit_for_kv_block(
 	/* Assign 0 to `i`. */
 	if (!lir_increment_tmpvar(&i_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_ICONST))
+	if (!lir_put_opcode(OP_ICONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
@@ -658,7 +659,7 @@ lir_visit_for_kv_block(
 
 	/* Put a loop header. */
 	loop_addr = (uint32_t)bytecode_top;		/* LOOP: */
-	if (!lir_put_opcode(LOP_EQI)) 			/*  if i == size then break */
+	if (!lir_put_opcode(OP_EQI)) 			/*  if i == size then break */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
 		return false;
@@ -666,13 +667,13 @@ lir_visit_for_kv_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)size_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_JMPIFEQ)) 		/*  if i == size then break */
+	if (!lir_put_opcode(OP_JMPIFEQ)) 		/*  if i == size then break */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
 		return false;
 	if (!lir_put_branch_addr(block->succ))
 		return false;
-	if (!lir_put_opcode(LOP_GETDICTKEYBYINDEX))	/* key = dict.getKeyByIndex(i) */
+	if (!lir_put_opcode(OP_GETDICTKEYBYINDEX))	/* key = dict.getKeyByIndex(i) */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)key_tmpvar))
 		return false;
@@ -680,7 +681,7 @@ lir_visit_for_kv_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_GETDICTVALBYINDEX)) 	/* val = dict.getValByIndex(i) */
+	if (!lir_put_opcode(OP_GETDICTVALBYINDEX)) 	/* val = dict.getValByIndex(i) */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)val_tmpvar))
 		return false;
@@ -688,7 +689,7 @@ lir_visit_for_kv_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_INC)) 		/* i++ */
+	if (!lir_put_opcode(OP_INC)) 		/* i++ */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
@@ -704,7 +705,7 @@ lir_visit_for_kv_block(
 	}
 
 	/* Put a back-edge jump. */
-	if (!lir_put_opcode(LOP_JMP))
+	if (!lir_put_opcode(OP_JMP))
 		return false;
 	if (!lir_put_imm32(loop_addr))
 		return false;
@@ -736,7 +737,7 @@ lir_visit_for_v_block(
 
 	/* Put a line number. */
 	if (noct_conf_optimize == 0) {
-		if (!lir_put_opcode(LOP_LINEINFO))
+		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
 			return false;
@@ -751,7 +752,7 @@ lir_visit_for_v_block(
 	/* Get a collection size. */
 	if (!lir_increment_tmpvar(&size_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_LEN))
+	if (!lir_put_opcode(OP_LEN))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)size_tmpvar))
 		return false;
@@ -761,7 +762,7 @@ lir_visit_for_v_block(
 	/* Assign 0 to `i`. */
 	if (!lir_increment_tmpvar(&i_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_ICONST))
+	if (!lir_put_opcode(OP_ICONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
@@ -775,7 +776,7 @@ lir_visit_for_v_block(
 
 	/* Put a loop header. */
 	loop_addr = (uint32_t)bytecode_top;		/* LOOP: */
-	if (!lir_put_opcode(LOP_EQI)) 			/*  if i == size then break */
+	if (!lir_put_opcode(OP_EQI)) 			/*  if i == size then break */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
 		return false;
@@ -783,13 +784,13 @@ lir_visit_for_v_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)size_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_JMPIFEQ))
+	if (!lir_put_opcode(OP_JMPIFEQ))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
 		return false;
 	if (!lir_put_branch_addr(block->succ))
 		return false;
-	if (!lir_put_opcode(LOP_LOADARRAY)) 	/* val = array[i] */
+	if (!lir_put_opcode(OP_LOADARRAY)) 	/* val = array[i] */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)val_tmpvar))
 		return false;
@@ -797,7 +798,7 @@ lir_visit_for_v_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
-	if (!lir_put_opcode(LOP_INC)) 		/* i++ */
+	if (!lir_put_opcode(OP_INC)) 		/* i++ */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
@@ -813,7 +814,7 @@ lir_visit_for_v_block(
 	}
 
 	/* Put a back-edge jump. */
-	if (!lir_put_opcode(LOP_JMP))
+	if (!lir_put_opcode(OP_JMP))
 		return false;
 	if (!lir_put_imm32(loop_addr))
 		return false;
@@ -868,7 +869,7 @@ lir_visit_while_block(
 
 	/* Put a line number. */
 	if (noct_conf_optimize == 0) {
-		if (!lir_put_opcode(LOP_LINEINFO))
+		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
 			return false;
@@ -880,7 +881,7 @@ lir_visit_while_block(
 		return false;
 	if (!lir_visit_expr(cmp_tmpvar, block->val.while_.cond, block))
 		return false;
-	if (!lir_put_opcode(LOP_JMPIFFALSE))
+	if (!lir_put_opcode(OP_JMPIFFALSE))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
 		return false;
@@ -899,7 +900,7 @@ lir_visit_while_block(
 	}
 
 	/* Put a back-edge jump. */
-	if (!lir_put_opcode(LOP_JMP))
+	if (!lir_put_opcode(OP_JMP))
 		return false;
 	if (!lir_put_imm32(loop_addr))
 		return false;
@@ -920,7 +921,7 @@ lir_visit_stmt(
 
 	/* Put a line number. */
 	if (noct_conf_optimize == 0) {
-		if (!lir_put_opcode(LOP_LINEINFO))
+		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)stmt->line))
 			return false;
@@ -945,7 +946,7 @@ lir_visit_stmt(
 			assert(stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL);
 
 			/* Put a storesymbol. */
-			if (!lir_put_opcode(LOP_STORESYMBOL))
+			if (!lir_put_opcode(OP_STORESYMBOL))
 				return false;
 			if (!lir_put_string(stmt->lhs->val.term.term->val.symbol))
 				return false;
@@ -968,7 +969,7 @@ lir_visit_stmt(
 				return false;
 
 			/* Put a store. */
-			if (!lir_put_opcode(LOP_STOREARRAY))
+			if (!lir_put_opcode(OP_STOREARRAY))
 				return false;
 			if (!lir_put_tmpvar((uint16_t)obj_tmpvar))
 				return false;
@@ -990,7 +991,7 @@ lir_visit_stmt(
 				return false;
 
 			/* Put a store. */
-			if (!lir_put_opcode(LOP_STOREDOT))
+			if (!lir_put_opcode(OP_STOREDOT))
 				return false;
 			if (!lir_put_tmpvar((uint16_t)obj_tmpvar))
 				return false;
@@ -1158,7 +1159,7 @@ lir_visit_unary_expr(
 	/* Put an opcode. */
 	switch (expr->type) {
 	case HIR_EXPR_NEG:
-		if (!lir_put_opcode(LOP_NEG))
+		if (!lir_put_opcode(OP_NEG))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 			return false;
@@ -1166,7 +1167,7 @@ lir_visit_unary_expr(
 			return false;
 		break;
 	case HIR_EXPR_NOT:
-		if (!lir_put_opcode(LOP_NOT))
+		if (!lir_put_opcode(OP_NOT))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 			return false;
@@ -1209,46 +1210,46 @@ lir_visit_binary_expr(
 	/* Put an opcode. */
 	switch (expr->type) {
 	case HIR_EXPR_LT:
-		opcode = LOP_LT;
+		opcode = OP_LT;
 		break;
 	case HIR_EXPR_LTE:
-		opcode = LOP_LTE;
+		opcode = OP_LTE;
 		break;
 	case HIR_EXPR_EQ:
-		opcode = LOP_EQ;
+		opcode = OP_EQ;
 		break;
 	case HIR_EXPR_NEQ:
-		opcode = LOP_NEQ;
+		opcode = OP_NEQ;
 		break;
 	case HIR_EXPR_GTE:
-		opcode = LOP_GTE;
+		opcode = OP_GTE;
 		break;
 	case HIR_EXPR_GT:
-		opcode = LOP_GT;
+		opcode = OP_GT;
 		break;
 	case HIR_EXPR_PLUS:
-		opcode = LOP_ADD;
+		opcode = OP_ADD;
 		break;
 	case HIR_EXPR_MINUS:
-		opcode = LOP_SUB;
+		opcode = OP_SUB;
 		break;
 	case HIR_EXPR_MUL:
-		opcode = LOP_MUL;
+		opcode = OP_MUL;
 		break;
 	case HIR_EXPR_DIV:
-		opcode = LOP_DIV;
+		opcode = OP_DIV;
 		break;
 	case HIR_EXPR_MOD:
-		opcode = LOP_MOD;
+		opcode = OP_MOD;
 		break;
 	case HIR_EXPR_AND:
-		opcode = LOP_AND;
+		opcode = OP_AND;
 		break;
 	case HIR_EXPR_OR:
-		opcode = LOP_OR;
+		opcode = OP_OR;
 		break;
 	case HIR_EXPR_SUBSCR:
-		opcode = LOP_LOADARRAY;
+		opcode = OP_LOADARRAY;
 		break;
 	default:
 		opcode = -1;
@@ -1291,7 +1292,7 @@ lir_visit_dot_expr(
 		return false;
 
 	/* Put a bytecode sequence. */
-	if (!lir_put_opcode(LOP_LOADDOT))
+	if (!lir_put_opcode(OP_LOADDOT))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1339,7 +1340,7 @@ lir_visit_call_expr(
 	}
 
 	/* Put a bytecode sequence. */
-	if (!lir_put_opcode(LOP_CALL))
+	if (!lir_put_opcode(OP_CALL))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1393,7 +1394,7 @@ lir_visit_thiscall_expr(
 	}
 
 	/* Put a bytecode sequence. */
-	if (!lir_put_opcode(LOP_THISCALL))
+	if (!lir_put_opcode(OP_THISCALL))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1434,7 +1435,7 @@ lir_visit_array_expr(
 	elem_count = expr->val.array.elem_count;
 	
 	/* Create an array. */
-	if (!lir_put_opcode(LOP_ACONST))
+	if (!lir_put_opcode(OP_ACONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1450,13 +1451,13 @@ lir_visit_array_expr(
 			return false;
 
 		/* Add to the array. */
-		if (!lir_put_opcode(LOP_ICONST))
+		if (!lir_put_opcode(OP_ICONST))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)index_tmpvar))
 			return false;
 		if (!lir_put_imm32((uint32_t)i))
 			return false;
-		if (!lir_put_opcode(LOP_STOREARRAY))
+		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 			return false;
@@ -1492,7 +1493,7 @@ lir_visit_dict_expr(
 	kv_count = expr->val.dict.kv_count;
 	
 	/* Create a dictionary. */
-	if (!lir_put_opcode(LOP_DCONST))
+	if (!lir_put_opcode(OP_DCONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1510,13 +1511,13 @@ lir_visit_dict_expr(
 			return false;
 
 		/* Add to the dict. */
-		if (!lir_put_opcode(LOP_SCONST))
+		if (!lir_put_opcode(OP_SCONST))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)key_tmpvar))
 			return false;
 		if (!lir_put_string(expr->val.dict.key[i]))
 			return false;
-		if (!lir_put_opcode(LOP_STOREARRAY))
+		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 			return false;
@@ -1602,7 +1603,7 @@ lir_visit_symbol_term(
 	/* Put an instruction. */
 	if (local != NULL) {
 		/* The term is an explicit local variable. */
-		if (!lir_put_opcode(LOP_ASSIGN))
+		if (!lir_put_opcode(OP_ASSIGN))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 			return false;
@@ -1610,7 +1611,7 @@ lir_visit_symbol_term(
 			return false;
 	} else {
 		/* The term is not an explicit local variable. */
-		if (!lir_put_opcode(LOP_LOADSYMBOL))
+		if (!lir_put_opcode(OP_LOADSYMBOL))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 			return false;
@@ -1629,7 +1630,7 @@ lir_visit_int_term(
 	assert(term != NULL);
 	assert(term->type == HIR_TERM_INT);
 
-	if (!lir_put_opcode(LOP_ICONST))
+	if (!lir_put_opcode(OP_ICONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1651,7 +1652,7 @@ lir_visit_float_term(
 
 	data = *(uint32_t *)&term->val.f;
 
-	if (!lir_put_opcode(LOP_FCONST))
+	if (!lir_put_opcode(OP_FCONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1669,7 +1670,7 @@ lir_visit_string_term(
 	assert(term != NULL);
 	assert(term->type == HIR_TERM_STRING);
 
-	if (!lir_put_opcode(LOP_SCONST))
+	if (!lir_put_opcode(OP_SCONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1687,7 +1688,7 @@ lir_visit_empty_array_term(
 	assert(term != NULL);
 	assert(term->type == HIR_TERM_EMPTY_ARRAY);
 
-	if (!lir_put_opcode(LOP_ACONST))
+	if (!lir_put_opcode(OP_ACONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -1703,7 +1704,7 @@ lir_visit_empty_dict_term(
 	assert(term != NULL);
 	assert(term->type == HIR_TERM_EMPTY_DICT);
 
-	if (!lir_put_opcode(LOP_DCONST))
+	if (!lir_put_opcode(OP_DCONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
 		return false;
@@ -2065,17 +2066,17 @@ lir_dump(
 		ofs = (int)(ptrdiff_t)(pc - func->bytecode);
 		opcode = *pc++;
 		switch (opcode) {
-		case LOP_LINEINFO:
+		case OP_LINEINFO:
 		{
 			uint32_t line;
 			IMM4(line);
 			printf("%04d: LINEINFO(line:%d)\n", ofs, line);
 			break;
 		}
-		case LOP_NOP:
+		case OP_NOP:
 			pc++;
 			break;
-		case LOP_ASSIGN:
+		case OP_ASSIGN:
 		{
 			uint16_t dst;
 			uint16_t src;
@@ -2084,7 +2085,7 @@ lir_dump(
 			printf("%04d: ASSIGN(dst:%d, src:%d)\n", ofs, dst, src);
 			break;
 		}
-		case LOP_ICONST:
+		case OP_ICONST:
 		{
 			uint16_t dst;
 			uint32_t val;
@@ -2093,7 +2094,7 @@ lir_dump(
 			printf("%04d: ICONST(dst:%d, val:%d)\n", ofs, dst, val);
 			break;
 		}
-		case LOP_FCONST:
+		case OP_FCONST:
 		{
 			uint16_t dst;
 			uint32_t val = 0;
@@ -2104,7 +2105,7 @@ lir_dump(
 			printf("%04d: FCONST(dst:%d, val:%f)\n", ofs, dst, val_f);
 			break;
 		}
-		case LOP_SCONST:
+		case OP_SCONST:
 		{
 			uint16_t dst;
 			const char *val;
@@ -2113,29 +2114,29 @@ lir_dump(
 			printf("%04d: SCONST(dst:%d, val:%s)\n", ofs, dst, val);
 			break;
 		}
-		case LOP_ACONST:
+		case OP_ACONST:
 		{
 			uint16_t dst;
 			IMM2(dst);
 			printf("%04d: ACONST(dst:%d)\n", ofs, dst);
 			break;
 		}
-		case LOP_DCONST:
+		case OP_DCONST:
 		{
 			uint16_t dst;
 			IMM2(dst);
 			printf("%04d: DCONST(dst:%d)\n", ofs, dst);
 			break;
 		}
-		case LOP_INC:
+		case OP_INC:
 		{
 			uint16_t dst;
 			IMM2(dst);
 			printf("%04d: INC(dst:%d)\n", ofs, dst);
 			break;
 		}
-		//case LOP_NEG:
-		case LOP_ADD:
+		//case OP_NEG:
+		case OP_ADD:
 		{
 			uint16_t dst;
 			uint16_t src1;
@@ -2146,17 +2147,17 @@ lir_dump(
 			printf("%04d: ADD(dst:%d, src1:%d, src2: %d)\n", ofs, dst, src1, src2);
 			break;
 		}
-		//case LOP_SUB:
-		//case LOP_MUL:
-		//case LOP_DIV:
-		//case LOP_MOD:
-		//case LOP_AND:
-		//case LOP_OR:
-		//case LOP_XOR:
-		//case LOP_LT:
-		//case LOP_LTE:
-		//case LOP_GT:
-		case LOP_GTE:
+		//case OP_SUB:
+		//case OP_MUL:
+		//case OP_DIV:
+		//case OP_MOD:
+		//case OP_AND:
+		//case OP_OR:
+		//case OP_XOR:
+		//case OP_LT:
+		//case OP_LTE:
+		//case OP_GT:
+		case OP_GTE:
 		{
 			uint16_t dst;
 			uint16_t src1;
@@ -2167,7 +2168,7 @@ lir_dump(
 			printf("%04d: GTE(dst:%d, src1:%d, src2:%d)\n", ofs, dst, src1, src2);
 			break;
 		}
-		case LOP_EQ:
+		case OP_EQ:
 		{
 			uint16_t dst;
 			uint16_t src1;
@@ -2178,7 +2179,7 @@ lir_dump(
 			printf("%04d: EQ(dst:%d, src1:%d, src2:%d)\n", ofs, dst, src1, src2);
 			break;
 		}
-		case LOP_EQI:
+		case OP_EQI:
 		{
 			uint16_t dst;
 			uint16_t src1;
@@ -2189,8 +2190,8 @@ lir_dump(
 			printf("%04d: EQI(dst:%d, src1:%d, src2:%d)\n", ofs, dst, src1, src2);
 			break;
 		}
-		//case LOP_NEQ:
-		case LOP_LOADARRAY:
+		//case OP_NEQ:
+		case OP_LOADARRAY:
 		{
 			uint16_t dst;
 			uint16_t src1;
@@ -2201,7 +2202,7 @@ lir_dump(
 			printf("%04d: LOADARRAY(dst:%d, arr:%d, subsc:%d)\n", ofs, dst, src1, src2);
 			break;
 		}
-		case LOP_STOREARRAY:
+		case OP_STOREARRAY:
 		{
 			uint16_t dst;
 			uint16_t src1;
@@ -2212,7 +2213,7 @@ lir_dump(
 			printf("%04d: STOREARRAY(arr:%d, subsc:%d, val:%d)\n", ofs, dst, src1, src2);
 			break;
 		}
-		case LOP_LEN:
+		case OP_LEN:
 		{
 			uint16_t dst;
 			uint16_t src;
@@ -2221,7 +2222,7 @@ lir_dump(
 			printf("%04d: LEN(dst:%d, src:%d)\n", ofs, dst, src);
 			break;
 		}
-		case LOP_GETDICTKEYBYINDEX:
+		case OP_GETDICTKEYBYINDEX:
 		{
 			uint16_t dst;
 			uint16_t dict;
@@ -2232,7 +2233,7 @@ lir_dump(
 			printf("%04d: GETDICTKEYBYINDEX(dst:%d, dict:%d, index:%d)\n", ofs, dst, dict, index);
 			break;
 		}
-		case LOP_GETDICTVALBYINDEX:
+		case OP_GETDICTVALBYINDEX:
 		{
 			uint16_t dst;
 			uint16_t dict;
@@ -2243,9 +2244,9 @@ lir_dump(
 			printf("%04d: GETDICTKEYBYINDEX(dst:%d, dict:%d, index:%d)\n", ofs, dst, dict, index);
 			break;
 		}
-		//case LOP_STOREDOT:
-		//case LOP_LOADDOT:
-		case LOP_STORESYMBOL:
+		//case OP_STOREDOT:
+		//case OP_LOADDOT:
+		case OP_STORESYMBOL:
 		{
 			const char *symbol;
 			uint16_t src;
@@ -2254,7 +2255,7 @@ lir_dump(
 			printf("%04d: STORESYMBOL(symbol:%s, src:%d)\n", ofs, symbol, src);
 			break;
 		}
-		case LOP_LOADSYMBOL:
+		case OP_LOADSYMBOL:
 		{
 			uint16_t dst;
 			const char *symbol;
@@ -2263,7 +2264,7 @@ lir_dump(
 			printf("%04d: LOADSYMBOL(src: %d, symbol:%s)\n", ofs, dst, symbol);
 			break;
 		}
-		case LOP_CALL:
+		case OP_CALL:
 		{
 			uint16_t dst;
 			uint16_t func;
@@ -2281,15 +2282,15 @@ lir_dump(
 			printf(")\n");
 			break;
 		}
-		//case LOP_THISCALL:
-		case LOP_JMP:
+		//case OP_THISCALL:
+		case OP_JMP:
 		{
 			uint32_t target;
 			IMM4(target);
 			printf("%04d: JMP(target:%d)\n", ofs, target);
 			break;
 		}
-		case LOP_JMPIFTRUE:
+		case OP_JMPIFTRUE:
 		{
 			uint16_t src;
 			uint32_t target;
@@ -2298,7 +2299,7 @@ lir_dump(
 			printf("%04d: JMPIFTRUE(src:%d, target:%d)\n", ofs, src, target);
 			break;
 		}
-		case LOP_JMPIFFALSE:
+		case OP_JMPIFFALSE:
 		{
 			uint16_t src;
 			uint32_t target;
@@ -2307,7 +2308,7 @@ lir_dump(
 			printf("%04d: JMPIFFALSE(src:%d, target:%d)\n", ofs, src, target);
 			break;
 		}
-		case LOP_JMPIFEQ:
+		case OP_JMPIFEQ:
 		{
 			uint16_t src;
 			uint32_t target;

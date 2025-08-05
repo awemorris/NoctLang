@@ -5,28 +5,13 @@
  */
 
 /*
- * Bytecode interpreter
+ * Bytecode Interpreter
  */
-
-#if defined(NO_INTERPRETER)
-
-#include "noct/runtime.h"
-#include "interpreter.h"
-
-/* Visit a bytecode array. */
-static bool
-rt_visit_bytecode(
-	struct rt_env *env,
-	struct rt_func *func)
-{
-	return false;
-}
-
-#else
 
 #include "runtime.h"
 #include "interpreter.h"
 #include "execution.h"
+#include "bytecode.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -120,7 +105,7 @@ rt_visit_bytecode(
 	return true;
 }
 
-/* Visit a ROP_LINEINFO instruction. */
+/* Visit a OP_LINEINFO instruction. */
 static inline bool
 rt_visit_lineinfo_op(
 	struct rt_env *env,
@@ -148,7 +133,7 @@ rt_visit_lineinfo_op(
 	return true;
 }
 
-/* Visit a ROP_ASSIGN instruction. */
+/* Visit a OP_ASSIGN instruction. */
 static inline bool
 rt_visit_assign_op(
 	struct rt_env *env,
@@ -184,7 +169,7 @@ rt_visit_assign_op(
 	return true;
 }
 
-/* Visit a ROP_ICONST instruction. */
+/* Visit a OP_ICONST instruction. */
 static inline bool
 rt_visit_iconst_op(
 	struct rt_env *env,
@@ -220,7 +205,7 @@ rt_visit_iconst_op(
 	return true;
 }
 
-/* Visit a ROP_FCONST instruction. */
+/* Visit a OP_FCONST instruction. */
 static inline bool
 rt_visit_fconst_op(
 	struct rt_env *env,
@@ -259,7 +244,7 @@ rt_visit_fconst_op(
 	return true;
 }
 
-/* Visit a ROP_SCONST instruction. */
+/* Visit a OP_SCONST instruction. */
 static inline bool
 rt_visit_sconst_op(
 	struct rt_env *env,
@@ -299,7 +284,7 @@ rt_visit_sconst_op(
 	return true;
 }
 
-/* Visit a ROP_ACONST instruction. */
+/* Visit a OP_ACONST instruction. */
 static inline bool
 rt_visit_aconst_op(
 	struct rt_env *env,
@@ -330,7 +315,7 @@ rt_visit_aconst_op(
 	return true;
 }
 
-/* Visit a ROP_DCONST instruction. */
+/* Visit a OP_DCONST instruction. */
 static inline bool
 rt_visit_dconst_op(
 	struct rt_env *env,
@@ -361,7 +346,7 @@ rt_visit_dconst_op(
 	return true;
 }
 
-/* Visit a ROP_INC instruction. */
+/* Visit a OP_INC instruction. */
 static inline bool
 rt_visit_inc_op(
 	struct rt_env *env,
@@ -397,7 +382,7 @@ rt_visit_inc_op(
 	return true;
 }
 
-/* Visit a ROP_ADD instruction. */
+/* Visit a OP_ADD instruction. */
 static inline bool
 rt_visit_add_op(
 	struct rt_env *env,
@@ -409,7 +394,7 @@ rt_visit_add_op(
 	BINARY_OP(rt_add_helper);
 }
 
-/* Visit a ROP_SUB instruction. */
+/* Visit a OP_SUB instruction. */
 static inline bool
 rt_visit_sub_op(
 	struct rt_env *env,
@@ -421,7 +406,7 @@ rt_visit_sub_op(
 	BINARY_OP(rt_sub_helper);
 }
 
-/* Visit a ROP_MUL instruction. */
+/* Visit a OP_MUL instruction. */
 static inline bool
 rt_visit_mul_op(
 	struct rt_env *env,
@@ -433,7 +418,7 @@ rt_visit_mul_op(
 	BINARY_OP(rt_mul_helper);
 }
 
-/* Visit a ROP_DIV instruction. */
+/* Visit a OP_DIV instruction. */
 static inline bool
 rt_visit_div_op(
 	struct rt_env *env,
@@ -445,7 +430,7 @@ rt_visit_div_op(
 	BINARY_OP(rt_div_helper);
 }
 
-/* Visit a ROP_MOD instruction. */
+/* Visit a OP_MOD instruction. */
 static inline bool
 rt_visit_mod_op(
 	struct rt_env *env,
@@ -457,7 +442,7 @@ rt_visit_mod_op(
 	BINARY_OP(rt_mod_helper);
 }
 
-/* Visit a ROP_AND instruction. */
+/* Visit a OP_AND instruction. */
 static inline bool
 rt_visit_and_op(
 	struct rt_env *env,
@@ -469,7 +454,7 @@ rt_visit_and_op(
 	BINARY_OP(rt_and_helper);
 }
 
-/* Visit a ROP_OR instruction. */
+/* Visit a OP_OR instruction. */
 static inline bool
 rt_visit_or_op(
 	struct rt_env *env,
@@ -481,7 +466,7 @@ rt_visit_or_op(
 	BINARY_OP(rt_or_helper);
 }
 
-/* Visit a ROP_XOR instruction. */
+/* Visit a OP_XOR instruction. */
 static inline bool
 rt_visit_xor_op(
 	struct rt_env *env,
@@ -493,7 +478,7 @@ rt_visit_xor_op(
 	BINARY_OP(rt_xor_helper);
 }
 
-/* Visit a ROP_NEG instruction. */
+/* Visit a OP_NEG instruction. */
 static inline bool
 rt_visit_neg_op(
 	struct rt_env *env,
@@ -505,7 +490,7 @@ rt_visit_neg_op(
 	UNARY_OP(rt_neg_helper);
 }
 
-/* Visit a ROP_NOT instruction. */
+/* Visit a OP_NOT instruction. */
 static inline bool
 rt_visit_not_op(
 	struct rt_env *env,
@@ -517,7 +502,7 @@ rt_visit_not_op(
 	UNARY_OP(rt_not_helper);
 }
 
-/* Visit a ROP_LT instruction. */
+/* Visit a OP_LT instruction. */
 static inline bool
 rt_visit_lt_op(
 	struct rt_env *env,
@@ -529,7 +514,7 @@ rt_visit_lt_op(
 	BINARY_OP(rt_lt_helper);
 }
 
-/* Visit a ROP_LTE instruction. */
+/* Visit a OP_LTE instruction. */
 static inline bool
 rt_visit_lte_op(
 	struct rt_env *env,
@@ -541,7 +526,7 @@ rt_visit_lte_op(
 	BINARY_OP(rt_lte_helper);
 }
 
-/* Visit a ROP_GT instruction. */
+/* Visit a OP_GT instruction. */
 static inline bool
 rt_visit_gt_op(
 	struct rt_env *env,
@@ -553,7 +538,7 @@ rt_visit_gt_op(
 	BINARY_OP(rt_gt_helper);
 }
 
-/* Visit a ROP_GTE instruction. */
+/* Visit a OP_GTE instruction. */
 static inline bool
 rt_visit_gte_op(
 	struct rt_env *env,
@@ -565,7 +550,7 @@ rt_visit_gte_op(
 	BINARY_OP(rt_gte_helper);
 }
 
-/* Visit a ROP_EQ instruction. */
+/* Visit a OP_EQ instruction. */
 static inline bool
 rt_visit_eq_op(
 	struct rt_env *env,
@@ -577,7 +562,7 @@ rt_visit_eq_op(
 	BINARY_OP(rt_eq_helper);
 }
 
-/* Visit a ROP_NEQ instruction. */
+/* Visit a OP_NEQ instruction. */
 static inline bool
 rt_visit_neq_op(
 	struct rt_env *env,
@@ -589,7 +574,7 @@ rt_visit_neq_op(
 	BINARY_OP(rt_neq_helper);
 }
 
-/* Visit a ROP_STOREARRAY instruction. */
+/* Visit a OP_STOREARRAY instruction. */
 static inline bool
 rt_visit_storearray_op(
 	struct rt_env *env,
@@ -601,7 +586,7 @@ rt_visit_storearray_op(
 	BINARY_OP(rt_storearray_helper);
 }
 
-/* Visit a ROP_LOADARRAY instruction. */
+/* Visit a OP_LOADARRAY instruction. */
 static inline bool
 rt_visit_loadarray_op(
 	struct rt_env *env,
@@ -613,7 +598,7 @@ rt_visit_loadarray_op(
 	BINARY_OP(rt_loadarray_helper);
 }
 
-/* Visit a ROP_LEN instruction. */
+/* Visit a OP_LEN instruction. */
 static inline bool
 rt_visit_len_op(
 	struct rt_env *env,
@@ -625,7 +610,7 @@ rt_visit_len_op(
 	UNARY_OP(rt_len_helper);
 }
 
-/* Visit a ROP_GETDICTKEYBYINDEX instruction. */
+/* Visit a OP_GETDICTKEYBYINDEX instruction. */
 static inline bool
 rt_visit_getdictkeybyindex_op(
 	struct rt_env *env,
@@ -637,7 +622,7 @@ rt_visit_getdictkeybyindex_op(
 	BINARY_OP(rt_getdictkeybyindex_helper);
 }
 
-/* Visit a ROP_GETDICTVALBYINDEX instruction. */
+/* Visit a OP_GETDICTVALBYINDEX instruction. */
 static inline bool
 rt_visit_getdictvalbyindex_op(
 	struct rt_env *env,
@@ -649,7 +634,7 @@ rt_visit_getdictvalbyindex_op(
 	BINARY_OP(rt_getdictvalbyindex_helper);
 }
 
-/* Visit a ROP_LOADYMBOL instruction. */
+/* Visit a OP_LOADYMBOL instruction. */
 static inline bool
 rt_visit_loadsymbol_op(
 	struct rt_env *env,
@@ -684,7 +669,7 @@ rt_visit_loadsymbol_op(
 	return true;
 }
 
-/* Visit a ROP_STORESYMBOL instruction. */
+/* Visit a OP_STORESYMBOL instruction. */
 static inline bool
 rt_visit_storesymbol_op(
 	struct rt_env *env,
@@ -715,7 +700,7 @@ rt_visit_storesymbol_op(
 	return true;
 }
 
-/* Visit a ROP_LOADDOT instruction. */
+/* Visit a OP_LOADDOT instruction. */
 static inline bool
 rt_visit_loaddot_op(
 	struct rt_env *env,
@@ -763,7 +748,7 @@ rt_visit_loaddot_op(
 	return true;
 }
 
-/* Visit a ROP_STOREDOT instruction. */
+/* Visit a OP_STOREDOT instruction. */
 static inline bool
 rt_visit_storedot_op(
 	struct rt_env *env,
@@ -811,7 +796,7 @@ rt_visit_storedot_op(
 	return true;
 }
 
-/* Visit a ROP_CALL instruction. */
+/* Visit a OP_CALL instruction. */
 static inline bool
 rt_visit_call_op(
 	struct rt_env *env,
@@ -854,7 +839,7 @@ rt_visit_call_op(
 	return true;
 }
 
-/* Visit a ROP_THISCALL instruction. */
+/* Visit a OP_THISCALL instruction. */
 static inline bool
 rt_visit_thiscall_op(
 	struct rt_env *env,
@@ -911,7 +896,7 @@ rt_visit_thiscall_op(
 	return true;
 }
 
-/* Visit a ROP_JMP instruction. */
+/* Visit a OP_JMP instruction. */
 static inline bool
 rt_visit_jmp_op(
 	struct rt_env *env,
@@ -941,7 +926,7 @@ rt_visit_jmp_op(
 	return true;
 }
 
-/* Visit a ROP_JMPIFTRUE instruction. */
+/* Visit a OP_JMPIFTRUE instruction. */
 static inline bool
 rt_visit_jmpiftrue_op(
 	struct rt_env *env,
@@ -987,7 +972,7 @@ rt_visit_jmpiftrue_op(
 	return true;
 }
 
-/* Visit a ROP_JMPIFFALSE instruction. */
+/* Visit a OP_JMPIFFALSE instruction. */
 static inline bool
 rt_visit_jmpiffalse_op(
 	struct rt_env *env,
@@ -1041,168 +1026,168 @@ rt_visit_op(
 	int *pc)
 {
 	switch (func->bytecode[*pc]) {
-	case ROP_NOP:
+	case OP_NOP:
 		/* NOP */
 		(*pc)++;
 		break;
-	case ROP_LINEINFO:
+	case OP_LINEINFO:
 		if (!rt_visit_lineinfo_op(env, func, pc))
 			return false;
 		break;
-	case ROP_ASSIGN:
+	case OP_ASSIGN:
 		if (!rt_visit_assign_op(env, func, pc))
 			return false;
 		break;
-	case ROP_ICONST:
+	case OP_ICONST:
 		if (!rt_visit_iconst_op(env, func, pc))
 			return false;
 		break;
-	case ROP_FCONST:
+	case OP_FCONST:
 		if (!rt_visit_fconst_op(env, func, pc))
 			return false;
 		break;
-	case ROP_SCONST:
+	case OP_SCONST:
 		if (!rt_visit_sconst_op(env, func, pc))
 			return false;
 		break;
-	case ROP_ACONST:
+	case OP_ACONST:
 		if (!rt_visit_aconst_op(env, func, pc))
 			return false;
 		break;
-	case ROP_DCONST:
+	case OP_DCONST:
 		if (!rt_visit_dconst_op(env, func, pc))
 			return false;
 		break;
-	case ROP_INC:
+	case OP_INC:
 		if (!rt_visit_inc_op(env, func, pc))
 			return false;
 		break;
-	case ROP_ADD:
+	case OP_ADD:
 		if (!rt_visit_add_op(env, func, pc))
 			return false;
 		break;
-	case ROP_SUB:
+	case OP_SUB:
 		if (!rt_visit_sub_op(env, func, pc))
 			return false;
 		break;
-	case ROP_MUL:
+	case OP_MUL:
 		if (!rt_visit_mul_op(env, func, pc))
 			return false;
 		break;
-	case ROP_DIV:
+	case OP_DIV:
 		if (!rt_visit_div_op(env, func, pc))
 			return false;
 		break;
-	case ROP_MOD:
+	case OP_MOD:
 		if (!rt_visit_mod_op(env, func, pc))
 			return false;
 		break;
-	case ROP_AND:
+	case OP_AND:
 		if (!rt_visit_and_op(env, func, pc))
 			return false;
 		break;
-	case ROP_OR:
+	case OP_OR:
 		if (!rt_visit_or_op(env, func, pc))
 			return false;
 		break;
-	case ROP_XOR:
+	case OP_XOR:
 		if (!rt_visit_xor_op(env, func, pc))
 			return false;
 		break;
-	case ROP_NEG:
+	case OP_NEG:
 		if (!rt_visit_neg_op(env, func, pc))
 			return false;
 		break;
-	case ROP_NOT:
+	case OP_NOT:
 		if (!rt_visit_not_op(env, func, pc))
 			return false;
 		break;
-	case ROP_LT:
+	case OP_LT:
 		if (!rt_visit_lt_op(env, func, pc))
 			return false;
 		break;
-	case ROP_LTE:
+	case OP_LTE:
 		if (!rt_visit_lte_op(env, func, pc))
 			return false;
 		break;
-	case ROP_GT:
+	case OP_GT:
 		if (!rt_visit_gt_op(env, func, pc))
 			return false;
 		break;
-	case ROP_GTE:
+	case OP_GTE:
 		if (!rt_visit_gte_op(env, func, pc))
 			return false;
 		break;
-	case ROP_EQ:
+	case OP_EQ:
 		if (!rt_visit_eq_op(env, func, pc))
 			return false;
 		break;
-	case ROP_EQI:
+	case OP_EQI:
 		/* Same as EQ. EQI is an optimization hint for JIT-compiler. */
 		if (!rt_visit_eq_op(env, func, pc))
 			return false;
 		break;
-	case ROP_NEQ:
+	case OP_NEQ:
 		if (!rt_visit_neq_op(env, func, pc))
 			return false;
 		break;
-	case ROP_STOREARRAY:
+	case OP_STOREARRAY:
 		if (!rt_visit_storearray_op(env, func, pc))
 			return false;
 		break;
-	case ROP_LOADARRAY:
+	case OP_LOADARRAY:
 		if (!rt_visit_loadarray_op(env, func, pc))
 			return false;
 		break;
-	case ROP_LEN:
+	case OP_LEN:
 		if (!rt_visit_len_op(env, func, pc))
 			return false;
 		break;
-	case ROP_GETDICTKEYBYINDEX:
+	case OP_GETDICTKEYBYINDEX:
 		if (!rt_visit_getdictkeybyindex_op(env, func, pc))
 			return false;
 		break;
-	case ROP_GETDICTVALBYINDEX:
+	case OP_GETDICTVALBYINDEX:
 		if (!rt_visit_getdictvalbyindex_op(env, func, pc))
 			return false;
 		break;
-	case ROP_LOADSYMBOL:
+	case OP_LOADSYMBOL:
 		if (!rt_visit_loadsymbol_op(env, func, pc))
 			return false;
 		break;
-	case ROP_STORESYMBOL:
+	case OP_STORESYMBOL:
 		if (!rt_visit_storesymbol_op(env, func, pc))
 			return false;
 		break;
-	case ROP_LOADDOT:
+	case OP_LOADDOT:
 		if (!rt_visit_loaddot_op(env, func, pc))
 			return false;
 		break;
-	case ROP_STOREDOT:
+	case OP_STOREDOT:
 		if (!rt_visit_storedot_op(env, func, pc))
 			return false;
 		break;
-	case ROP_CALL:
+	case OP_CALL:
 		if (!rt_visit_call_op(env, func, pc))
 			return false;
 		break;
-	case ROP_THISCALL:
+	case OP_THISCALL:
 		if (!rt_visit_thiscall_op(env, func, pc))
 			return false;
 		break;
-	case ROP_JMP:
+	case OP_JMP:
 		if (!rt_visit_jmp_op(env, func, pc))
 			return false;
 		break;
-	case ROP_JMPIFTRUE:
+	case OP_JMPIFTRUE:
 		if (!rt_visit_jmpiftrue_op(env, func, pc))
 			return false;
 		break;
-	case ROP_JMPIFFALSE:
+	case OP_JMPIFFALSE:
 		if (!rt_visit_jmpiffalse_op(env, func, pc))
 			return false;
 		break;
-	case ROP_JMPIFEQ:
+	case OP_JMPIFEQ:
 		/* Same as JMPIFTRUE. (JMPIFEQ is an optimization hint for JIT-compiler.) */
 		if (!rt_visit_jmpiftrue_op(env, func, pc))
 			return false;
@@ -1214,5 +1199,3 @@ rt_visit_op(
 
 	return true;
 }
-
-#endif

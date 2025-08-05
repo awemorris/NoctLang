@@ -15,54 +15,17 @@
 #include "gc.h"
 
 /*
- * Butecode OP definition.
+ * Maximum number of the stack depth.
  */
-enum rt_bytecode {
-	ROP_NOP,		/* 0x00: nop */
-	ROP_ASSIGN,		/* 0x01: dst = src */
-	ROP_ICONST,		/* 0x02: dst = integer constant */
-	ROP_FCONST,		/* 0x03: dst = floating-point constant */
-	ROP_SCONST,		/* 0x04: dst = string constant */
-	ROP_ACONST,		/* 0x05: dst = empty array */
-	ROP_DCONST,		/* 0x06: dst = empty dictionary */
-	ROP_INC,		/* 0x07: dst = src + 1 */
-	ROP_NEG,		/* 0x08: dst = -src */
-	ROP_NOT,		/* 0x09: dst = !src */
-	ROP_ADD,		/* 0x0a: dst = src1 + src2 */
-	ROP_SUB,		/* 0x0b: dst = src1 - src2 */
-	ROP_MUL,		/* 0x0c: dst = src1 * src2 */
-	ROP_DIV,		/* 0x0d: dst = src1 / src2 */
-	ROP_MOD,		/* 0x0e: dst = src1 % src2 */
-	ROP_AND,		/* 0x0f: dst = src1 & src2 */
-	ROP_OR,			/* 0x10: dst = src1 | src2 */
-	ROP_XOR,		/* 0x11: dst = src1 ^ src2 */
-	ROP_LT,			/* 0x12: dst = src1 <  src2 [0 or 1] */
-	ROP_LTE,		/* 0x13: dst = src1 <= src2 [0 or 1] */
-	ROP_GT,			/* 0x14: dst = src1 >  src2 [0 or 1] */
-	ROP_GTE,		/* 0x15: dst = src1 >= src2 [0 or 1] */
-	ROP_EQ,			/* 0x16: dst = src1 == src2 [0 or 1] */
-	ROP_NEQ,		/* 0x17: dst = src1 != src2 [0 or 1] */
-	ROP_EQI,		/* 0x18: dst = src1 == src2 [0 or 1], integers */
-	ROP_LOADARRAY,		/* 0x19: dst = src1[src2] */
-	ROP_STOREARRAY,		/* 0x1a: opr1[opr2] = opr3 */
-	ROP_LEN,		/* 0x1b: dst = len(src) */
-	ROP_GETDICTKEYBYINDEX,	/* 0x1c: dst = src1.keyAt(src2) */
-	ROP_GETDICTVALBYINDEX,	/* 0x1d: dst = src1.valAt(src2) */
-	ROP_STOREDOT,		/* 0x1e: obj.access = src */
-	ROP_LOADDOT,		/* 0x1f: dst = obj.access */
-	ROP_STORESYMBOL,	/* 0x20: setSymbol(dst, src) */
-	ROP_LOADSYMBOL,		/* 0x21: dst = getSymbol(src) */
-	ROP_CALL,		/* 0x22: func(arg1, ...) */
-	ROP_THISCALL,		/* 0x23: obj->func(arg1, ...) */
-	ROP_JMP,		/* 0x24: PC = src */
-	ROP_JMPIFTRUE,		/* 0x25: PC = src1 if src2 != 0 */
-	ROP_JMPIFFALSE,		/* 0x26: PC = src1 if src2 == 0 */
-	ROP_JMPIFEQ,		/* 0x27: PC = src1 if src2 indicates eq */
-	ROP_LINEINFO,		/* 0x28: line = src */
-};
+#define RT_FRAME_MAX		32
 
 /*
- * Maximum number of C pinned variables.
+ * Maximum number of the tmpvar in a stack.
+ */
+#define RT_TMPVAR_MAX		128
+
+/*
+ * Maximum number of the C pinned variables.
  */
 #define RT_GLOBAL_PIN_MAX	64
 #define RT_LOCAL_PIN_MAX	32
@@ -76,87 +39,6 @@ struct rt_array;
 struct rt_dict;
 struct rt_func;
 struct rt_bindglobal;
-
-/*
- * VM.
- */
-struct rt_vm {
-	/* Global symbols. */
-	struct rt_bindglobal *global;
-
-	/* Function list. */
-	struct rt_func *func_list;
-
-	/* GC. */
-	struct rt_gc_info gc;
-
-	/* Env list. */
-	struct rt_env *env_list;
-
-	/* Pinned C global variables. */
-	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
-	int pinned_count;
-
-	/* Is JIT code written and not commited? */
-	bool is_jit_dirty;
-
-#if defined(USE_MULTITHREAD)
-	/* In-flight counter for GC exclusion. */
-	int in_flight_counter;
-
-	/* GC stop-the-world counter. */
-	int gc_stw_counter;
-#endif
-};
-
-/*
- * Runtime environment.
- */
-struct rt_env {
-	/* Stack. (Do not move this. JIT assumes its offset is 0.) */
-	struct rt_frame *frame;
-
-	/* Execution line. (Do not move. JIT assumes the offset 8.) */
-	int line;
-
-	/* Do not move. */
-	int _dummy;
-
-	/* VM. */
-	struct rt_vm *vm;
-
-	/* execution file. */
-	char file_name[1024];
-
-	/* Error message. */
-	char error_message[4096];
-
-	struct rt_env *next;
-
-#if defined(USE_MULTITHREAD)
-	/* A counter for GC. */
-	int gc_in_progress_counter;
-#endif
-};
-
-/*
- * Calling frame.
- */
-struct rt_frame {
-	/* tmpvar (Do not move. JIT assumes the offset 0.) */
-	struct rt_value *tmpvar;
-	int tmpvar_size;
-
-	/* function */
-	struct rt_func *func;
-
-	/* Pinned C local variables. */
-	struct rt_value *pinned[RT_LOCAL_PIN_MAX];
-	int pinned_count;
-
-	/* Next frame. */
-	struct rt_frame *next;
-};
 
 /*
  * String object.
@@ -225,6 +107,123 @@ struct rt_bindglobal {
 	char *name;
 	struct rt_value val;
 	struct rt_bindglobal *next;
+};
+
+/*
+ * Calling frame.
+ */
+struct rt_frame {
+	/*
+	 * tmpvar pointer.
+	 *  - Do not move. JIT assumes its offset.
+	 */
+	struct rt_value *tmpvar;
+
+	/*
+	 * Size of the tmpvar table.
+	 */
+	int tmpvar_size;
+
+	/*
+	 * Current running function.
+	 */
+	struct rt_func *func;
+
+	/*
+	 * Pinned C local variables.
+	 */
+	struct rt_value *pinned[RT_LOCAL_PIN_MAX];
+	int pinned_count;
+
+	/*
+	 * tmpvar body.
+	 */
+	struct rt_value tmpvar_alloc[RT_TMPVAR_MAX];
+};
+
+/*
+ * Runtime environment.
+ */
+struct rt_env {
+	/*
+	 * [Stack Pointer]
+	 *  - Do not move this. JIT codegen assumes its offset.
+	 */
+	struct rt_frame *frame;
+
+	/*
+	 * [Execution Line]
+	 *  - Do not move. JIT codegen assumes the offset.
+	 */
+	int line;
+
+	/*
+	 * Do not move. (8-byte alisgnment)
+	 */
+	int _dummy;
+
+	/*
+	 * Reference to VM.
+	 */
+	struct rt_vm *vm;
+
+	/*
+	 * Stack allocation table, referenced by the "frame" field.
+	 */
+	struct rt_frame frame_alloc[RT_FRAME_MAX];
+	int cur_frame_index;
+
+	/*
+	 * Execution file name. Set by "rt_call()".
+	 */
+	char file_name[256];
+
+	/*
+	 * Error message. Set by "rt_error()".
+	 */
+	char error_message[1024];
+
+	/*
+	 * Env linked list.
+	 */
+	struct rt_env *next;
+
+#if defined(USE_MULTITHREAD)
+	/* A counter for GC. */
+	int gc_in_progress_counter;
+#endif
+};
+
+/*
+ * VM.
+ */
+struct rt_vm {
+	/* Global symbols. */
+	struct rt_bindglobal *global;
+
+	/* Function list. */
+	struct rt_func *func_list;
+
+	/* GC. */
+	struct rt_gc_info gc;
+
+	/* Env list. */
+	struct rt_env *env_list;
+
+	/* Pinned C global variables. */
+	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
+	int pinned_count;
+
+	/* Is JIT code written and not commited? */
+	bool is_jit_dirty;
+
+#if defined(USE_MULTITHREAD)
+	/* In-flight counter for GC exclusion. */
+	int in_flight_counter;
+
+	/* GC stop-the-world counter. */
+	int gc_stw_counter;
+#endif
 };
 
 /* Create a runtime environment. */

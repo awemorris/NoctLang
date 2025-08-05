@@ -75,9 +75,15 @@ rt_create_vm(
 	(*default_env)->vm = *vm;
 	(*vm)->env_list = *default_env;
 
+	/* Enter the initial stack frame. */
+	(*default_env)->cur_frame_index = 0;
+	(*default_env)->frame = &(*default_env)->frame_alloc[0];
+	(*default_env)->frame->tmpvar = &(*default_env)->frame->tmpvar_alloc[0];
+	(*default_env)->frame->tmpvar_size = RT_TMPVAR_MAX;
+
 #if defined(USE_MULTITHREAD)
-	/* Initialize the environment. */
-	rt_gc_init_env(*default_env);
+	/* Initialize for GC. */
+	rt_gc_init_env(env);
 #endif
 
 	/* Initialize the garbage collector. */
@@ -116,7 +122,7 @@ rt_destroy_vm(
 	env = vm->env_list;
 	while (env != NULL) {
 		next_env = env->next;
-		rt_free_env(env);
+		free(env);
 		env = next_env;
 	}
 
@@ -135,18 +141,6 @@ rt_destroy_vm(
 	free(vm);
 
 	return true;
-}
-
-/* Free a thread environment. */
-static void
-rt_free_env(
-	struct rt_env *env)
-{
-	/* Free frames. */
-	while (env->frame != NULL)
-		rt_leave_frame(env, NULL);
-
-	free(env);
 }
 
 /* Free a function. */
@@ -173,7 +167,6 @@ rt_free_func(
 }
 
 #if defined(USE_MULTITHREAD)
-
 /*
  * Create an environment for the current thread.
  */
@@ -193,9 +186,15 @@ rt_create_thread_env(
 	memset(env, 0, sizeof(struct rt_env));
 	env->vm = prev_env->vm;
 
-	/* Link to the VM. */
+	/* Link. */
 	env->next = prev_env->vm->env_list;
 	prev_env->vm->env_list = env;
+
+	/* Enter the initial stack frame. */
+	env->cur_frame_index = 0;
+	env->frame = &env->frame_alloc[0];
+	env->frame->tmpvar = &env->frame->tmpvar_alloc[0];
+	env->frame->tmpvar_size = RT_TMPVAR_MAX;
 
 	/* Initialize for GC. */
 	rt_gc_init_env(env);
@@ -204,8 +203,7 @@ rt_create_thread_env(
 	*new_env = env;
 	return true;
 }
-
-#endif /* defined(USE_MULTITHREAD) */
+#endif
 
 /*
  * Get an error message.
@@ -763,23 +761,19 @@ rt_enter_frame(
 {
 	struct rt_frame *frame;
 
-	frame = malloc(sizeof(struct rt_frame));
-	if (frame == NULL) {
-		rt_out_of_memory(env);
+	if (++env->cur_frame_index >= RT_FRAME_MAX) {
+		rt_error(env, _("Stack overflow."));
 		return false;
 	}
-	memset(frame, 0, sizeof(struct rt_frame));
-	frame->func = func;
-	frame->tmpvar_size = func->tmpvar_size;
-	frame->tmpvar = malloc(sizeof(struct rt_value) * (size_t)func->tmpvar_size);
-	if (frame->tmpvar == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-	memset(frame->tmpvar, 0, sizeof(struct rt_value) * (size_t)func->tmpvar_size);
 
-	frame->next = env->frame;
+	frame = &env->frame_alloc[env->cur_frame_index];
 	env->frame = frame;
+	frame->func = func;
+	frame->tmpvar = &frame->tmpvar_alloc[0];
+	frame->tmpvar_size = func->tmpvar_size;
+
+	/* We can't remove this due to GC. */
+	memset(frame->tmpvar, 0, sizeof(struct rt_value) * (size_t)frame->tmpvar_size);
 
 	return true;
 }
@@ -794,13 +788,12 @@ rt_leave_frame(
 {
 	struct rt_frame *frame;
 
-	/* Unlink the frame from the list. */
-	frame = env->frame;
-	env->frame = env->frame->next;
+	if (--env->cur_frame_index < 0) {
+		rt_error(env, _("Stack underflow."));
+		abort();
+	}
 
-	/* Free. */
-	free(frame->tmpvar);
-	free(frame);
+	env->frame = &env->frame_alloc[env->cur_frame_index];
 }
 
 /*

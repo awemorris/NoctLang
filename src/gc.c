@@ -748,7 +748,7 @@ rt_gc_young_gc_body(
 	struct rt_gc_object *obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
-	int i;
+	int sp, i;
 
 	env->vm->gc.graduate_new_list = NULL;
 
@@ -798,8 +798,9 @@ rt_gc_young_gc_body(
 	}
 
 	/* For all call frames. */
-	frame = env->frame;
-	while (frame != NULL) {
+	for (sp = env->cur_frame_index; sp >= 0; sp--) {
+		frame = &env->frame_alloc[sp];
+
 		/* For all temporary variables in the frame. */
 		for (i = 0; i < frame->tmpvar_size; i++) {
 			if (IS_REF_VAL(&frame->tmpvar[i])) {
@@ -815,8 +816,6 @@ rt_gc_young_gc_body(
 					return;
 			}
 		}
-
-		frame = frame->next;
 	}
 
 	/* For all pinned C global variables. */
@@ -1339,7 +1338,7 @@ rt_gc_old_gc_body(
 	struct rt_gc_object *obj, *next_obj;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
-	int i;
+	int sp, i;
 
 	/*
 	 * Clear marks.
@@ -1365,8 +1364,9 @@ rt_gc_old_gc_body(
 	}
 
 	/* For all call frames. */
-	frame = env->frame;
-	while (frame != NULL) {
+	for (sp = env->cur_frame_index; sp >= 0; sp--) {
+		frame = &env->frame_alloc[sp];
+
 		/* For all temporary variables in the frame. */
 		for (i = 0; i < frame->tmpvar_size; i++) {
 			if (IS_REF_VAL(&frame->tmpvar[i]))
@@ -1378,8 +1378,6 @@ rt_gc_old_gc_body(
 			if (IS_REF_VAL(frame->pinned[i]))
 				rt_gc_mark_old_object_recursively(env, frame->pinned[i]->val.obj);
 		}
-
-		frame = frame->next;
 	}
 
 	/* For all pinned C global variables. */
@@ -1485,7 +1483,7 @@ rt_gc_compact_gc(
 {
 	struct rt_gc_object *obj, **objpp;
 	char *cur_blk, *remap_top;
-	int i, index;
+	int sp, i, index;
 	struct rt_bindglobal *global;
 	struct rt_frame *frame;
 
@@ -1584,7 +1582,10 @@ rt_gc_compact_gc(
 	/* For all tenure list references. */
 	objpp = &env->vm->gc.tenure_list;
 	while (*objpp != NULL) {
+		/* Rewrite ->next. */
 		rt_gc_update_tenure_ref(env, objpp);
+
+		/* Rewrite ->prev. */
 		if ((*objpp)->prev != NULL)
 			rt_gc_update_tenure_ref(env, &(*objpp)->prev);
 		objpp = &(*objpp)->next;
@@ -1593,7 +1594,10 @@ rt_gc_compact_gc(
 	/* For all remember set references. */
 	objpp = &env->vm->gc.remember_set;
 	while (*objpp != NULL) {
+		/* Rewrite ->rem_next. */
 		rt_gc_update_tenure_ref_recursively(env, objpp);
+
+		/* Rewrite ->rem_prev. */
 		if ((*objpp)->rem_prev != NULL)
 			rt_gc_update_tenure_ref(env, &(*objpp)->rem_prev);
 		objpp = &(*objpp)->rem_next;
@@ -1608,8 +1612,9 @@ rt_gc_compact_gc(
 	}
 
 	/* For all call frames. */
-	frame = env->frame;
-	while (frame != NULL) {
+	for (sp = env->cur_frame_index; sp >= 0; sp--) {
+		frame = &env->frame_alloc[sp];
+
 		/* For all temporary variables in the frame. */
 		for (i = 0; i < frame->tmpvar_size; i++) {
 			if (IS_REF_VAL(&frame->tmpvar[i]))
@@ -1621,8 +1626,6 @@ rt_gc_compact_gc(
 			if (IS_REF_VAL(frame->pinned[i]))
 				rt_gc_update_tenure_ref_recursively(env, &frame->pinned[i]->val.obj);
 		}
-
-		frame = frame->next;
 	}
 
 	/* For all pinned C global variables. */

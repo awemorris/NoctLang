@@ -12,6 +12,8 @@
 #define NOCT_JIT_H
 
 #include <noct/c89compat.h>
+#include "bytecode.h"
+
 #include <string.h>
 
 /* Generate a JIT-compiled code for a function. */
