@@ -243,9 +243,9 @@ jit_put_addi(
 	if (!jit_put_word(ctx,
 			  (imm << 20) | /* imm */
 			  (rs << 15) |	/* rs1 */
-			  (6 << 12) |   /* funct3 */
+			  (0 << 12) |   /* funct3 */
 			  (rd << 7) |	/* rd */
-			  0x93)) 	/* opcode */
+			  0x13)) 	/* opcode */
 		return false;
 	return true;
 }
@@ -371,7 +371,7 @@ jit_put_sw(
 }
 
 /* SD */
-#define SD(rs2, imm, rs1)	if (!jit_put_sw(ctx, rs2, imm, rs1)) return false
+#define SD(rs2, imm, rs1)	if (!jit_put_sd(ctx, rs2, imm, rs1)) return false
 static INLINE bool
 jit_put_sd(
 	struct jit_context *ctx,
@@ -461,7 +461,7 @@ jit_put_jalr(
 	uint32_t rs)
 {
 	if (!jit_put_word(ctx,
-			  ((imm & 0x1fffff) << 20) |	/* imm */
+			  ((imm & 0xfff) << 20) |	/* imm */
 			  (rs << 15) |			/* rs1 */
 			  (0 << 12) |			/* funct3 */
 			  (rd << 7) |			/* rd */
@@ -661,12 +661,11 @@ jit_visit_iconst_op(
 
 		/* t0 = &env->frame->tmpvar[dst] */
 		ORI	(REG_T0, REG_ZERO, IMM12(dst));
-		SLLI	(REG_T0, REG_T0, IMM5(8));
+		SLLI	(REG_T0, REG_T0, IMM5(4));
 		ADD	(REG_T0, REG_S11, REG_T0);
 
 		/* env->frame->tmpvar[dst].type = RT_VALUE_INT */
 		ORI	(REG_T1, REG_ZERO, IMM12(0));
-		SLLI	(REG_T1, REG_T1, IMM5(8));
 		SW	(REG_T1, 0, REG_T0);
 
 		/* env->frame->tmpvar[dst].val.i = val */
@@ -1725,10 +1724,10 @@ jit_visit_bytecode(
 	/* Put a prologue. */
 	ASM {
 		/* Push the general-purpose registers. */
-		ADDI	(REG_SP, REG_SP, IMM12(-24));
-		SD	(REG_RA, 16, REG_SP);
-		SD	(REG_S10, 8, REG_SP);
-		SD	(REG_S11, 0, REG_SP);
+		ADDI	(REG_SP, REG_SP, IMM12(-32));
+		SD	(REG_RA, 24, REG_SP);
+		SD	(REG_S10, 16, REG_SP);
+		SD	(REG_S11, 8, REG_SP);
 
 		/* s10 = rt */
 		MV	(REG_S10, REG_A0);
@@ -1738,22 +1737,21 @@ jit_visit_bytecode(
 		LD	(REG_S11, 0, REG_T0);
 
 		/* Skip an exception handler. */
-		JAL	(REG_ZERO, IMM21(24));
+		JAL	(REG_ZERO, IMM21(28));
 	}
 
 	/* Put an exception handler. */
 	ctx->exception_code = ctx->code;
 	ASM {
 	/* EXCEPTION: */
-		LD	(REG_S11, 0, REG_SP);
-		LD	(REG_S10, 8, REG_SP);
-		LD	(REG_RA, 16, REG_SP);
-		ADDI	(REG_SP, REG_SP, IMM12(24));
+		LD	(REG_S11, 8, REG_SP);
+		LD	(REG_S10, 16, REG_SP);
+		LD	(REG_RA, 24, REG_SP);
+		ADDI	(REG_SP, REG_SP, IMM12(32));
 		ORI	(REG_A0, REG_ZERO, IMM12(0));
 		RET	();
 	}
 
-#if 0
 	/* Put a body. */
 	while (ctx->lpc < ctx->func->bytecode_size) {
 		/* Save LPC and addr. */
@@ -1933,7 +1931,6 @@ jit_visit_bytecode(
 			break;
 		}
 	}
-#endif
 
 	/* Add the tail PC to the table. */
 	ctx->pc_entry[ctx->pc_entry_count].lpc = (uint32_t)ctx->lpc;
@@ -1943,10 +1940,10 @@ jit_visit_bytecode(
 	/* Put an epilogue. */
 	ASM {
 	/* EPILOGUE: */
-		LD	(REG_S11, 0, REG_SP);
-		LD	(REG_S10, 8, REG_SP);
-		LD	(REG_RA, 16, REG_SP);
-		ADDI	(REG_SP, REG_SP, IMM12(24));
+		LD	(REG_S11, 8, REG_SP);
+		LD	(REG_S10, 16, REG_SP);
+		LD	(REG_RA, 24, REG_SP);
+		ADDI	(REG_SP, REG_SP, IMM12(32));
 		ORI	(REG_A0, REG_ZERO, IMM12(1));
 		RET	();
 	}
