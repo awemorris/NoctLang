@@ -337,17 +337,29 @@ jit_put_li64(
 	val = 0;
 	shift = 0;
 	while (imm) {
-		chunk = imm & 0xfff;
+		if (shift != 52)
+			chunk = imm >> 52;
+		else
+			chunk = (imm >> 52) & 0xf;
+
 		if (shift > 0 && val > 0) {
 			SLLI(rd, rd, 12);
 		}
+
 		if (chunk > 0) {
 			ORI(rd, rd, chunk);
 		}
+
 		val |= chunk;
-		val <<= 12;
-		imm >>= 12;
-		shift += 12;
+		if (shift != 48) {
+			val <<= 12;
+			imm <<= 12;
+			shift += 12;
+		} else {
+			val <<= 4;
+			imm <<= 4;
+			shift += 4;
+		}
 	}	
 	return true;
 }
