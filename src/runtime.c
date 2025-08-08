@@ -732,7 +732,8 @@ rt_call(
 				return false;
 			}
 			printf("Returned from JIT code (true).\n");
-			printf("%d: %d\n", env->frame->tmpvar[0].type, env->frame->tmpvar[0].val.i);
+			//printf("%d: %d\n", env->frame->tmpvar[1].type, env->frame->tmpvar[1].val.i);
+			printf("%d: %s\n", env->frame->tmpvar[1].type, env->frame->tmpvar[1].val.str->data);
 		} else {
 			/* Call the bytecode interpreter. */
 			if (!rt_visit_bytecode(env, func))

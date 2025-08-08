@@ -625,12 +625,10 @@ jit_visit_assign_op(
 
 		/* t0 = dst_addr = &evn->frame->tmpvar[dst] */
 		ORI	(REG_T0, REG_ZERO, IMM12(dst));
-		SLLI	(REG_T0, REG_T0, IMM5(4));
 		ADD	(REG_T0, REG_S11, REG_T0);
 
 		/* t1 = src_addr = &env->frame->tmpvar[src] */
 		ORI	(REG_T1, REG_ZERO, IMM12(src));
-		SLLI	(REG_T1, REG_T1, IMM5(4));
 		ADD	(REG_T1, REG_S11, REG_T1);
 
 		/* *dst_addr = *src_addr */
@@ -663,7 +661,6 @@ jit_visit_iconst_op(
 
 		/* t0 = &env->frame->tmpvar[dst] */
 		ORI	(REG_T0, REG_ZERO, IMM12(dst));
-		SLLI	(REG_T0, REG_T0, IMM5(4));
 		ADD	(REG_T0, REG_S11, REG_T0);
 
 		/* env->frame->tmpvar[dst].type = RT_VALUE_INT */
@@ -698,7 +695,6 @@ jit_visit_fconst_op(
 
 		/* x2 = &env->frame->tmpvar[dst] */
 		ORI	(REG_T0, REG_ZERO, IMM12(dst));
-		SLLI	(REG_T0, REG_T0, IMM5(4));
 		ADD	(REG_T0, REG_S11, REG_T0);
 
 		/* Assign env->frame->tmpvar[dst].type = RT_VALUE_FLOAT. */
@@ -707,7 +703,7 @@ jit_visit_fconst_op(
 
 		/* Assign env->frame->tmpvar[dst].val.f = val. */
 		LI_32	(REG_T2, IMM32(val));
-		SW	(REG_T2, 8, REG_T1);
+		SW	(REG_T2, 8, REG_T0);
 	}
 
 	return true;
@@ -736,7 +732,6 @@ jit_visit_sconst_op(
 
 		/* Arg2 a1: &env->frame->tmpvar[dst] */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
-		SLLI	(REG_A1, REG_A1, IMM5(4));
 		ADD	(REG_A1, REG_S11, REG_A1);
 
 		/* Arg3: a2: val */
@@ -747,7 +742,7 @@ jit_visit_sconst_op(
 		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+//		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -774,7 +769,6 @@ jit_visit_aconst_op(
 
 		/* Arg2 a1: &env->frame->tmpvar[dst] */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
-		SLLI	(REG_A1, REG_A1, IMM5(4));
 		ADD	(REG_A1, REG_S11, REG_A0);
 
 		/* Call rt_make_empty_array(). */
@@ -809,7 +803,6 @@ jit_visit_dconst_op(
 
 		/* Arg2 a1: &env->frame->tmpvar[dst] */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
-		SLLI	(REG_A1, REG_A1, IMM5(4));
 		ADD	(REG_A1, REG_S11, REG_A1);
 
 		/* Call rt_make_empty_dict(). */
@@ -841,7 +834,6 @@ jit_visit_inc_op(
 
 		/* t0 = &env->frame->tmpvar[dst]. */
 		ORI	(REG_T0, REG_ZERO, IMM12(dst));
-		SLLI	(REG_T0, REG_T0, IMM5(4));
 		ADD	(REG_T0, REG_S11, REG_T0);
 
 		/* rt->frame->tmpvar[dst].val.i++ */
@@ -1176,13 +1168,11 @@ jit_visit_eqi_op(
 
 		/* t0 = &rt->frame->tmpvar[src1].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src1));
-		SLLI	(REG_T0, REG_T0, IMM5(4));
 		ADD	(REG_T0, REG_T0, REG_S11);
 		LW	(REG_T0, 8, REG_T0);
 
 		/* t1 = &rt->frame->tmpvar[src2].val.i */
 		ORI	(REG_T1, REG_ZERO, IMM12(src2));
-		SLLI	(REG_T1, REG_T1, IMM5(4));
 		ADD	(REG_T1, REG_T1, REG_S11);
 		LW	(REG_T1, 8, REG_T1);
 
@@ -1622,10 +1612,11 @@ jit_visit_jmpiftrue_op(
 		return false;
 	}
 
+	src *= sizeof(struct rt_value);
+
 	ASM {
 		/* x3 = &rt->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
-		SLLI	(REG_T0, REG_T0, IMM5(4));	/* sizeof(struct rt_value) */
 		ADD	(REG_T0, REG_S11, REG_T0);
 		LW	(REG_T0, 8, REG_T0);
 
@@ -1662,10 +1653,11 @@ jit_visit_jmpiffalse_op(
 		return false;
 	}
 
+	src *= sizeof(struct rt_value);
+
 	ASM {
 		/* x3 = &rt->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
-		SLLI	(REG_T0, REG_T0, IMM5(4));	/* sizeof(struct rt_value) */
 		ADD	(REG_T0, REG_S11, REG_T0);
 		LW	(REG_T0, 8, REG_T0);
 

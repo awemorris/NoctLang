@@ -1616,10 +1616,11 @@ jit_visit_jmpiftrue_op(
 		return false;
 	}
 
+	src *= sizeof(struct rt_value);
+
 	ASM {
 		/* x3 = &rt->frame->tmpvar[src].val.i */
 		MOVZ	(REG_X2, IMM16(src), LSL_0);
-		LSL_4	(REG_X2, REG_X2);		/* src * sizeof(struct rt_value) */
 		ADD	(REG_X2, REG_X2, REG_X1);
 		LDR_IMM	(REG_X3, REG_X2, IMM9(8));
 
@@ -1656,10 +1657,11 @@ jit_visit_jmpiffalse_op(
 		return false;
 	}
 
+	src *= sizeof(struct rt_value);
+
 	ASM {
 		/* x3 = &rt->frame->tmpvar[src].val.i */
 		MOVZ		(REG_X2, IMM16(src), LSL_0);
-		LSL_4		(REG_X2, REG_X2);		/* src * sizeof(struct rt_value) */
 		ADD		(REG_X2, REG_X2, REG_X1);
 		LDR_IMM		(REG_X3, REG_X2, IMM9(8));
 
