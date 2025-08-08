@@ -294,6 +294,8 @@ jit_put_li32(
 			  (rd << 7) |	/* rd */
 			  0x13))	/* opcode */
 		return false;
+
+	return true;
 }
 
 /* LI_64 */
