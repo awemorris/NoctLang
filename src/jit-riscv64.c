@@ -470,23 +470,18 @@ jit_put_li32(
 	uint32_t rd,
 	uint32_t imm)
 {
-	uint32_t hi = imm >> 12;
-	uint32_t lo = imm & 0xfff;
-
-	/* lui rd, imm[31:12] */
+	/* auipc rd, o */
 	if (!jit_put_word(ctx,
-			  (hi << 12) |	/* imm */
-			  (rd << 7) |	/* rd */
-			  0x37))	/* opcode */
+			  ((0 & 0xfffff) >> 12) |	/* imm */
+			  (rd << 7) |			/* rd */
+			  0x17))			/* opcode */
 		return false;
 
-	/* addi rd, rd, imm[11:0] */
-	if (!jit_put_word(ctx,
-			  (lo << 20) |	/* imm */
-			  (rd << 15) |	/* rs */
-			  (0 << 12) | 	/* funct3 */
-			  (rd << 7) |	/* rd */
-			  0x13))	/* opcode */
+	LW(rd, 12, rd);
+	JAL(REG_ZERO, IMM21(8));
+
+	/* .dowrd imm */
+	if (!jit_put_word(ctx, imm))
 		return false;
 
 	return true;
@@ -1327,7 +1322,7 @@ jit_visit_storesymbol_op(
 		/* s11: &env->frame->tmpvar[0] */
 
 		/* Arg1 a0: env */
-		MV	(REG_A0, REG_S11);
+		MV	(REG_A0, REG_S10);
 
 		/* Arg2 a1: dst */
 		LI_64	(REG_A1, IMM64(dst));
@@ -1367,7 +1362,7 @@ jit_visit_loaddot_op(
 		/* s11: &env->frame->tmpvar[0] */
 
 		/* Arg1 a0: env */
-		MV	(REG_A0, REG_S11);
+		MV	(REG_A0, REG_S10);
 
 		/* Arg2 a1: dst */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
@@ -1404,13 +1399,13 @@ jit_visit_storedot_op(
 	CONSUME_TMPVAR(src);
 	field = (uint64_t)(intptr_t)field_s;
 
-	/* if (!jit_loaddot_helper(rt, dst, dict, field)) return false; */
+	/* if (!jit_storedot_helper(rt, dict, field, src)) return false; */
 	ASM {
 		/* s10: env */
 		/* s11: &env->frame->tmpvar[0] */
 
 		/* Arg1 a0: env */
-		MV	(REG_A1, REG_S11);
+		MV	(REG_A0, REG_S10);
 
 		/* Arg2 a1: dict */
 		ORI	(REG_A1, REG_ZERO, IMM12(dict));
@@ -1473,7 +1468,7 @@ jit_visit_call_op(
 		/* s11: &env->frame->tmpvar[0] */
 
 		/* Arg1 a0: env */
-		MV	(REG_A0, REG_S11);
+		MV	(REG_A0, REG_S10);
 
 		/* Arg2 a1: dst */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
@@ -1537,7 +1532,7 @@ jit_visit_thiscall_op(
 		/* s11: &env->frame->tmpvar[0] */
 
 		/* Arg1 a0: env */
-		MV	(REG_A0, REG_S11);
+		MV	(REG_A0, REG_S10);
 
 		/* Arg2 a1: dst */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
@@ -1585,6 +1580,9 @@ jit_visit_jmp_op(
 	ctx->branch_patch_count++;
 
 	ASM {
+		/* s10: env */
+		/* s11: &env->frame->tmpvar[0] */
+
 		/* Patched later. */
 		JAL	(REG_ZERO, IMM21(0));
 	}
@@ -1610,7 +1608,10 @@ jit_visit_jmpiftrue_op(
 	src *= sizeof(struct rt_value);
 
 	ASM {
-		/* x3 = &rt->frame->tmpvar[src].val.i */
+		/* s10: env */
+		/* s11: &env->frame->tmpvar[0] */
+
+		/* t0 = &rt->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		ADD	(REG_T0, REG_S11, REG_T0);
 		LW	(REG_T0, 8, REG_T0);
@@ -1651,7 +1652,10 @@ jit_visit_jmpiffalse_op(
 	src *= sizeof(struct rt_value);
 
 	ASM {
-		/* x3 = &rt->frame->tmpvar[src].val.i */
+		/* s10: env */
+		/* s11: &env->frame->tmpvar[0] */
+
+		/* t0 = &rt->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		ADD	(REG_T0, REG_S11, REG_T0);
 		LW	(REG_T0, 8, REG_T0);
@@ -1696,6 +1700,9 @@ jit_visit_jmpifeq_op(
 	ctx->branch_patch_count++;
 
 	ASM {
+		/* s10: env */
+		/* s11: &env->frame->tmpvar[0] */
+
 		/* Patched later. */
 		BEQ	(REG_T0, REG_T1, IMM13(0));
 	}

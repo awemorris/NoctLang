@@ -1386,7 +1386,7 @@ jit_visit_storedot_op(
 	CONSUME_TMPVAR(src);
 	field = (uint64_t)(intptr_t)field_s;
 
-	/* if (!jit_loaddot_helper(rt, dst, dict, field)) return false; */
+	/* if (!jit_storedot_helper(rt, dst, dict, field)) return false; */
 	ASM {
 		STP_PUSH	(REG_X0, REG_X1);
 		STP_PUSH	(REG_X30, REG_XZR);
