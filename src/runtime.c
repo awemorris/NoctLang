@@ -728,12 +728,11 @@ rt_call(
 		if (func->jit_code != NULL) {
 			/* Call a JIT-generated code. */
 			if (!func->jit_code(env)) {
-				printf("Returned from JIT code (false).\n");
+				//printf("Returned from JIT code (false).\n");
 				return false;
 			}
-			printf("Returned from JIT code (true).\n");
-			printf("%d: %d\n", env->frame->tmpvar[0].type, env->frame->tmpvar[0].val.i);
-			//printf("%d: %s\n", env->frame->tmpvar[1].type, env->frame->tmpvar[1].val.str->data);
+			//printf("Returned from JIT code (true).\n");
+			//printf("%d: %d\n", env->frame->tmpvar[0].type, env->frame->tmpvar[0].val.i);
 		} else {
 			/* Call the bytecode interpreter. */
 			if (!rt_visit_bytecode(env, func))
