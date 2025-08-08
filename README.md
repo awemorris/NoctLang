@@ -9,6 +9,7 @@ and clean C-like syntax.
 
 Written in portable ANSI C with no external dependencies, it runs
 everywhere — from desktop PCs down to single-chip environments.
+(JIT works on: x86, x86_64 arm, aarch64, riscv64, ppc, ppc64, mips, mips64)
 
 Try it now — launch the REPL or write your first program.
 It might take less time than you think.
@@ -57,7 +58,7 @@ and .NET.
 
 Noct is simple enough to try right now — no setup, no hassle.
 
-Just run the `noct` command and type:
+Just run the `noct` command and type the following on the REPL:
 
 ```
 for (i in 0..10) {
@@ -92,7 +93,7 @@ cmake --build build
 To run a script:
 
 ```
-./noct script.noct
+noct script.noct
 ```
 
 ---
@@ -214,32 +215,6 @@ Noct uses two intermediate representations:
 
 Their separation enables a lightweight JIT pipeline with a clear,
 analyzable architecture.
-
----
-
-## Roadmap
-
-Ongoing work focuses on performance, portability, and expressiveness.
-
-**JIT Architecture Support**
-
-**Status of JIT Support for Architectures**
-
-|Architecture    |Status     |
-|----------------|-----------|
-|x86 32bit       |OK         |
-|x86 64bit       |OK         |
-|Arm 32bit       |OK         |
-|Arm 64bit       |OK         |
-|MIPS 32bit      |OK         |
-|MIPS 64bit      |OK         |
-|PowerPC 32bit   |OK         |
-|PowerPC 64bit   |OK         |
-|RISC-V 32bit    |Soon       |
-|RISC-V 64bit    |Soon       |
-|SPARC 32bit     |Soon       |
-|SPARC 64bit     |Soon       |
-|s390x           |Planned    |
 
 ---
 
