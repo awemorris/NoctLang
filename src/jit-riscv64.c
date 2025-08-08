@@ -508,7 +508,13 @@ jit_put_li64(
 		return false;
 
 	LD(rd, 12, rd);
-	JAL(REG_ZERO, IMM21(8));
+	JAL(REG_ZERO, IMM21(12));
+
+	/* .dowrd imm */
+	if (!jit_put_word(ctx, (uint32_t)(imm & 0xffffffff)))
+		return false;
+	if (!jit_put_word(ctx, (uint32_t)(imm >> 32)))
+		return false;
 
 	return true;
 }
