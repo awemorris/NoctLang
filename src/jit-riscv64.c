@@ -332,6 +332,7 @@ jit_put_li64(
 	uint16_t chunk;
 	int shift;
 
+	printf("LI_64 %016lx\n", imm);
 	ORI(rd, REG_ZERO, 0);
 
 	val = 0;
@@ -343,11 +344,18 @@ jit_put_li64(
 			chunk = (imm >> 52) & 0xf;
 
 		if (shift > 0 && val > 0) {
-			SLLI(rd, rd, 12);
+			if (shift != 52) {
+				SLLI(rd, rd, 12);
+				printf("SLLI 12\n");
+			} else {
+				SLLI(rd, rd, 4);
+				printf("SLLI 4\n");
+			}
 		}
 
 		if (chunk > 0) {
 			ORI(rd, rd, chunk);
+			printf("ORI %03x\n", chunk);
 		}
 
 		val |= chunk;
@@ -754,7 +762,7 @@ jit_visit_sconst_op(
 		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-//		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
