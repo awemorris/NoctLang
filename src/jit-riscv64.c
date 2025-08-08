@@ -173,7 +173,7 @@ jit_commit(
 #define IMM12(v)	((uint32_t)((v) & 0xfff))
 #define IMM13(v)	((uint32_t)((v) & 0x1fff))
 #define IMM21(v)	((uint32_t)((v) & 0x1fffff))
-#define IMM32(v)	((uint64_t)(v))
+#define IMM32(v)	((uint32_t)(v))
 #define IMM64(v)	((uint64_t)(v))
 
 /* Put a instruction word. */
@@ -374,7 +374,7 @@ static INLINE bool
 jit_put_jal(
 	struct jit_context *ctx,
 	uint32_t rd,
-	uint64_t imm)
+	uint32_t imm)
 {
 	uint32_t imm_20    = (imm & 0x100000) >> 20;
 	uint32_t imm_19_12 = (imm & 0x0ff000) >> 12;
