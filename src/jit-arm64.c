@@ -1623,7 +1623,7 @@ jit_visit_jmpiftrue_op(
 		ADD	(REG_X2, REG_X2, REG_X1);
 		LDR_IMM	(REG_X3, REG_X2, IMM9(8));
 
-		/* Compare: rt->frame->tmpvar[dst].val.i == 1 */
+		/* Compare: rt->frame->tmpvar[dst].val.i != 0 */
 		CMP_W3_IMM	(IMM12(0));
 	}
 
