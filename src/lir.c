@@ -25,7 +25,7 @@
 
 /* Debug print */
 #undef DEBUG_BLOCK_ORDER
-#define DEBUG_DUMP_LIR
+#undef DEBUG_DUMP_LIR
 
 /*
  * Config
