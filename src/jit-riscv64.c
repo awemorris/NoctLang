@@ -26,7 +26,7 @@
 #define NEVER_COME_HERE		0
 
 /* Branch patch type */
-#define PATCH_BAL		0
+#define PATCH_JAL		0
 #define PATCH_BEQ		1
 #define PATCH_BNE		2
 
@@ -168,9 +168,12 @@ jit_commit(
 #define REG_T6		31
 
 /* Immediate */
+#define IMM5(v)		((uint32_t)((v) & 0x1f))
 #define IMM9(v)		((uint32_t)((v) & 0x1ff))
 #define IMM12(v)	((uint32_t)((v) & 0xfff))
+#define IMM13(v)	((uint32_t)((v) & 0x1fff))
 #define IMM21(v)	((uint32_t)((v) & 0x1fffff))
+#define IMM32(v)	((uint64_t)(v))
 #define IMM64(v)	((uint64_t)(v))
 
 /* Put a instruction word. */
@@ -225,6 +228,25 @@ jit_put_add(
 			  (0 << 12) |		/* funct3 */
 			  (rd << 7) |
 			  0x33))
+		return false;
+	return true;
+}
+
+/* ADDI */
+#define ADDI(rd, rs, imm)	if (!jit_put_addi(ctx, rd, rs, imm)) return false
+static INLINE bool
+jit_put_addi(
+	struct jit_context *ctx,
+	uint32_t rd,
+	uint32_t rs,
+	uint32_t imm)
+{
+	if (!jit_put_word(ctx,
+			  (imm << 20) |		/* imm */
+			  (rs << 15) |		/* rs1 */
+			  (0 << 12) |		/* funct3 */
+			  (rd << 7) |		/* rd */
+			  0x13))		/* opcode */
 		return false;
 	return true;
 }
@@ -286,10 +308,10 @@ jit_put_li32(
 			  0x37))	/* opcode */
 		return false;
 
-	/* addi rd, */
+	/* addi rd, rd, imm[11:0] */
 	if (!jit_put_word(ctx,
 			  (lo << 20) |	/* imm */
-			  (rd << 15) |	/* rs1 */
+			  (rd << 15) |	/* rs */
 			  (0 << 12) | 	/* funct3 */
 			  (rd << 7) |	/* rd */
 			  0x13))	/* opcode */
@@ -394,9 +416,9 @@ jit_put_lw(
 static INLINE bool
 jit_put_ld(
 	struct jit_context *ctx,
-	uint32_t rs2,
+	uint32_t rd,
 	uint32_t imm,
-	uint32_t rs1)
+	uint32_t rs)
 {
 	if (!jit_put_word(ctx,
 			  ((imm & 0xfff) << 20) |	/* imm[11:0] */
@@ -426,7 +448,7 @@ jit_put_jal(
 			  (imm_11 << 20) |
 			  (imm_19_12 << 12) |
 			  (rd << 7) |
-			  opcode))
+			  0x6f))
 		return false;
 	return true;
 }
@@ -503,7 +525,7 @@ jit_put_bne(
 }
 
 /* ret */
-#define RET()	JALR(REG_ZERO, REG_RA)
+#define RET()	JALR(REG_ZERO, 0, REG_RA)
 
 
 /*
@@ -519,7 +541,7 @@ jit_put_bne(
 		MV	(REG_A0, REG_S10);									\
 														\
 		/* Arg2 a1: dst */										\
-		MV	(REG_A1, REG_ZERO, IMM12(dst));								\
+		ORI	(REG_A1, REG_ZERO, IMM12(dst));								\
 														\
 		/* Arg3 a2: src1 */										\
 		ORI	(REG_A2, REG_ZERO, IMM12(src1));							\
@@ -532,7 +554,7 @@ jit_put_bne(
 		JALR	(REG_RA, 0, REG_T0);									\
 														\
 		/* If failed: */										\
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code))); \
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code))); \
 	}
 
 #define ASM_UNARY_OP(f)												\
@@ -544,17 +566,17 @@ jit_put_bne(
 		MV	(REG_A0, REG_S10);									\
 														\
 		/* Arg2 a1: dst */										\
-		MV	(REG_A1, REG_ZERO, IMM12(dst));								\
+		ORI	(REG_A1, REG_ZERO, IMM12(dst));								\
 														\
 		/* Arg3 a2: src */										\
 		ORI	(REG_A2, REG_ZERO, IMM12(src));								\
 														\
 		/* Call f(). */											\
 		LI_64	(REG_T0, IMM64((uint64_t)f));								\
-		JALR	(REG_RA, REG_T0);									\
+		JALR	(REG_RA, 0, REG_T0);									\
 														\
 		/* If failed: */										\
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code))); \
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code))); \
 	}
 
 /*
@@ -572,7 +594,7 @@ jit_visit_lineinfo_op(
 
 	ASM {
 		/* s10: env */
-		/* s11: &env->frame->tmpva[0] */
+		/* s11: &env->frame->tmpvar[0] */
 
 		/* env->line = line; */
 		ORI	(REG_T0, REG_ZERO, IMM12(line & 0xfff));
@@ -614,7 +636,7 @@ jit_visit_assign_op(
 		/* *dst_addr = *src_addr */
 		LD	(REG_T2, 0, REG_T1);
 		LD	(REG_T3, 8, REG_T1);
-		SD	(REG_T2, 0, TEG_T0);
+		SD	(REG_T2, 0, REG_T0);
 		SD	(REG_T3, 8, REG_T0);
 	}
 
@@ -650,7 +672,7 @@ jit_visit_iconst_op(
 
 		/* env->frame->tmpvar[dst].val.i = val */
 		LI_32	(REG_T2, IMM32(val));
-		SW	(REG_T2, 8, REG_T1);
+		SW	(REG_T2, 8, REG_T0);
 	}
 
 	return true;
@@ -722,10 +744,10 @@ jit_visit_sconst_op(
 
 		/* Call rt_make_string(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_make_string));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -757,10 +779,10 @@ jit_visit_aconst_op(
 
 		/* Call rt_make_empty_array(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_make_empty_array));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -792,10 +814,10 @@ jit_visit_dconst_op(
 
 		/* Call rt_make_empty_dict(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_make_empty_dict));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -1292,10 +1314,10 @@ jit_visit_loadsymbol_op(
 
 		/* Call rt_loadsymbol_helper(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_loadsymbol_helper));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -1330,10 +1352,10 @@ jit_visit_storesymbol_op(
 
 		/* Call rt_storesymbol_helper(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_storesymbol_helper));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -1373,10 +1395,10 @@ jit_visit_loaddot_op(
 
 		/* Call rt_loaddot_helper(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_loaddot_helper));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -1416,10 +1438,10 @@ jit_visit_storedot_op(
 
 		/* Call rt_storedot_helper(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_storedot_helper));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -1449,7 +1471,7 @@ jit_visit_call_op(
 	/* Embed arguments to the code. */
 	if (arg_count > 0) {
 		ASM {
-			JALR	(REG_ZERO, IMM21(4 + 4 * arg_count));
+			JAL	(REG_ZERO, IMM21(4 + 4 * arg_count));
 		}
 		arg_addr = (uint64_t)(intptr_t)ctx->code;
 		for (i = 0; i < arg_count; i++) {
@@ -1469,23 +1491,23 @@ jit_visit_call_op(
 		MV	(REG_A0, REG_S11);
 
 		/* Arg2 a1: dst */
-		ORI	(REG_A1, IMM12(dst));
+		ORI	(REG_A1, REG_ZERO, IMM12(dst));
 
 		/* Arg3 a2: func */
-		ORI	(REG_A2, IMM12(func));
+		ORI	(REG_A2, REG_ZERO, IMM12(func));
 
 		/* Arg4 a3: arg_count */
-		ORI	(REG_A3, IMM12(arg_count));
+		ORI	(REG_A3, REG_ZERO, IMM12(arg_count));
 
 		/* Arg5 a4: arg */
 		LI_64	(REG_A4, IMM64(arg_addr));
 
 		/* Call rt_call_helper(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_call_helper));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -1516,7 +1538,7 @@ jit_visit_thiscall_op(
 
 	/* Embed arguments. */
 	ASM {
-		JALR	(REG_X0, IMM21(4 + 4 * arg_count));
+		JAL	(REG_ZERO, IMM21(4 + 4 * arg_count));
 	}
 	arg_addr = (uint64_t)(intptr_t)ctx->code;
 	for (i = 0; i < arg_count; i++) {
@@ -1533,26 +1555,26 @@ jit_visit_thiscall_op(
 		MV	(REG_A0, REG_S11);
 
 		/* Arg2 a1: dst */
-		ORI	(REG_A1, IMM12(dst));
+		ORI	(REG_A1, REG_ZERO, IMM12(dst));
 
 		/* Arg3 a2: obj */
-		ORI	(REG_A2, IMM12(obj));
+		ORI	(REG_A2, REG_ZERO, IMM12(obj));
 
 		/* Arg4 a3: symbol */
-		LI_64	(REG_A3, IMM64((uint64_t)symbol)));
+		LI_64	(REG_A3, IMM64((uint64_t)symbol));
 
 		/* Arg5 a4: argcount */
-		ORI	(REG_A3, IMM12(arg_count));
+		ORI	(REG_A3, REG_ZERO, IMM12(arg_count));
 
 		/* Arg6 a5: arg */
 		LI_64	(REG_A5, IMM64(arg_addr));
 
 		/* Call rt_thiscall_helper(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_thiscall_helper));
-		JALR	(REG_RA, REG_T0);
+		JALR	(REG_RA, 0, REG_T0);
 
 		/* If failed: */
-		BEQ	(REG_A0, REG_ZERO, IMM21((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+		BEQ	(REG_A0, REG_ZERO, IMM13((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
 	}
 
 	return true;
@@ -1579,7 +1601,7 @@ jit_visit_jmp_op(
 
 	ASM {
 		/* Patched later. */
-		JAL	(REG_ZERO, IMM22(0));
+		JAL	(REG_ZERO, IMM21(0));
 	}
 
 	return true;
@@ -1602,13 +1624,13 @@ jit_visit_jmpiftrue_op(
 
 	ASM {
 		/* x3 = &rt->frame->tmpvar[src].val.i */
-		ORI	(REG_T0, IMM12(src));
+		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		SLLI	(REG_T0, REG_T0, IMM5(4));	/* sizeof(struct rt_value) */
 		ADD	(REG_T0, REG_S11, REG_T0);
 		LW	(REG_T0, 8, REG_T0);
 
 		/* Compare: rt->frame->tmpvar[dst].val.i != 0 */
-		ORI	(REG_T1, IMM12(0));
+		ORI	(REG_T1, REG_ZERO, IMM12(0));
 	}
 
 	/* Patch later. */
@@ -1642,13 +1664,13 @@ jit_visit_jmpiffalse_op(
 
 	ASM {
 		/* x3 = &rt->frame->tmpvar[src].val.i */
-		ORI	(REG_T0, IMM12(src));
+		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		SLLI	(REG_T0, REG_T0, IMM5(4));	/* sizeof(struct rt_value) */
 		ADD	(REG_T0, REG_S11, REG_T0);
 		LW	(REG_T0, 8, REG_T0);
 
 		/* Compare: rt->frame->tmpvar[dst].val.i == 0 */
-		ORI	(REG_T1, IMM12(0));
+		ORI	(REG_T1, REG_ZERO, IMM12(0));
 	}
 
 	/* Patch later. */
@@ -1704,30 +1726,30 @@ jit_visit_bytecode(
 	/* Put a prologue. */
 	ASM {
 		/* Push the general-purpose registers. */
-		ADDI	(REG_SP, REG_SP, IMM12(-24));
-		SD	(REG_RA, 16, REG_SP);
-		SD	(REG_S10, 8, REG_SP);
-		SD	(REG_S11, 0, REG_SP);
+		ADDI	(REG_SP, REG_SP, IMM12(-32));
+		SD	(REG_RA,  16, REG_SP);
+		SD	(REG_S10,  8, REG_SP);
+		SD	(REG_S11,  0, REG_SP);
 
 		/* s10 = rt */
 		MV	(REG_S10, REG_A0);
 
 		/* s11 = &rt->frame->tmpvar[0] */
-		LD	(REG_T0, 0, REG_S10);
-		LD	(REG_S11, 0, REG_T0);
+		LD	(REG_S11, 0, REG_A0);
+		LD	(REG_S11, 0, REG_S11);
 
 		/* Skip an exception handler. */
-		JAL	(X0, IMM21(24));
+		JAL	(REG_ZERO, IMM21(28));
 	}
 
 	/* Put an exception handler. */
 	ctx->exception_code = ctx->code;
 	ASM {
 	/* EXCEPTION: */
-		LD	(REG_S11, 0, REG_SP);
-		LD	(REG_S10, 8, REG_SP);
-		LD	(REG_RA, 16, REG_SP);
-		ADDI	(REG_SP, REG_SP, IMM12(25));
+		LD	(REG_S11,  0, REG_SP);
+		LD	(REG_S10,  8, REG_SP);
+		LD	(REG_RA,  16, REG_SP);
+		ADDI	(REG_SP, REG_SP, IMM12(32));
 		ORI	(REG_A0, REG_ZERO, IMM12(0));
 		RET	();
 	}
@@ -1920,10 +1942,10 @@ jit_visit_bytecode(
 	/* Put an epilogue. */
 	ASM {
 	/* EPILOGUE: */
-		LD	(REG_S11, 0, REG_SP);
-		LD	(REG_S10, 8, REG_SP);
-		LD	(REG_RA, 16, REG_SP);
-		ADDI	(REG_SP, REG_SP, IMM12(24));
+		LD	(REG_S11,  0, REG_SP);
+		LD	(REG_S10,  8, REG_SP);
+		LD	(REG_RA,  16, REG_SP);
+		ADDI	(REG_SP, REG_SP, IMM12(32));
 		ORI	(REG_A0, REG_ZERO, IMM12(1));
 		RET	();
 	}
@@ -1964,17 +1986,17 @@ jit_patch_branch(
 	ctx->code = ctx->branch_patch[patch_index].code;
 
 	/* Assemble. */
-	if (ctx->branch_patch[patch_index].type == PATCH_BAL) {
+	if (ctx->branch_patch[patch_index].type == PATCH_JAL) {
 		ASM {
-			JALR	(REG_ZERO, IMM21(offset));
+			JAL	(REG_ZERO, IMM21(offset));
 		}
 	} else if (ctx->branch_patch[patch_index].type == PATCH_BEQ) {
 		ASM {
-			BEQ	(REG_T0, REG_T1, IMM12(offset));
+			BEQ	(REG_T0, REG_T1, IMM13(offset));
 		}
 	} else if (ctx->branch_patch[patch_index].type == PATCH_BNE) {
 		ASM {
-			BNE	(REG_T0, REG_T1, IMM12(offset));
+			BNE	(REG_T0, REG_T1, IMM13(offset));
 		}
 	}
 
