@@ -290,88 +290,6 @@ jit_put_slli(
 	return true;
 }
 
-/* LI_32 */
-#define LI_32(rd, imm)	if (!jit_put_li32(ctx, rd, imm)) return false
-static INLINE bool
-jit_put_li32(
-	struct jit_context *ctx,
-	uint32_t rd,
-	uint32_t imm)
-{
-	uint32_t hi = imm >> 12;
-	uint32_t lo = imm & 0xfff;
-
-	/* lui rd, imm[31:12] */
-	if (!jit_put_word(ctx,
-			  (hi << 12) |	/* imm */
-			  (rd << 7) |	/* rd */
-			  0x37))	/* opcode */
-		return false;
-
-	/* addi rd, rd, imm[11:0] */
-	if (!jit_put_word(ctx,
-			  (lo << 20) |	/* imm */
-			  (rd << 15) |	/* rs */
-			  (0 << 12) | 	/* funct3 */
-			  (rd << 7) |	/* rd */
-			  0x13))	/* opcode */
-		return false;
-
-	return true;
-}
-
-/* LI_64 */
-#define LI_64(rd, imm)	if (!jit_put_li64(ctx, rd, imm)) return false
-static INLINE bool
-jit_put_li64(
-	struct jit_context *ctx,
-	uint32_t rd,
-	uint64_t imm)
-{
-	uint64_t val;
-	uint16_t chunk;
-	int shift;
-
-//	printf("LI_64 %016lx\n", imm);
-	ORI(rd, REG_ZERO, 0);
-
-	val = 0;
-	shift = 0;
-	while (imm) {
-		if (shift != 52)
-			chunk = imm >> 52;
-		else
-			chunk = (imm >> 52) & 0xf;
-
-		if (shift > 0 && val > 0) {
-			if (shift != 52) {
-				SLLI(rd, rd, 12);
-//				printf("SLLI 12\n");
-			} else {
-				SLLI(rd, rd, 4);
-//				printf("SLLI 4\n");
-			}
-		}
-
-		if (chunk > 0) {
-			ORI(rd, rd, chunk);
-//			printf("ORI %03x\n", chunk);
-		}
-
-		val |= chunk;
-		if (shift != 48) {
-			val <<= 12;
-			imm <<= 12;
-			shift += 12;
-		} else {
-			val <<= 4;
-			imm <<= 4;
-			shift += 4;
-		}
-	}	
-	return true;
-}
-
 /* SW */
 #define SW(rs2, imm, rs1)	if (!jit_put_sw(ctx, rs2, imm, rs1)) return false
 static INLINE bool
@@ -544,8 +462,59 @@ jit_put_bne(
 	return true;
 }
 
+/* LI_32 */
+#define LI_32(rd, imm)	if (!jit_put_li32(ctx, rd, imm)) return false
+static INLINE bool
+jit_put_li32(
+	struct jit_context *ctx,
+	uint32_t rd,
+	uint32_t imm)
+{
+	uint32_t hi = imm >> 12;
+	uint32_t lo = imm & 0xfff;
+
+	/* lui rd, imm[31:12] */
+	if (!jit_put_word(ctx,
+			  (hi << 12) |	/* imm */
+			  (rd << 7) |	/* rd */
+			  0x37))	/* opcode */
+		return false;
+
+	/* addi rd, rd, imm[11:0] */
+	if (!jit_put_word(ctx,
+			  (lo << 20) |	/* imm */
+			  (rd << 15) |	/* rs */
+			  (0 << 12) | 	/* funct3 */
+			  (rd << 7) |	/* rd */
+			  0x13))	/* opcode */
+		return false;
+
+	return true;
+}
+
+/* LI_64 */
+#define LI_64(rd, imm)	if (!jit_put_li64(ctx, rd, imm)) return false
+static INLINE bool
+jit_put_li64(
+	struct jit_context *ctx,
+	uint32_t rd,
+	uint64_t imm)
+{
+	/* auipc rd, o */
+	if (!jit_put_word(ctx,
+			  ((0 & 0xfffff) >> 12) |	/* imm */
+			  (rd << 7) |			/* rd */
+			  0x17))			/* opcode */
+		return false;
+
+	LD(rd, 12, rd);
+	JAL(REG_ZERO, IMM21(8));
+
+	return true;
+}
+
 /* ret */
-#define RET()	JALR(REG_ZERO, 0, REG_RA)
+#define RET()	JALR(REG_ZERO, IMM12(0), REG_RA)
 
 
 /*
@@ -789,7 +758,7 @@ jit_visit_aconst_op(
 
 		/* Arg2 a1: &env->frame->tmpvar[dst] */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
-		ADD	(REG_A1, REG_S11, REG_A0);
+		ADD	(REG_A1, REG_S11, REG_A1);
 
 		/* Call rt_make_empty_array(). */
 		LI_64	(REG_T0, IMM64((uint64_t)rt_make_empty_array));
@@ -819,7 +788,7 @@ jit_visit_dconst_op(
 		/* s11: &env->frame->tmpvar[0] */
 
 		/* Arg1 a0: env */
-		MV	(REG_A0, REG_S11);
+		MV	(REG_A0, REG_S10);
 
 		/* Arg2 a1: &env->frame->tmpvar[dst] */
 		ORI	(REG_A1, REG_ZERO, IMM12(dst));
@@ -1574,7 +1543,7 @@ jit_visit_thiscall_op(
 		LI_64	(REG_A3, IMM64((uint64_t)symbol));
 
 		/* Arg5 a4: argcount */
-		ORI	(REG_A3, REG_ZERO, IMM12(arg_count));
+		ORI	(REG_A4, REG_ZERO, IMM12(arg_count));
 
 		/* Arg6 a5: arg */
 		LI_64	(REG_A5, IMM64(arg_addr));
