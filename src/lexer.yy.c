@@ -1,6 +1,6 @@
-#line 2 "/home/tabata/src/NoctLang/build/lexer.yy.c"
+#line 1 "/Users/tabata/src/NoctLang/build/lexer.yy.c"
 
-#line 4 "/home/tabata/src/NoctLang/build/lexer.yy.c"
+#line 3 "/Users/tabata/src/NoctLang/build/lexer.yy.c"
 
 #define  YY_INT_ALIGNED short int
 
@@ -704,8 +704,8 @@ static const flex_int16_t yy_chk[212] =
 #define yymore() yymore_used_but_not_detected
 #define YY_MORE_ADJ 0
 #define YY_RESTORE_YY_MORE_OFFSET
-#line 1 "/home/tabata/src/NoctLang/src/lexer.l"
-#line 2 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 1 "/Users/tabata/src/NoctLang/src/lexer.l"
+#line 2 "/Users/tabata/src/NoctLang/src/lexer.l"
 /*
  * Copyright (c) 2025, Awe Morris. All rights reserved.
  */
@@ -721,9 +721,18 @@ static const flex_int16_t yy_chk[212] =
 #define YY_NO_UNPUT
 #define YY_NO_UNISTD_H
 
+#define malloc   ast_malloc
+#define realloc  ast_realloc
+#define free     ast_free
+
+void *ast_malloc(size_t size);
+void *ast_realloc(void *p, size_t size);
+char *ast_strdup(const char *s);
+void ast_free(void *p);
+
 extern YYLTYPE yylloc;
-#line 726 "/home/tabata/src/NoctLang/build/lexer.yy.c"
-#line 727 "/home/tabata/src/NoctLang/build/lexer.yy.c"
+#line 734 "/Users/tabata/src/NoctLang/build/lexer.yy.c"
+#line 735 "/Users/tabata/src/NoctLang/build/lexer.yy.c"
 
 #define INITIAL 0
 
@@ -983,9 +992,9 @@ YY_DECL
 		}
 
 	{
-#line 23 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 32 "/Users/tabata/src/NoctLang/src/lexer.l"
 
-#line 989 "/home/tabata/src/NoctLang/build/lexer.yy.c"
+#line 997 "/Users/tabata/src/NoctLang/build/lexer.yy.c"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -1041,7 +1050,7 @@ do_action:	/* This label is used only to access EOF actions. */
 case 1:
 /* rule 1 can match eol */
 YY_RULE_SETUP
-#line 24 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 33 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1051,7 +1060,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 2:
 YY_RULE_SETUP
-#line 30 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 39 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			sscanf(yytext, "%lf", &ast_yylval.fval);
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1062,7 +1071,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 3:
 YY_RULE_SETUP
-#line 37 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 46 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			sscanf(yytext, "%d", &ast_yylval.ival);
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1074,9 +1083,9 @@ YY_RULE_SETUP
 case 4:
 /* rule 4 can match eol */
 YY_RULE_SETUP
-#line 44 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 53 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
-			ast_yylval.sval = strdup(yytext + 1);
+			ast_yylval.sval = ast_strdup(yytext + 1);
 			ast_yylval.sval[yyleng - 2] = '\0';
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1086,7 +1095,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 5:
 YY_RULE_SETUP
-#line 52 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 61 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1096,7 +1105,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 6:
 YY_RULE_SETUP
-#line 58 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 67 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1106,7 +1115,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 7:
 YY_RULE_SETUP
-#line 64 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 73 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1116,7 +1125,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 8:
 YY_RULE_SETUP
-#line 70 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 79 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1126,7 +1135,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 9:
 YY_RULE_SETUP
-#line 76 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 85 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1136,7 +1145,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 10:
 YY_RULE_SETUP
-#line 82 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 91 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1146,7 +1155,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 11:
 YY_RULE_SETUP
-#line 88 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 97 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1156,7 +1165,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 12:
 YY_RULE_SETUP
-#line 94 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 103 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1166,7 +1175,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 13:
 YY_RULE_SETUP
-#line 100 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 109 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1176,7 +1185,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 14:
 YY_RULE_SETUP
-#line 106 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 115 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1186,7 +1195,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 15:
 YY_RULE_SETUP
-#line 112 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 121 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1196,7 +1205,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 16:
 YY_RULE_SETUP
-#line 118 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 127 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1206,7 +1215,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 17:
 YY_RULE_SETUP
-#line 124 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 133 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1216,7 +1225,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 18:
 YY_RULE_SETUP
-#line 130 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 139 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1226,7 +1235,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 19:
 YY_RULE_SETUP
-#line 136 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 145 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1236,7 +1245,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 20:
 YY_RULE_SETUP
-#line 142 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 151 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1246,7 +1255,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 21:
 YY_RULE_SETUP
-#line 148 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 157 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1256,7 +1265,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 22:
 YY_RULE_SETUP
-#line 154 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 163 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1266,7 +1275,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 23:
 YY_RULE_SETUP
-#line 160 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 169 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1276,7 +1285,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 24:
 YY_RULE_SETUP
-#line 166 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 175 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1286,7 +1295,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 25:
 YY_RULE_SETUP
-#line 172 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 181 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1296,7 +1305,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 26:
 YY_RULE_SETUP
-#line 178 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 187 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1306,7 +1315,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 27:
 YY_RULE_SETUP
-#line 184 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 193 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1316,7 +1325,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 28:
 YY_RULE_SETUP
-#line 190 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 199 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1326,7 +1335,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 29:
 YY_RULE_SETUP
-#line 196 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 205 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1336,7 +1345,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 30:
 YY_RULE_SETUP
-#line 202 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 211 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1346,7 +1355,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 31:
 YY_RULE_SETUP
-#line 208 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 217 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1356,7 +1365,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 32:
 YY_RULE_SETUP
-#line 214 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 223 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1366,7 +1375,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 33:
 YY_RULE_SETUP
-#line 220 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 229 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1376,7 +1385,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 34:
 YY_RULE_SETUP
-#line 226 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 235 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1386,7 +1395,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 35:
 YY_RULE_SETUP
-#line 232 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 241 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1396,7 +1405,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 36:
 YY_RULE_SETUP
-#line 238 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 247 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1406,7 +1415,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 37:
 YY_RULE_SETUP
-#line 244 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 253 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1416,7 +1425,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 38:
 YY_RULE_SETUP
-#line 250 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 259 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1426,7 +1435,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 39:
 YY_RULE_SETUP
-#line 256 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 265 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1436,7 +1445,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 40:
 YY_RULE_SETUP
-#line 262 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 271 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1446,7 +1455,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 41:
 YY_RULE_SETUP
-#line 268 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 277 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1456,7 +1465,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 42:
 YY_RULE_SETUP
-#line 274 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 283 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1466,7 +1475,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 43:
 YY_RULE_SETUP
-#line 280 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 289 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1476,7 +1485,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 44:
 YY_RULE_SETUP
-#line 286 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 295 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1486,7 +1495,7 @@ YY_RULE_SETUP
 case 45:
 /* rule 45 can match eol */
 YY_RULE_SETUP
-#line 291 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 300 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1496,9 +1505,9 @@ YY_RULE_SETUP
 	YY_BREAK
 case 46:
 YY_RULE_SETUP
-#line 297 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 306 "/Users/tabata/src/NoctLang/src/lexer.l"
 {
-			ast_yylval.sval = strdup(yytext);
+			ast_yylval.sval = ast_strdup(yytext);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
@@ -1507,10 +1516,10 @@ YY_RULE_SETUP
 	YY_BREAK
 case 47:
 YY_RULE_SETUP
-#line 304 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 313 "/Users/tabata/src/NoctLang/src/lexer.l"
 ECHO;
 	YY_BREAK
-#line 1514 "/home/tabata/src/NoctLang/build/lexer.yy.c"
+#line 1522 "/Users/tabata/src/NoctLang/build/lexer.yy.c"
 case YY_STATE_EOF(INITIAL):
 	yyterminate();
 
@@ -2680,7 +2689,7 @@ void yyfree (void * ptr , yyscan_t yyscanner)
 
 #define YYTABLES_NAME "yytables"
 
-#line 304 "/home/tabata/src/NoctLang/src/lexer.l"
+#line 313 "/Users/tabata/src/NoctLang/src/lexer.l"
 
 
 int ast_yywrap(yyscan_t scanner)

@@ -75,12 +75,13 @@
 #define yylloc          ast_yylloc
 
 /* First part of user prologue.  */
-#line 1 "/home/tabata/src/NoctLang/src/parser.y"
+#line 1 "/Users/tabata/src/NoctLang/src/parser.y"
 
 /*
  * Copyright (c) 2025, Awe Morris. All rights reserved.
  */
-#include "c89compat.h"
+
+#include <noct/c89compat.h>
 #include "ast.h"
 
 #include <stdio.h>
@@ -94,11 +95,14 @@ static void print_debug(const char *s);
 #define debug(s)
 #endif
 
+#define YYMALLOC ast_malloc
+
 extern int ast_error_line;
 extern int ast_error_column;
 
 int ast_yylex(void *);
 void ast_yyerror(void *, char *s);
+void *ast_malloc(size_t size); 
 
 /* Internal: called back from the parser. */
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);
@@ -152,12 +156,12 @@ struct ast_term *ast_accept_empty_array_term(void);
 struct ast_term *ast_accept_empty_dict_term(void);
 struct ast_arg_list *ast_accept_arg_list(struct ast_arg_list *arg_list, struct ast_expr *expr);
 
-#line 79 "/home/tabata/src/NoctLang/src/parser.y"
+#line 83 "/Users/tabata/src/NoctLang/src/parser.y"
 
 #include "stdio.h"
 extern void ast_yyerror(void *scanner, char *s);
 
-#line 161 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 165 "/Users/tabata/src/NoctLang/build/parser.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -646,15 +650,15 @@ static const yytype_int8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,   169,   169,   174,   180,   185,   190,   195,   201,   206,
-     212,   217,   223,   227,   231,   235,   239,   243,   247,   251,
-     255,   259,   264,   270,   275,   281,   286,   292,   297,   303,
-     308,   314,   319,   325,   330,   335,   340,   345,   350,   356,
-     362,   368,   374,   379,   384,   389,   394,   399,   404,   409,
-     414,   419,   424,   429,   434,   439,   444,   449,   454,   459,
-     464,   469,   474,   479,   484,   489,   494,   499,   504,   509,
-     514,   520,   525,   531,   536,   542,   547,   553,   558,   563,
-     568,   573,   578
+       0,   173,   173,   178,   184,   189,   194,   199,   205,   210,
+     216,   221,   227,   231,   235,   239,   243,   247,   251,   255,
+     259,   263,   268,   274,   279,   285,   290,   296,   301,   307,
+     312,   318,   323,   329,   334,   339,   344,   349,   354,   360,
+     366,   372,   378,   383,   388,   393,   398,   403,   408,   413,
+     418,   423,   428,   433,   438,   443,   448,   453,   458,   463,
+     468,   473,   478,   483,   488,   493,   498,   503,   508,   513,
+     518,   524,   529,   535,   540,   546,   551,   557,   562,   567,
+     572,   577,   582
 };
 #endif
 
@@ -1570,13 +1574,13 @@ yyparse (void *scanner)
 
 
 /* User initialization code.  */
-#line 163 "/home/tabata/src/NoctLang/src/parser.y"
+#line 167 "/Users/tabata/src/NoctLang/src/parser.y"
 {
 	ast_yylloc.last_line = yylloc.first_line = 0;
 	ast_yylloc.last_column = yylloc.first_column = 0;
 }
 
-#line 1580 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1584 "/Users/tabata/src/NoctLang/build/parser.tab.c"
 
   yylsp[0] = yylloc;
   goto yysetstate;
@@ -1787,726 +1791,726 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* func_list: func  */
-#line 170 "/home/tabata/src/NoctLang/src/parser.y"
+#line 174 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.func_list) = ast_accept_func_list(NULL, (yyvsp[0].func));
 			debug("func_list: class");
 		}
-#line 1796 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1800 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 3: /* func_list: func_list func  */
-#line 175 "/home/tabata/src/NoctLang/src/parser.y"
+#line 179 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.func_list) = ast_accept_func_list((yyvsp[-1].func_list), (yyvsp[0].func));
 			debug("func_list: func_list func");
 		}
-#line 1805 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1809 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 4: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 181 "/home/tabata/src/NoctLang/src/parser.y"
+#line 185 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.func) = ast_accept_func((yyvsp[-6].sval), (yyvsp[-4].param_list), (yyvsp[-1].stmt_list));
 			debug("func: func name(param_list) { stmt_list }");
 		}
-#line 1814 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1818 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 5: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 186 "/home/tabata/src/NoctLang/src/parser.y"
+#line 190 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.func) = ast_accept_func((yyvsp[-5].sval), (yyvsp[-3].param_list), NULL);
 			debug("func: func name(param_list) { empty }");
 		}
-#line 1823 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1827 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 6: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 191 "/home/tabata/src/NoctLang/src/parser.y"
+#line 195 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.func) = ast_accept_func((yyvsp[-5].sval), NULL, (yyvsp[-1].stmt_list));
 			debug("func: func name() { stmt_list }");
 		}
-#line 1832 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1836 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 7: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 196 "/home/tabata/src/NoctLang/src/parser.y"
+#line 200 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.func) = ast_accept_func((yyvsp[-4].sval), NULL, NULL);
 			debug("func: func name() { empty }");
 		}
-#line 1841 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1845 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 8: /* param_list: TOKEN_SYMBOL  */
-#line 202 "/home/tabata/src/NoctLang/src/parser.y"
+#line 206 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.param_list) = ast_accept_param_list(NULL, (yyvsp[0].sval));
 			debug("param_list: symbol");
 		}
-#line 1850 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1854 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 9: /* param_list: param_list TOKEN_COMMA TOKEN_SYMBOL  */
-#line 207 "/home/tabata/src/NoctLang/src/parser.y"
+#line 211 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.param_list) = ast_accept_param_list((yyvsp[-2].param_list), (yyvsp[0].sval));
 			debug("param_list: param_list symbol");
 		}
-#line 1859 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1863 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 10: /* stmt_list: stmt  */
-#line 213 "/home/tabata/src/NoctLang/src/parser.y"
+#line 217 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt_list) = ast_accept_stmt_list(NULL, (yyvsp[0].stmt));
 			debug("stmt_list: stmt");
 		}
-#line 1868 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1872 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 11: /* stmt_list: stmt_list stmt  */
-#line 218 "/home/tabata/src/NoctLang/src/parser.y"
+#line 222 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt_list) = ast_accept_stmt_list((yyvsp[-1].stmt_list), (yyvsp[0].stmt));
 			debug("stmt_list: stmt_list stmt");
 		}
-#line 1877 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1881 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 12: /* stmt: expr_stmt  */
-#line 224 "/home/tabata/src/NoctLang/src/parser.y"
+#line 228 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1885 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1889 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 13: /* stmt: assign_stmt  */
-#line 228 "/home/tabata/src/NoctLang/src/parser.y"
+#line 232 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1893 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1897 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 14: /* stmt: if_stmt  */
-#line 232 "/home/tabata/src/NoctLang/src/parser.y"
+#line 236 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1901 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1905 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 15: /* stmt: elif_stmt  */
-#line 236 "/home/tabata/src/NoctLang/src/parser.y"
+#line 240 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1909 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1913 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 16: /* stmt: else_stmt  */
-#line 240 "/home/tabata/src/NoctLang/src/parser.y"
+#line 244 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1917 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1921 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 17: /* stmt: while_stmt  */
-#line 244 "/home/tabata/src/NoctLang/src/parser.y"
+#line 248 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1925 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1929 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 18: /* stmt: for_stmt  */
-#line 248 "/home/tabata/src/NoctLang/src/parser.y"
+#line 252 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1933 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1937 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 19: /* stmt: return_stmt  */
-#line 252 "/home/tabata/src/NoctLang/src/parser.y"
+#line 256 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1941 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1945 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 20: /* stmt: break_stmt  */
-#line 256 "/home/tabata/src/NoctLang/src/parser.y"
+#line 260 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1949 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1953 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 21: /* stmt: continue_stmt  */
-#line 260 "/home/tabata/src/NoctLang/src/parser.y"
+#line 264 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 1957 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1961 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 22: /* expr_stmt: expr TOKEN_SEMICOLON  */
-#line 265 "/home/tabata/src/NoctLang/src/parser.y"
+#line 269 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_expr_stmt((yylsp[-1]).first_line + 1, (yyvsp[-1].expr));
 			debug("expr_stmt");
 		}
-#line 1966 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1970 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 23: /* assign_stmt: expr TOKEN_ASSIGN expr TOKEN_SEMICOLON  */
-#line 271 "/home/tabata/src/NoctLang/src/parser.y"
+#line 275 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_assign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr), false);
 			debug("assign_stmt");
 		}
-#line 1975 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1979 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 24: /* assign_stmt: TOKEN_VAR expr TOKEN_ASSIGN expr TOKEN_SEMICOLON  */
-#line 276 "/home/tabata/src/NoctLang/src/parser.y"
+#line 280 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_assign_stmt((yylsp[-4]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr), true);
 			debug("var assign_stmt");
 		}
-#line 1984 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1988 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 25: /* if_stmt: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 282 "/home/tabata/src/NoctLang/src/parser.y"
+#line 286 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_if_stmt((yylsp[-6]).first_line + 1, (yyvsp[-4].expr), (yyvsp[-1].stmt_list));
 			debug("if_stmt: stmt_list");
 		}
-#line 1993 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 1997 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 26: /* if_stmt: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 287 "/home/tabata/src/NoctLang/src/parser.y"
+#line 291 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_if_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), NULL);
 			debug("if_stmt: empty");
 		}
-#line 2002 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2006 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 27: /* elif_stmt: TOKEN_ELSE TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 293 "/home/tabata/src/NoctLang/src/parser.y"
+#line 297 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_elif_stmt((yylsp[-7]).first_line + 1, (yyvsp[-4].expr), (yyvsp[-1].stmt_list));
 			debug("elif_stmt: stmt_list");
 		}
-#line 2011 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2015 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 28: /* elif_stmt: TOKEN_ELSE TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 298 "/home/tabata/src/NoctLang/src/parser.y"
+#line 302 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_elif_stmt((yylsp[-6]).first_line + 1, (yyvsp[-3].expr), NULL);
 			debug("elif_stmt: empty");
 		}
-#line 2020 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2024 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 29: /* else_stmt: TOKEN_ELSE TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 304 "/home/tabata/src/NoctLang/src/parser.y"
+#line 308 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_else_stmt((yylsp[-3]).first_line + 1, (yyvsp[-1].stmt_list));
 			debug("else_stmt: stmt_list");
 		}
-#line 2029 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2033 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 30: /* else_stmt: TOKEN_ELSE TOKEN_LBLK TOKEN_RBLK  */
-#line 309 "/home/tabata/src/NoctLang/src/parser.y"
+#line 313 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_else_stmt((yylsp[-2]).first_line + 1, NULL);
 			debug("else_stmt: empty");
 		}
-#line 2038 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2042 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 31: /* while_stmt: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 315 "/home/tabata/src/NoctLang/src/parser.y"
+#line 319 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_while_stmt((yylsp[-6]).first_line + 1, (yyvsp[-4].expr), (yyvsp[-1].stmt_list));
 			debug("while_stmt: stmt_list");
 		}
-#line 2047 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2051 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 32: /* while_stmt: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 320 "/home/tabata/src/NoctLang/src/parser.y"
+#line 324 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_while_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), NULL);
 			debug("while_stmt: empty");
 		}
-#line 2056 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2060 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 33: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 326 "/home/tabata/src/NoctLang/src/parser.y"
+#line 330 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_kv_stmt((yylsp[-10]).first_line + 1, (yyvsp[-8].sval), (yyvsp[-6].sval), (yyvsp[-4].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(k, v in array) { stmt_list }");
 		}
-#line 2065 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2069 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 34: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 331 "/home/tabata/src/NoctLang/src/parser.y"
+#line 335 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_kv_stmt((yylsp[-9]).first_line + 1, (yyvsp[-7].sval), (yyvsp[-5].sval), (yyvsp[-3].expr), NULL);
 			debug("for_stmt: for(k, v in array) { empty }");
 		}
-#line 2074 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2078 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 35: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 336 "/home/tabata/src/NoctLang/src/parser.y"
+#line 340 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_v_stmt((yylsp[-8]).first_line + 1, (yyvsp[-6].sval), (yyvsp[-4].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(v in array) { stmt_list }");
 		}
-#line 2083 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2087 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 36: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 341 "/home/tabata/src/NoctLang/src/parser.y"
+#line 345 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_v_stmt((yylsp[-7]).first_line + 1, (yyvsp[-5].sval), (yyvsp[-3].expr), NULL);
 			debug("for_stmt: for(v in array) { empty }");
 		}
-#line 2092 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2096 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 37: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 346 "/home/tabata/src/NoctLang/src/parser.y"
+#line 350 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_range_stmt((yylsp[-10]).first_line + 1, (yyvsp[-8].sval), (yyvsp[-6].expr), (yyvsp[-4].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(i in x..y) { stmt_list }");
 		}
-#line 2101 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2105 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 38: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK  */
-#line 351 "/home/tabata/src/NoctLang/src/parser.y"
+#line 355 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_range_stmt((yylsp[-9]).first_line + 1, (yyvsp[-7].sval), (yyvsp[-5].expr), (yyvsp[-3].expr), NULL);
 			debug("for_stmt: for(i in x..y) { empty}");
 		}
-#line 2110 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2114 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 39: /* return_stmt: TOKEN_RETURN expr TOKEN_SEMICOLON  */
-#line 357 "/home/tabata/src/NoctLang/src/parser.y"
+#line 361 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_return_stmt((yylsp[-2]).first_line + 1, (yyvsp[-1].expr));
 			debug("rerurn_stmt:");
 		}
-#line 2119 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2123 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 40: /* break_stmt: TOKEN_BREAK TOKEN_SEMICOLON  */
-#line 363 "/home/tabata/src/NoctLang/src/parser.y"
+#line 367 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_break_stmt((yylsp[-1]).first_line + 1);
 			debug("break_stmt:");
 		}
-#line 2128 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2132 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 41: /* continue_stmt: TOKEN_CONTINUE TOKEN_SEMICOLON  */
-#line 369 "/home/tabata/src/NoctLang/src/parser.y"
+#line 373 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.stmt) = ast_accept_continue_stmt((yylsp[-1]).first_line + 1);
 			debug("continue_stmt");
 		}
-#line 2137 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2141 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 42: /* expr: term  */
-#line 375 "/home/tabata/src/NoctLang/src/parser.y"
+#line 379 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_term_expr((yyvsp[0].term));
 			debug("expr: term");
 		}
-#line 2146 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2150 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 43: /* expr: TOKEN_LPAR expr TOKEN_RPAR  */
-#line 380 "/home/tabata/src/NoctLang/src/parser.y"
+#line 384 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = (yyvsp[-1].expr);
 			debug("expr: (expr)");
 		}
-#line 2155 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2159 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 44: /* expr: expr TOKEN_LARR expr TOKEN_RARR  */
-#line 385 "/home/tabata/src/NoctLang/src/parser.y"
+#line 389 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_subscr_expr((yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("expr: array[subscript]");
 		}
-#line 2164 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2168 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 45: /* expr: expr TOKEN_OR expr  */
-#line 390 "/home/tabata/src/NoctLang/src/parser.y"
+#line 394 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_or_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr or expr");
 		}
-#line 2173 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2177 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 46: /* expr: expr TOKEN_AND expr  */
-#line 395 "/home/tabata/src/NoctLang/src/parser.y"
+#line 399 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_and_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr and expr");
 		}
-#line 2182 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2186 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 47: /* expr: expr TOKEN_LT expr  */
-#line 400 "/home/tabata/src/NoctLang/src/parser.y"
+#line 404 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_lt_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr lt expr");
 		}
-#line 2191 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2195 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 48: /* expr: expr TOKEN_LTE expr  */
-#line 405 "/home/tabata/src/NoctLang/src/parser.y"
+#line 409 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_lte_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr lte expr");
 		}
-#line 2200 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2204 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 49: /* expr: expr TOKEN_GT expr  */
-#line 410 "/home/tabata/src/NoctLang/src/parser.y"
+#line 414 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_gt_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr gt expr");
 		}
-#line 2209 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2213 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 50: /* expr: expr TOKEN_GTE expr  */
-#line 415 "/home/tabata/src/NoctLang/src/parser.y"
+#line 419 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_gte_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr gte expr");
 		}
-#line 2218 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2222 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 51: /* expr: expr TOKEN_EQ expr  */
-#line 420 "/home/tabata/src/NoctLang/src/parser.y"
+#line 424 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_eq_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr eq expr");
 		}
-#line 2227 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2231 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 52: /* expr: expr TOKEN_NEQ expr  */
-#line 425 "/home/tabata/src/NoctLang/src/parser.y"
+#line 429 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_neq_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr neq expr");
 		}
-#line 2236 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2240 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 53: /* expr: expr TOKEN_PLUS expr  */
-#line 430 "/home/tabata/src/NoctLang/src/parser.y"
+#line 434 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_plus_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr plus expr");
 		}
-#line 2245 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2249 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 54: /* expr: expr TOKEN_MINUS expr  */
-#line 435 "/home/tabata/src/NoctLang/src/parser.y"
+#line 439 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_minus_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr sub expr");
 		}
-#line 2254 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2258 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 55: /* expr: expr TOKEN_MUL expr  */
-#line 440 "/home/tabata/src/NoctLang/src/parser.y"
+#line 444 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_mul_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr mul expr");
 		}
-#line 2263 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2267 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 56: /* expr: expr TOKEN_DIV expr  */
-#line 445 "/home/tabata/src/NoctLang/src/parser.y"
+#line 449 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_div_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr div expr");
 		}
-#line 2272 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2276 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 57: /* expr: expr TOKEN_MOD expr  */
-#line 450 "/home/tabata/src/NoctLang/src/parser.y"
+#line 454 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_mod_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr div expr");
 		}
-#line 2281 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2285 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 58: /* expr: TOKEN_MINUS expr  */
-#line 455 "/home/tabata/src/NoctLang/src/parser.y"
+#line 459 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_neg_expr((yyvsp[0].expr));
 			debug("expr: neg expr");
 		}
-#line 2290 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2294 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 59: /* expr: TOKEN_NOT expr  */
-#line 460 "/home/tabata/src/NoctLang/src/parser.y"
+#line 464 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_not_expr((yyvsp[0].expr));
 			debug("expr: not expr");
 		}
-#line 2299 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2303 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 60: /* expr: expr TOKEN_DOT TOKEN_SYMBOL  */
-#line 465 "/home/tabata/src/NoctLang/src/parser.y"
+#line 469 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_dot_expr((yyvsp[-2].expr), (yyvsp[0].sval));
 			debug("expr: expr.symbol");
 		}
-#line 2308 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2312 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 61: /* expr: expr TOKEN_LPAR arg_list TOKEN_RPAR  */
-#line 470 "/home/tabata/src/NoctLang/src/parser.y"
+#line 474 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_call_expr((yyvsp[-3].expr), (yyvsp[-1].arg_list));
 			debug("expr: call(param_list)");
 		}
-#line 2317 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2321 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 62: /* expr: expr TOKEN_LPAR TOKEN_RPAR  */
-#line 475 "/home/tabata/src/NoctLang/src/parser.y"
+#line 479 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_call_expr((yyvsp[-2].expr), NULL);
 			debug("expr: call()");
 		}
-#line 2326 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2330 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 63: /* expr: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR arg_list TOKEN_RPAR  */
-#line 480 "/home/tabata/src/NoctLang/src/parser.y"
+#line 484 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_thiscall_expr((yyvsp[-5].expr), (yyvsp[-3].sval), (yyvsp[-1].arg_list));
 			debug("expr: thiscall(param_list)");
 		}
-#line 2335 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2339 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 64: /* expr: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR  */
-#line 485 "/home/tabata/src/NoctLang/src/parser.y"
+#line 489 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_thiscall_expr((yyvsp[-4].expr), (yyvsp[-2].sval), NULL);
 			debug("expr: thiscall(param_list)");
 		}
-#line 2344 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2348 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 65: /* expr: TOKEN_LARR arg_list TOKEN_RARR  */
-#line 490 "/home/tabata/src/NoctLang/src/parser.y"
+#line 494 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_array_expr((yyvsp[-1].arg_list));
 			debug("expr: array");
 		}
-#line 2353 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2357 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 66: /* expr: TOKEN_LBLK kv_list TOKEN_RBLK  */
-#line 495 "/home/tabata/src/NoctLang/src/parser.y"
+#line 499 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_dict_expr((yyvsp[-1].kv_list));
 			debug("expr: dict");
 		}
-#line 2362 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2366 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 67: /* expr: TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 500 "/home/tabata/src/NoctLang/src/parser.y"
+#line 504 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_func_expr((yyvsp[-5].param_list), (yyvsp[-1].stmt_list));
 			debug("expr: func param_list stmt_list");
 		}
-#line 2371 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2375 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 68: /* expr: TOKEN_LAMBDA TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK  */
-#line 505 "/home/tabata/src/NoctLang/src/parser.y"
+#line 509 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_func_expr(NULL, (yyvsp[-1].stmt_list));
 			debug("expr: func stmt_list");
 		}
-#line 2380 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2384 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 69: /* expr: TOKEN_LAMBDA TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK  */
-#line 510 "/home/tabata/src/NoctLang/src/parser.y"
+#line 514 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_func_expr((yyvsp[-4].param_list), NULL);
 			debug("expr: func param_list");
 		}
-#line 2389 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2393 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 70: /* expr: TOKEN_LAMBDA TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK  */
-#line 515 "/home/tabata/src/NoctLang/src/parser.y"
+#line 519 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.expr) = ast_accept_func_expr(NULL, NULL);
 			debug("expr: func");
 		}
-#line 2398 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2402 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 71: /* arg_list: expr  */
-#line 521 "/home/tabata/src/NoctLang/src/parser.y"
+#line 525 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.arg_list) = ast_accept_arg_list(NULL, (yyvsp[0].expr));
 			debug("arg_list: expr");
 		}
-#line 2407 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2411 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 72: /* arg_list: arg_list TOKEN_COMMA expr  */
-#line 526 "/home/tabata/src/NoctLang/src/parser.y"
+#line 530 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.arg_list) = ast_accept_arg_list((yyvsp[-2].arg_list), (yyvsp[0].expr));
 			debug("arg_list: arg_list arg");
 		}
-#line 2416 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2420 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 73: /* kv_list: kv  */
-#line 532 "/home/tabata/src/NoctLang/src/parser.y"
+#line 536 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.kv_list) = ast_accept_kv_list(NULL, (yyvsp[0].kv));
 			debug("kv_list: kv");
 		}
-#line 2425 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2429 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 74: /* kv_list: kv_list TOKEN_COMMA kv  */
-#line 537 "/home/tabata/src/NoctLang/src/parser.y"
+#line 541 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.kv_list) = ast_accept_kv_list((yyvsp[-2].kv_list), (yyvsp[0].kv));
 			debug("kv_list: kv_list kv");
 		}
-#line 2434 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2438 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 75: /* kv: TOKEN_STR TOKEN_COLON expr  */
-#line 543 "/home/tabata/src/NoctLang/src/parser.y"
+#line 547 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.kv) = ast_accept_kv((yyvsp[-2].sval), (yyvsp[0].expr));
 			debug("kv");
 		}
-#line 2443 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2447 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 76: /* kv: TOKEN_SYMBOL TOKEN_COLON expr  */
-#line 548 "/home/tabata/src/NoctLang/src/parser.y"
+#line 552 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.kv) = ast_accept_kv((yyvsp[-2].sval), (yyvsp[0].expr));
 			debug("kv");
 		}
-#line 2452 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2456 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 77: /* term: TOKEN_INT  */
-#line 554 "/home/tabata/src/NoctLang/src/parser.y"
+#line 558 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.term) = ast_accept_int_term((yyvsp[0].ival));
 			debug("term: int");
 		}
-#line 2461 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2465 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 78: /* term: TOKEN_FLOAT  */
-#line 559 "/home/tabata/src/NoctLang/src/parser.y"
+#line 563 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.term) = ast_accept_float_term((float)(yyvsp[0].fval));
 			debug("term: float");
 		}
-#line 2470 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2474 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 79: /* term: TOKEN_STR  */
-#line 564 "/home/tabata/src/NoctLang/src/parser.y"
+#line 568 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.term) = ast_accept_str_term((yyvsp[0].sval));
 			debug("term: string");
 		}
-#line 2479 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2483 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 80: /* term: TOKEN_SYMBOL  */
-#line 569 "/home/tabata/src/NoctLang/src/parser.y"
+#line 573 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.term) = ast_accept_symbol_term((yyvsp[0].sval));
 			debug("term: symbol");
 		}
-#line 2488 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2492 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 81: /* term: TOKEN_LARR TOKEN_RARR  */
-#line 574 "/home/tabata/src/NoctLang/src/parser.y"
+#line 578 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.term) = ast_accept_empty_array_term();
 			debug("term: empty array symbol");
 		}
-#line 2497 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2501 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
   case 82: /* term: TOKEN_LBLK TOKEN_RBLK  */
-#line 579 "/home/tabata/src/NoctLang/src/parser.y"
+#line 583 "/Users/tabata/src/NoctLang/src/parser.y"
                 {
 			(yyval.term) = ast_accept_empty_dict_term();
 			debug("term: empty dict symbol");
 		}
-#line 2506 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2510 "/Users/tabata/src/NoctLang/build/parser.tab.c"
     break;
 
 
-#line 2510 "/home/tabata/src/NoctLang/build/parser.tab.c"
+#line 2514 "/Users/tabata/src/NoctLang/build/parser.tab.c"
 
       default: break;
     }
@@ -2704,7 +2708,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 584 "/home/tabata/src/NoctLang/src/parser.y"
+#line 588 "/Users/tabata/src/NoctLang/src/parser.y"
 
 
 #ifdef DEBUG
@@ -2728,7 +2732,7 @@ void ast_yyerror(void *scanner, char *s)
 	ast_error_column = ast_yylloc.first_column + 1;
 	
 	if (s != NULL)
-		strcpy(ast_error_message, _(s));
+		strcpy(ast_error_message, N_TR(s));
 	else
 		strcpy(ast_error_message, "");
 }
