@@ -9,12 +9,23 @@ and clean C-like syntax.
 
 Written in portable ANSI C with no external dependencies, it runs
 everywhere — from desktop PCs down to single-chip environments.
-(JIT works on: x86, x86_64 arm, aarch64, riscv64, ppc, ppc64, mips, mips64)
 
 Try it now — launch the REPL or write your first program.
 It might take less time than you think.
 
-**Status**: Actively developed and constantly evolving.
+## Status
+
+Actively developed and constantly evolving.
+
+JIT works on:
+x86, x86_64, ARM, Arm64, RISC-V 32-bit, RISC-V 64-bit, PowerPC 32-bit, PowerPC 64-bit, MIPS 32-bit, MIPS 64-bit
+
+OS:
+Windows, macOS, Linux, *BSD, Android, iOS, Game Consoles (PS4/PS5/Switch/Xbox Series X|S)
+
+Note: On major consoles, runtime code generation (JIT) is generally
+prohibited or tightly restricted by platform policies. Noct runs there
+with AOT compilation.
 
 ---
 
