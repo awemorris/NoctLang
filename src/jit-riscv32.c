@@ -555,10 +555,10 @@ jit_visit_assign_op(
 		ADD	(REG_T1, REG_S11, REG_T1);
 
 		/* *dst_addr = *src_addr */
-		LD	(REG_T2, 0, REG_T1);
-		LD	(REG_T3, 4, REG_T1);
-		SD	(REG_T2, 0, REG_T0);
-		SD	(REG_T3, 4, REG_T0);
+		LW	(REG_T2, 0, REG_T1);
+		LW	(REG_T3, 4, REG_T1);
+		SW	(REG_T2, 0, REG_T0);
+		SW	(REG_T3, 4, REG_T0);
 	}
 
 	return true;
@@ -729,7 +729,7 @@ jit_visit_dconst_op(
 		ADD	(REG_A1, REG_S11, REG_A1);
 
 		/* Call rt_make_empty_dict(). */
-		LI_32	(REG_T0, IMM64((uint32_t)rt_make_empty_dict));
+		LI_32	(REG_T0, IMM32((uint32_t)rt_make_empty_dict));
 		JALR	(REG_RA, IMM12(0), REG_T0);
 
 		/* If failed: */
@@ -1092,12 +1092,12 @@ jit_visit_eqi_op(
 		/* t0 = &rt->frame->tmpvar[src1].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src1));
 		ADD	(REG_T0, REG_T0, REG_S11);
-		LW	(REG_T0, 8, REG_T0);
+		LW	(REG_T0, 4, REG_T0);
 
 		/* t1 = &rt->frame->tmpvar[src2].val.i */
 		ORI	(REG_T1, REG_ZERO, IMM12(src2));
 		ADD	(REG_T1, REG_T1, REG_S11);
-		LW	(REG_T1, 8, REG_T1);
+		LW	(REG_T1, 4, REG_T1);
 
 		/* Here, t0 = src1, t1 = src2 */
 	}
@@ -1547,7 +1547,7 @@ jit_visit_jmpiftrue_op(
 		/* t0 = &rt->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		ADD	(REG_T0, REG_S11, REG_T0);
-		LW	(REG_T0, 8, REG_T0);
+		LW	(REG_T0, 4, REG_T0);
 
 		/* Compare: rt->frame->tmpvar[dst].val.i != 0 */
 		ORI	(REG_T1, REG_ZERO, IMM12(0));
@@ -1591,7 +1591,7 @@ jit_visit_jmpiffalse_op(
 		/* t0 = &rt->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		ADD	(REG_T0, REG_S11, REG_T0);
-		LW	(REG_T0, 8, REG_T0);
+		LW	(REG_T0, 4, REG_T0);
 
 		/* Compare: rt->frame->tmpvar[dst].val.i == 0 */
 		ORI	(REG_T1, REG_ZERO, IMM12(0));
