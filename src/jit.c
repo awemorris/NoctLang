@@ -162,6 +162,18 @@ jit_build(
 }
 
 /*
+ * Commit written code.
+ */
+void
+jit_commit(
+	struct rt_env *env)
+{
+	UNUSED_PARAMETER(rt);
+
+	/* stub */
+}
+
+/*
  * Free a JIT-compiled code for a function.
  */
 void
