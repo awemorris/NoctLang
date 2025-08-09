@@ -68,37 +68,37 @@ void noct_init_locale(void)
 	DWORD dwLang = GetUserDefaultLCID() & 0x3ff;
 	switch (dwLang) {
 	case LANG_ENGLISH:
-		lang_code = "en";
+		noct_lang_code = "en";
 		break;
 	case LANG_FRENCH:
-		lang_code = "fr";
+		noct_lang_code = "fr";
 		break;
 	case LANG_GERMAN:
-		lang_code = "de";
+		noct_lang_code = "de";
 		break;
 	case LANG_SPANISH:
-		lang_code = "es";
+		noct_lang_code = "es";
 		break;
 	case LANG_ITALIAN:
-		lang_code = "it";
+		noct_lang_code = "it";
 		break;
 	case LANG_GREEK:
-		lang_code = "el";
+		noct_lang_code = "el";
 		break;
 	case LANG_RUSSIAN:
-		lang_code = "ru";
+		noct_lang_code = "ru";
 		break;
 	case LANG_CHINESE_SIMPLIFIED:
-		lang_code = "zh";
+		noct_lang_code = "zh";
 		break;
 	case LANG_CHINESE_TRADITIONAL:
-		lang_code = "tw";
+		noct_lang_code = "tw";
 		break;
 	case LANG_JAPANESE:
-		lang_code = "ja";
+		noct_lang_code = "ja";
 		break;
 	default:
-		lang_code = "en";
+		noct_lang_code = "en";
 		break;
 	}
 #endif	/* !defined(_WIN32) */
