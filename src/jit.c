@@ -151,10 +151,10 @@ jit_map_executable(
  */
 bool
 jit_build(
-	struct rt_env *rt,
+	struct rt_env *env,
 	struct rt_func *func)
 {
-	UNUSED_PARAMETER(rt);
+	UNUSED_PARAMETER(env);
 	UNUSED_PARAMETER(func);
 
 	/* stub */
@@ -168,7 +168,7 @@ void
 jit_commit(
 	struct rt_env *env)
 {
-	UNUSED_PARAMETER(rt);
+	UNUSED_PARAMETER(env);
 
 	/* stub */
 }
@@ -178,9 +178,9 @@ jit_commit(
  */
 void
 jit_free(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
-	UNUSED_PARAMETER(rt);
+	UNUSED_PARAMETER(env);
 
 	/* stub */
 }
