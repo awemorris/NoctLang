@@ -169,7 +169,6 @@ jit_free(
 	struct rt_env *rt)
 {
 	UNUSED_PARAMETER(rt);
-	UNUSED_PARAMETER(func);
 
 	/* stub */
 }
