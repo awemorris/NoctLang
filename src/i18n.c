@@ -21,7 +21,7 @@
 /*
  * Language code for translation.
  */
-const char *lang_code = "en";
+static const char *lang_code = "en";
 
 /*
  * Called from noct_gettext().
