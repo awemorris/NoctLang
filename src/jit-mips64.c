@@ -56,7 +56,7 @@ jit_build(
 	/* If the first call, map a memory region for the generated code. */
 	if (jit_code_region == NULL) {
 		if (!jit_map_memory_region((void **)&jit_code_region, JIT_CODE_MAX)) {
-			rt_error(env, _("Memory mapping failed."));
+			rt_error(env, "Memory mapping failed.");
 			return false;
 		}
 		jit_code_region_cur = jit_code_region;
@@ -1646,7 +1646,7 @@ jit_visit_bytecode(
 	while (ctx->lpc < ctx->func->bytecode_size) {
 		/* Save LPC and addr. */
 		if (ctx->pc_entry_count >= PC_ENTRY_MAX) {
-			rt_error(ctx->env, _("Code too big."));
+			rt_error(ctx->env, "Code too big.");
 			return false;
 		}
 		ctx->pc_entry[ctx->pc_entry_count].lpc = (uint32_t)ctx->lpc;
@@ -1869,7 +1869,7 @@ jit_patch_branch(
 			
 	}
 	if (target_code == NULL) {
-		rt_error(ctx->env, _("Branch target not found."));
+		rt_error(ctx->env, "Branch target not found.");
 		return false;
 	}
 
