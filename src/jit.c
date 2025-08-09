@@ -166,8 +166,7 @@ jit_build(
  */
 void
 jit_free(
-	struct rt_env *rt,
-	struct rt_func *func)
+	struct rt_env *rt)
 {
 	UNUSED_PARAMETER(rt);
 	UNUSED_PARAMETER(func);
