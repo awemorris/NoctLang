@@ -23,9 +23,9 @@ x86, x86_64, ARM, Arm64, RISC-V 32-bit, RISC-V 64-bit, PowerPC 32-bit, PowerPC 6
 OS:
 Windows, macOS, Linux, *BSD, Android, iOS, Game Consoles (PS4/PS5/Switch/Xbox Series X|S)
 
-Note: On major consoles, runtime code generation (JIT) is generally
-prohibited or tightly restricted by platform policies. Noct runs there
-with AOT compilation.
+Note: On major smartphones and consoles, runtime code generation (JIT)
+is generally prohibited or tightly restricted by platform
+policies. Noct runs there with AOT compilation.
 
 ---
 
