@@ -1583,7 +1583,7 @@ jit_visit_jmp_op(
 
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		noct_error(ctx->env, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1612,7 +1612,7 @@ jit_visit_jmpiftrue_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		noct_error(ctx->env, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1653,7 +1653,7 @@ jit_visit_jmpiffalse_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		noct_error(ctx->env, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1694,7 +1694,7 @@ jit_visit_jmpifeq_op(
 	CONSUME_TMPVAR(src);
 	CONSUME_IMM32(target_lpc);
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
-		noct_error(ctx->env, BROKEN_BYTECODE);
+		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
 
@@ -1775,7 +1775,7 @@ jit_visit_bytecode(
 	while (ctx->lpc < ctx->func->bytecode_size) {
 		/* Save LPC and addr. */
 		if (ctx->pc_entry_count >= PC_ENTRY_MAX) {
-			noct_error(ctx->env, N_TR("Code too big."));
+			rt_error(ctx->env, N_TR("Code too big."));
 			return false;
 		}
 		ctx->pc_entry[ctx->pc_entry_count].lpc = (uint32_t)ctx->lpc;
@@ -2004,12 +2004,16 @@ jit_patch_branch(
 			
 	}
 	if (target_code == NULL) {
-		noct_error(ctx->env, "Branch target not found.");
+		rt_error(ctx->env, "Branch target not found.");
 		return false;
 	}
 
 	/* Calc a branch offset. */
 	offset = (int)((intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code);
+	if (offset & ~0x7ffff) {
+		rt_error(ctx->env, "Branch target too far.");
+		return false;
+	}
 
 	/* Set the assembler cursor. */
 	ctx->code = ctx->branch_patch[patch_index].code;

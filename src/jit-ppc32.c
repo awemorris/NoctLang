@@ -1801,6 +1801,11 @@ jit_patch_branch(
 
 	/* Assemble. */
 	if (ctx->branch_patch[patch_index].type == PATCH_BAL) {
+		if (offset & ~0x3ffffff) {
+			rt_error(ctx->env, "Branch target too far.");
+			return false;
+		}
+
 		ASM {
 			/* b offset */
 			IW(0x00000048 |
@@ -1810,6 +1815,11 @@ jit_patch_branch(
 			   (((uint32_t)offset >> 24) & 0x03));
 		}
 	} else if (ctx->branch_patch[patch_index].type == PATCH_BEQ) {
+		if (offset & ~0xffff) {
+			rt_error(ctx->env, "Branch target too far.");
+			return false;
+		}
+
 		ASM {
 			/* beq offset */
 			IW(0x00008241 |
@@ -1817,6 +1827,11 @@ jit_patch_branch(
 			   ((((uint32_t)offset >> 8) & 0xff) << 16));
 		}
 	} else if (ctx->branch_patch[patch_index].type == PATCH_BNE) {
+		if (offset & ~0xffff) {
+			rt_error(ctx->env, "Branch target too far.");
+			return false;
+		}
+
 		ASM {
 			/* bne offset */
 			IW(0x00008240 |
