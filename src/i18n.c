@@ -21,14 +21,14 @@
 /*
  * Language code for translation.
  */
-static const char *lang_code = "en";
+const char *noct_lang_code = "en";
 
 /*
  * Called from noct_gettext().
  */
 const char *noct_get_system_language(void)
 {
-	return lang_code;
+	return noct_lang_code;
 }
 
 /*
