@@ -872,7 +872,7 @@ rt_neq_helper(
 			break;
 		default:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = 0;
+			dst_val->val.i = 1;
 			break;
 		}
 		break;
@@ -888,7 +888,7 @@ rt_neq_helper(
 			break;
 		default:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = 0;
+			dst_val->val.i = 1;
 			break;
 		}
 		break;
@@ -900,13 +900,13 @@ rt_neq_helper(
 			break;
 		default:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = 0;
+			dst_val->val.i = 1;
 			break;
 		}
 		break;
 	default:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = 0;
+		dst_val->val.i = 1;
 		break;
 	}
 
