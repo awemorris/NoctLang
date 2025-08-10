@@ -801,8 +801,9 @@ rt_eq_helper(
 			dst_val->val.i = ((float)src1_val->val.i == src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			rt_error(env, N_TR("Value is not a number."));
-			return false;
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = 0;
+			break;
 		}
 		break;
 	case NOCT_VALUE_FLOAT:
@@ -816,8 +817,9 @@ rt_eq_helper(
 			dst_val->val.i = (src1_val->val.f == src2_val->val.f) ? 1 : 0;
 			break;
 		default:
-			rt_error(env, N_TR("Value is not a number."));
-			return false;
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = 0;
+			break;
 		}
 		break;
 	case NOCT_VALUE_STRING:
@@ -827,12 +829,14 @@ rt_eq_helper(
 			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) == 0 ? 1 : 0;
 			break;
 		default:
-			rt_error(env, N_TR("Value is not a string."));
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = 0;
 			break;
 		}
 		break;
 	default:
-		rt_error(env, N_TR("Value is not a number or a string."));
+		dst_val->type = NOCT_VALUE_INT;
+		dst_val->val.i = 0;
 		return false;
 	}
 
