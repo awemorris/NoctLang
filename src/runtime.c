@@ -698,7 +698,7 @@ rt_call(
 	rt_gc_safepoint(env);
 #endif
 
-	/* Commit JIT-compiled code. */
+	/* Commit JIT-compiled code for the first time compilation. */
 	if (noct_conf_use_jit && env->vm->is_jit_dirty) {
 		jit_commit(env);
 		env->vm->is_jit_dirty = false;
@@ -743,6 +743,12 @@ rt_call(
 	/* Get a return value. */
 	if (!rt_get_return(env, ret))
 		return false;
+
+	/* Commit JIT-compiled code for dynamically imported inside the function. */
+	if (noct_conf_use_jit && env->vm->is_jit_dirty) {
+		jit_commit(env);
+		env->vm->is_jit_dirty = false;
+	}
 
 	/* Succeeded. */
 	rt_leave_frame(env, ret);
