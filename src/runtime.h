@@ -59,6 +59,8 @@ struct rt_array {
 	size_t alloc_size;
 	size_t size;
 	struct rt_value *table;
+
+	struct rt_array *newer;
 };
 
 /*
@@ -71,6 +73,8 @@ struct rt_dict {
 	size_t size;
 	struct rt_value *key;
 	struct rt_value *value;
+
+	struct rt_dict *newer;
 };
 
 /*
@@ -287,7 +291,7 @@ bool rt_get_array_elem(struct rt_env *env, struct rt_array *array, int index, st
 bool rt_set_array_elem(struct rt_env *env, struct rt_array **arr, int index, struct rt_value *val);
 
 /* Resizes an array. */
-bool rt_resize_array(struct rt_env *env, struct rt_array *arr, int size);
+bool rt_resize_array(struct rt_env *env, struct rt_array **arr, int size);
 
 /* Checks if a key exists in a dictionary. */
 bool rt_check_dict_key(struct rt_env *env, struct rt_dict *dict, const char *key, bool *ret);

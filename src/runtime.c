@@ -42,8 +42,8 @@ static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, uint32_t size, int *pos, char *file_name);
 static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos);
-static bool rt_expand_array(struct rt_env *env, struct rt_array **arr, size_t size);
-static bool rt_expand_dict(struct rt_env *env, struct rt_dict **dict, size_t size);
+static bool rt_expand_array(struct rt_env *env, struct rt_array *old_arr, struct rt_array **new_arr_pp, size_t size);
+static bool rt_expand_dict(struct rt_env *env, struct rt_dict *old_dict, struct rt_dict **new_dict_pp, size_t size);
 static bool rt_get_return(struct rt_env *rt, struct rt_value *val);
 
 /*
@@ -888,13 +888,21 @@ rt_get_array_elem(
 	int index,
 	struct rt_value *val)
 {
+	struct rt_array *real_arr;
+
 	assert(env != NULL);
 	assert(arr != NULL);
 	assert(index >= 0);
 	assert(index < arr->size);
 	assert(val != NULL);
 
-	*val = arr->table[index];
+	/* Get the newer reference. */
+	real_arr = arr;
+	while (real_arr->newer != NULL)
+		real_arr = real_arr->newer;
+
+	/* Load. */
+	*val = real_arr->table[index];
 
 	return true;
 }
@@ -909,29 +917,42 @@ rt_set_array_elem(
 	int index,
 	NoctValue *val)
 {
+	struct rt_array *real_arr;
+
 	assert(env != NULL);
 	assert(arr != NULL);
 	assert(*arr != NULL);
 	assert(index >= 0);
 	assert(val != NULL);
 
-	/*
-	 * Expand the array if needed.
-	 * Note that array->val.arr may be replaced.
-	 */
-	if (!rt_expand_array(env, arr, index + 1))
-		return false;
-	if ((*arr)->size < index + 1)
-		(*arr)->size = index + 1;
+	/* Get the newer reference. */
+	real_arr = *arr;
+	while (real_arr->newer != NULL)
+		real_arr = real_arr->newer;
+
+	/* Expand the array if needed.. */
+	if (index >= real_arr->alloc_size) {
+		/* Reallocate an array. */
+		if (!rt_expand_array(env, real_arr, arr, index + 1))
+			return false;
+
+		/* Get the new array. */
+		real_arr = *arr;
+
+		/* Set the new size. */
+		real_arr->size = index + 1;
+	}
 
 	/* Store. */
-	(*arr)->table[index] = *val;
+	real_arr->table[index] = *val;
+	if (index >= real_arr->size)
+		real_arr->size = index + 1;
 
 	/* GC: Write barrier for the remember set. */
 	if (val->type == NOCT_VALUE_STRING ||
 	    val->type == NOCT_VALUE_ARRAY ||
 	    val->type == NOCT_VALUE_DICT)
-		rt_gc_array_write_barrier(env, *arr, index, val);
+		rt_gc_array_write_barrier(env, real_arr, index, val);
 
 	return true;
 }
@@ -942,25 +963,35 @@ rt_set_array_elem(
 bool
 rt_resize_array(
 	struct rt_env *env,
-	struct rt_array *arr,
+	struct rt_array **arr,
 	int size)
 {
+	struct rt_array *real_arr;
+
 	assert(env != NULL);
 	assert(arr != NULL);
 
-	if (size > arr->size) {
-		/* Expand the array size if needed. */
-		if (!rt_expand_array(env, &arr, size))
+	/* Get the newer reference. */
+	real_arr = *arr;
+	while (real_arr->newer != NULL)
+		real_arr = real_arr->newer;
+
+	if (size > real_arr->size) {
+		/* Reallocate an array. */
+		if (!rt_expand_array(env, real_arr, arr, size))
 			return false;
 
-		/* Set the element count. */
-		arr->size = size;
-	} else {
-		/* Remove (zero-fill) the reminder. */
-		memset(&arr->table[size], 0, sizeof(struct rt_value) * (size_t)(arr->size - size - 1));
+		/* Get the new array. */
+		real_arr = *arr;
 
 		/* Set the element count. */
-		arr->size = size;
+		real_arr->size = size;
+	} else {
+		/* Remove (zero-fill) the reminder. */
+		memset(&real_arr->table[size], 0, sizeof(struct rt_value) * (size_t)(real_arr->size - size - 1));
+
+		/* Set the element count. */
+		real_arr->size = size;
 	}
 
 	return true;
@@ -970,47 +1001,48 @@ rt_resize_array(
 static bool
 rt_expand_array(
 	struct rt_env *env,
-	struct rt_array **arr,
+	struct rt_array *old_arr,
+	struct rt_array **new_arr_pp,
 	size_t size)
 {
-	struct rt_array *old_arr, *new_arr;
+	struct rt_array *new_arr;
+	size_t old_size;
 	int i;
 
 	assert(env != NULL);
+	assert(old_arr->newer == NULL);
+	assert(old_arr->alloc_size < size);
 
-	old_arr = *arr;
+	old_size = old_arr->alloc_size;
 
-	/* Expand the table. */
-	if (old_arr->alloc_size < size) {
-		size_t old_size;
+	/* Get the next size. */
+	if (size < old_size * 2)
+		size = old_size * 2;
+	else
+		size = size * 2;
 
-		old_size = old_arr->alloc_size;
-
-		/* Get the next size. */
-		if (size < old_size * 2)
-			size = old_size * 2;
-		else
-			size = size * 2;
-
-		/* Allocate the new array. */
-		new_arr = rt_gc_alloc_array(env, size);
-		if (new_arr == NULL) {
-			rt_out_of_memory(env);
-			return false;
-		}
-
-		/* Copy the values with write barrier. */
-		for (i = 0; i < (int)old_arr->size; i++) {
-			/* Copy. */
-			new_arr->table[i] = old_arr->table[i];
-
-			/* Write barrier. */
-			rt_gc_array_write_barrier(env, new_arr, i, &new_arr->table[i]);
-		}
-
-		/* The older array reference is unlinked here. */
-		*arr = new_arr;
+	/* Allocate the new array. */
+	new_arr = rt_gc_alloc_array(env, size);
+	if (new_arr == NULL) {
+		rt_out_of_memory(env);
+		return false;
 	}
+
+	/* Copy the values with write barrier. */
+	new_arr->size = old_arr->size;
+	for (i = 0; i < old_arr->size; i++) {
+		/* Copy. */
+		new_arr->table[i] = old_arr->table[i];
+
+		/* Write barrier. */
+		rt_gc_array_write_barrier(env, new_arr, i, &new_arr->table[i]);
+	}
+	
+	/* Set the forwaring pointer. */
+	old_arr->newer = new_arr;
+
+	/* Set the result. */
+	*new_arr_pp = new_arr;
 
 	return true;
 }
@@ -1025,18 +1057,24 @@ rt_get_dict_elem(
 	const char *key,
 	struct rt_value *val)
 {
+	struct rt_dict *real_dict;
 	int i;
 
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(val != NULL);
+
+	/* Get the newer reference. */
+	real_dict = dict;
+	while (real_dict->newer != NULL)
+		real_dict = real_dict->newer;
 	
 	/* Search the key. */
-	for (i = 0; i < dict->size; i++) {
-		if (strcmp(dict->key[i].val.str->data, key) == 0) {
+	for (i = 0; i < real_dict->size; i++) {
+		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Succeeded. */
-			*val = dict->value[i];
+			*val = real_dict->value[i];
 			return true;
 		}
 	}
@@ -1056,6 +1094,7 @@ rt_set_dict_elem(
 	const char *key,
 	struct rt_value *val)
 {
+	struct rt_dict *real_dict;
 	int i;
 
 	assert(env != NULL);
@@ -1064,30 +1103,41 @@ rt_set_dict_elem(
 	assert(key != NULL);
 	assert(val != NULL);
 	
+	/* Get the newer reference. */
+	real_dict = *dict;
+	while (real_dict->newer != NULL)
+		real_dict = real_dict->newer;
+
 	/* Search for the key. */
-	for (i = 0; i < (*dict)->size; i++) {
-		if (strcmp((*dict)->key[i].val.str->data, key) == 0) {
-			(*dict)->value[i] = *val;
+	for (i = 0; i < real_dict->size; i++) {
+		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+			real_dict->value[i] = *val;
 			return true;
 		}
 	}
 
 	/* Expand the size. */
-	if (!rt_expand_dict(env, dict, (*dict)->size + 1))
-		return false;
+	if (real_dict->size + 1 >= real_dict->alloc_size) {
+		/* Reallocate a dictionary. */
+		if (!rt_expand_dict(env, real_dict, dict, real_dict->size + 1))
+			return false;
+
+		/* Get the new dictionary. */
+		real_dict = *dict;
+	}
 
 	/* Append the key. */
-	if (!rt_make_string(env, &(*dict)->key[(*dict)->size], key))
+	if (!rt_make_string(env, &real_dict->key[real_dict->size], key))
 		return false;
-	(*dict)->value[(*dict)->size] = *val;
-	(*dict)->size++;
+	real_dict->value[real_dict->size] = *val;
+	real_dict->size++;
 
 	/* GC: Write barrier for the remember set. */
 	if (val->type == NOCT_VALUE_STRING ||
 	    val->type == NOCT_VALUE_ARRAY ||
 	    val->type == NOCT_VALUE_DICT) {
-		rt_gc_dict_write_barrier(env, *dict, i, &(*dict)->key[(*dict)->size]);
-		rt_gc_dict_write_barrier(env, *dict, i, val);
+		rt_gc_dict_write_barrier(env, real_dict, i, &(*dict)->key[real_dict->size]);
+		rt_gc_dict_write_barrier(env, real_dict, i, val);
 	}
 
 	return true;
@@ -1097,53 +1147,54 @@ rt_set_dict_elem(
 static bool
 rt_expand_dict(
 	struct rt_env *env,
-	struct rt_dict **dict,
+	struct rt_dict *old_dict,
+	struct rt_dict **new_dict_pp,
 	size_t size)
 {
-	struct rt_dict *old_dict, *new_dict;
+	struct rt_dict *new_dict;
+	size_t old_size;
 	int i;
 
 	assert(env != NULL);
-	assert(dict != NULL);
+	assert(old_dict != NULL);
+	assert(old_dict->newer == NULL);
+	assert(old_dict->size < size);
+	assert(new_dict_pp != NULL);
 
-	old_dict = *dict;
+	old_size = old_dict->alloc_size;
 
-	/* Expand the tables. */
-	if (old_dict->alloc_size < size) {
-		size_t old_size;
+	/* Get the next size. */
+	if (size < old_size * 2)
+		size = old_size * 2;
+	else
+		size = size * 2;
 
-		old_size = old_dict->alloc_size;
-
-		/* Get the next size. */
-		if (size < old_size * 2)
-			size = old_size * 2;
-		else
-			size = size * 2;
-
-		/* Allocate the new array. */
-		new_dict = rt_gc_alloc_dict(env, size);
-		if (new_dict == NULL) {
-			rt_out_of_memory(env);
-			return false;
-		}
-		new_dict->size = old_size;
-
-		/* Copy the values with write barrier. */
-		for (i = 0; i < (int)old_dict->size; i++) {
-			/* Copy the key. */
-			new_dict->key[i] = old_dict->key[i];
-
-			/* Copy the value. */
-			new_dict->value[i] = old_dict->value[i];
-
-			/* Write barrier. */
-			rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->key[i]);
-			rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->value[i]);
-		}
-
-		/* The older array reference is unlinked here. */
-		*dict = new_dict;
+	/* Allocate the new array. */
+	new_dict = rt_gc_alloc_dict(env, size);
+	if (new_dict == NULL) {
+		rt_out_of_memory(env);
+		return false;
 	}
+
+	/* Copy the values with write barrier. */
+	new_dict->size = old_dict->size;
+	for (i = 0; i < (int)old_dict->size; i++) {
+		/* Copy the key. */
+		new_dict->key[i] = old_dict->key[i];
+
+		/* Copy the value. */
+		new_dict->value[i] = old_dict->value[i];
+
+		/* Write barrier. */
+		rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->key[i]);
+		rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->value[i]);
+	}
+
+	/* Set the forwarding pointer. */
+	old_dict->newer = new_dict;
+
+	/* Set the result */
+	*new_dict_pp = new_dict;
 
 	return true;
 }

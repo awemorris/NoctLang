@@ -1005,8 +1005,11 @@ rt_loadarray_helper(
 		return false;
 	}
 
-	/* Check the subscript type and value. */
+	/* Check the subscript type and value, then load the element. */
 	if (!is_dict) {
+		struct rt_array *real_arr;
+
+		/* Get the subscript value. */
 		if (subscr_val->type != NOCT_VALUE_INT) {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
@@ -1014,29 +1017,49 @@ rt_loadarray_helper(
 		subscript = subscr_val->val.i;
 		key = NULL;
 
-		if (subscript >= arr_val->val.arr->size) {
+		/* Get the newer reference. */
+		real_arr = arr_val->val.arr;
+		while (real_arr->newer != NULL)
+			real_arr = real_arr->newer;
+
+		/* Check the index range. */
+		if (subscript >= real_arr->size) {
 			rt_error(env, N_TR("Array index %d is out-of-range."), subscript);
 			return false;
 		}
+
+		/* Load. */
+		*dst_val = real_arr->table[subscript];
+		return true;
 	} else {
+		struct rt_dict *real_dict;
+		int i;
+
+		/* Get the key string. */
 		if (subscr_val->type != NOCT_VALUE_STRING) {
 			rt_error(env, N_TR("Subscript not a string."));
 			return false;
 		}
-		subscript = -1;;
+		subscript = -1;
 		key = subscr_val->val.str->data;
-	}
 
-	/* Load the element. */
-	if (!is_dict) {
-		if (!rt_get_array_elem(env, arr_val->val.arr, subscript, dst_val))
-			return false;
-	} else {
-		if (!rt_get_dict_elem(env, arr_val->val.dict, key, dst_val))
-			return false;
-	}
+		/* Get the newer reference. */
+		real_dict = arr_val->val.dict;
+		while (real_dict->newer != NULL)
+			real_dict = real_dict->newer;
 
-	return true;
+		/* Search the key. */
+		for (i = 0; i < real_dict->size; i++) {
+			if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+				/* Succeeded. */
+				*dst_val = real_dict->value[i];
+				return true;
+			}
+		}
+		
+		rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
+		return false;
+	}
 }
 
 /*

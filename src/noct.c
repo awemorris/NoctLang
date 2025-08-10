@@ -454,6 +454,7 @@ noct_get_array_size(
 	NoctValue *val,
 	int *size)
 {
+	struct rt_array *real_arr;
 	int type;
 
 	assert(env != NULL);
@@ -469,8 +470,13 @@ noct_get_array_size(
 		return false;
 	}
 
+	/* Get the newer reference. */
+	real_arr = val->val.arr;
+	while (real_arr->newer != NULL)
+		real_arr = real_arr->newer;
+
 	/* Get the size. */
-	*size = val->val.arr->size;
+	*size = real_arr->size;
 
 	return true;
 }
@@ -483,6 +489,7 @@ noct_get_array_elem(
 	int index,
 	NoctValue *val)
 {
+	struct rt_array *real_arr;
 	int type;
 
 	assert(env != NULL);
@@ -499,14 +506,19 @@ noct_get_array_elem(
 		return false;
 	}
 
+	/* Get the newer reference. */
+	real_arr = array->val.arr;
+	while (real_arr->newer != NULL)
+		real_arr = real_arr->newer;
+
 	/* Check the array boundary. */
-	if (index < 0 || index >= array->val.arr->size) {
+	if (index < 0 || index >= real_arr->size) {
 		rt_error(env, N_TR("Array index %d is out-of-range."), index);
 		return false;
 	}
 	
 	/* Load. */
-	*val = array->val.arr->table[index];
+	*val = real_arr->table[index];
 
 	return true;
 }
@@ -556,7 +568,7 @@ noct_resize_array(
 	}
 
 	/* Resize. */
-	if (!rt_resize_array(env, array->val.arr, size))
+	if (!rt_resize_array(env, &array->val.arr, size))
 		return false;
 
 	return true;
@@ -569,7 +581,7 @@ noct_make_array_copy(
 	NoctValue *dst,
 	NoctValue *src)
 {
-	struct rt_array *arr;
+	struct rt_array *arr, *src_real;
 	int i;
 
 	assert(env != NULL);
@@ -582,15 +594,21 @@ noct_make_array_copy(
 		return false;
 	}
 
+	/* Get the newer reference. */
+	src_real = src->val.arr;
+	while (src_real->newer != NULL)
+		src_real = src_real->newer;
+
 	/* Allocate an array. */
-	arr = rt_gc_alloc_array(env, src->val.arr->size);
+	arr = rt_gc_alloc_array(env, src_real->size);
 	if (arr == NULL)
 		return false;
 
 	/* Copy the array with write-barrier. */
-	for (i = 0; i < (int)src->val.arr->size; i++) {
+	arr->size = src_real->size;
+	for (i = 0; i < (int)src_real->size; i++) {
 		/* Copy. */
-		arr->table[i] = src->val.arr->table[i];
+		arr->table[i] = src_real->table[i];
 
 		/* Write barrier. */
 		rt_gc_array_write_barrier(env, arr, i, &arr->table[i]);
@@ -610,6 +628,8 @@ noct_get_dict_size(
 	NoctValue *dict,
 	int *size)
 {
+	struct rt_dict *real_dict;
+
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(size != NULL);
@@ -619,6 +639,11 @@ noct_get_dict_size(
 		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
+
+	/* Get the newer reference. */
+	real_dict = dict->val.dict;
+	while (real_dict->newer != NULL)
+		real_dict = real_dict->newer;
 
 	/* Get the size. */
 	*size = dict->val.dict->size;
@@ -634,6 +659,8 @@ noct_get_dict_key_by_index(
 	int index,
 	const char **key)
 {
+	struct rt_dict *real_dict;
+
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(index >= 0);
@@ -645,14 +672,19 @@ noct_get_dict_key_by_index(
 		return false;
 	}
 
+	/* Get the newer reference. */
+	real_dict = dict->val.dict;
+	while (real_dict->newer != NULL)
+		real_dict = real_dict->newer;
+
 	/* Check the boundary. */
-	if (index < 0 || index >= dict->val.dict->size) {
+	if (index < 0 || index >= real_dict->size) {
 		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
 		return false;
 	}
 
 	/* Load. */
-	*key = dict->val.dict->key[index].val.str->data;
+	*key = real_dict->key[index].val.str->data;
 
 	return true;
 }
@@ -665,6 +697,8 @@ noct_get_dict_value_by_index(
 	int index,
 	NoctValue *val)
 {
+	struct rt_dict *real_dict;
+
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(index >= 0);
@@ -676,14 +710,19 @@ noct_get_dict_value_by_index(
 		return false;
 	}
 
+	/* Get the newer reference. */
+	real_dict = dict->val.dict;
+	while (real_dict->newer != NULL)
+		real_dict = real_dict->newer;
+
 	/* Check the boundary. */
-	if (index < 0 || index >= dict->val.dict->size) {
+	if (index < 0 || index >= real_dict->size) {
 		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
 		return false;
 	}
 
 	/* Load. */
-	*val = dict->val.dict->value[index];
+	*val = real_dict->value[index];
 
 	return true;
 }
@@ -696,6 +735,7 @@ noct_check_dict_key(
 	const char *key,
 	bool *ret)
 {
+	struct rt_dict *real_dict;
 	int i;
 
 	assert(env != NULL);
@@ -709,9 +749,14 @@ noct_check_dict_key(
 		return false;
 	}
 
+	/* Get the newer reference. */
+	real_dict = dict->val.dict;
+	while (real_dict->newer != NULL)
+		real_dict = real_dict->newer;
+
 	/* Search the key. */
-	for (i = 0; i < dict->val.dict->size; i++) {
-		if (strcmp(dict->val.dict->key[i].val.str->data, key) == 0) {
+	for (i = 0; i < real_dict->size; i++) {
+		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Found. */
 			*ret = true;
 			return true;
@@ -800,8 +845,12 @@ noct_remove_dict_elem(
 		return false;
 	}
 
-	/* Search for the key. */
+	/* Get the newer reference. */
 	d = dict->val.dict;
+	while (d->newer != NULL)
+		d = d->newer;
+
+	/* Search for the key. */
 	for (i = 0; i < d->size; i++) {
 		if (strcmp(d->key[i].val.str->data, key) == 0) {
 			/* Remove the key and value. */
@@ -834,7 +883,7 @@ noct_make_dict_copy(
 	NoctValue *dst,
 	NoctValue *src)
 {
-	struct rt_dict *d;
+	struct rt_dict *d, *src_real;
 	int i;
 
 	assert(env != NULL);
@@ -847,18 +896,24 @@ noct_make_dict_copy(
 		return false;
 	}
 
+	/* Get the newer reference. */
+	src_real = src->val.dict;
+	while (src_real->newer != NULL)
+		src_real = src_real->newer;
+
 	/* Make a dictionary */
-	d = rt_gc_alloc_dict(env, src->val.dict->size);
+	d = rt_gc_alloc_dict(env, src_real->size);
 	if (d == NULL)
 		return false;
 
 	/* Copy the array with write-barrier. */
-	for (i = 0; i < (int)src->val.dict->size; i++) {
+	d->size = src_real->size;
+	for (i = 0; i < (int)src_real->size; i++) {
 		/* Copy the key. */
-		d->key[i] = src->val.dict->key[i];
+		d->key[i] = src_real->key[i];
 
 		/* Copy the value. */
-		d->value[i] = src->val.dict->value[i];
+		d->value[i] = src_real->value[i];
 
 		/* Write barrier. */
 		rt_gc_dict_write_barrier(env, d, i, &d->key[i]);

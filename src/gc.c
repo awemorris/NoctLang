@@ -74,6 +74,7 @@ static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
 static void rt_gc_young_gc(struct rt_env *env);
 static void rt_gc_young_gc_body(struct rt_env *env);
 static bool rt_gc_copy_young_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
+static void rt_gc_array_dict_follow_newer(struct rt_env *env, struct rt_gc_object **obj);
 static struct rt_gc_object *rt_gc_promote_object(struct rt_env *env, struct rt_gc_object *obj);
 static struct rt_gc_object *rt_gc_promote_string(struct rt_env *env, struct rt_gc_object *obj);
 static struct rt_gc_object *rt_gc_promote_array(struct rt_env *env, struct rt_gc_object *obj);
@@ -361,6 +362,7 @@ rt_gc_alloc_array(
 		arr->alloc_size = size;
 		arr->size = 0;
 		arr->table = table;
+		arr->newer = NULL;
 
 		/* Succeeded. */
 		return arr;
@@ -407,6 +409,7 @@ rt_gc_alloc_array_graduate(
 		arr->alloc_size = size;
 		arr->size = 0;
 		arr->table = table;
+		arr->newer = NULL;
 
 		/* Succeeded. (graduate) */
 		return arr;
@@ -467,6 +470,7 @@ rt_gc_alloc_array_tenure(
 		arr->alloc_size = size;
 		arr->size = 0;
 		arr->table = table;
+		arr->newer = NULL;
 
 		/* Succeeded. */
 		return arr;
@@ -534,6 +538,7 @@ rt_gc_alloc_dict(
 		dict->size = 0;
 		dict->key = key_table;
 		dict->value = value_table;
+		dict->newer = NULL;
 
 		/* Succeeded. */
 		return dict;
@@ -588,6 +593,7 @@ rt_gc_alloc_dict_graduate(
 		dict->size = 0;
 		dict->key = key_table;
 		dict->value = value_table;
+		dict->newer = NULL;
 
 		/* Succeeded. (graduate) */
 		return dict;
@@ -656,6 +662,7 @@ rt_gc_alloc_dict_tenure(
 		dict->size = 0;
 		dict->key = key_table;
 		dict->value = value_table;
+		dict->newer = NULL;
 
 		/* Succeeded. */
 		return dict;
@@ -933,6 +940,9 @@ rt_gc_copy_young_object_recursively(
 	bool is_promoted;
 	int i;
 
+	/* If this is an array or dictionary, get the forwarder. */
+	rt_gc_array_dict_follow_newer(env, obj);
+
 	/* If already processed. */
 	if ((*obj)->is_marked) {
 		/* And if this is a young object. */
@@ -1075,6 +1085,29 @@ rt_gc_copy_young_object_recursively(
 	}
 
 	return true;
+}
+
+/* If this is an array or dictionary, get the forwarder. */
+static void
+rt_gc_array_dict_follow_newer(
+	struct rt_env *env,
+	struct rt_gc_object **obj)
+{
+	if ((*obj)->type == RT_GC_TYPE_ARRAY) {
+		struct rt_array *arr = (struct rt_array *)*obj;
+		if (arr->newer == NULL)
+			return;		
+		while (arr->newer != NULL)
+			arr = arr->newer;
+		*obj = &arr->head;
+	} else if ((*obj)->type == RT_GC_TYPE_DICT) {
+		struct rt_dict *dict = (struct rt_dict *)*obj;
+		if (dict->newer == NULL)
+			return;		
+		while (dict->newer != NULL)
+			dict = dict->newer;
+		*obj = &dict->head;
+	}
 }
 
 /* Promotes an object. */

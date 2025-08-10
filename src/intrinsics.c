@@ -18,10 +18,10 @@
 
 #define NEVER_COME_HERE		0
 
-static bool rt_intrin_global(struct rt_env *rt);
 static bool rt_intrin_push(struct rt_env *rt);
 static bool rt_intrin_pop(struct rt_env *rt);
 static bool rt_intrin_unset(struct rt_env *rt);
+static bool rt_intrin_newArray(struct rt_env *rt);
 static bool rt_intrin_resize(struct rt_env *rt);
 static bool rt_intrin_substring(struct rt_env *rt);
 static bool rt_intrin_fast_gc(struct rt_env *rt);
@@ -40,6 +40,7 @@ struct intrin_item {
 	{"push",       "__push",      2, {"this", "val"         }, rt_intrin_push,       true, NULL},
 	{"pop",        "__pop",       1, {"this"                }, rt_intrin_pop,        true, NULL},
 	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true, NULL},
+	{"newArray",   "newArray",    1, {"size"                }, rt_intrin_newArray,   true, NULL},
 	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true, NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true, NULL},
 	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    true, NULL},
@@ -162,6 +163,29 @@ rt_intrin_unset(
 		return false;
 
 	if (!noct_remove_dict_elem(env, &arr, val_s))
+		return false;
+
+	return true;
+}
+
+/* newArray() */
+static bool
+rt_intrin_newArray(
+	struct rt_env *env)
+{
+	struct rt_value arr, size;
+	int size_i;
+
+	noct_pin_local(env, 1, &size);
+
+	if (!noct_get_arg_check_int(env, 0, &size, &size_i))
+		return false;
+
+	if (!noct_make_empty_array(env, &arr))
+		return false;
+	if (!noct_resize_array(env, &arr, size_i))
+		return false;
+	if (!noct_set_return(env, &arr))
 		return false;
 
 	return true;
