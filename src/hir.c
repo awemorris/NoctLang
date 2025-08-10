@@ -1659,6 +1659,7 @@ hir_visit_array_expr(
 {
 	struct hir_expr *e;
 	struct ast_expr *elem;
+	int count, index;
 
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
@@ -1674,22 +1675,35 @@ hir_visit_array_expr(
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_ARRAY;
 
-	/* Visit the argument expressions. */
+	/* Count the elements and allocate a table. */
+	count = 0;
 	if (aexpr->val.array.elem_list != NULL) {
 		elem = aexpr->val.array.elem_list->list;
 		while (elem != NULL) {
-			if (!hir_visit_expr(&e->val.array.elem[e->val.array.elem_count], elem)) {
+			elem = elem->next;
+			count++;
+		}
+
+		e->val.array.elem_count = count;
+		e->val.array.elem = hir_malloc(count * sizeof(struct hir_exp *));
+		if (e->val.array.elem == NULL) {
+			hir_out_of_memory();
+			return false;
+		}
+		memset(e->val.array.elem, 0, count * sizeof(struct hir_exp *));
+	}
+
+	/* Visit the argument expressions. */
+	if (aexpr->val.array.elem_list != NULL) {
+		elem = aexpr->val.array.elem_list->list;
+		index = 0;
+		while (elem != NULL) {
+			if (!hir_visit_expr(&e->val.array.elem[index], elem)) {
 				hir_free_expr(e);
 				return false;
 			}
-
-			e->val.array.elem_count++;
-			if (e->val.array.elem_count > HIR_ARRAY_LITERAL_SIZE) {
-				hir_fatal(hir_error_line, N_TR("Exceeded the maximum argument count."));
-				return false;
-			}
-
 			elem = elem->next;
+			index++;
 		}
 	}
 
@@ -1706,7 +1720,7 @@ hir_visit_dict_expr(
 {
 	struct hir_expr *e;
 	struct ast_kv *kv;
-	int index;
+	int count, index;
 
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
@@ -1722,12 +1736,37 @@ hir_visit_dict_expr(
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_DICT;
 
-	/* Visit the argument expressions. */
+	/* Count the elements and allocate a table. */
+	count = 0;
 	if (aexpr->val.dict.kv_list != NULL) {
 		kv = aexpr->val.dict.kv_list->list;
 		while (kv != NULL) {
-			index = e->val.dict.kv_count;
+			kv = kv->next;
+			count++;
+		}
 
+		e->val.dict.kv_count = count;
+
+		e->val.dict.key = hir_malloc(count * sizeof(char *));
+		if (e->val.dict.key == NULL) {
+			hir_out_of_memory();
+			return false;
+		}
+		memset(e->val.dict.key, 0, count * sizeof(char *));
+
+		e->val.dict.value = hir_malloc(count * sizeof(struct hir_exp *));
+		if (e->val.dict.value == NULL) {
+			hir_out_of_memory();
+			return false;
+		}
+		memset(e->val.dict.value, 0, count * sizeof(struct hir_exp *));
+	}
+
+	/* Visit the argument expressions. */
+	if (aexpr->val.dict.kv_list != NULL) {
+		kv = aexpr->val.dict.kv_list->list;
+		index = 0;
+		while (kv != NULL) {
 			/* Copy the key. */
 			e->val.dict.key[index] = hir_strdup(kv->key);
 			if (e->val.dict.key[index] == NULL) {
@@ -1741,14 +1780,8 @@ hir_visit_dict_expr(
 				return false;
 			}
 
-			/* Increment the key-value pair count. */
-			e->val.dict.kv_count++;
-			if (e->val.dict.kv_count > HIR_DICT_LITERAL_SIZE) {
-				hir_fatal(hir_error_line, N_TR("Exceeded the maximum argument count."));
-				return false;
-			}
-
 			kv = kv->next;
+			index++;
 		}
 	}
 
@@ -2133,6 +2166,10 @@ hir_free_expr(
 				e->val.array.elem[i] = NULL;
 			}
 		}
+		if (e->val.array.elem != NULL) {
+			hir_free(e->val.array.elem);
+			e->val.array.elem = NULL;
+		}
 		break;
 	case HIR_EXPR_DICT:
 		for (i = 0; i < e->val.dict.kv_count; i++) {
@@ -2144,6 +2181,14 @@ hir_free_expr(
 				hir_free_expr(e->val.dict.value[i]);
 				e->val.dict.value[i] = NULL;
 			}
+		}
+		if (e->val.dict.key != NULL) {
+			hir_free(e->val.dict.key);
+			e->val.dict.key = NULL;
+		}
+		if (e->val.dict.value != NULL) {
+			hir_free(e->val.dict.value);
+			e->val.dict.value = NULL;
 		}
 		break;
 	default:

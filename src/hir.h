@@ -63,12 +63,6 @@ enum hir_term_type {
 /* Maximum Parameters and Arguments Size */
 #define HIR_PARAM_SIZE		32
 
-/* Maximum Elements of Array Literal */
-#define HIR_ARRAY_LITERAL_SIZE	1024
-
-/* Maximum Key-Value Pairs of Dict Literal */
-#define HIR_DICT_LITERAL_SIZE	1024
-
 /* Forward Declaration */
 struct hir_cfg_node;
 struct hir_stmt;
@@ -258,7 +252,7 @@ struct hir_expr {
 			int elem_count;
 
 			/* Element expressions. */
-			struct hir_expr *elem[HIR_ARRAY_LITERAL_SIZE];
+			struct hir_expr **elem;
 		} array;
 
 		/* Dictionary Literal Expression */
@@ -267,10 +261,10 @@ struct hir_expr {
 			int kv_count;
 
 			/* Key strings. */
-			char *key[HIR_DICT_LITERAL_SIZE];
+			char **key;
 
 			/* Value expressions. */
-			struct hir_expr *value[HIR_DICT_LITERAL_SIZE];
+			struct hir_expr **value;
 		} dict;
 	} val;
 };
