@@ -64,10 +64,10 @@ enum hir_term_type {
 #define HIR_PARAM_SIZE		32
 
 /* Maximum Elements of Array Literal */
-#define HIR_ARRAY_LITERAL_SIZE	32
+#define HIR_ARRAY_LITERAL_SIZE	1024
 
 /* Maximum Key-Value Pairs of Dict Literal */
-#define HIR_DICT_LITERAL_SIZE	32
+#define HIR_DICT_LITERAL_SIZE	1024
 
 /* Forward Declaration */
 struct hir_cfg_node;
