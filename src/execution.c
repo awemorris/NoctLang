@@ -960,10 +960,10 @@ rt_storearray_helper(
 
 	/* Store the value as a container element. */
 	if (!is_dict) {
-		if (!rt_set_array_elem(env, arr_val->val.arr, subscript, val_val))
+		if (!rt_set_array_elem(env, &arr_val->val.arr, subscript, val_val))
 			return false;
 	} else {
-		if (!rt_set_dict_elem(env, arr_val->val.dict, key, val_val))
+		if (!rt_set_dict_elem(env, &arr_val->val.dict, key, val_val))
 			return false;
 	}
 
@@ -1255,7 +1255,7 @@ rt_storedot_helper(
 	val = &env->frame->tmpvar[src];
 
 	/* Store the source value to the dictionary with the key. */
-	if (!rt_set_dict_elem(env, dict_val->val.dict, field, val))
+	if (!rt_set_dict_elem(env, &dict_val->val.dict, field, val))
 		return false;
 
 	return true;

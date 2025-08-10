@@ -531,7 +531,7 @@ noct_set_array_elem(
 	}
 
 	/* Set a value. */
-	if (!rt_set_array_elem(env, array->val.arr, index, val))
+	if (!rt_set_array_elem(env, &array->val.arr, index, val))
 		return false;
 
 	return true;
@@ -774,7 +774,7 @@ noct_set_dict_elem(
 	}
 
 	/* Set a value. */
-	if (!rt_set_dict_elem(env, dict->val.dict, key, val))
+	if (!rt_set_dict_elem(env, &dict->val.dict, key, val))
 		return false;
 
 	return true;
