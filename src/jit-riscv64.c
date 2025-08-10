@@ -1975,7 +1975,7 @@ jit_patch_branch(
 
 	/* Calc a branch offset. */
 	offset = (int)((intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code);
-	if (offset & 0x1fffff) {
+	if (abs(offset) & 0x1fffff) {
 		rt_error(ctx->env, "Branch target too far.");
 		return false;
 	}

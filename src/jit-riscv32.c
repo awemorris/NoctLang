@@ -1911,7 +1911,7 @@ jit_patch_branch(
 
 	/* Set the assembler cursor. */
 	ctx->code = ctx->branch_patch[patch_index].code;
-	if (offset & ~0x1fffff) {
+	if (abs(offset) & ~0x1fffff) {
 		rt_error(ctx->env, "Branch target too far.");
 		return false;
 	}
