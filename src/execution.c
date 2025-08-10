@@ -1005,7 +1005,7 @@ rt_loadarray_helper(
 		return false;
 	}
 
-	/* Check the subscript type. */
+	/* Check the subscript type and value. */
 	if (!is_dict) {
 		if (subscr_val->type != NOCT_VALUE_INT) {
 			rt_error(env, N_TR("Subscript not an integer."));
@@ -1013,6 +1013,11 @@ rt_loadarray_helper(
 		}
 		subscript = subscr_val->val.i;
 		key = NULL;
+
+		if (subscript >= arr_val->val.arr->size) {
+			rt_error(env, N_TR("Array index %d is out-of-range."), subscript);
+			return false;
+		}
 	} else {
 		if (subscr_val->type != NOCT_VALUE_STRING) {
 			rt_error(env, N_TR("Subscript not a string."));
