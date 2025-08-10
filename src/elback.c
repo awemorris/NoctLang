@@ -891,7 +891,6 @@ elback_visit_array_expr(
 	assert(expr != NULL);
 	assert(expr->type == HIR_EXPR_ARRAY);
 	assert(expr->val.array.elem_count > 0);
-	assert(expr->val.array.elem_count < HIR_ARRAY_LITERAL_SIZE);
 
 	elem_count = expr->val.array.elem_count;
 	
@@ -921,7 +920,6 @@ elback_visit_dict_expr(
 	assert(expr != NULL);
 	assert(expr->type == HIR_EXPR_DICT);
 	assert(expr->val.dict.kv_count > 0);
-	assert(expr->val.dict.kv_count < HIR_DICT_LITERAL_SIZE);
 
 	kv_count = expr->val.dict.kv_count;
 	
