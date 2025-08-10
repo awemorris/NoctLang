@@ -84,7 +84,7 @@ struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_
 struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
 static void rt_gc_old_gc(struct rt_env *env);
 static void rt_gc_old_gc_body(struct rt_env *env);
-static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object *obj);
+static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
 static bool rt_gc_compact_gc(struct rt_env *env);
 static void rt_gc_update_tenure_ref(struct rt_env *env, struct rt_gc_object **obj);
@@ -1386,7 +1386,7 @@ rt_gc_old_gc_body(
 	global = env->vm->global;
 	while (global != NULL) {
 		if (IS_REF_VAL(&global->val))
-			rt_gc_mark_old_object_recursively(env, global->val.val.obj);
+			rt_gc_mark_old_object_recursively(env, &global->val.val.obj);
 		global = global->next;
 	}
 
@@ -1397,20 +1397,20 @@ rt_gc_old_gc_body(
 		/* For all temporary variables in the frame. */
 		for (i = 0; i < frame->tmpvar_size; i++) {
 			if (IS_REF_VAL(&frame->tmpvar[i]))
-				rt_gc_mark_old_object_recursively(env, frame->tmpvar[i].val.obj);
+				rt_gc_mark_old_object_recursively(env, &frame->tmpvar[i].val.obj);
 		}
 
 		/* For all pinned C local variables in the frame. */
 		for (i = 0; i < frame->pinned_count; i++) {
 			if (IS_REF_VAL(frame->pinned[i]))
-				rt_gc_mark_old_object_recursively(env, frame->pinned[i]->val.obj);
+				rt_gc_mark_old_object_recursively(env, &frame->pinned[i]->val.obj);
 		}
 	}
 
 	/* For all pinned C global variables. */
 	for (i = 0; i < env->vm->pinned_count; i++) {
 		if (IS_REF_VAL(env->vm->pinned[i]))
-			rt_gc_mark_old_object_recursively(env, env->vm->pinned[i]->val.obj);
+			rt_gc_mark_old_object_recursively(env, &env->vm->pinned[i]->val.obj);
 	}
 
 	/*
@@ -1434,33 +1434,36 @@ rt_gc_old_gc_body(
 static void
 rt_gc_mark_old_object_recursively(
 	struct rt_env *env,
-	struct rt_gc_object *obj)
+	struct rt_gc_object **obj)
 {
 	int i;
 
+	/* Follow the newer array/dict. */
+	rt_gc_array_dict_follow_newer(env, obj);
+
 	/* If the object is a tenure object. */
-	if (obj->region == RT_GC_REGION_TENURE) {
+	if ((*obj)->region == RT_GC_REGION_TENURE) {
 		/* If already marked, just return. */
-		if (obj->is_marked)
+		if ((*obj)->is_marked)
 			return;
 
 		/* Mark. */
-		obj->is_marked = true;
+		(*obj)->is_marked = true;
 	}
 
 	/* Mark recursively. */
-	if (obj->type == RT_GC_TYPE_ARRAY) {
-		struct rt_array *arr = (struct rt_array *)obj;
+	if ((*obj)->type == RT_GC_TYPE_ARRAY) {
+		struct rt_array *arr = (struct rt_array *)*obj;
 		for (i = 0; i < arr->size; i++) {
 			if (IS_REF_VAL(&arr->table[i]))
-				rt_gc_mark_old_object_recursively(env, arr->table[i].val.obj);
+				rt_gc_mark_old_object_recursively(env, &arr->table[i].val.obj);
 		}
-	} else if (obj->type == RT_GC_TYPE_DICT) {
-		struct rt_dict *dict = (struct rt_dict *)obj;
+	} else if ((*obj)->type == RT_GC_TYPE_DICT) {
+		struct rt_dict *dict = (struct rt_dict *)*obj;
 		for (i = 0; i < dict->size; i++) {
-			rt_gc_mark_old_object_recursively(env, dict->key[i].val.obj);
+			rt_gc_mark_old_object_recursively(env, &dict->key[i].val.obj);
 			if (IS_REF_VAL(&dict->value[i]))
-				rt_gc_mark_old_object_recursively(env, dict->value[i].val.obj);
+				rt_gc_mark_old_object_recursively(env, &dict->value[i].val.obj);
 		}
 	}
 }
