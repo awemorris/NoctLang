@@ -908,31 +908,7 @@ rt_get_array_size(
 	assert(arr != NULL);
 	assert(size != NULL);
 
-	/* Acquire the array. */
-	while (1) {
-		/* Get the newer reference. */
-		real_arr = atomic_load_relaxed_ptr((void**)&(arr));
-		while (atomic_load_relaxed_ptr((void **)&real_arr->newer) != NULL)
-			real_arr = atomic_load_relaxed_ptr((void **)&real_arr->newer);
-
-		/* Try acquire. */
-		int old = atomic_fetch_add_acquire(&real_arr->counter, 1);
-		if (old == 0 && atomic_load_acquire_ptr((void **)&real_arr->newer) == NULL)
-			break;
-
-		/* Failed, release. */
-		atomic_fetch_sub_release(&real_arr->counter, 1);
-
-		/* Allow GC in other threads because they may cause GC. */
-		while (1) {
-			atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);
-			while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)
-				cpu_relax();
-			atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);
-			if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)
-				break;
-		}
-	}
+	ACQUIRE_OBJ(arr, real_arr);
 
 	/* Get the size. */
 	*size = real_arr->size;

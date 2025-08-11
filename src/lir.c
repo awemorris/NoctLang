@@ -87,11 +87,6 @@ static int lir_error_line;
 static char lir_error_message[1024];
 
 /*
- * noct.c
- */
-char *noct_strdup(const char *s);
-
-/*
  * Forward declaration.
  */
 static int lir_count_local(struct hir_block *func);
@@ -107,7 +102,6 @@ static int lir_get_local_index(struct hir_block *block, const char *symbol);
 static bool lir_visit_while_block(struct hir_block *block);
 static bool lir_visit_stmt(struct hir_block *block, struct hir_stmt *stmt);
 static bool lir_check_lhs_local(struct hir_block *block, struct hir_expr *lhs, int *rhs_tmpvar);
-static bool lir_check_return_stmt(struct hir_stmt *stmt);
 static bool lir_visit_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_binary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);

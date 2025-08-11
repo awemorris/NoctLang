@@ -318,7 +318,9 @@ jit_visit_lineinfo_op(
 
         /* rt->line = line; */
         ASM {
-                /* r14 = rt */
+		/* r13: exception_handler */
+		/* r14: rt */
+		/* r15: &rt->frame->tmpvar[0] */
 
                 /* movl line, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID(line);
                 /* movq %rax, 0x8(%r14) */        IB(0x49); IB(0x89); IB(0x46); IB(0x08);
@@ -343,7 +345,9 @@ jit_visit_assign_op(
 
         /* rt->frame->tmpvar[dst] = rt->frame->tmpvar[src]; */
         ASM {
-                /* r15 = &rt->frame->tmpvar[0] */
+		/* r13: exception_handler */
+		/* r14: rt */
+		/* r15: &rt->frame->tmpvar[0] */
 
                 /* movq dst, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* movq src, %rbx */                IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src);
@@ -374,7 +378,9 @@ jit_visit_iconst_op(
         /* &rt->frame->tmpvar[dst].type = RT_VALUE_INT; */
         /* &rt->frame->tmpvar[dst].val.i = val; */
         ASM {
-                /* r15 = &rt->frame->tmpvar[0] */
+		/* r13: exception_handler */
+		/* r14: rt */
+		/* r15: &rt->frame->tmpvar[0] */
 
                 /* movq dst, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15, %rax */                IB(0x4c); IB(0x01); IB(0xf8);
@@ -401,7 +407,9 @@ jit_visit_fconst_op(
         /* &rt->frame->tmpvar[dst].type = RT_VALUE_INT; */
         /* &rt->frame->tmpvar[dst].val.i = val; */
         ASM {
-                /* r15 = &rt->frame->tmpvar[0] */
+		/* r13: exception_handler */
+		/* r14: rt */
+		/* r15: &rt->frame->tmpvar[0] */
 
                 /* movq dst, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15, %rax */                IB(0x4c); IB(0x01); IB(0xf8);
@@ -591,7 +599,9 @@ jit_visit_inc_op(
 
         /* &rt->frame->tmpvar[dst].val.i++ */
         ASM {
-                /* r15 = &rt->frame->tmpvar[0] */
+		/* r13: exception_handler */
+		/* r14: rt */
+		/* r15: &rt->frame->tmpvar[0] */
 
                 /* movq dst, %rax */                        IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15, %rax */                        IB(0x4c); IB(0x01); IB(0xf8);
@@ -901,18 +911,22 @@ jit_visit_eqi_op(
 
         /* src1 - src2 */
         ASM {
-                /* movq dst, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
-                /* addq %r15, %rax */                IB(0x4c); IB(0x01); IB(0xf8);
+		/* r13: exception_handler */
+		/* r14: rt */
+		/* r15: &rt->frame->tmpvar[0] */
 
-                /* movq src1, %rbx */                IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src1);
-                /* addq %r15, %rbx */                IB(0x4c); IB(0x01); IB(0xfb);
+                /* movq dst, %rax */             IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* addq %r15, %rax */            IB(0x4c); IB(0x01); IB(0xf8);
+
+                /* movq src1, %rbx */            IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src1);
+                /* addq %r15, %rbx */            IB(0x4c); IB(0x01); IB(0xfb);
                 
-                /* movq src2, %rcx */                IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src2);
-                /* addq %r15, %rcx */                IB(0x4c); IB(0x01); IB(0xf9);
+                /* movq src2, %rcx */            IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src2);
+                /* addq %r15, %rcx */            IB(0x4c); IB(0x01); IB(0xf9);
 
-                /* movq 8(%rbx), %rax */        IB(0x48); IB(0x8b); IB(0x43); IB(0x08);
-                /* movq 8(%rcx), %rdx */        IB(0x48); IB(0x8b); IB(0x51); IB(0x08);
-                /* cmpl %eax, %edx */                IB(0x39); IB(0xc2);
+                /* movq 8(%rbx), %rax */         IB(0x48); IB(0x8b); IB(0x43); IB(0x08);
+                /* movq 8(%rcx), %rdx */         IB(0x48); IB(0x8b); IB(0x51); IB(0x08);
+                /* cmpl %eax, %edx */            IB(0x39); IB(0xc2);
         }
 
         return true;
@@ -1394,13 +1408,13 @@ jit_visit_thiscall_op(
                         /* mov dst -> rdx (2nd arg) */                 IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
                         /* mov obj -> r8 (3rd arg) */                  IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)obj);
                         /* mov symbol -> r9 (4th arg) */               IB(0x49); IB(0xB9); IQ((uint64_t)symbol);
-                        /* shadow space */                             IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
+                        /* shadow space */                             IB(0x48); IB(0x83); IB(0xEC); IB(0x38);
                         /* mov arg_count -> [rsp+0x20] (5th arg) */    IB(0xC7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)arg_count);
                         /* movabs arg_addr -> rax */                   IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
                         /* mov  rax -> [rsp+0x28] (6th arg) */         IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x28);
                         /* movabs rt_thiscall_helper -> rax */         IB(0x48); IB(0xB8); IQ((uint64_t)rt_thiscall_helper);
                         /* call rax */                                 IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 (shadow) */                     IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* shadow space */                             IB(0x48); IB(0x83); IB(0xC4); IB(0x38);
 
                         /* test eax, eax */                            IB(0x83); IB(0xF8); IB(0x00);
                         /* jne 8 <next> */                             IB(0x75); IB(0x03);
@@ -1475,11 +1489,15 @@ jit_visit_jmpiftrue_op(
                 return false;
         }
 
+	src *= sizeof(struct rt_value);
+
         ASM {
+		/* r13: exception_handler */
+		/* r14: rt */
+		/* r15: &rt->frame->tmpvar[0] */
+
                 /* rdx = &rt->frame->tmpvar[src] */
-                /* movq %r14, %rcx */              IB(0x4c); IB(0x89); IB(0xf1);
                 /* movq src, %rdx */               IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)src);
-                /* shlq $4, %rdx */                IB(0x48); IB(0xc1); IB(0xe2); IB(0x04);
                 /* addq %r15, %rdx */              IB(0x4c); IB(0x01); IB(0xfa);
                 /* movl 8(%rdx), %eax */           IB(0x8b); IB(0x42); IB(0x08);
 
@@ -1516,11 +1534,11 @@ jit_visit_jmpiffalse_op(
                 return false;
         }
 
+	src *= sizeof(struct rt_value);
+
         ASM {
                 /* rdx = &rt->frame->tmpvar[src] */
-                /* movq %r14, %rcx */              IB(0x4c); IB(0x89); IB(0xf1);
                 /* movq src, %rdx */               IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)src);
-                /* shlq $4, %rdx */                IB(0x48); IB(0xc1); IB(0xe2); IB(0x04);
                 /* addq %r15, %rdx */              IB(0x4c); IB(0x01); IB(0xfa);
                 /* movl 8(%rdx), %eax */           IB(0x8b); IB(0x42); IB(0x08);
 
