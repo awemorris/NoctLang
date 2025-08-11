@@ -1055,7 +1055,7 @@ rt_resize_array(
 
 	ACQUIRE_OBJ(*arr, real_arr);
 
-	if (size > real_arr->size) {
+	if (size > real_arr->alloc_size) {
 		struct rt_array *new_arr;
 
 		/* Reallocate an array. */

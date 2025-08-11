@@ -994,11 +994,11 @@ rt_gc_copy_young_object_recursively(
 			/* The forwarding pointer is set in rt_gc_promote_object(). */
 		}
 
+		/* Mark the old object processed. */
+		(*obj)->is_marked = true;
+
 		/* Rewrite the reference. */
 		*obj = new_obj;
-
-		/* Mark as processed. */
-		(*obj)->is_marked = true;
 	}
 
 	/* Recursively copy. */
