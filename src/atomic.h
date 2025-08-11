@@ -63,6 +63,12 @@ static INLINE void cpu_relax(void)
 
 #include <intrin.h>
 
+static INLINE void *atomic_load_relaxed_ptr(void **p)
+{
+	MemoryBarrier();
+	return __atomic_load_n(p, __ATOMIC_RELAXED);
+}
+
 static INLINE int atomic_load_acquire(int *v)
 {
 	return _InterlockedExchangeAdd((volatile long *)v, 0);
@@ -70,7 +76,7 @@ static INLINE int atomic_load_acquire(int *v)
 
 static INLINE void *atomic_load_acquire_ptr(void **pp)
 {
-	return (void *)_InterlockedExchangeAdd((volatile long *)v, 0);
+	return (void *)_InterlockedExchangeAdd((volatile long *)pp, 0);
 }
 
 static INLINE void atomic_store_release_ptr(void **p, void *v)
@@ -90,12 +96,12 @@ static INLINE int atomic_fetch_sub_release(int *v, int sub)
 
 #if defined(_M_IX86) || defined(_M_X64)
 #include <immintrin.h>
-static NOCT_INLINE void cpu_relax(void)
+static INLINE void cpu_relax(void)
 {
 	_mm_pause();
 }
 #elif defined(_M_ARM64)
-static NOCT_INLINE void cpu_relax(void)
+static INLINE void cpu_relax(void)
 {
 	// yield
 	__emit(0xD503207F);

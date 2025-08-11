@@ -1753,16 +1753,3 @@ noct_set_return_make_string(
 
 	return true;
 }
-
-char *noct_strdup(const char *s)
-{
-	char *ret;
-
-	ret = noct_malloc(strlen(s) + 1);
-	if (ret == NULL)
-		return NULL;
-
-	strcpy(ret, s);
-
-	return ret;
-}

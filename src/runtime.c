@@ -41,7 +41,6 @@ int noct_conf_optimize = 0;
 bool noct_conf_repl_mode = 0;
 
 /* Forward declarations. */
-static void rt_free_env(struct rt_env *env);
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, uint32_t size, int *pos, char *file_name);
@@ -50,7 +49,6 @@ static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_leave_frame(struct rt_env *env, struct rt_value *ret);
 static bool rt_expand_array(struct rt_env *env, struct rt_array *old_arr, struct rt_array **new_arr_pp, size_t size);
 static bool rt_expand_dict(struct rt_env *env, struct rt_dict *old_dict, struct rt_dict **new_dict_pp, size_t size);
-static bool rt_get_return(struct rt_env *rt, struct rt_value *val);
 
 /*
  * Initialization
@@ -1151,7 +1149,7 @@ rt_make_array_copy(
 	struct rt_array **dst,
 	struct rt_array *src)
 {
-	struct rt_array *arr, *src_real;
+	struct rt_array *src_real;
 	int i;
 
 	assert(env != NULL);
@@ -1174,7 +1172,7 @@ rt_make_array_copy(
 		(*dst)->table[i] = src_real->table[i];
 
 		/* Write barrier. */
-		rt_gc_array_write_barrier(env, *dst, i, &arr->table[i]);
+		rt_gc_array_write_barrier(env, *dst, i, &(*dst)->table[i]);
 	}
 
 	RELEASE_OBJ(src_real);
