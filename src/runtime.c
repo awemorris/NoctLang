@@ -679,6 +679,7 @@ rt_call(
 	struct rt_value *arg,
 	struct rt_value *ret)
 {
+	char old_file_name[256];
 	int i;
 
 #if defined(USE_MULTITHREAD)
@@ -710,7 +711,10 @@ rt_call(
 		if (!func->cfunc(env))
 			return false;
 	} else {
-		/* Set a file name. */
+		/* Backup the old file name. */
+		strncpy(old_file_name, env->file_name, sizeof(old_file_name) - 1);
+
+		/* Set the new file name. */
 		strncpy(env->file_name, env->frame->func->file_name, sizeof(env->file_name) - 1);
 
 		if (func->jit_code != NULL) {
@@ -726,6 +730,9 @@ rt_call(
 			if (!rt_visit_bytecode(env, func))
 				return false;
 		}
+
+		/* Restore the old file name. */
+		strncpy(env->file_name, old_file_name, sizeof(env->file_name) - 1);
 	}
 
 	/* Get a return value. */
