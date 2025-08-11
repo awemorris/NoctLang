@@ -49,10 +49,10 @@ static INLINE void cpu_relax(void)
 {
 #if defined(__i386__) || defined(__x86_64__)
 	// PAUSE
-	__builtin_ia32_pause();
+	__asm__ __volatile__("pause");
 #elif defined(__arm__) || defined(__aarch64__)
 	// YIELD
-	__builtin_arm_yield();
+	__asm__ __volatile__("yield");
 #elif defined(__powerpc__) || defined(__ppc__) || defined(__PPC__)
 	// Spin Loop Hint
 	__asm__ __volatile__("or 27,27,27");
