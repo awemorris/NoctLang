@@ -1018,7 +1018,7 @@ rt_set_array_elem(
 		    val->type == NOCT_VALUE_DICT)
 			rt_gc_array_write_barrier(env, new_arr, index, val);
 
-		/* Publish is done by a release to the old array. */
+		/* Publication is done by a release to the old array. */
 		RELEASE_OBJ(real_arr);
 		return true;
 	}
@@ -1070,7 +1070,7 @@ rt_resize_array(
 		/* Set the element count. */
 		new_arr->size = size;
 
-		/* Publish is done by a release to the old array. */
+		/* Publication is done by a release to the old array. */
 		RELEASE_OBJ(real_arr);
 	} else {
 		/* Remove (zero-fill) the reminder. */
@@ -1428,7 +1428,7 @@ rt_set_dict_elem(
 			rt_gc_dict_write_barrier(env, new_dict, i, val);
 		}
 
-		/* Publish is done by a release to the old dictionary. */
+		/* Publication is done by a release to the old dictionary. */
 		RELEASE_OBJ(real_dict);
 	}
 
@@ -1605,6 +1605,26 @@ rt_make_dict_copy(
  * Global Variable
  */
 
+#if !defined(USE_MULTITHREAD)
+
+#define ACQUIRE_GLOBAL()
+#define RELEASE_GLOBAL()
+
+#else
+
+#define ACQUIRE_GLOBAL()									\
+	while (1) {										\
+		int old = atomic_fetch_add_acquire(&env->vm->global_var_counter, 1);		\
+		if (old == 0)									\
+			break;									\
+		atomic_fetch_sub_release(&env->vm->global_var_counter, 1);			\
+	}
+
+#define RELEASE_GLOBAL()									\
+	atomic_fetch_sub_release(&env->vm->global_var_counter, 1);
+
+#endif
+
 /*
  * Get a global variable.
  */
@@ -1616,6 +1636,8 @@ rt_get_global(
 {
 	struct rt_bindglobal *global;
 
+	ACQUIRE_GLOBAL();
+
 	global = env->vm->global;
 	while (global != NULL) {
 		if (strcmp(global->name, name) == 0)
@@ -1623,11 +1645,15 @@ rt_get_global(
 		global = global->next;
 	}
 	if (global == NULL) {
+		RELEASE_GLOBAL();
+
 		noct_error(env, N_TR("Global variable \"%s\" not found."), name);
 		return false;
 	}
 
 	*val = global->val;
+
+	RELEASE_GLOBAL();
 
 	return true;
 }
@@ -1641,16 +1667,21 @@ rt_find_global(
 {
 	struct rt_bindglobal *g;
 
+	ACQUIRE_GLOBAL();
+
 	g = env->vm->global;
 	while (g != NULL) {
 		if (strcmp(g->name, name) == 0) {
 			*global = g;
+
+			RELEASE_GLOBAL();
 			return true;
 		}
 		g = g->next;
 	}
 
 	*global = NULL;
+	RELEASE_GLOBAL();
 
 	return false;
 }
@@ -1673,8 +1704,12 @@ rt_set_global(
 			return false;
 	}
 
+	ACQUIRE_GLOBAL();
+
 	/* Set the value. */
 	global->val = *val;
+
+	RELEASE_GLOBAL();
 
 	return true;
 }
@@ -1690,14 +1725,18 @@ rt_add_global(
 {
 	struct rt_bindglobal *g;
 
+	ACQUIRE_GLOBAL();
+
 	g = noct_malloc(sizeof(struct rt_bindglobal));
 	if (g == NULL) {
+		RELEASE_GLOBAL();
 		rt_out_of_memory(env);
 		return false;
 	}
 
 	g->name = strdup(name);
 	if (g->name == NULL) {
+		RELEASE_GLOBAL();
 		rt_out_of_memory(env);
 		return false;
 	}
@@ -1708,6 +1747,8 @@ rt_add_global(
 	env->vm->global = g;
 
 	*global = g;
+
+	RELEASE_GLOBAL();
 
 	return true;
 }

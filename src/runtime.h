@@ -56,13 +56,20 @@ struct rt_string {
 struct rt_array {
 	struct rt_gc_object head;
 
+	/* Allocation size. */
 	size_t alloc_size;
+
+	/* Current size. */
 	size_t size;
+
+	/* Value table. */
 	struct rt_value *table;
 
+	/* Copy-On-Resize forwarding. (RCU-style) */
 	struct rt_array *newer;
 
 #if defined(USE_MULTITHREAD)
+	/* Atomic counter. */
 	int counter;
 #endif
 };
@@ -73,14 +80,23 @@ struct rt_array {
 struct rt_dict {
 	struct rt_gc_object head;
 
+	/* Allocation size. */
 	size_t alloc_size;
+
+	/* Current used elements. */
 	size_t size;
+
+	/* Key table. */
 	struct rt_value *key;
+
+	/* Value table. */
 	struct rt_value *value;
 
+	/* Copy-On-Resize forwarding. (RCU-style) */
 	struct rt_dict *newer;
 
 #if defined(USE_MULTITHREAD)
+	/* Atomic counter. */
 	int counter;
 #endif
 };
@@ -201,7 +217,7 @@ struct rt_env {
 	struct rt_env *next;
 
 #if defined(USE_MULTITHREAD)
-	/* A counter for GC. */
+	/* Atomic counter for GC. */
 	int gc_in_progress_counter;
 #endif
 };
@@ -235,6 +251,9 @@ struct rt_vm {
 
 	/* GC stop-the-world counter. */
 	int gc_stw_counter;
+
+	/* Atomic counter for global variables. */
+	int global_var_counter;
 #endif
 };
 
