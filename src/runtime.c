@@ -18,6 +18,10 @@
 #include "jit.h"
 #include "gc.h"
 
+#if defined(USE_MULTITHREAD)
+#include "atomic.h"
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,9 +46,15 @@ static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, uint32_t size, int *pos, char *file_name);
 static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos);
+static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
+static void rt_leave_frame(struct rt_env *env, struct rt_value *ret);
 static bool rt_expand_array(struct rt_env *env, struct rt_array *old_arr, struct rt_array **new_arr_pp, size_t size);
 static bool rt_expand_dict(struct rt_env *env, struct rt_dict *old_dict, struct rt_dict **new_dict_pp, size_t size);
 static bool rt_get_return(struct rt_env *rt, struct rt_value *val);
+
+/*
+ * Initialization
+ */
 
 /*
  * Create a virtual machine.
@@ -205,34 +215,8 @@ rt_create_thread_env(
 #endif
 
 /*
- * Get an error message.
+ * Compilation
  */
-const char *
-rt_get_error_message(
-	struct rt_env *env)
-{
-	return &env->error_message[0];
-}
-
-/*
- * Get an error file name.
- */
-const char *
-rt_get_error_file(
-	struct rt_env *env)
-{
-	return &env->file_name[0];
-}
-
-/*
- * Get an error line number.
- */
-int
-rt_get_error_line(
-	struct rt_env *env)
-{
-	return env->line;
-}
 
 /*
  * Register functions from a souce text.
@@ -644,6 +628,10 @@ rt_register_cfunc(
 }
 
 /*
+ * Call
+ */
+
+/*
  * Call a function with a name.
  */
 bool
@@ -741,8 +729,7 @@ rt_call(
 	}
 
 	/* Get a return value. */
-	if (!rt_get_return(env, ret))
-		return false;
+	*ret = env->frame->tmpvar[0];
 
 	/* Commit JIT-compiled code for dynamically imported inside the function. */
 	if (noct_conf_use_jit && env->vm->is_jit_dirty) {
@@ -756,10 +743,8 @@ rt_call(
 	return true;
 }
 
-/*
- * Enter a new calling frame.
- */
-bool
+/* Enter a new calling frame. */
+static bool
 rt_enter_frame(
 	struct rt_env *env,
 	struct rt_func *func)
@@ -783,10 +768,8 @@ rt_enter_frame(
 	return true;
 }
 
-/*
- * Leave the current calling frame.
- */
-void
+/* Leave the current calling frame. */
+static void
 rt_leave_frame(
 	struct rt_env *env,
 	struct rt_value *ret)
@@ -800,6 +783,10 @@ rt_leave_frame(
 
 	env->frame = &env->frame_alloc[env->cur_frame_index];
 }
+
+/*
+ * String
+ */
 
 /*
  * Make a string value.
@@ -827,7 +814,56 @@ rt_make_string(
 }
 
 /*
- * Make an empty array value.
+ * Arrays and Dictionaries
+ */
+
+#if !defined(USE_MULTITHREAD)
+
+#define ACQUIRE_OBJ(obj, real_obj)							\
+	/* Get the newer reference. */							\
+	real_obj = (obj);								\
+	while (real_obj->newer != NULL)							\
+		real_obj = real_obj->newer;
+
+#define RELEASE_OBJ(real_obj)
+
+#else
+
+#define ACQUIRE_OBJ(obj, real_obj)							\
+	/* Acquire the array. */							\
+	while (1) {									\
+		/* Get the newer reference. */						\
+		real_obj = *atomic_load_relaxed_ptr(&(obj));				\
+		while (atomic_load_relaxed_ptr(&real_obj->newer) != NULL)		\
+			real_obj = atomic_load_relaxed_ptr(&real_obj->newer);		\
+											\
+		/* Try acquire. */							\
+		int old = atomic_fetch_add_acquire(&real_obj->counter, 1);		\
+		if (old == 0 && atomic_load_acquire_ptr(&real_obj->newer) == NULL)	\
+			break;								\
+											\
+		/* Failed, release. */							\
+		atomic_fetch_sub_release(&real_obj->counter, 1);			\
+											\
+		/* Allow GC in other threads because they may cause GC. */		\
+		while (1) {								\
+			atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);	\
+			while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)	\
+				cpu_relax();						\
+			atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);	\
+			if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)		\
+				break;							\
+		}									\
+	}
+
+#define RELEASE_OBJ(real_obj)								\
+	/* Failed, release. */								\
+	atomic_fetch_sub_release(&real_obj->counter, 1);
+
+#endif
+
+/*
+ * Make an empty array.
  */
 bool
 rt_make_empty_array(
@@ -835,7 +871,6 @@ rt_make_empty_array(
 	struct rt_value *val)
 {
 	struct rt_array *arr;
-
 	const int START_SIZE = 16;
 
 	/* Allocate an array. */
@@ -853,27 +888,27 @@ rt_make_empty_array(
 }
 
 /*
- * Make an empty dictionary value.
+ * Get the size of an array.
  */
 bool
-rt_make_empty_dict(
+rt_get_array_size(
 	struct rt_env *env,
-	struct rt_value *val)
+	struct rt_array *arr,
+	int *size)
 {
-	struct rt_dict *dict;
+	struct rt_array *real_arr;
+	int type;
 
-	const int START_SIZE = 16;
+	assert(env != NULL);
+	assert(arr != NULL);
+	assert(size != NULL);
 
-	/* Allocate a dictionary. */
-	dict = rt_gc_alloc_dict(env, START_SIZE);
-	if (dict == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
+	ACQUIRE_OBJ(arr, real_arr);
 
-	/* Setup a value. */
-	val->type = NOCT_VALUE_DICT;
-	val->val.dict = dict;
+	/* Get the size. */
+	*size = real_arr->size;
+
+	RELEASE_OBJ(real_arr);
 
 	return true;
 }
@@ -896,13 +931,20 @@ rt_get_array_elem(
 	assert(index < arr->size);
 	assert(val != NULL);
 
-	/* Get the newer reference. */
-	real_arr = arr;
-	while (real_arr->newer != NULL)
-		real_arr = real_arr->newer;
+	ACQUIRE_OBJ(arr, real_arr);
+
+	/* Check the array boundary. */
+	if (index < 0 || index >= real_arr->size) {
+		RELEASE_OBJ(real_ptr);
+
+		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		return false;
+	}
 
 	/* Load. */
 	*val = real_arr->table[index];
+
+	RELEASE_OBJ(real_arr);
 
 	return true;
 }
@@ -925,22 +967,36 @@ rt_set_array_elem(
 	assert(index >= 0);
 	assert(val != NULL);
 
-	/* Get the newer reference. */
-	real_arr = *arr;
-	while (real_arr->newer != NULL)
-		real_arr = real_arr->newer;
+	ACQUIRE_OBJ(*arr, real_arr);
 
 	/* Expand the array if needed.. */
 	if (index >= real_arr->alloc_size) {
-		/* Reallocate an array. */
-		if (!rt_expand_array(env, real_arr, arr, index + 1))
-			return false;
+		struct rt_array *new_arr;
 
-		/* Get the new array. */
-		real_arr = *arr;
+		/* Reallocate an array. */
+		if (!rt_expand_array(env, real_arr, arr, index + 1)) {
+			RELEASE_OBJ(real_arr);
+			return false;
+		}
+
+		/* Get the new array which is only visible to this thread. */
+		new_arr = *arr;
 
 		/* Set the new size. */
-		real_arr->size = index + 1;
+		new_arr->size = index + 1;
+
+		/* Store. */
+		new_arr->table[index] = *val;
+
+		/* GC: Write barrier for the remember set. */
+		if (val->type == NOCT_VALUE_STRING ||
+		    val->type == NOCT_VALUE_ARRAY ||
+		    val->type == NOCT_VALUE_DICT)
+			rt_gc_array_write_barrier(env, new_arr, index, val);
+
+		/* Publish is done by a release to the old array. */
+		RELEASE_OBJ(real_arr);
+		return true;
 	}
 
 	/* Store. */
@@ -953,6 +1009,8 @@ rt_set_array_elem(
 	    val->type == NOCT_VALUE_ARRAY ||
 	    val->type == NOCT_VALUE_DICT)
 		rt_gc_array_write_barrier(env, real_arr, index, val);
+
+	RELEASE_OBJ(real_arr);
 
 	return true;
 }
@@ -971,15 +1029,14 @@ rt_resize_array(
 	assert(env != NULL);
 	assert(arr != NULL);
 
-	/* Get the newer reference. */
-	real_arr = *arr;
-	while (real_arr->newer != NULL)
-		real_arr = real_arr->newer;
+	ACQUIRE_OBJ(*arr, real_arr);
 
 	if (size > real_arr->size) {
 		/* Reallocate an array. */
-		if (!rt_expand_array(env, real_arr, arr, size))
+		if (!rt_expand_array(env, real_arr, arr, size)) {
+			RELEASE_OBJ(real_arr);
 			return false;
+		}
 
 		/* Get the new array. */
 		real_arr = *arr;
@@ -993,6 +1050,8 @@ rt_resize_array(
 		/* Set the element count. */
 		real_arr->size = size;
 	}
+
+	RELEASE_OBJ(real_arr);
 
 	return true;
 }
@@ -1048,6 +1107,200 @@ rt_expand_array(
 }
 
 /*
+ * Make a shallow copy of an array.
+ */
+bool
+rt_make_array_copy(
+	struct rt_env *env,
+	struct rt_array **dst,
+	struct rt_array *src)
+{
+	struct rt_array *arr, *src_real;
+	int i;
+
+	assert(env != NULL);
+	assert(dst != NULL);
+	assert(src != NULL);
+
+	ACQUIRE_OBJ(src, src_real);
+
+	/* Allocate an array. */
+	*dst = rt_gc_alloc_array(env, src_real->size);
+	if (*dst == NULL) {
+		RELEASE_OBJ(src_real);
+		return false;
+	}
+
+	/* Copy the array with write-barrier. */
+	(*dst)->size = src_real->size;
+	for (i = 0; i < (int)src_real->size; i++) {
+		/* Copy. */
+		(*dst)->table[i] = src_real->table[i];
+
+		/* Write barrier. */
+		rt_gc_array_write_barrier(env, *dst, i, &arr->table[i]);
+	}
+
+	RELEASE_OBJ(src_real);
+
+	return true;
+}
+
+/*
+ * Make an empty dictionary.
+ */
+bool
+rt_make_empty_dict(
+	struct rt_env *env,
+	struct rt_value *val)
+{
+	struct rt_dict *dict;
+
+	const int START_SIZE = 16;
+
+	/* Allocate a dictionary. */
+	dict = rt_gc_alloc_dict(env, START_SIZE);
+	if (dict == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	/* Setup a value. */
+	val->type = NOCT_VALUE_DICT;
+	val->val.dict = dict;
+
+	return true;
+}
+
+/*
+ * Get the size of a dictionary.
+ */
+bool
+rt_get_dict_size(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	int *size)
+{
+	struct rt_dict *real_dict;
+
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(size != NULL);
+
+	ACQUIRE_OBJ(dict, real_dict);
+
+	/* Get the size. */
+	*size = real_dict->size;
+
+	RELEASE_OBJ(real_dict);
+
+	return true;
+}
+
+/*
+ * Checks if a key exists in a dictionary.
+ */
+bool
+rt_check_dict_key(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	const char *key,
+	bool *ret)
+{
+	struct rt_dict *real_dict;
+	int i;
+
+	ACQUIRE_OBJ(dict, real_dict);
+
+	/* Search the key. */
+	for (i = 0; i < real_dict->size; i++) {
+		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+			/* Found. */
+			RELEASE_OBJ(real_dict);
+			*ret = true;
+			return true;
+		}
+	}
+
+	/* Not found. */
+	RELEASE_OBJ(real_dict);
+	*ret = false;
+
+	/* Note: this is not an error, so just return true. */
+	return true;
+}
+
+/*
+ * Get a dictionary key by index.
+ */
+bool
+rt_get_dict_key_by_index(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	int index,
+	struct rt_value *key)
+{
+	struct rt_dict *real_dict;
+
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(index >= 0);
+	assert(key != NULL);
+	
+	ACQUIRE_OBJ(dict, real_dict);
+
+	/* Check the boundary. */
+	if (index < 0 || index >= real_dict->size) {
+		RELEASE_OBJ(real_dict);
+
+		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
+		return false;
+	}
+
+	/* Load the key. */
+	*key = real_dict->key[index];
+
+	RELEASE_OBJ(real_dict);
+
+	return true;
+}
+
+/*
+ * Get a dictionary value by index.
+ */
+bool
+rt_get_dict_value_by_index(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	int index,
+	struct rt_value *val)
+{
+	struct rt_dict *real_dict;
+
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(index >= 0);
+	assert(val != NULL);
+	
+	ACQUIRE_OBJ(dict, real_dict);
+
+	/* Check the boundary. */
+	if (index < 0 || index >= real_dict->size) {
+		RELEASE_OBJ(real_dict);
+
+		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
+		return false;
+	}
+
+	/* Load the value. */
+	*val = real_dict->value[index];
+
+	RELEASE_OBJ(real_dict);
+
+	return true;
+}
+
+/*
  * Retrieves the value by a key in a dictionary.
  */
 bool
@@ -1065,19 +1318,20 @@ rt_get_dict_elem(
 	assert(key != NULL);
 	assert(val != NULL);
 
-	/* Get the newer reference. */
-	real_dict = dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
-	
+	ACQUIRE_OBJ(dict, real_dict);
+
 	/* Search the key. */
 	for (i = 0; i < real_dict->size; i++) {
 		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Succeeded. */
 			*val = real_dict->value[i];
+
+			RELEASE_OBJ(real_dict);
 			return true;
 		}
 	}
+
+	RELEASE_OBJ(real_dict);
 
 	/* Failed. */
 	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
@@ -1102,28 +1356,51 @@ rt_set_dict_elem(
 	assert(*dict != NULL);
 	assert(key != NULL);
 	assert(val != NULL);
-	
-	/* Get the newer reference. */
-	real_dict = *dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
+
+	ACQUIRE_OBJ(*dict, real_dict);
 
 	/* Search for the key. */
 	for (i = 0; i < real_dict->size; i++) {
 		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+			/* Found, store the value. */
 			real_dict->value[i] = *val;
+
+			RELEASE_OBJ(real_dict);
 			return true;
 		}
 	}
 
 	/* Expand the size. */
 	if (real_dict->size + 1 >= real_dict->alloc_size) {
-		/* Reallocate a dictionary. */
-		if (!rt_expand_dict(env, real_dict, dict, real_dict->size + 1))
-			return false;
+		struct rt_dict *new_dict;
 
-		/* Get the new dictionary. */
-		real_dict = *dict;
+		/* Reallocate a dictionary. */
+		if (!rt_expand_dict(env, real_dict, dict, real_dict->size + 1)) {
+			RELEASE_OBJ(real_dict);
+			return false;
+		}
+
+		/* Get the new dictionary which is only visible to this thread.. */
+		new_dict = *dict;
+
+		/* Append the key. */
+		if (!rt_make_string(env, &new_dict->key[new_dict->size], key)) {
+			RELEASE_OBJ(real_dict);
+			return false;
+		}
+		new_dict->value[new_dict->size] = *val;
+		new_dict->size++;
+
+		/* GC: Write barrier for the remember set. */
+		if (val->type == NOCT_VALUE_STRING ||
+		    val->type == NOCT_VALUE_ARRAY ||
+		    val->type == NOCT_VALUE_DICT) {
+			rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->key[new_dict->size]);
+			rt_gc_dict_write_barrier(env, new_dict, i, val);
+		}
+
+		/* Publish is done by a release to the old dictionary. */
+		RELEASE_OBJ(real_dict);
 	}
 
 	/* Append the key. */
@@ -1136,10 +1413,11 @@ rt_set_dict_elem(
 	if (val->type == NOCT_VALUE_STRING ||
 	    val->type == NOCT_VALUE_ARRAY ||
 	    val->type == NOCT_VALUE_DICT) {
-		rt_gc_dict_write_barrier(env, real_dict, i, &(*dict)->key[real_dict->size]);
+		rt_gc_dict_write_barrier(env, real_dict, i, &real_dict->key[real_dict->size]);
 		rt_gc_dict_write_barrier(env, real_dict, i, val);
 	}
 
+	RELEASE_OBJ(real_dict);
 	return true;
 }
 
@@ -1199,16 +1477,104 @@ rt_expand_dict(
 	return true;
 }
 
-/* Get a return value. */
-static bool
-rt_get_return(
+#if !defined(USE_MULTITHREAD)
+/*
+ * Remove a dictionary key.
+ *
+ * Note: this is not thread-safe and not defined in the multithreaded build.
+ */
+bool
+rt_remove_dict_elem(
 	struct rt_env *env,
-	struct rt_value *val)
+	struct rt_dict *dict,
+	const char *key)
 {
-	*val = env->frame->tmpvar[0];
+	struct rt_dict *d;
+	int i;
+
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(key != NULL);
+	
+	ACQUIRE_OBJ(dict, d);
+
+	/* Search for the key. */
+	for (i = 0; i < d->size; i++) {
+		if (strcmp(d->key[i].val.str->data, key) == 0) {
+			/* Remove the key and value. */
+			memmove(&d->key[i],
+				&d->key[i + 1],
+				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
+			memmove(&d->value[i],
+				&d->value[i + 1],
+				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
+			d->key[d->size - 1].type = NOCT_VALUE_INT;
+			d->key[d->size - 1].val.i = 0;
+			d->value[d->size - 1].type = NOCT_VALUE_INT;
+			d->value[d->size - 1].val.i = 0;
+			d->size--;
+
+			/* Succeeded. */
+			RELEASE_OBJ(d);
+			return true;
+		}
+	}
+
+	RELEASE_OBJ(d);
+
+	/* Failed. */
+	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
+	return false;
+}
+#endif
+
+/*
+ * Make a shallow copy of a dictionary.
+ */
+bool
+rt_make_dict_copy(
+	struct rt_env *env,
+	struct rt_dict **dst,
+	struct rt_dict *src)
+{
+	struct rt_dict *d, *src_real;
+	int i;
+
+	assert(env != NULL);
+	assert(src != NULL);
+	assert(dst != NULL);
+
+	ACQUIRE_OBJ(src, src_real);
+
+	/* Make a dictionary */
+	d = rt_gc_alloc_dict(env, src_real->size);
+	if (d == NULL) {
+		RELEASE_OBJ(src_real);
+		return false;
+	}
+
+	/* Copy the array with write-barrier. */
+	d->size = src_real->size;
+	for (i = 0; i < (int)src_real->size; i++) {
+		/* Copy the key. */
+		d->key[i] = src_real->key[i];
+
+		/* Copy the value. */
+		d->value[i] = src_real->value[i];
+
+		/* Write barrier. */
+		rt_gc_dict_write_barrier(env, d, i, &d->key[i]);
+		rt_gc_dict_write_barrier(env, d, i, &d->value[i]);
+	}
+
+	RELEASE_OBJ(src_real);
 
 	return true;
 }
+
+/*
+ * Global Variable
+ */
 
 /*
  * Get a global variable.
@@ -1318,6 +1684,10 @@ rt_add_global(
 }
 
 /*
+ * FFI Pin
+ */
+
+/*
  * Pins a C global variable.
  */
 bool
@@ -1369,17 +1739,37 @@ rt_pin_local(
 }
 
 /*
- * Retrieves the approximate memory usage, in bytes.
+ * Error Handling
  */
-bool
-rt_get_heap_usage(
-	struct rt_env *env,
-	size_t *ret)
-{
-	if (!rt_gc_get_heap_usage(env, ret))
-		return false;
 
-	return true;
+/*
+ * Get an error message.
+ */
+const char *
+rt_get_error_message(
+	struct rt_env *env)
+{
+	return &env->error_message[0];
+}
+
+/*
+ * Get an error file name.
+ */
+const char *
+rt_get_error_file(
+	struct rt_env *env)
+{
+	return &env->file_name[0];
+}
+
+/*
+ * Get an error line number.
+ */
+int
+rt_get_error_line(
+	struct rt_env *env)
+{
+	return env->line;
 }
 
 /*

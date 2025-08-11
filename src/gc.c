@@ -1994,7 +1994,7 @@ rt_gc_safepoint(
 	while (1) {
 		/* Try acquire. */
 		atomic_increment(&env->vm->in_flight_counter);
-		if (!env->vm->gc_stw_counter)
+		if (atomic_read(&env->vm->gc_stw_counter) == 0)
 			break;
 
 		/* Failed, release. */
@@ -2080,7 +2080,7 @@ back_to_inflight:
 		while (1) {
 			/* Try acquire. */
 			atomic_increment(&env->vm->in_flight_counter);
-			if (!env->vm->gc_stw_counter) {
+			if (atomic_read(&env->vm->gc_stw_counter) == 0) {
 				/* Succeeded. */
 				break;
 			}

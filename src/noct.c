@@ -313,17 +313,12 @@ noct_get_int(
 	NoctValue *val,
 	int *i)
 {
-	int type;
-
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(i != NULL);
 
-	/* Get the value type. */
-	type = val->type;
-
 	/* Check the type. */
-	if (type != NOCT_VALUE_INT) {
+	if (val->type != NOCT_VALUE_INT) {
 		rt_error(env, N_TR("Value is not an integer."));
 		return false;
 	}
@@ -341,17 +336,12 @@ noct_get_float(
 	NoctValue *val,
 	float *f)
 {
-	int type;
-
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(f != NULL);
 
-	/* Get the value type. */
-	type = val->type;
-
 	/* Check the type. */
-	if (type != NOCT_VALUE_FLOAT) {
+	if (val->type != NOCT_VALUE_FLOAT) {
 		rt_error(env, N_TR("Value is not a float."));
 		return false;
 	}
@@ -369,17 +359,12 @@ noct_get_string_len(
 	NoctValue *val,
 	size_t *len)
 {
-	int type;
-
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(len != NULL);
 
-	/* Get the value type. */
-	type = val->type;
-
 	/* Check the type. */
-	if (type != NOCT_VALUE_STRING) {
+	if (val->type != NOCT_VALUE_STRING) {
 		rt_error(env, N_TR("Value is not a string."));
 		return false;
 	}
@@ -397,18 +382,14 @@ noct_get_string(
 	NoctValue *val,
 	const char **s)
 {
-	int type;
 	size_t src_len;
 	size_t copy_len;
 
 	assert(env != NULL);
 	assert(val != NULL);
 
-	/* Get the value type. */
-	type = val->type;
-
 	/* Check the type. */
-	if (type != NOCT_VALUE_STRING) {
+	if (val->type != NOCT_VALUE_STRING) {
 		rt_error(env, N_TR("Value is not a string."));
 		return false;
 	}
@@ -426,17 +407,12 @@ noct_get_func(
 	NoctValue *val,
 	NoctFunc **f)
 {
-	int type;
-
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(f != NULL);
 
-	/* Get the value type. */
-	type = val->type;
-
 	/* Check the type. */
-	if (type != NOCT_VALUE_FUNC) {
+	if (val->type != NOCT_VALUE_FUNC) {
 		rt_error(env, N_TR("Value is not a function."));
 		return false;
 	}
@@ -455,28 +431,20 @@ noct_get_array_size(
 	int *size)
 {
 	struct rt_array *real_arr;
-	int type;
 
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(size != NULL);
 
-	/* Get the value type. */
-	type = val->type;
-
 	/* Check the type. */
-	if (type != NOCT_VALUE_ARRAY) {
+	if (val->type != NOCT_VALUE_ARRAY) {
 		rt_error(env, N_TR("Value is not an array."));
 		return false;
 	}
 
-	/* Get the newer reference. */
-	real_arr = val->val.arr;
-	while (real_arr->newer != NULL)
-		real_arr = real_arr->newer;
-
-	/* Get the size. */
-	*size = real_arr->size;
+	/* Get the array size. */
+	if (!rt_get_array_size(env, val->val.arr, size))
+		return false;
 
 	return true;
 }
@@ -490,35 +458,21 @@ noct_get_array_elem(
 	NoctValue *val)
 {
 	struct rt_array *real_arr;
-	int type;
 
 	assert(env != NULL);
 	assert(array != NULL);
 	assert(index >= 0);
 	assert(val != NULL);
 
-	/* Get the value type. */
-	type = array->type;
-
 	/* Check the type. */
-	if (type != NOCT_VALUE_ARRAY) {
+	if (array->type != NOCT_VALUE_ARRAY) {
 		rt_error(env, N_TR("Value is not an array."));
 		return false;
 	}
 
-	/* Get the newer reference. */
-	real_arr = array->val.arr;
-	while (real_arr->newer != NULL)
-		real_arr = real_arr->newer;
-
-	/* Check the array boundary. */
-	if (index < 0 || index >= real_arr->size) {
-		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+	/* Get the array element. */
+	if (!rt_get_array_elem(env, array->val.arr, index, val))
 		return false;
-	}
-	
-	/* Load. */
-	*val = real_arr->table[index];
 
 	return true;
 }
@@ -542,7 +496,7 @@ noct_set_array_elem(
 		return false;
 	}
 
-	/* Set a value. */
+	/* Set the array element. */
 	if (!rt_set_array_elem(env, &array->val.arr, index, val))
 		return false;
 
@@ -556,8 +510,6 @@ noct_resize_array(
 	NoctValue *array,
 	int size)
 {
-	struct rt_array *arr;
-
 	assert(env != NULL);
 	assert(array != NULL);
 
@@ -567,7 +519,7 @@ noct_resize_array(
 		return false;
 	}
 
-	/* Resize. */
+	/* Resize the array. */
 	if (!rt_resize_array(env, &array->val.arr, size))
 		return false;
 
@@ -581,9 +533,6 @@ noct_make_array_copy(
 	NoctValue *dst,
 	NoctValue *src)
 {
-	struct rt_array *arr, *src_real;
-	int i;
-
 	assert(env != NULL);
 	assert(dst != NULL);
 	assert(src != NULL);
@@ -594,29 +543,14 @@ noct_make_array_copy(
 		return false;
 	}
 
-	/* Get the newer reference. */
-	src_real = src->val.arr;
-	while (src_real->newer != NULL)
-		src_real = src_real->newer;
-
-	/* Allocate an array. */
-	arr = rt_gc_alloc_array(env, src_real->size);
-	if (arr == NULL)
-		return false;
-
-	/* Copy the array with write-barrier. */
-	arr->size = src_real->size;
-	for (i = 0; i < (int)src_real->size; i++) {
-		/* Copy. */
-		arr->table[i] = src_real->table[i];
-
-		/* Write barrier. */
-		rt_gc_array_write_barrier(env, arr, i, &arr->table[i]);
-	}
-
-	/* Setup the value. */
 	dst->type = NOCT_VALUE_ARRAY;
-	dst->val.arr = arr;
+
+	/* Make a shallow copy of the source array. */
+	if (!rt_make_array_copy(env, &dst->val.arr, src->val.arr)) {
+		/* Failed. Invalidate the value for safety. */
+		dst->type = NOCT_VALUE_INT;
+		return false;
+	}
 
 	return true;
 }
@@ -628,8 +562,6 @@ noct_get_dict_size(
 	NoctValue *dict,
 	int *size)
 {
-	struct rt_dict *real_dict;
-
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(size != NULL);
@@ -640,13 +572,9 @@ noct_get_dict_size(
 		return false;
 	}
 
-	/* Get the newer reference. */
-	real_dict = dict->val.dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
-
-	/* Get the size. */
-	*size = dict->val.dict->size;
+	/* Get the dictionary size. */
+	if (!rt_get_dict_size(env, dict->val.dict, size))
+		return false;
 
 	return true;
 }
@@ -657,10 +585,8 @@ noct_get_dict_key_by_index(
 	NoctEnv *env,
 	NoctValue *dict,
 	int index,
-	const char **key)
+	NoctValue *key)
 {
-	struct rt_dict *real_dict;
-
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(index >= 0);
@@ -672,19 +598,9 @@ noct_get_dict_key_by_index(
 		return false;
 	}
 
-	/* Get the newer reference. */
-	real_dict = dict->val.dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
-
-	/* Check the boundary. */
-	if (index < 0 || index >= real_dict->size) {
-		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
+	/* Load the key. */
+	if (!rt_get_dict_key_by_index(env, dict->val.dict, index, key))
 		return false;
-	}
-
-	/* Load. */
-	*key = real_dict->key[index].val.str->data;
 
 	return true;
 }
@@ -697,8 +613,6 @@ noct_get_dict_value_by_index(
 	int index,
 	NoctValue *val)
 {
-	struct rt_dict *real_dict;
-
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(index >= 0);
@@ -710,19 +624,9 @@ noct_get_dict_value_by_index(
 		return false;
 	}
 
-	/* Get the newer reference. */
-	real_dict = dict->val.dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
-
-	/* Check the boundary. */
-	if (index < 0 || index >= real_dict->size) {
-		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
+	/* Load the value. */
+	if (!rt_get_dict_value_by_index(env, dict->val.dict, index, val))
 		return false;
-	}
-
-	/* Load. */
-	*val = real_dict->value[index];
 
 	return true;
 }
@@ -735,9 +639,6 @@ noct_check_dict_key(
 	const char *key,
 	bool *ret)
 {
-	struct rt_dict *real_dict;
-	int i;
-
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
@@ -749,22 +650,10 @@ noct_check_dict_key(
 		return false;
 	}
 
-	/* Get the newer reference. */
-	real_dict = dict->val.dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
-
 	/* Search the key. */
-	for (i = 0; i < real_dict->size; i++) {
-		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
-			/* Found. */
-			*ret = true;
-			return true;
-		}
-	}
+	if (!rt_check_dict_key(env, dict->val.dict, key, ret))
+		return false;
 
-	/* Not found. */
-	*ret = false;
 	return true;
 }
 
@@ -776,8 +665,6 @@ noct_get_dict_elem(
 	const char *key,
 	NoctValue *val)
 {
-	int i;
-
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
@@ -804,9 +691,6 @@ noct_set_dict_elem(
 	const char *key,
 	NoctValue *val)
 {
-	int i;
-	size_t len;
-
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
@@ -825,6 +709,10 @@ noct_set_dict_elem(
 	return true;
 }
 
+/*
+ * The following is not thread-safe.
+ */
+#if !defined(USE_MULTITHREAD)
 NOCT_DLL
 bool
 noct_remove_dict_elem(
@@ -845,36 +733,13 @@ noct_remove_dict_elem(
 		return false;
 	}
 
-	/* Get the newer reference. */
-	d = dict->val.dict;
-	while (d->newer != NULL)
-		d = d->newer;
+	/* Remove the element. */
+	if (!rt_remove_dict_elem(env, dict->val.dict, key))
+		return false;
 
-	/* Search for the key. */
-	for (i = 0; i < d->size; i++) {
-		if (strcmp(d->key[i].val.str->data, key) == 0) {
-			/* Remove the key and value. */
-			memmove(&d->key[i],
-				&d->key[i + 1],
-				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
-			memmove(&d->value[i],
-				&d->value[i + 1],
-				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
-			d->key[d->size - 1].type = NOCT_VALUE_INT;
-			d->key[d->size - 1].val.i = 0;
-			d->value[d->size - 1].type = NOCT_VALUE_INT;
-			d->value[d->size - 1].val.i = 0;
-			d->size--;
-
-			/* Succeeded. */
-			return true;
-		}
-	}
-
-	/* Failed. */
-	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
-	return false;
+	return true;
 }
+#endif
 
 NOCT_DLL
 bool
@@ -883,9 +748,6 @@ noct_make_dict_copy(
 	NoctValue *dst,
 	NoctValue *src)
 {
-	struct rt_dict *d, *src_real;
-	int i;
-
 	assert(env != NULL);
 	assert(src != NULL);
 	assert(dst != NULL);
@@ -896,33 +758,13 @@ noct_make_dict_copy(
 		return false;
 	}
 
-	/* Get the newer reference. */
-	src_real = src->val.dict;
-	while (src_real->newer != NULL)
-		src_real = src_real->newer;
-
-	/* Make a dictionary */
-	d = rt_gc_alloc_dict(env, src_real->size);
-	if (d == NULL)
-		return false;
-
-	/* Copy the array with write-barrier. */
-	d->size = src_real->size;
-	for (i = 0; i < (int)src_real->size; i++) {
-		/* Copy the key. */
-		d->key[i] = src_real->key[i];
-
-		/* Copy the value. */
-		d->value[i] = src_real->value[i];
-
-		/* Write barrier. */
-		rt_gc_dict_write_barrier(env, d, i, &d->key[i]);
-		rt_gc_dict_write_barrier(env, d, i, &d->value[i]);
-	}
-
-	/* Setup the value. */
 	dst->type = NOCT_VALUE_DICT;
-	dst->val.dict = d;
+
+	if (!rt_make_dict_copy(env, &dst->val.dict, src->val.dict)) {
+		/* Failed. Invalidate the value for safety. */
+		dst->type = NOCT_VALUE_INT;
+		return false;
+	}
 
 	return true;
 }
@@ -1076,8 +918,8 @@ noct_get_heap_usage(
 	NoctEnv *env,
 	size_t *ret)
 {
-	if (!rt_get_heap_usage(env, ret))
-		return false;
+	/* TODO: */
+	*ret = 0;
 
 	return true;
 }

@@ -13,21 +13,35 @@
 
 #if defined(__GNUC__)
 
-static NOCT_INLINE int atomic_increment(int *v)
+static INLINE void *atomic_load_relaxed_ptr(void * volatile *p)
 {
-	int old = __sync_fetch_and_add(v, 1);
+	return __atomic_load_n(p, __ATOMIC_RELAXED);
+}
+
+static INLINE int atomic_load_acquire(int *v)
+{
+	return __atomic_load_n(v, __ATOMIC_ACQUIRE);
+}
+
+static INLINE void *atomic_load_acquire_ptr(void **pp)
+{
+	return __atomic_load_n(pp, __ATOMIC_ACQUIRE);
+}
+
+static INLINE void atomic_store_release_ptr(void **p, void *v)
+{
+	__atomic_store_n(pp, v, __ATOMIC_RELEASE);
+}
+
+static INLINE int atomic_fetch_add_acquire(int *v, int add)
+{
+	unsigned old = __atomic_fetch_add(v, add, __ATOMIC_ACQUIRE);
 	return old;
 }
 
-static NOCT_INLINE int atomic_decrement(int *v)
+static INLINE int atomic_fetch_sub_release(int *v, int sub)
 {
-	int old = __sync_fetch_and_sub(v, 1);
-	return old;
-}
-
-static NOCT_INLINE int atomic_read(int *v)
-{
-	int old = __sync_fetch_and_add(v, 0);
+	unsigned old = __atomic_fetch_sub(v, sub, __ATOMIC_RELEASE);
 	return old;
 }
 
@@ -49,19 +63,29 @@ static NOCT_INLINE void cpu_relax(void)
 
 #include <intrin.h>
 
-static NOCT_INLINE int atomic_increment(int *v)
+static INLINE int atomic_load_acquire(int *v)
 {
-	_InterlockedExchangeAdd((volatile long *)v, 1);
+	return _InterlockedExchangeAdd((volatile long *)v, 0);
 }
 
-static NOCT_INLINE int atomic_decrement(int *v)
+static INLINE void *atomic_load_acquire_ptr(void **pp)
 {
-	_InterlockedExchangeAdd((volatile long *)v, -1);
+	return (void *)_InterlockedExchangeAdd((volatile long *)v, 0);
 }
 
-static NOCT_INLINE int atomic_read(int *v)
+static INLINE void atomic_store_release_ptr(void **p, void *v)
 {
-	_InterlockedExchangeAdd((volatile long *)v, 0);
+	_InterlockedExchangePointer((void* volatile *)p, v);
+}
+
+static INLINE int atomic_fetch_add_acquire(int *v, int add)
+{
+	return _InterlockedExchangeAdd((volatile long *)v, 1);
+}
+
+static INLINE int atomic_fetch_sub_release(int *v, int sub)
+{
+	return _InterlockedExchangeAdd((volatile long *)v, -1);
 }
 
 #if defined(_M_IX86) || defined(_M_X64)

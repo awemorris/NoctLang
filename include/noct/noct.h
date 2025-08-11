@@ -457,7 +457,7 @@ noct_get_dict_key_by_index(
 	NoctEnv *env,
 	NoctValue *dict,
 	int index,
-	const char **key);
+	NoctValue *key);
 
 /*
  * Retrieves a dictionary value by index.
@@ -510,6 +510,8 @@ noct_set_dict_elem(
 
 /*
  * Removes a key-value pair from a dictionary by key.
+ *
+ * Note: this is not thread-safe and not defined in the multithreaded build.
  */
 NOCT_DLL
 bool

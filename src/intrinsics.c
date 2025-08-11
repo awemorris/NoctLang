@@ -39,13 +39,15 @@ struct intrin_item {
 } intrin_items[] = {
 	{"push",       "__push",      2, {"this", "val"         }, rt_intrin_push,       true, NULL},
 	{"pop",        "__pop",       1, {"this"                }, rt_intrin_pop,        true, NULL},
-	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true, NULL},
 	{"newArray",   "newArray",    1, {"size"                }, rt_intrin_newArray,   true, NULL},
 	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true, NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true, NULL},
 	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    true, NULL},
 	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    true, NULL},
 	{"compact_gc", "compact_gc",  0, {NULL},                   rt_intrin_compact_gc, true, NULL},
+#if !defined(USE_MULTITHREAD)
+	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true, NULL},
+#endif
 };
 
 bool
@@ -142,27 +144,6 @@ rt_intrin_pop(
 		return false;
 
 	if (!noct_set_return(env, &val))
-		return false;
-
-	return true;
-}
-
-/* unset() */
-static bool
-rt_intrin_unset(
-	struct rt_env *env)
-{
-	struct rt_value arr, val;
-	const char *val_s;
-
-	noct_pin_local(env, 2, &arr, &val);
-
-	if (!noct_get_arg_check_dict(env, 0, &arr))
-		return false;
-	if (!noct_get_arg_check_string(env, 1, &val, &val_s))
-		return false;
-
-	if (!noct_remove_dict_elem(env, &arr, val_s))
 		return false;
 
 	return true;
@@ -280,3 +261,31 @@ rt_intrin_compact_gc(
 	noct_compact_gc(env);
 	return true;
 }
+
+/*
+ * The following are not thread-safe.
+ */
+#if !defined(USE_MULTITHREAD)
+
+/* unset() */
+static bool
+rt_intrin_unset(
+	struct rt_env *env)
+{
+	struct rt_value arr, val;
+	const char *val_s;
+
+	noct_pin_local(env, 2, &arr, &val);
+
+	if (!noct_get_arg_check_dict(env, 0, &arr))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &val, &val_s))
+		return false;
+
+	if (!noct_remove_dict_elem(env, &arr, val_s))
+		return false;
+
+	return true;
+}
+
+#endif
