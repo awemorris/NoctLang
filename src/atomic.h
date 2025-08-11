@@ -13,7 +13,7 @@
 
 #if defined(__GNUC__)
 
-static INLINE void *atomic_load_relaxed_ptr(void * volatile *p)
+static INLINE void *atomic_load_relaxed_ptr(void **p)
 {
 	return __atomic_load_n(p, __ATOMIC_RELAXED);
 }
@@ -28,7 +28,7 @@ static INLINE void *atomic_load_acquire_ptr(void **pp)
 	return __atomic_load_n(pp, __ATOMIC_ACQUIRE);
 }
 
-static INLINE void atomic_store_release_ptr(void **p, void *v)
+static INLINE void atomic_store_release_ptr(void **pp, void *v)
 {
 	__atomic_store_n(pp, v, __ATOMIC_RELEASE);
 }
@@ -45,7 +45,7 @@ static INLINE int atomic_fetch_sub_release(int *v, int sub)
 	return old;
 }
 
-static NOCT_INLINE void cpu_relax(void)
+static INLINE void cpu_relax(void)
 {
 #if defined(__i386__) || defined(__x86_64__)
 	// PAUSE

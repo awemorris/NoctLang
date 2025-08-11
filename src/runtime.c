@@ -92,7 +92,7 @@ rt_create_vm(
 
 #if defined(USE_MULTITHREAD)
 	/* Initialize for GC. */
-	rt_gc_init_env(env);
+	rt_gc_init_env(*default_env);
 #endif
 
 	/* Initialize the garbage collector. */
@@ -829,35 +829,35 @@ rt_make_string(
 
 #else
 
-#define ACQUIRE_OBJ(obj, real_obj)							\
-	/* Acquire the array. */							\
-	while (1) {									\
-		/* Get the newer reference. */						\
-		real_obj = *atomic_load_relaxed_ptr(&(obj));				\
-		while (atomic_load_relaxed_ptr(&real_obj->newer) != NULL)		\
-			real_obj = atomic_load_relaxed_ptr(&real_obj->newer);		\
-											\
-		/* Try acquire. */							\
-		int old = atomic_fetch_add_acquire(&real_obj->counter, 1);		\
-		if (old == 0 && atomic_load_acquire_ptr(&real_obj->newer) == NULL)	\
-			break;								\
-											\
-		/* Failed, release. */							\
-		atomic_fetch_sub_release(&real_obj->counter, 1);			\
-											\
-		/* Allow GC in other threads because they may cause GC. */		\
-		while (1) {								\
-			atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);	\
-			while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)	\
-				cpu_relax();						\
-			atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);	\
-			if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)		\
-				break;							\
-		}									\
+#define ACQUIRE_OBJ(obj, real_obj)								\
+	/* Acquire the array. */								\
+	while (1) {										\
+		/* Get the newer reference. */							\
+		real_obj = atomic_load_relaxed_ptr((void**)&(obj));				\
+		while (atomic_load_relaxed_ptr((void **)&real_obj->newer) != NULL)		\
+			real_obj = atomic_load_relaxed_ptr((void **)&real_obj->newer);		\
+												\
+		/* Try acquire. */								\
+		int old = atomic_fetch_add_acquire(&real_obj->counter, 1);			\
+		if (old == 0 && atomic_load_acquire_ptr((void **)&real_obj->newer) == NULL)	\
+			break;									\
+												\
+		/* Failed, release. */								\
+		atomic_fetch_sub_release(&real_obj->counter, 1);				\
+												\
+		/* Allow GC in other threads because they may cause GC. */			\
+		while (1) {									\
+			atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);		\
+			while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)		\
+				cpu_relax();							\
+			atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);		\
+			if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)			\
+				break;								\
+		}										\
 	}
 
-#define RELEASE_OBJ(real_obj)								\
-	/* Failed, release. */								\
+#define RELEASE_OBJ(real_obj)									\
+	/* Failed, release. */									\
 	atomic_fetch_sub_release(&real_obj->counter, 1);
 
 #endif
@@ -903,7 +903,31 @@ rt_get_array_size(
 	assert(arr != NULL);
 	assert(size != NULL);
 
-	ACQUIRE_OBJ(arr, real_arr);
+	/* Acquire the array. */
+	while (1) {
+		/* Get the newer reference. */
+		real_arr = atomic_load_relaxed_ptr((void**)&(arr));
+		while (atomic_load_relaxed_ptr((void **)&real_arr->newer) != NULL)
+			real_arr = atomic_load_relaxed_ptr((void **)&real_arr->newer);
+
+		/* Try acquire. */
+		int old = atomic_fetch_add_acquire(&real_arr->counter, 1);
+		if (old == 0 && atomic_load_acquire_ptr((void **)&real_arr->newer) == NULL)
+			break;
+
+		/* Failed, release. */
+		atomic_fetch_sub_release(&real_arr->counter, 1);
+
+		/* Allow GC in other threads because they may cause GC. */
+		while (1) {
+			atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);
+			while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)
+				cpu_relax();
+			atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);
+			if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)
+				break;
+		}
+	}
 
 	/* Get the size. */
 	*size = real_arr->size;
@@ -935,7 +959,7 @@ rt_get_array_elem(
 
 	/* Check the array boundary. */
 	if (index < 0 || index >= real_arr->size) {
-		RELEASE_OBJ(real_ptr);
+		RELEASE_OBJ(real_arr);
 
 		rt_error(env, N_TR("Array index %d is out-of-range."), index);
 		return false;
@@ -1032,26 +1056,31 @@ rt_resize_array(
 	ACQUIRE_OBJ(*arr, real_arr);
 
 	if (size > real_arr->size) {
+		struct rt_array *new_arr;
+
 		/* Reallocate an array. */
 		if (!rt_expand_array(env, real_arr, arr, size)) {
 			RELEASE_OBJ(real_arr);
 			return false;
 		}
 
-		/* Get the new array. */
-		real_arr = *arr;
+		/* Get the new array which is only visible to this thread.. */
+		new_arr = *arr;
 
 		/* Set the element count. */
-		real_arr->size = size;
+		new_arr->size = size;
+
+		/* Publish is done by a release to the old array. */
+		RELEASE_OBJ(real_arr);
 	} else {
 		/* Remove (zero-fill) the reminder. */
 		memset(&real_arr->table[size], 0, sizeof(struct rt_value) * (size_t)(real_arr->size - size - 1));
 
 		/* Set the element count. */
 		real_arr->size = size;
-	}
 
-	RELEASE_OBJ(real_arr);
+		RELEASE_OBJ(real_arr);
+	}
 
 	return true;
 }

@@ -12,12 +12,11 @@ func main() {
     dict["aaa"] = "value1";
     dict.bbb = 123;
 
-    // Dictionary remove
+    // Dictionary overwrite
     for (k, v in dict) {
     	print("k = " + k + ", v = " + v);
     }
-    print("unset");
-    dict->unset("aaa");
+    dict.aaa = "AFTER";
     for (k, v in dict) {
     	print("k = " + k + ", v = " + v);
     }

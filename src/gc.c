@@ -1965,15 +1965,15 @@ rt_gc_init_env(
 	/* Make this thread inflight. */
 	while (1) {
 		/* Try acquire. */
-		atomic_increment(&env->vm->in_flight_counter);
-		if (atomic_read(&env->vm->gc_stw_counter) == 0)
+		atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);
+		if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)
 			break;
 
 		/* Failed, release. */
-		atomic_decrement(&env->vm->in_flight_counter);
+		atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);
 
 		/* Wait for GC. */
-		while (atomic_read(&env->vm->gc_stw_counter) > 0)
+		while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)
 			cpu_relax();
 	}
 }
@@ -1986,19 +1986,19 @@ rt_gc_safepoint(
 	struct rt_env *env)
 {
 	/* Make this thread non-inflight. */
-	atomic_decrement(&env->vm->in_flight_counter);
+	atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);
 
 	/* Allow other threads to run GC in this point. */
 
 	/* Make this thread inflight again. */
 	while (1) {
 		/* Try acquire. */
-		atomic_increment(&env->vm->in_flight_counter);
-		if (atomic_read(&env->vm->gc_stw_counter) == 0)
+		atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);
+		if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)
 			break;
 
 		/* Failed, release. */
-		atomic_decrement(&env->vm->in_flight_counter);
+		atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);
 
 		/* Wait for GC. */
 		while (env->vm->gc_stw_counter > 0)
@@ -2019,14 +2019,14 @@ rt_gc_multithread_gc_wrapper(
 	/* This thread is inflight at this moment. */
 
 	/* If this is not a recursive GC call. */
-	if (atomic_read(&env->gc_in_progress_counter) == 0) {
+	if (atomic_load_acquire(&env->gc_in_progress_counter) == 0) {
 		// Make this thread non-inflight, and enter a GC safe point.
-		atomic_decrement(&env->vm->in_flight_counter);
+		atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);
 
 		/* Wait for all other threads entering GC safe points. */
 		while (1) {
 			/* Try acquire the right to execute GC. */
-			int old = atomic_increment(&env->vm->gc_stw_counter);
+			int old = atomic_fetch_add_acquire(&env->vm->gc_stw_counter, 1);
 			if (env->vm->in_flight_counter == 0 && old == 0) {
 				/* Succeeded, entering the GC section. */
 				is_executor = true;
@@ -2034,7 +2034,7 @@ rt_gc_multithread_gc_wrapper(
 			}
 
 			/* Failed, release.*/
-			atomic_decrement(&env->vm->gc_stw_counter);
+			atomic_fetch_sub_release(&env->vm->gc_stw_counter, 1);
 
 			/* If another thread got the right to execute GC. */
 			if (old > 0) {
@@ -2058,20 +2058,20 @@ rt_gc_multithread_gc_wrapper(
 	}
 
 	/* Count-up for recursive GC calls. */
-	atomic_increment(&env->gc_in_progress_counter);
+	atomic_fetch_add_acquire(&env->gc_in_progress_counter, 1);
 
 	/* Run GC. */
 	gc(env);
 
 	/* Count-down for recursive GC calls. */
-	atomic_decrement(&env->gc_in_progress_counter);
+	atomic_fetch_sub_release(&env->gc_in_progress_counter, 1);
 
 back_to_inflight:
 	/* If this is not a recursive GC call. */
 	if (env->gc_in_progress_counter == 0) {
 		if (is_executor) {
 			/* Exit a GC. */
-			atomic_decrement(&env->vm->gc_stw_counter);
+			atomic_fetch_sub_release(&env->vm->gc_stw_counter, 1);
 		}
 
 		/* At this moment, another thread may execute GC. */
@@ -2079,17 +2079,17 @@ back_to_inflight:
 		/* Wait for GC, and make this thread inflight again. */
 		while (1) {
 			/* Try acquire. */
-			atomic_increment(&env->vm->in_flight_counter);
-			if (atomic_read(&env->vm->gc_stw_counter) == 0) {
+			atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);
+			if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0) {
 				/* Succeeded. */
 				break;
 			}
 
 			/* Failed, release. */
-			atomic_decrement(&env->vm->in_flight_counter);
+			atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);
 
 			/* Wait for GC. */
-			while (atomic_read(&env->vm->gc_stw_counter) > 0)
+			while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)
 				cpu_relax();
 		}
 

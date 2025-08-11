@@ -156,6 +156,10 @@ if(ENABLE_JIT)
   target_compile_definitions(noctlang PRIVATE USE_JIT)
 endif()
 
+if(ENABLE_MULTITHREAD)
+  target_compile_definitions(noctlang PRIVATE USE_MULTITHREAD)
+endif()
+
 if(ENABLE_I18N)
   target_compile_definitions(noctlang PRIVATE USE_TRANSLATION)
 endif()  
