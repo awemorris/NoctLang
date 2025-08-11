@@ -837,7 +837,7 @@ rt_eq_helper(
 	default:
 		dst_val->type = NOCT_VALUE_INT;
 		dst_val->val.i = 0;
-		return false;
+		break;
 	}
 
 	return true;
