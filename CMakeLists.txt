@@ -22,7 +22,7 @@ option(ENABLE_JIT
 
 option(ENABLE_MULTITHREAD
   "Enable multithread support"
-  ON
+  OFF
 )
 
 option(ENABLE_CLI
