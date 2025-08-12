@@ -1016,7 +1016,6 @@ rt_set_array_elem(
 		rt_gc_array_write_barrier(env, real_arr, index, val);
 
 	RELEASE_OBJ(real_arr);
-
 	return true;
 }
 
@@ -1152,7 +1151,6 @@ rt_make_array_copy(
 	}
 
 	RELEASE_OBJ(src_real);
-
 	return true;
 }
 
@@ -1203,7 +1201,6 @@ rt_get_dict_size(
 	*size = real_dict->size;
 
 	RELEASE_OBJ(real_dict);
-
 	return true;
 }
 
@@ -1271,7 +1268,6 @@ rt_get_dict_key_by_index(
 	*key = real_dict->key[index];
 
 	RELEASE_OBJ(real_dict);
-
 	return true;
 }
 
@@ -1306,7 +1302,6 @@ rt_get_dict_value_by_index(
 	*val = real_dict->value[index];
 
 	RELEASE_OBJ(real_dict);
-
 	return true;
 }
 
@@ -1411,6 +1406,7 @@ rt_set_dict_elem(
 
 		/* Publication is done by a release to the old dictionary. */
 		RELEASE_OBJ(real_dict);
+		return true;
 	}
 
 	/* Append the key. */

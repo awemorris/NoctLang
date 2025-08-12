@@ -363,6 +363,9 @@ rt_gc_alloc_array(
 		arr->size = 0;
 		arr->table = table;
 		arr->newer = NULL;
+#if defined(USE_MULTITHREAD)
+		arr->counter = 0;
+#endif
 
 		/* Succeeded. */
 		return arr;
@@ -410,6 +413,9 @@ rt_gc_alloc_array_graduate(
 		arr->size = 0;
 		arr->table = table;
 		arr->newer = NULL;
+#if defined(USE_MULTITHREAD)
+		arr->counter = 0;
+#endif
 
 		/* Succeeded. (graduate) */
 		return arr;
@@ -471,6 +477,9 @@ rt_gc_alloc_array_tenure(
 		arr->size = 0;
 		arr->table = table;
 		arr->newer = NULL;
+#if defined(USE_MULTITHREAD)
+		arr->counter = 0;
+#endif
 
 		/* Succeeded. */
 		return arr;
@@ -539,6 +548,9 @@ rt_gc_alloc_dict(
 		dict->key = key_table;
 		dict->value = value_table;
 		dict->newer = NULL;
+#if defined(USE_MULTITHREAD)
+		dict->counter = 0;
+#endif
 
 		/* Succeeded. */
 		return dict;
@@ -594,6 +606,9 @@ rt_gc_alloc_dict_graduate(
 		dict->key = key_table;
 		dict->value = value_table;
 		dict->newer = NULL;
+#if defined(USE_MULTITHREAD)
+		dict->counter = 0;
+#endif
 
 		/* Succeeded. (graduate) */
 		return dict;
@@ -663,6 +678,9 @@ rt_gc_alloc_dict_tenure(
 		dict->key = key_table;
 		dict->value = value_table;
 		dict->newer = NULL;
+#if defined(USE_MULTITHREAD)
+		dict->counter = 0;
+#endif
 
 		/* Succeeded. */
 		return dict;
@@ -1169,21 +1187,23 @@ rt_gc_promote_array(
 	struct rt_gc_object *obj)
 {
 	struct rt_array *old_arr, *new_arr;
-	int size;
+	int alloc_size;
 
-	size = old_arr->size;
-	if (size == 0)
-		size = old_arr->alloc_size;
+	/* Get the allocation size. */
+	old_arr = (struct rt_array *)obj;
+	alloc_size = old_arr->size;
+	if (alloc_size == 0)
+		alloc_size = old_arr->alloc_size;
 
 	/* Allocate an array object. */
-	old_arr = (struct rt_array *)obj;
-	new_arr = rt_gc_alloc_array_tenure(env, size);
+	new_arr = rt_gc_alloc_array_tenure(env, alloc_size);
 	if (new_arr == NULL)
 		return false;
 
 	/* Copy the table. */
 	new_arr->size = old_arr->size;
-	memcpy(new_arr->table, old_arr->table, old_arr->size * sizeof(struct rt_value));
+	if (new_arr->size > 0)
+		memcpy(new_arr->table, old_arr->table, new_arr->size * sizeof(struct rt_value));
 
 	/* Set the forwarding pointer. */
 	obj->forward = &new_arr->head;
@@ -1198,19 +1218,25 @@ rt_gc_promote_dict(
 	struct rt_gc_object *obj)
 {
 	struct rt_dict *old_dict, *new_dict;
+	int alloc_size;
+
+	/* Get the allocation size. */
+	old_dict = (struct rt_dict *)obj;
+	alloc_size = old_dict->size;
+	if (alloc_size == 0)
+		alloc_size = old_dict->alloc_size;
 
 	/* Allocate a dictionary object. */
-	old_dict = (struct rt_dict *)obj;
-	new_dict = rt_gc_alloc_dict_tenure(env, old_dict->size);
+	new_dict = rt_gc_alloc_dict_tenure(env, alloc_size);
 	if (new_dict == NULL)
 		return false;
 
-	/* Copy the keys. */
+	/* Copy the keys and values. */
 	new_dict->size = old_dict->size;
-	memcpy(new_dict->key, old_dict->key, old_dict->size * sizeof(struct rt_value));
-
-	/* Copy the values. */
-	memcpy(new_dict->value, old_dict->value, old_dict->size * sizeof(struct rt_value));
+	if (new_dict->size > 0) {
+		memcpy(new_dict->key, old_dict->key, new_dict->size * sizeof(struct rt_value));
+		memcpy(new_dict->value, old_dict->value, new_dict->size * sizeof(struct rt_value));
+	}
 
 	/* Set the forwarding pointer. */
 	obj->forward = &new_dict->head;
@@ -1885,6 +1911,8 @@ rt_gc_tenure_alloc(
 	struct rt_env *env,
 	size_t size)
 {
+	return malloc(size);
+#if 0
 	char *cur;
 
 	assert(size > 0);
@@ -1931,6 +1959,7 @@ rt_gc_tenure_alloc(
 	/* Allocate at the end of the free list. */
 	*(size_t *)cur = size | RT_GC_FREELIST_USED_BIT;
 	return cur + sizeof(size_t);
+#endif
 }
 
 /* Free a tenure block. */
@@ -1939,6 +1968,8 @@ rt_gc_tenure_free(
 	struct rt_env *env,
 	void *p)
 {
+	free(p);
+#if 0
 	size_t *header;
 	size_t size;
 
@@ -1953,6 +1984,7 @@ rt_gc_tenure_free(
 
 	/* Erase the used bit. */
 	*header = size & RT_GC_FREELIST_SIZE_MASK;
+#endif
 }
 
 /*
