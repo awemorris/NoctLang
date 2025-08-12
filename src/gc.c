@@ -1906,8 +1906,8 @@ rt_gc_tenure_alloc(
 		if (blk_size == 0)
 			break;
 
-		blk_size &= blk_size & RT_GC_FREELIST_SIZE_MASK;
 		is_used = blk_size & RT_GC_FREELIST_USED_BIT;
+		blk_size &= blk_size & RT_GC_FREELIST_SIZE_MASK;
 
 		/* Check if the block is used or the size is small. */
 		if (is_used || size > blk_size) {
