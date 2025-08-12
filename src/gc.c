@@ -1898,17 +1898,20 @@ rt_gc_tenure_alloc(
 	cur = env->vm->gc.tenure_freelist.top;
 
 	/* Search for the first match. */
-        while (*(size_t *)cur) {
+	while (*(size_t *)cur) {
 		size_t blk_size = *(size_t *)cur;
+		bool is_used;
 
 		/* Check for the end of the list. */
 		if (blk_size == 0)
 			break;
 
+		blk_size &= blk_size & RT_GC_FREELIST_SIZE_MASK;
+		is_used = blk_size & RT_GC_FREELIST_USED_BIT;
+
 		/* Check if the block is used or the size is small. */
-		if ((blk_size & RT_GC_FREELIST_USED_BIT) ||
-		    (size > blk_size)) {
-			cur = cur + sizeof(size_t) + (blk_size & RT_GC_FREELIST_SIZE_MASK);
+		if (is_used || size > blk_size) {
+			cur = cur + sizeof(size_t) + blk_size;
 			assert(cur < env->vm->gc.tenure_freelist.end);
 			continue;
 		}
