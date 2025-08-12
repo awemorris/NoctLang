@@ -1900,6 +1900,7 @@ rt_gc_tenure_alloc(
 	/* Search for the first match. */
         while (*(size_t *)cur) {
 		size_t blk_size = *(size_t *)cur;
+
 		/* Check for the end of the list. */
 		if (blk_size == 0)
 			break;
@@ -1908,6 +1909,7 @@ rt_gc_tenure_alloc(
 		if ((blk_size & RT_GC_FREELIST_USED_BIT) ||
 		    (size > blk_size)) {
 			cur = cur + sizeof(size_t) + (blk_size & RT_GC_FREELIST_SIZE_MASK);
+			assert(cur < env->vm->gc.tenure_freelist.end);
 			continue;
 		}
 
