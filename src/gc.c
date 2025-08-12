@@ -1169,10 +1169,15 @@ rt_gc_promote_array(
 	struct rt_gc_object *obj)
 {
 	struct rt_array *old_arr, *new_arr;
+	int size;
+
+	size = old_arr->size;
+	if (size == 0)
+		size = old_arr->alloc_size;
 
 	/* Allocate an array object. */
 	old_arr = (struct rt_array *)obj;
-	new_arr = rt_gc_alloc_array_tenure(env, old_arr->size);
+	new_arr = rt_gc_alloc_array_tenure(env, size);
 	if (new_arr == NULL)
 		return false;
 
