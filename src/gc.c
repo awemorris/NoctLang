@@ -1911,8 +1911,6 @@ rt_gc_tenure_alloc(
 	struct rt_env *env,
 	size_t size)
 {
-	return malloc(size);
-#if 0
 	char *cur;
 
 	assert(size > 0);
@@ -1959,7 +1957,6 @@ rt_gc_tenure_alloc(
 	/* Allocate at the end of the free list. */
 	*(size_t *)cur = size | RT_GC_FREELIST_USED_BIT;
 	return cur + sizeof(size_t);
-#endif
 }
 
 /* Free a tenure block. */
@@ -1968,8 +1965,6 @@ rt_gc_tenure_free(
 	struct rt_env *env,
 	void *p)
 {
-	free(p);
-#if 0
 	size_t *header;
 	size_t size;
 
@@ -1984,7 +1979,6 @@ rt_gc_tenure_free(
 
 	/* Erase the used bit. */
 	*header = size & RT_GC_FREELIST_SIZE_MASK;
-#endif
 }
 
 /*
