@@ -18,6 +18,8 @@
 
 #define NEVER_COME_HERE		0
 
+static bool rt_intrin_int(struct rt_env *rt);
+static bool rt_intrin_float(struct rt_env *rt);
 static bool rt_intrin_push(struct rt_env *rt);
 static bool rt_intrin_pop(struct rt_env *rt);
 static bool rt_intrin_unset(struct rt_env *rt);
@@ -37,16 +39,18 @@ struct intrin_item {
 	bool is_thiscall;
 	struct rt_func *func;
 } intrin_items[] = {
-	{"push",       "__push",      2, {"this", "val"         }, rt_intrin_push,       true, NULL},
-	{"pop",        "__pop",       1, {"this"                }, rt_intrin_pop,        true, NULL},
-	{"newArray",   "newArray",    1, {"size"                }, rt_intrin_newArray,   true, NULL},
-	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true, NULL},
-	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true, NULL},
-	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    true, NULL},
-	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    true, NULL},
-	{"compact_gc", "compact_gc",  0, {NULL},                   rt_intrin_compact_gc, true, NULL},
+	{"int",        "int",         1, {"val"                 }, rt_intrin_int,        false, NULL},
+	{"float",      "float",       1, {"val"                 }, rt_intrin_float,      false, NULL},
+	{"push",       "__push",      2, {"this", "val"         }, rt_intrin_push,       true,  NULL},
+	{"pop",        "__pop",       1, {"this"                }, rt_intrin_pop,        true,  NULL},
+	{"newArray",   "newArray",    1, {"size"                }, rt_intrin_newArray,   true,  NULL},
+	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true,  NULL},
+	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true,  NULL},
+	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    false, NULL},
+	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    false, NULL},
+	{"compact_gc", "compact_gc",  0, {NULL},                   rt_intrin_compact_gc, true,  NULL},
 #if !defined(USE_MULTITHREAD)
-	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true, NULL},
+	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true,  NULL},
 #endif
 };
 
@@ -90,6 +94,50 @@ rt_get_intrin_thiscall_func(
 
 	/* Not found/ */
 	*func = NULL;
+	return true;
+}
+
+/* int() */
+static bool
+rt_intrin_int(
+	struct rt_env *env)
+{
+	struct rt_value val, ret;
+	const char *val_s;
+	int val_i;
+
+	noct_pin_local(env, 2, &val, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &val, &val_s))
+		return false;
+
+	val_i = atoi(val_s);
+
+	if (!noct_set_return_make_int(env, &ret, val_i))
+		return false;
+
+	return true;
+}
+
+/* float() */
+static bool
+rt_intrin_float(
+	struct rt_env *env)
+{
+	struct rt_value val, ret;
+	const char *val_s;
+	float val_f;
+
+	noct_pin_local(env, 2, &val, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &val, &val_s))
+		return false;
+
+	val_f = (float)atof(val_s);
+
+	if (!noct_set_return_make_float(env, &ret, val_f))
+		return false;
+
 	return true;
 }
 
