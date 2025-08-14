@@ -198,6 +198,9 @@ bool rt_gc_unpin_global(struct rt_env *env, struct rt_value *val);
 /* Pins a C local variable. */
 bool rt_gc_pin_local(struct rt_env *env, struct rt_value *val);
 
+/* Unpins a C local variable. */
+bool rt_gc_unpin_local(struct rt_env *env, struct rt_value *val);
+
 /* Retrieves the approximate memory usage, in bytes. */
 bool rt_gc_get_heap_usage(struct rt_env *env, size_t *ret);
 

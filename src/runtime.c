@@ -1787,6 +1787,23 @@ rt_pin_local(
 }
 
 /*
+ * Unpin a C local variable.
+ */
+bool
+rt_unpin_local(
+	struct rt_env *env,
+	struct rt_value *val)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+
+	if (!rt_gc_unpin_local(env, val))
+		return false;
+
+	return true;
+}
+
+/*
  * Error Handling
  */
 

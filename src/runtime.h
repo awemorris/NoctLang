@@ -380,6 +380,9 @@ bool rt_unpin_global(struct rt_env *env, struct rt_value *val);
 /* Pin a C local variable. */
 bool rt_pin_local(struct rt_env *env, struct rt_value *val);
 
+/* Unpin a C local variable. */
+bool rt_unpin_local(struct rt_env *env, struct rt_value *val);
+
 /*
  * Error Handling
  */

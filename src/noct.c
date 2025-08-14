@@ -889,6 +889,31 @@ noct_pin_local(
 }
 
 NOCT_DLL
+bool
+noct_unpin_local(
+	NoctEnv *env,
+	int count,
+	...)
+{
+	va_list ap;
+	int i;
+	struct rt_value *val;
+
+	assert(env != NULL);
+	assert(count > 0);
+
+	va_start(ap, count);
+	for (i = 0; i < count; i++) {
+		val = va_arg(ap, struct rt_value *);
+		if (!rt_unpin_local(env, val))
+			return false;
+	}
+	va_end(ap);
+
+	return true;
+}
+
+NOCT_DLL
 void
 noct_fast_gc(
 	NoctEnv *env)

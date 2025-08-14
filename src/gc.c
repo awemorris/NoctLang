@@ -1837,6 +1837,33 @@ rt_gc_pin_local(
 }
 
 /*
+ * Unpins a C local variable.
+ */
+bool
+rt_gc_unpin_local(
+	struct rt_env *env,
+	struct rt_value *val)
+{
+	int i;
+
+	assert(env != NULL);
+	assert(val != NULL);
+
+	for (i = 0; i < env->frame->pinned_count; i++) {
+		if (env->frame->pinned[i] == val) {
+			memmove(&env->frame->pinned[i], &env->frame->pinned[i+1], (RT_GLOBAL_PIN_MAX - i - 1) * sizeof(struct rt_value *));
+
+			/* Succeeded. */
+			return true;
+		}
+	}
+
+	/* Failed. */
+	assert(PINNED_VAR_NOT_FOUND);
+	return false;
+}
+
+/*
  * Retrieves the approximate memory usage, in bytes.
  */
 bool
