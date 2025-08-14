@@ -11,25 +11,11 @@ set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment ve
 # Build Configuration
 #
 
-option(ENABLE_SHARED
- "Build a shared library"
-  OFF
-)
-
-option(ENABLE_JIT
-  "Enable JIT feature"
-  ON
-)
-
-option(ENABLE_MULTITHREAD
-  "Enable multithread support"
-  OFF
-)
-
-option(ENABLE_CLI
-  "Also build CLI binary"
-  ON
-)
+option(ENABLE_JIT          "Enable JIT feature"          ON)
+option(ENABLE_MULTITHREAD  "Enable multithread support"  OFF)
+option(ENABLE_CLI          "Also build CLI binary"       ON)
+option(ENABLE_SHARED       "Build a shared library"      OFF)
+option(ENABLE_OBJECT       "Build objects only"          OFF)
 
 option(ENABLE_I18N
   "Enable translation feature (increased binary size)"
@@ -133,6 +119,8 @@ endif()
 
 if(ENABLE_SHARED)
   set(LIB_TYPE SHARED)
+elseif(ENABLE_OBJECT)
+  set(LIB_TYPE OBJECT)
 else()
   set(LIB_TYPE STATIC)
 endif()
