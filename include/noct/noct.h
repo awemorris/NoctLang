@@ -610,6 +610,16 @@ noct_pin_local(
 	...);
 
 /*
+ * Undeclare a native local variables for use within an FFI function.
+ */
+NOCT_DLL
+bool
+noct_unpin_global(
+	NoctEnv *env,
+	int count,
+	...);
+
+/*
  * Triggers a fast garbage collection pass, typically during a
  * periodic pause such as VSync.
  *
