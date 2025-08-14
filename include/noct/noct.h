@@ -614,7 +614,7 @@ noct_pin_local(
  */
 NOCT_DLL
 bool
-noct_unpin_global(
+noct_unpin_local(
 	NoctEnv *env,
 	int count,
 	...);
