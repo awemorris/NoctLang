@@ -766,6 +766,7 @@ rt_enter_frame(
 	frame->func = func;
 	frame->tmpvar = &frame->tmpvar_alloc[0];
 	frame->tmpvar_size = func->tmpvar_size;
+	frame->pinned_count = 0;
 
 	/* We can't remove this due to GC. */
 	memset(frame->tmpvar, 0, sizeof(struct rt_value) * (size_t)frame->tmpvar_size);
