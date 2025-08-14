@@ -1804,13 +1804,12 @@ rt_gc_unpin_global(
 	for (i = 0; i < env->vm->pinned_count; i++) {
 		if (env->vm->pinned[i] == val) {
 			memmove(&env->vm->pinned[i], &env->vm->pinned[i+1], (RT_GLOBAL_PIN_MAX - i - 1) * sizeof(struct rt_value *));
+			env->vm->pinned_count--;
 
 			/* Succeeded. */
 			return true;
 		}
 	}
-
-	env->vm->pinned_count--;
 
 	/* Failed. */
 	assert(PINNED_VAR_NOT_FOUND);
@@ -1853,14 +1852,13 @@ rt_gc_unpin_local(
 
 	for (i = 0; i < env->frame->pinned_count; i++) {
 		if (env->frame->pinned[i] == val) {
-			memmove(&env->frame->pinned[i], &env->frame->pinned[i+1], (RT_GLOBAL_PIN_MAX - i - 1) * sizeof(struct rt_value *));
+			memmove(&env->frame->pinned[i], &env->frame->pinned[i+1], (RT_LOCAL_PIN_MAX - i - 1) * sizeof(struct rt_value *));
+			env->frame->pinned_count--;
 
 			/* Succeeded. */
 			return true;
 		}
 	}
-
-	env->frame->pinned_count--;
 
 	/* Failed. */
 	assert(PINNED_VAR_NOT_FOUND);
