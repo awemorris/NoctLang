@@ -1810,6 +1810,8 @@ rt_gc_unpin_global(
 		}
 	}
 
+	env->vm->pinned_count--;
+
 	/* Failed. */
 	assert(PINNED_VAR_NOT_FOUND);
 	return false;
@@ -1857,6 +1859,8 @@ rt_gc_unpin_local(
 			return true;
 		}
 	}
+
+	env->frame->pinned_count--;
 
 	/* Failed. */
 	assert(PINNED_VAR_NOT_FOUND);
