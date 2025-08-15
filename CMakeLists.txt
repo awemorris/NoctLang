@@ -160,7 +160,7 @@ if(ENABLE_UNITY)
 endif()
 
 if(ENABLE_EMSCRIPTEN)
-  target_compile_definitions(noctlang PRIVATE USE_EMSCIPTEN)
+  target_compile_definitions(noctlang PRIVATE USE_EMSCRIPTEN)
 endif()
 
 if(WIN32)
