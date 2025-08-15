@@ -38,9 +38,15 @@
 /*
  * Region Size
  */
+#if !defined(USE_EMSCRIPTEN)
 #define RT_GC_NURSERY_SIZE		(2 * 1024 * 1024)
 #define RT_GC_GRADUATE_SIZE		(256 * 1024)
-#define RT_GC_TENURE_SIZE		(512 * 1024 * 1024)
+#define RT_GC_TENURE_SIZE		(256 * 1024 * 1024)
+#else
+#define RT_GC_NURSERY_SIZE		(2 * 1024 * 1024)
+#define RT_GC_GRADUATE_SIZE		(256 * 1024)
+#define RT_GC_TENURE_SIZE		(4 * 1024 * 1024)
+#endif
 
 /*
  * Large Object Promotion Threshold - A new object that has a size

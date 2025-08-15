@@ -17,6 +17,7 @@ option(ENABLE_CLI          "Also build CLI binary"       ON)
 option(ENABLE_SHARED       "Build a shared library"      OFF)
 option(ENABLE_OBJECT       "Build objects only"          OFF)
 option(ENABLE_UNITY        "Build for Unity plugin"      OFF)
+option(ENABLE_EMSCRIPTEN   "Build for Emscripten"        OFF)
 
 option(ENABLE_I18N
   "Enable translation feature (increased binary size)"
@@ -156,6 +157,10 @@ endif()
 
 if(ENABLE_UNITY)
   target_compile_definitions(noctlang PRIVATE USE_UNITY)
+endif()
+
+if(ENABLE_EMSCRIPTEN)
+  target_compile_definitions(noctlang PRIVATE USE_EMSCIPTEN)
 endif()
 
 if(WIN32)
