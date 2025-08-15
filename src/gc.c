@@ -1402,6 +1402,20 @@ rt_gc_old_gc_body(
 	 * Clear marks.
 	 */
 
+	/* Clear marks of the nursery objects. */
+	obj = env->vm->gc.nursery_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj = obj->next;
+	}
+
+	/* Clear marks of the graduate objects. */
+	obj = env->vm->gc.graduate_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj = obj->next;
+	}
+
 	/* Clear marks of the tenure objects. */
 	obj = env->vm->gc.tenure_list;
 	while (obj != NULL) {
@@ -1472,15 +1486,12 @@ rt_gc_mark_old_object_recursively(
 	/* Follow the newer array/dict. */
 	rt_gc_array_dict_follow_newer(env, obj);
 
-	/* If the object is a tenure object. */
-	if ((*obj)->region == RT_GC_REGION_TENURE) {
-		/* If already marked, just return. */
-		if ((*obj)->is_marked)
-			return;
+	/* If already marked, just return. */
+	if ((*obj)->is_marked)
+		return;
 
-		/* Mark. */
-		(*obj)->is_marked = true;
-	}
+	/* Mark. */
+	(*obj)->is_marked = true;
 
 	/* Mark recursively. */
 	if ((*obj)->type == RT_GC_TYPE_ARRAY) {
