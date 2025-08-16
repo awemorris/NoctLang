@@ -11,8 +11,9 @@ option(NOCTLANG_ENABLE_STATIC       "Build a static library"      OFF)
 option(NOCTLANG_ENABLE_SHARED       "Build a shared library"      OFF)
 option(NOCTLANG_ENABLE_OBJECT       "Build objects only"          OFF)
 option(NOCTLANG_ENABLE_MULTITHREAD  "Enable multithread support"  OFF)
-option(NOCTLANG_ENABLE_EMSCRIPTEN   "Build for Emscripten"        OFF)
 option(NOCTLANG_ENABLE_I18N         "Enable translation feature"  OFF)
+option(NOCTLANG_TARGET_WASM         "Build for Emscripten"        OFF)
+option(NOCTLANG_TARGET_UNITY        "Build for Unity"             OFF)
 
 #
 # Debug/Release
@@ -147,8 +148,12 @@ if(NOCTLANG_ENABLE_I18N)
   target_compile_definitions(noctlang PRIVATE USE_TRANSLATION)
 endif()  
 
-if(NOCTLANG_ENABLE_EMSCRIPTEN)
-  target_compile_definitions(noctlang PRIVATE USE_EMSCRIPTEN)
+if(NOCTLANG_TARGET_WASM)
+  target_compile_definitions(noctlang PRIVATE USE_WASM)
+endif()
+
+if(NOCTLANG_TARGET_UNITY)
+  target_compile_definitions(noctlang PRIVATE USE_UNITY)
 endif()
 
 if(WIN32)
