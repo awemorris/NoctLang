@@ -1,10 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  project(NoctLang LANGUAGES C)
-endif()
-
-set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
+project(NoctLang LANGUAGES C)
 
 #
 # Build Configuration
