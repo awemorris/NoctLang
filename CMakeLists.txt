@@ -5,24 +5,23 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version")
 
 #
 # Build Configuration
 #
 
-option(ENABLE_JIT          "Enable JIT feature"          ON)
-option(ENABLE_MULTITHREAD  "Enable multithread support"  OFF)
-option(ENABLE_CLI          "Also build CLI binary"       ON)
-option(ENABLE_SHARED       "Build a shared library"      OFF)
-option(ENABLE_OBJECT       "Build objects only"          OFF)
-option(ENABLE_UNITY        "Build for Unity plugin"      OFF)
-option(ENABLE_EMSCRIPTEN   "Build for Emscripten"        OFF)
+option(NOCTLANG_ENABLE_CLI          "Build a CLI binary"          ON)
+option(NOCTLANG_ENABLE_JIT          "Enable JIT feature"          ON)
+option(NOCTLANG_ENABLE_STATIC       "Build a static library"      OFF)
+option(NOCTLANG_ENABLE_SHARED       "Build a shared library"      OFF)
+option(NOCTLANG_ENABLE_OBJECT       "Build objects only"          OFF)
+option(NOCTLANG_ENABLE_MULTITHREAD  "Enable multithread support"  OFF)
+option(NOCTLANG_ENABLE_EMSCRIPTEN   "Build for Emscripten"        OFF)
+option(NOCTLANG_ENABLE_I18N         "Enable translation feature"  OFF)
 
-option(ENABLE_I18N
-  "Enable translation feature (increased binary size)"
-  OFF
-)
+#
+# Debug/Release
+#
 
 # Use "Release" build type by default.
 if(NOT CMAKE_BUILD_TYPE)
@@ -97,7 +96,7 @@ BISON_TARGET(Parser
 # Library Target
 #
 
-set(BASE_SOURCE
+set(NOCTLANG_BASE_SOURCE
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
   src/ast.c
@@ -112,54 +111,48 @@ set(BASE_SOURCE
   src/gc.c
 )
 
-if(ENABLE_I18N)
-  set(I18N_SOURCE
+if(NOCTLANG_ENABLE_I18N)
+  set(NOCTLANG_I18N_SOURCE
     src/i18n.c
     src/translation.c
   )
 endif()
 
-if(ENABLE_OBJECT)
-  set(LIB_TYPE OBJECT)
-elseif(ENABLE_SHARED)
-  set(LIB_TYPE SHARED)
+if(NOCTLANG_ENABLE_SHARED)
+  set(NOCTLANG_LIB_TYPE SHARED)
+elseif(NOCTLANG_ENABLE_OBJECT)
+  set(NOCTLANG_LIB_TYPE OBJECT)
 else()
-  set(LIB_TYPE STATIC)
+  set(NOCTLANG_LIB_TYPE STATIC)
 endif()
 
 add_library(
   noctlang
-  ${LIB_TYPE}
-
-  ${BASE_SOURCE}
-  ${I18N_SOURCE}
+  ${NOCTLANG_LIB_TYPE}
+  ${NOCTLANG_BASE_SOURCE}
+  ${NOCTLANG_I18N_SOURCE}
 )
 
 target_include_directories(noctlang PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-if(ENABLE_SHARED)
+if(NOCTLANG_ENABLE_SHARED)
   target_compile_definitions(noctlang PRIVATE USE_DLL DLL_IMPL)
 endif()
 
-if(ENABLE_JIT)
+if(NOCTLANG_ENABLE_JIT)
   target_compile_definitions(noctlang PRIVATE USE_JIT)
 endif()
 
-if(ENABLE_MULTITHREAD)
+if(NOCTLANG_ENABLE_MULTITHREAD)
   target_compile_definitions(noctlang PRIVATE USE_MULTITHREAD)
 endif()
 
-if(ENABLE_I18N)
+if(NOCTLANG_ENABLE_I18N)
   target_compile_definitions(noctlang PRIVATE USE_TRANSLATION)
 endif()  
 
-if(ENABLE_UNITY)
-  target_compile_definitions(noctlang PRIVATE USE_UNITY)
-endif()
-
-if(ENABLE_EMSCRIPTEN)
+if(NOCTLANG_ENABLE_EMSCRIPTEN)
   target_compile_definitions(noctlang PRIVATE USE_EMSCRIPTEN)
 endif()
 
@@ -180,7 +173,7 @@ set(NOCTLANG_LIBRARIES    ${LOCTLANG_LIBRARY})
 # CLI Target
 #
 
-if(ENABLE_CLI)
+if(NOCTLANG_ENABLE_CLI)
   add_executable(
     noct
 
@@ -198,15 +191,15 @@ if(ENABLE_CLI)
      ${CMAKE_CURRENT_SOURCE_DIR}/src
   )
 
-  if(ENABLE_SHARED)
+  if(NOCTLANG_ENABLE_SHARED)
     target_compile_definitions(noct PRIVATE USE_DLL)
   endif()
 
-  if(ENABLE_JIT)
+  if(NOCTLANG_ENABLE_JIT)
     target_compile_definitions(noct PRIVATE USE_JIT)
   endif()
 
-  if(ENABLE_I18N)
+  if(NOCTLANG_ENABLE_I18N)
     target_compile_definitions(noct PRIVATE USE_TRANSLATION)
   endif()  
 
