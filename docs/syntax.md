@@ -1,8 +1,6 @@
 NoctLang Syntax
 ===============
 
-NoctLang is a simple scripting language.
-
 ## Assignments
 
 Variables in NoctLang are dynamically typed and don't require explicit
@@ -219,19 +217,19 @@ in outer functions.
 ```
 func main() {
     var s1 = "ABCDEFG";
-    var s2 = s1.substring(1, -1); // from the char 1, to the end
+    var s2 = s1->substring(1, -1); // from the char 1, to the end
 }
 ```
 
-### length()
+### length
 
 ```
 func main() {
     var str = "ABCDEFG";
-    var slen = length(str);
+    var slen = str.length;
 
     var array = [0, 1, 2];
-    var alen = array.length();
+    var alen = array.length;
 }
 ```
 
@@ -240,7 +238,9 @@ func main() {
 ```
 func main() {
     var array = [0, 1, 2];
-    array.push(3); // Add to the last.
+    array->push(3); // Add to the last.
+
+    var elem = array->pop();
 }
 ```
 
