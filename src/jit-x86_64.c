@@ -775,7 +775,7 @@ jit_visit_neg_op(
         CONSUME_TMPVAR(src);
 
         /* if (!jit_neg_helper(rt, dst, src)) return false; */
-        ASM_UNARY_OP(rt_not_helper);
+        ASM_UNARY_OP(rt_neg_helper);
 
         return true;
 }
