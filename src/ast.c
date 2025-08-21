@@ -75,6 +75,10 @@ static void ast_free_expr(struct ast_expr *expr);
 static void ast_free_kv_list(struct ast_kv_list *kv_list);
 static void ast_free_kv(struct ast_kv *kv);
 static void ast_free_term(struct ast_term *term);
+static struct ast_expr *ast_copy_expr(struct ast_expr *expr);
+static struct ast_term *ast_copy_term(struct ast_term *term);
+static struct ast_arg_list *ast_copy_arg_list(struct ast_arg_list *arg_list);
+static struct ast_kv_list *ast_copy_kv_list(struct ast_kv_list *kv_list);
 static void ast_printf(const char *format, ...);
 static void ast_out_of_memory(void);
 void *ast_malloc(size_t size);
@@ -325,6 +329,82 @@ ast_accept_assign_stmt(
 	stmt->val.assign.lhs = lhs;
 	stmt->val.assign.rhs = rhs;
 	stmt->val.assign.is_var = is_var;
+	stmt->line = line;
+
+	return stmt;
+}
+
+/* Called from the parser when it accepted a plusassign_stmt. */
+struct ast_stmt *
+ast_accept_plusassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	struct ast_stmt *stmt;
+	struct ast_expr *expr, *rhs0;
+
+	rhs0 = ast_copy_expr(lhs);
+	if (rhs0 == NULL)
+		return NULL;
+
+	expr = ast_malloc(sizeof(struct ast_expr));
+	if (expr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(expr, 0, sizeof(struct ast_expr));
+	expr->type = AST_EXPR_PLUS;
+	expr->val.binary.expr[0] = rhs0;
+	expr->val.binary.expr[1] = rhs;
+
+	stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt, 0, sizeof(struct ast_stmt));
+	stmt->type = AST_STMT_ASSIGN;
+	stmt->val.assign.lhs = lhs;
+	stmt->val.assign.rhs = expr;
+	stmt->line = line;
+
+	return stmt;
+}
+
+/* Called from the parser when it accepted a minusassign_stmt. */
+struct ast_stmt *
+ast_accept_minusassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	struct ast_stmt *stmt;
+	struct ast_expr *expr, *rhs0;
+
+	rhs0 = ast_copy_expr(lhs);
+	if (rhs0 == NULL)
+		return NULL;
+
+	expr = ast_malloc(sizeof(struct ast_expr));
+	if (expr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(expr, 0, sizeof(struct ast_expr));
+	expr->type = AST_EXPR_MINUS;
+	expr->val.binary.expr[0] = rhs0;
+	expr->val.binary.expr[1] = rhs;
+
+	stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt, 0, sizeof(struct ast_stmt));
+	stmt->type = AST_STMT_ASSIGN;
+	stmt->val.assign.lhs = lhs;
+	stmt->val.assign.rhs = expr;
 	stmt->line = line;
 
 	return stmt;
@@ -1599,6 +1679,216 @@ ast_free_term(
 
 	ast_free(term);
 	term = NULL;
+}
+
+/* Copy an AST expr. */
+static struct ast_expr *
+ast_copy_expr(
+	struct ast_expr *expr)
+{
+	struct ast_expr *dst;
+
+	assert(expr != NULL);
+
+	dst = ast_malloc(sizeof(struct ast_expr));
+	if (expr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(dst, 0, sizeof(struct ast_expr));
+	dst->type = expr->type;
+
+	switch (expr->type) {
+	case AST_EXPR_TERM:
+		if (expr->val.term.term != NULL) {
+			dst->val.term.term = ast_copy_term(expr->val.term.term);
+			if (dst->val.term.term == NULL)
+				return NULL;
+		}
+		break;
+	case AST_EXPR_LT:
+	case AST_EXPR_LTE:
+	case AST_EXPR_EQ:
+	case AST_EXPR_NEQ:
+	case AST_EXPR_GTE:
+	case AST_EXPR_GT:
+	case AST_EXPR_PLUS:
+	case AST_EXPR_MINUS:
+	case AST_EXPR_MUL:
+	case AST_EXPR_DIV:
+	case AST_EXPR_MOD:
+	case AST_EXPR_AND:
+	case AST_EXPR_OR:
+	case AST_EXPR_SUBSCR:
+		if (expr->val.binary.expr[0] != NULL) {
+			dst->val.binary.expr[0] = ast_copy_expr(expr->val.binary.expr[0]);
+			if (dst->val.binary.expr[0] == NULL)
+				return NULL;
+		}
+		if (expr->val.binary.expr[1] != NULL) {
+			dst->val.binary.expr[1] = ast_copy_expr(expr->val.binary.expr[1]);
+			if (dst->val.binary.expr[1] == NULL)
+				return NULL;
+		}
+		break;
+	case AST_EXPR_NEG:
+		if (expr->val.unary.expr != NULL) {
+			dst->val.unary.expr = ast_copy_expr(expr->val.unary.expr);
+			if (dst->val.unary.expr == NULL)
+				return NULL;
+		}
+		break;
+	case AST_EXPR_DOT:
+		if (expr->val.dot.obj != NULL) {
+			dst->val.dot.obj = ast_copy_expr(expr->val.dot.obj);
+			if (dst->val.dot.obj == NULL)
+				return NULL;
+		}
+		if (expr->val.dot.symbol != NULL) {
+			dst->val.dot.symbol = ast_strdup(expr->val.dot.symbol);
+			if (dst->val.dot.symbol == NULL)
+				return NULL;
+		}
+		break;
+	case AST_EXPR_CALL:
+		if (expr->val.call.func != NULL) {
+			dst->val.call.func = ast_copy_expr(expr->val.call.func);
+			if (dst->val.call.func == NULL)
+				return NULL;
+		}
+		if (expr->val.call.arg_list != NULL) {
+			dst->val.call.arg_list = ast_copy_arg_list(expr->val.call.arg_list);
+			if (dst->val.call.arg_list == NULL)
+				return NULL;
+		}
+		break;
+	case AST_EXPR_ARRAY:
+		if (expr->val.array.elem_list != NULL) {
+			dst->val.array.elem_list = ast_copy_arg_list(expr->val.array.elem_list);
+			if (dst->val.array.elem_list == NULL)
+				return NULL;
+		}
+		break;
+	case AST_EXPR_DICT:
+		if (expr->val.dict.kv_list != NULL) {
+			dst->val.dict.kv_list = ast_copy_kv_list(expr->val.dict.kv_list);
+			if (dst->val.dict.kv_list == NULL)
+				return NULL;
+		}
+		break;
+	case AST_EXPR_FUNC:
+		ast_printf("Anonymous function inside += or -= is not allowed.");
+		return NULL;
+	}
+
+	return dst;
+}
+
+static struct ast_term *
+ast_copy_term(
+	struct ast_term *term)
+{
+	struct ast_term *dst;
+
+	dst = ast_malloc(sizeof(struct ast_term));
+	if (dst == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memcpy(dst, term, sizeof(struct ast_term));
+
+	switch (term->type) {
+	case AST_TERM_STRING:
+		if (term->val.s != NULL) {
+			dst->val.s = ast_strdup(term->val.s);
+			if (dst->val.s == NULL) {
+				ast_out_of_memory();
+				return NULL;
+			}
+		}
+		break;
+	case AST_TERM_SYMBOL:
+		if (term->val.symbol != NULL) {
+			dst->val.symbol = ast_strdup(term->val.symbol);
+			if (dst->val.symbol == NULL) {
+				ast_out_of_memory();
+				return NULL;
+			}
+		}
+		break;
+	default:
+		/* Other types don't need be duplicated. */
+		break;
+	}
+
+	return dst;
+}
+
+static struct ast_arg_list *
+ast_copy_arg_list(
+	struct ast_arg_list *arg_list)
+{
+	struct ast_arg_list *dst;
+	struct ast_expr *p, *expr;
+
+	dst = ast_malloc(sizeof(struct ast_arg_list));
+	if (dst == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(dst, 0, sizeof(struct ast_arg_list));
+
+	p = arg_list->list;
+	while (p != NULL) {
+		expr = ast_copy_expr(p);
+		if (expr == NULL)
+			return NULL;
+
+		AST_ADD_TO_LAST(struct ast_expr, dst->list, expr);
+		p = p->next;
+	}
+
+	return dst;
+}
+
+static struct ast_kv_list *
+ast_copy_kv_list(
+	struct ast_kv_list *kv_list)
+{
+	struct ast_kv_list *dst;
+	struct ast_kv *p, *kv;
+
+	dst = ast_malloc(sizeof(struct ast_kv_list));
+	if (dst == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(dst, 0, sizeof(struct ast_kv_list));
+
+	p = kv_list->list;
+	while (p != NULL) {
+		kv = ast_malloc(sizeof(struct ast_kv));
+		if (kv == NULL) {
+			ast_out_of_memory();
+			return NULL;
+		}
+		memset(kv, 0, sizeof(struct ast_kv));
+		kv->key = ast_strdup(p->key);
+		if (kv->key == NULL) {
+			ast_out_of_memory();
+			return NULL;
+		}
+		kv->value = ast_copy_expr(p->value);
+		if (kv->value == NULL) {
+			ast_out_of_memory();
+			return NULL;
+		}
+
+		AST_ADD_TO_LAST(struct ast_kv, dst->list, kv);
+		p = p->next;
+	}
+
+	return dst;	
 }
 
 /*

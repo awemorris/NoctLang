@@ -1,0 +1,9 @@
+func main() {
+     var a = 123;
+     a += 1;
+     print(a);
+
+     var b = 123;
+     b -= 1;
+     print(b);
+}
