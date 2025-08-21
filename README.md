@@ -1,31 +1,44 @@
 NoctLang
 ========
 
-Noct is a tiny yet mighty scripting language for game scripting.
+Noct is a tiny yet mighty programming language for scripting.
 Small enough to learn today, powerful enough to ship tomorrow!
 
 Just 154 KB — featuring a fast JIT compiler, robust generational GC,
-and clean C-like syntax.
+and clean C/JS-like syntax with a novel Dictionary-based OOP.
 
 Written in portable ANSI C with no external dependencies, it runs
 everywhere — from desktop PCs down to single-chip environments.
 
-Try it now — launch the REPL or write your first program.
-It might take less time than you think.
+Try it now — launch REPL or write your first program.  It might take
+less time than you think.
 
 ## Status
 
 Actively developed and constantly evolving.
 
-JIT works on:
-x86, x86_64, ARM, Arm64, RISC-V 32-bit, RISC-V 64-bit, PowerPC 32-bit, PowerPC 64-bit, MIPS 32-bit, MIPS 64-bit
+### JIT Targets:
 
-OS:
-Windows, macOS, Linux, *BSD, Android, iOS, Game Consoles (PS4/PS5/Switch/Xbox Series X|S)
+- Mainstream
+    - x86, x86_64, ARMv7, Arm64
+- Next Generation
+    - RISC-V 32-bit, RISC-V 64-bit
+- Misc
+    - PowerPC 32-bit, PowerPC 64-bit, MIPS 32-bit, MIPS 64-bit
+
+## OSes:
+
+- Desktop
+    - Windows, macOS, Linux
+- Mobile
+    - iOS, Android
+- Server
+    - FreeBSD, NetBSD, OpenBSD
+- Game Consoles
 
 Note: On major smartphones and consoles, runtime code generation (JIT)
 is generally prohibited or tightly restricted by platform
-policies. Noct runs there with AOT compilation.
+policies. Noct runs there with interpreter or AOT compilation.
 
 ---
 
@@ -36,13 +49,20 @@ found together in scripting languages:
 
 - **Familiar Syntax** — C/JS-like and easy to learn.
 - **Lightweight JIT** — Fast execution in a tiny runtime.
-- **Generational GC** — Semi-space copy + mark-sweep-compact.
+- **Generational GC** — Young semi-space copying + old mark-sweep-compact.
 - **Portable ANSI C** — No dependencies; runs everywhere.
 - **Tiny Footprint** — Runtime fits in 154 KB.
-- **AOT Compilation** — Translate to C for JIT-restricted platforms.
+- **AOT Compilation** — Translate to C for JIT-restricted platforms. (e.g. iOS)
 
 While most languages compromise on at least one of these,  
 Noct delivers all without sacrificing clarity or speed.
+
+In addition, Noct introduces **Dictionary-based OOP (D-OOP)** — a
+novel paradigm for object-oriented programming, achieved through
+dictionary merging instead of prototype chains or heavyweight class
+hierarchies. Thanks to this design, Noct programs can even be
+translated into Emacs Lisp code, reflecting the language's
+Lisp-inspired roots.
 
 ---
 

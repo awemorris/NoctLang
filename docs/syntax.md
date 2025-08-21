@@ -212,7 +212,15 @@ Lambda functions are simply translated to named functions in the
 compilation process. Therefore, they can't capture variables declared
 in outer functions.
 
-## Object Oriented Syntax
+## OOP in NoctLang
+
+The object-oriented model in NoctLang is a lightweight variation of prototype-based OOP.
+
+- Classes are simply dictionary templates
+- Inheritance and instantiation are realized by dictionary merging
+- There is no prototype chain, and modifying a class does not affect existing instances
+
+This design treats dictionaries as first-class objects, and the author refers to it as Dictionary-based OOP (D-OOP).
 
 ```
 func main() {
@@ -223,7 +231,7 @@ func main() {
         }
     };
 
-    // The subclass definition.
+    // The subclass definition. (Just a dictionary merging.)
     Cat = extend Animal {
         name: "Cat",
         voice: "meow",
@@ -232,12 +240,12 @@ func main() {
         }
     };
 
-    // Instantiation.
+    // Instantiation. (Just a dictionary merging.)
     var myCat = new Cat {
         voice: "neee"
     };
 
-    // This-call uses ->().
+    // This-call uses -> () syntax. (Equal to myCat.cry(myCat))
     myCat->cry();
 }
 ```
