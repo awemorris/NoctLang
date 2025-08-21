@@ -179,7 +179,6 @@ if(NOCTLANG_ENABLE_CLI)
 
     src/cli.c
     src/cback.c
-    src/elback.c
   )
 
   target_link_libraries(noct PRIVATE

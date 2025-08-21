@@ -1055,6 +1055,36 @@ ast_accept_func_expr(
 	return expr;
 }
 
+/* Called from the parser when it accepted a expr with a new syntax. */
+struct ast_expr *
+ast_accept_new_expr(
+	char *cls,
+	struct ast_kv_list *kv_list)
+{
+	struct ast_expr *expr, *kvexpr;
+
+	kvexpr = ast_malloc(sizeof(struct ast_expr));
+	if (kvexpr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(kvexpr, 0, sizeof(struct ast_expr));
+	kvexpr->type = AST_EXPR_DICT;
+	kvexpr->val.dict.kv_list = kv_list;
+	
+	expr = ast_malloc(sizeof(struct ast_expr));
+	if (expr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(expr, 0, sizeof(struct ast_expr));
+	expr->type = AST_EXPR_NEW;
+	expr->val.new_.cls = cls;
+	expr->val.new_.init = kvexpr;
+
+	return expr;
+}
+
 /* Called from the parser when it accepted a key-value list. */
 struct ast_kv_list *
 ast_accept_kv_list(

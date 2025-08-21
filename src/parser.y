@@ -68,6 +68,7 @@ struct ast_expr *ast_accept_thiscall_expr(struct ast_expr *obj, char *func, stru
 struct ast_expr *ast_accept_array_expr(struct ast_arg_list *arg_list);
 struct ast_expr *ast_accept_dict_expr(struct ast_kv_list *kv_list);
 struct ast_expr *ast_accept_func_expr(struct ast_param_list *param_list, struct ast_stmt_list *stmt_list);
+struct ast_expr *ast_accept_new_expr(char *cls, struct ast_kv_list *kv_list);
 struct ast_kv_list *ast_accept_kv_list(struct ast_kv_list *kv_list, struct ast_kv *kv);
 struct ast_kv *ast_accept_kv(char *key, struct ast_expr *value);
 struct ast_term *ast_accept_int_term(int i);
@@ -112,7 +113,8 @@ extern void ast_yyerror(void *scanner, char *s);
 %token <sval> TOKEN_SYMBOL TOKEN_STR
 %token <ival> TOKEN_INT
 %token <fval> TOKEN_FLOAT
-%token TOKEN_FUNC TOKEN_LAMBDA TOKEN_LARR TOKEN_RARR TOKEN_PLUS TOKEN_MINUS TOKEN_MUL
+%token TOKEN_FUNC TOKEN_NEW TOKEN_LAMBDA TOKEN_LARR TOKEN_RARR
+%token TOKEN_PLUS TOKEN_MINUS TOKEN_MUL
 %token TOKEN_DIV TOKEN_MOD TOKEN_ASSIGN TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK
 %token TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON TOKEN_DOT TOKEN_COMMA TOKEN_IF
 %token TOKEN_ELSE TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
@@ -519,6 +521,11 @@ expr		: term
 		{
 			$$ = ast_accept_func_expr(NULL, NULL);
 			debug("expr: func");
+		}
+		| TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK
+		{
+			$$ = ast_accept_new_expr($2, $4);
+			debug("expr: new");
 		}
 		;
 arg_list	: expr

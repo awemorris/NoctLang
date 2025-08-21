@@ -58,6 +58,7 @@ enum ast_expr_type {
 	AST_EXPR_ARRAY,
 	AST_EXPR_DICT,
 	AST_EXPR_FUNC,
+	AST_EXPR_NEW,
 };
 
 /* Term Type */
@@ -288,6 +289,15 @@ struct ast_expr {
 			/* Statement list. */
 			struct ast_stmt_list *stmt_list;
 		} func;
+
+		/* New Expression */
+		struct {
+			/* Class name. */
+			char *cls;
+
+			/* Initializer. */
+			struct ast_expr *init;
+		} new_;
 	} val;
 
 	/* Next expression node. */

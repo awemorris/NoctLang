@@ -48,6 +48,7 @@ enum hir_expr_type {
 	HIR_EXPR_THISCALL,
 	HIR_EXPR_ARRAY,
 	HIR_EXPR_DICT,
+	HIR_EXPR_NEW,
 };
 
 /* HIR Term Type */
@@ -266,6 +267,15 @@ struct hir_expr {
 			/* Value expressions. */
 			struct hir_expr **value;
 		} dict;
+
+		/* New Expression */
+		struct {
+			/* Class name. */
+			char *cls;
+
+			/* Initializer. */
+			struct hir_expr *init;
+		} new_;
 	} val;
 };
 

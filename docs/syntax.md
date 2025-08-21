@@ -39,7 +39,7 @@ func main() {
 }
 ```
 
-### Array
+## Array
 
 Arrays are ordered collections of values, accessed by index. Arrays
 support iteration through the `for` loop construct, allowing you to
@@ -75,7 +75,7 @@ func main() {
 }
 ```
 
-### Dictionary
+## Dictionary
 
 Dictionaries store key-value pairs, similar to hash maps or objects in
 other languages. They are defined using curly braces with key-value
@@ -115,7 +115,7 @@ func main() {
 }
 ```
 
-### For-loop
+## For-loop
 
 The for-loop construct provides a concise syntax for iterating through
 sequences such as ranges, arrays, and dictionaries.
@@ -156,7 +156,7 @@ func main() {
 }
 ```
 
-### While Loops
+## While Loops
 
 The while-loop provides a traditional iteration mechanism that
 continues execution as long as a specified condition remains
@@ -176,7 +176,7 @@ func main() {
 }
 ```
 
-### If and Else Blocks
+## If and Else Blocks
 
 Control flows allow for conditional executions based on evaluated
 expressions. The if-else construct follows a familiar syntax where
@@ -195,7 +195,7 @@ func main() {
 }
 ```
 
-### Lambda Functions
+## Lambda Functions
 
 Functions are first-class objects in the language. Anonymous
 functions, also known as `lambda` expressions, allow you to create
@@ -211,6 +211,32 @@ func main() {
 Lambda functions are simply translated to named functions in the
 compilation process. Therefore, they can't capture variables declared
 in outer functions.
+
+## Object Oriented Syntax
+
+```
+func main() {
+    // Base class definition.
+    Animal = {
+        name: "Animal",
+        cry: (this) => {
+        }
+    };
+
+    // Inherit the base class.
+    Cat = new Animal {
+        name: "Cat",
+        cry: (this) => {
+            print("Meow");
+        }
+    };
+
+    // Make an instantiate of the Cat class.
+    var myCat = new Cat { };
+
+    myCat->cry();
+}
+```
 
 ## Intrinsics
 
@@ -241,26 +267,5 @@ func main() {
 func main() {
     var array = [0, 1, 2];
     array.push(3); // Add to the last.
-}
-```
-
-### global
-
-```
-func main() {
-    var cat = new_cat();
-    var color = cat->getColor();
-}
-
-func new_cat() {
-    return {
-        // Field
-        color: "orange",
-
-        // Method
-        getColor: lambda (this) => {
-            return this.color;
-        },
-    };
 }
 ```

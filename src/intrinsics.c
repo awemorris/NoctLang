@@ -18,6 +18,7 @@
 
 #define NEVER_COME_HERE		0
 
+static bool rt_intrin_new(struct rt_env *rt);
 static bool rt_intrin_int(struct rt_env *rt);
 static bool rt_intrin_float(struct rt_env *rt);
 static bool rt_intrin_push(struct rt_env *rt);
@@ -39,6 +40,7 @@ struct intrin_item {
 	bool is_thiscall;
 	struct rt_func *func;
 } intrin_items[] = {
+	{"new",        "new",         2, {"cls", "init"         }, rt_intrin_new,        false, NULL},
 	{"int",        "int",         1, {"val"                 }, rt_intrin_int,        false, NULL},
 	{"float",      "float",       1, {"val"                 }, rt_intrin_float,      false, NULL},
 	{"push",       "__push",      2, {"this", "val"         }, rt_intrin_push,       true,  NULL},
@@ -94,6 +96,61 @@ rt_get_intrin_thiscall_func(
 
 	/* Not found/ */
 	*func = NULL;
+	return true;
+}
+
+/* new() */
+static bool
+rt_intrin_new(
+	struct rt_env *env)
+{
+	struct rt_value cls, init, ret, key, val;
+	const char *key_s;
+	int type, i, count;
+
+	noct_pin_local(env, 5, &cls, &init, &ret, &key, &val);
+
+	if (!noct_get_arg_check_dict(env, 0, &cls))
+		return false;
+	if (!noct_get_arg_check_dict(env, 1, &init))
+		return false;
+
+	/* Make a dictionary. */
+	if (!noct_make_empty_dict(env, &ret))
+		return false;
+
+	/* Copy the class elements. */
+	if (!noct_get_dict_size(env, &cls, &count))
+		return false;
+	for (i = 0; i < count; i++) {
+		if (!noct_get_dict_key_by_index(env, &cls, i, &key))
+			return false;
+		if (!noct_get_dict_value_by_index(env, &cls, i, &val))
+			return false;
+		if (!noct_get_string(env, &key, &key_s))
+			return false;
+		if (!noct_set_dict_elem(env, &ret, key_s, &val))
+			return false;
+	}
+
+	/* Copy the initializer. */
+	if (!noct_get_dict_size(env, &init, &count))
+		return false;
+	for (i = 0; i < count; i++) {
+		if (!noct_get_dict_key_by_index(env, &init, i, &key))
+			return false;
+		if (!noct_get_dict_value_by_index(env, &init, i, &val))
+			return false;
+		if (!noct_get_string(env, &key, &key_s))
+			return false;
+		if (!noct_set_dict_elem(env, &ret, key_s, &val))
+			return false;
+	}
+
+	/* Set the return value. */
+	if (!noct_set_return(env, &ret))
+		return false;
+
 	return true;
 }
 

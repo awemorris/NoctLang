@@ -110,6 +110,7 @@ static bool lir_visit_call_expr(int dst_tmpvar, struct hir_expr *expr, struct hi
 static bool lir_visit_thiscall_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_array_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_dict_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
+static bool lir_visit_new_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_term(int dst_tmpvar, struct hir_term *term, struct hir_block *block);
 static bool lir_visit_symbol_term(int dst_tmpvar, struct hir_term *term, struct hir_block *block);
 static bool lir_visit_int_term(int dst_tmpvar, struct hir_term *term);
@@ -1130,6 +1131,11 @@ lir_visit_expr(
 		if (!lir_visit_dict_expr(dst_tmpvar, expr, block))
 			return false;
 		break;
+	case HIR_EXPR_NEW:
+		/* For a new expression. */
+		if (!lir_visit_new_expr(dst_tmpvar, expr, block))
+			return false;
+		break;
 	default:
 		assert(NEVER_COME_HERE);
 		abort();
@@ -1528,6 +1534,67 @@ lir_visit_dict_expr(
 	lir_decrement_tmpvar(index_tmpvar);
 	lir_decrement_tmpvar(value_tmpvar);
 	lir_decrement_tmpvar(key_tmpvar);
+
+	return true;
+}
+
+static bool
+lir_visit_new_expr(
+	int dst_tmpvar,
+	struct hir_expr *expr,
+	struct hir_block *block)
+{
+	int arg_tmpvar[2];
+	int new_tmpvar, cls_tmpvar, init_tmpvar;
+
+	assert(expr != NULL);
+	assert(expr->type == HIR_EXPR_NEW);
+	assert(expr->val.new_.cls != NULL);
+	assert(expr->val.new_.init != NULL);
+
+	/* Load the "new" function. */
+	if (!lir_increment_tmpvar(&new_tmpvar))
+		return false;
+	if (!lir_put_opcode(OP_LOADSYMBOL))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)new_tmpvar))
+		return false;
+	if (!lir_put_string("new"))
+		return false;
+
+	/* Load the class name. */
+	if (!lir_increment_tmpvar(&cls_tmpvar))
+		return false;
+	if (!lir_put_opcode(OP_LOADSYMBOL))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)cls_tmpvar))
+		return false;
+	if (!lir_put_string(expr->val.new_.cls))
+		return false;
+
+	/* Visit the initializer. */
+	if (!lir_increment_tmpvar(&init_tmpvar))
+		return false;
+	if (!lir_visit_expr(init_tmpvar, expr->val.new_.init, block))
+		return false;
+
+	/* Put a bytecode sequence. */
+	if (!lir_put_opcode(OP_CALL))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)new_tmpvar))
+		return false;
+	if (!lir_put_imm8((uint8_t)2))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)cls_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)init_tmpvar))
+		return false;
+
+	lir_decrement_tmpvar(init_tmpvar);
+	lir_decrement_tmpvar(cls_tmpvar);
+	lir_decrement_tmpvar(new_tmpvar);
 
 	return true;
 }

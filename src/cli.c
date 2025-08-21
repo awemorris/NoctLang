@@ -10,7 +10,6 @@
 #include "hir.h"
 #include "lir.h"
 #include "cback.h"
-#include "elback.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -45,14 +44,11 @@ void noct_init_locale(void);
 static void show_usage(void);
 static int command_compile(int argc, char *argv[]);
 static int command_transpile_c(int argc, char *argv[]);
-static int command_transpile_elisp(int argc, char *argv[]);
 static int command_run(int argc, char *argv[]);
 static int command_repl(void);
 static bool compile_source(const char *file_name);
 static bool do_transpile_c(const char *out_file, int in_file_count, const char *in_file[]);
 static bool add_file_hook_c(const char *fname);
-static bool do_transpile_elisp(const char *out_file, int in_file_count, const char *in_file[]);
-static bool add_file_hook_elisp(const char *fname);
 static bool add_file(const char *fname, bool (*add_file_hook)(const char *));
 static bool is_multiline_start(const char *text, bool *is_func);
 static bool accept_multiline(const char *text);
@@ -90,8 +86,6 @@ int main(int argc, char *argv[])
 		return command_compile(argc, argv);
 	if (strcmp(first_arg, "--ansic") == 0)
 		return command_transpile_c(argc, argv);
-	if (strcmp(first_arg, "--elisp") == 0)
-		return command_transpile_elisp(argc, argv);
 
 	/* Run */
 	return command_run(argc, argv);
@@ -104,10 +98,9 @@ static void show_usage(void)
 	wide_printf(N_TR("Version %s\n"), VERSION);
 	wide_printf("\n");
 	wide_printf(N_TR("Usage\n"));
-	wide_printf(N_TR("  noct <file>                        ... run a program\n"));
-	wide_printf(N_TR("  noct --compile <files>             ... convert to bytecode files\n"));
-	wide_printf(N_TR("  noct --ansic <out file> <in files> ... convert to a C source file\n"));
-	wide_printf(N_TR("  noct --elisp <out file> <in files> ... convert to an Emacs Lisp source file\n"));
+	wide_printf(N_TR("  noct <file>                            ... run a program\n"));
+	wide_printf(N_TR("  noct --compile <files>                 ... convert to bytecode files\n"));
+	wide_printf(N_TR("  noct --transpile <out file> <in files> ... convert to a C source file\n"));
 }
 
 /*
@@ -446,96 +439,6 @@ static bool add_file_hook_c(const char *fname)
 	}
 
 	/* Free intermediated. */
-	hir_cleanup();
-	ast_cleanup();
-
-	return true;
-}
-
-/*
- * Emacs Lisp Translation
- */
-
-/* The top level function for the Emacs Lisp translation. */
-static int command_transpile_elisp(int argc, char *argv[])
-{
-	if (argc < 4) {
-		show_usage();
-		return 1;
-	}
-
-	if (!do_transpile_elisp(argv[2], argc - 3, (const char **)&argv[3]))
-		return 1;
-
-	return 0;
-}
-
-/* Do Emacs Lisp translation. */
-static bool do_transpile_elisp(const char *out_file, int in_file_count, const char *in_file[])
-{
-	int i;
-
-	/* Initialize the backend. */
-	if (!elback_init(out_file))
-		return false;
-
-	/* For each input file or directory. */
-	for (i = 0; i < in_file_count; i++) {
-		if (!add_file(in_file[i], add_file_hook_elisp))
-			return false;
-	}
-
-	/* Put a epilogue code. */
-	if (!elback_finalize())
-		return false;
-
-	return true;
-}
-
-/* "On file add" callback for Emacs Lisp translation. */
-static bool add_file_hook_elisp(const char *fname)
-{
-	char *data;
-	size_t len;
-	int func_count, j;
-
-	/* Load a file. */
-	if (!load_file_content(fname, &data, &len))
-		return false;
-
-	/* Do parse, build AST. */
-	if (!ast_build(fname, data)) {
-		wide_printf(N_TR("Error: %s: %d: %s\n"),
-			    ast_get_file_name(),
-			    ast_get_error_line(),
-			    ast_get_error_message());
-		return false;
-	}
-
-	/* Transform AST to HIR. */
-	if (!hir_build()) {
-		wide_printf(N_TR("Error: %s: %d: %s\n"),
-			    hir_get_file_name(),
-			    hir_get_error_line(),
-			    hir_get_error_message());
-		return false;
-	}
-
-	/* For each HIR function. */
-	func_count = hir_get_function_count();
-	for (j = 0; j < func_count; j++) {
-		struct hir_block *hfunc;
-
-		/* Put Emacs Lisp. */
-		hfunc = hir_get_function(j);
-		if (!elback_translate_func(hfunc))
-			return false;
-	}
-
-	/* Free entire HIR. */
-	hir_cleanup();
-
-	/* Free intermediates. */
 	hir_cleanup();
 	ast_cleanup();
 

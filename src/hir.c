@@ -104,6 +104,7 @@ static bool hir_visit_thiscall_expr(struct hir_expr **hexpr, struct ast_expr *ae
 static bool hir_visit_array_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_dict_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_func_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
+static bool hir_visit_new_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_term(struct hir_term **hterm, struct ast_term *aterm);
 static bool hir_visit_param_list(struct hir_block *hfunc,struct ast_func *afunc);
 static bool hir_defer_anon_func(struct ast_expr *aexpr, char **symbol);
@@ -1391,6 +1392,9 @@ hir_visit_expr(
 	case AST_EXPR_FUNC:
 		result = hir_visit_func_expr(hexpr, aexpr);
 		break;
+	case AST_EXPR_NEW:
+		result = hir_visit_new_expr(hexpr, aexpr);
+		break;
 	default:
 		result = false;
 		assert(UNIMPLEMENTED);
@@ -1834,6 +1838,45 @@ hir_visit_func_expr(
 	return true;
 }
 
+/* Visit an AST new expr. */
+static bool
+hir_visit_new_expr(
+	struct hir_expr **hexpr,
+	struct ast_expr *aexpr)
+{
+	struct hir_expr *e;
+	struct hir_term *t;
+
+	assert(hexpr != NULL);
+	assert(*hexpr == NULL);
+	assert(aexpr != NULL);
+	assert(aexpr->type == AST_EXPR_NEW);
+
+	/* Allocate an hexpr. */
+	e = hir_malloc(sizeof(struct hir_expr));
+	if (e == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+	memset(e, 0, sizeof(struct hir_expr));
+	e->type = HIR_EXPR_NEW;
+	e->val.new_.cls = hir_strdup(aexpr->val.new_.cls);
+	if (e->val.new_.cls == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+
+	/* Visit an expr. */
+	if (!hir_visit_expr(&e->val.new_.init, aexpr->val.new_.init)) {
+		hir_free_expr(e);
+		return false;
+	}
+
+	*hexpr = e;
+
+	return true;
+}
+
 /* Visit an AST term. */
 static bool
 hir_visit_term(
@@ -2190,6 +2233,10 @@ hir_free_expr(
 			hir_free(e->val.dict.value);
 			e->val.dict.value = NULL;
 		}
+		break;
+	case HIR_EXPR_NEW:
+		hir_free(e->val.new_.cls);
+		hir_free_expr(e->val.new_.init);
 		break;
 	default:
 		assert(NEVER_COME_HERE);
