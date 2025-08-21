@@ -212,6 +212,23 @@ Lambda functions are simply translated to named functions in the
 compilation process. Therefore, they can't capture variables declared
 in outer functions.
 
+## Increment/Decrement (+=, -=, ++, --)
+
+```
+func main() {
+    var a = 123;
+    a += 321;
+    a++;
+
+    var b = 123;
+    b -= 321;
+    b--;
+}
+```
+
+`++` and `--` are supported only as standalone statements (`a++;`, `b--;`).
+Using them inside expressions is disallowed to avoid complex side-effects.
+
 ## OOP in NoctLang
 
 The object-oriented model in NoctLang is a lightweight variation of prototype-based OOP.
