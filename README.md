@@ -4,7 +4,7 @@ NoctLang
 Noct is a tiny yet mighty programming language for scripting.
 Small enough to learn today, powerful enough to ship tomorrow!
 
-Just 154 KB — featuring a fast JIT compiler, robust generational GC,
+Just ~160 KB — featuring a fast JIT compiler, robust generational GC,
 and clean C/JS-like syntax with a novel Dictionary-based OOP.
 
 Written in portable ANSI C with no external dependencies, it runs
@@ -51,7 +51,7 @@ found together in scripting languages:
 - **Lightweight JIT** — Fast execution in a tiny runtime.
 - **Generational GC** — Young semi-space copying + old mark-sweep-compact.
 - **Portable ANSI C** — No dependencies; runs everywhere.
-- **Tiny Footprint** — Runtime fits in 154 KB.
+- **Tiny Footprint** — Runtime fits in ~160 KB.
 - **AOT Compilation** — Translate to C for JIT-restricted platforms. (e.g. iOS, Android)
 
 While most languages compromise on at least one of these,  
