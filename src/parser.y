@@ -113,7 +113,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %token <sval> TOKEN_SYMBOL TOKEN_STR
 %token <ival> TOKEN_INT
 %token <fval> TOKEN_FLOAT
-%token TOKEN_FUNC TOKEN_NEW TOKEN_LAMBDA TOKEN_LARR TOKEN_RARR
+%token TOKEN_FUNC TOKEN_CLASS TOKEN_NEW TOKEN_EXTEND TOKEN_LAMBDA TOKEN_LARR TOKEN_RARR
 %token TOKEN_PLUS TOKEN_MINUS TOKEN_MUL
 %token TOKEN_DIV TOKEN_MOD TOKEN_ASSIGN TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK
 %token TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON TOKEN_DOT TOKEN_COMMA TOKEN_IF
@@ -502,28 +502,40 @@ expr		: term
 			$$ = ast_accept_dict_expr($2);
 			debug("expr: dict");
 		}
+		| TOKEN_CLASS TOKEN_LBLK kv_list TOKEN_RBLK
+		{
+			/* class is equal to dict. */
+			$$ = ast_accept_dict_expr($3);
+			debug("expr: dict");
+		}
 		| TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_func_expr($2, $6);
 			debug("expr: func param_list stmt_list");
 		}
-		| TOKEN_LAMBDA TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK
+		| TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func_expr(NULL, $6);
+			$$ = ast_accept_func_expr(NULL, $5);
 			debug("expr: func stmt_list");
 		}
-		| TOKEN_LAMBDA TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK
+		| TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK
 		{
-			$$ = ast_accept_func_expr($3, NULL);
+			$$ = ast_accept_func_expr($2, NULL);
 			debug("expr: func param_list");
 		}
-		| TOKEN_LAMBDA TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK
+		| TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK
 		{
 			$$ = ast_accept_func_expr(NULL, NULL);
 			debug("expr: func");
 		}
 		| TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK
 		{
+			$$ = ast_accept_new_expr($2, $4);
+			debug("expr: new");
+		}
+		| TOKEN_EXTEND TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK
+		{
+			/* extend is equal to new. */
 			$$ = ast_accept_new_expr($2, $4);
 			debug("expr: new");
 		}

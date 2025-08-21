@@ -216,24 +216,28 @@ in outer functions.
 
 ```
 func main() {
-    // Base class definition.
-    Animal = {
+    // The base class definition. (A class is just a dictionary.)
+    Animal = class {
         name: "Animal",
         cry: (this) => {
         }
     };
 
-    // Inherit the base class.
-    Cat = new Animal {
+    // The subclass definition.
+    Cat = extend Animal {
         name: "Cat",
+        voice: "meow",
         cry: (this) => {
-            print("Meow");
+            print(this.name + " cries like " + this.voice);
         }
     };
 
-    // Make an instantiate of the Cat class.
-    var myCat = new Cat { };
+    // Instantiation.
+    var myCat = new Cat {
+        voice: "neee"
+    };
 
+    // This-call uses ->().
     myCat->cry();
 }
 ```
