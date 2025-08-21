@@ -1063,15 +1063,19 @@ ast_accept_new_expr(
 {
 	struct ast_expr *expr, *kvexpr;
 
-	kvexpr = ast_malloc(sizeof(struct ast_expr));
-	if (kvexpr == NULL) {
-		ast_out_of_memory();
-		return NULL;
+	if (kv_list != NULL) {
+		kvexpr = ast_malloc(sizeof(struct ast_expr));
+		if (kvexpr == NULL) {
+			ast_out_of_memory();
+			return NULL;
+		}
+		memset(kvexpr, 0, sizeof(struct ast_expr));
+		kvexpr->type = AST_EXPR_DICT;
+		kvexpr->val.dict.kv_list = kv_list;
+	} else {
+		kvexpr = NULL;
 	}
-	memset(kvexpr, 0, sizeof(struct ast_expr));
-	kvexpr->type = AST_EXPR_DICT;
-	kvexpr->val.dict.kv_list = kv_list;
-	
+
 	expr = ast_malloc(sizeof(struct ast_expr));
 	if (expr == NULL) {
 		ast_out_of_memory();

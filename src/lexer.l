@@ -197,10 +197,11 @@ extern YYLTYPE yylloc;
 			return TOKEN_NEW;
 		}
 "extend"	{
+			/* extend is equal to new. */
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
-			return TOKEN_EXTEND;
+			return TOKEN_NEW;
 		}
 "class"		{
 			ast_yylloc.first_line = ast_yylloc.last_line;

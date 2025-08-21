@@ -1492,7 +1492,7 @@ lir_visit_dict_expr(
 
 	assert(expr != NULL);
 	assert(expr->type == HIR_EXPR_DICT);
-	assert(expr->val.dict.kv_count > 0);
+	assert(expr->val.dict.kv_count >= 0);
 
 	kv_count = expr->val.dict.kv_count;
 	
@@ -1550,7 +1550,6 @@ lir_visit_new_expr(
 	assert(expr != NULL);
 	assert(expr->type == HIR_EXPR_NEW);
 	assert(expr->val.new_.cls != NULL);
-	assert(expr->val.new_.init != NULL);
 
 	/* Load the "new" function. */
 	if (!lir_increment_tmpvar(&new_tmpvar))
@@ -1575,8 +1574,15 @@ lir_visit_new_expr(
 	/* Visit the initializer. */
 	if (!lir_increment_tmpvar(&init_tmpvar))
 		return false;
-	if (!lir_visit_expr(init_tmpvar, expr->val.new_.init, block))
-		return false;
+	if (expr->val.new_.init != NULL) {
+		if (!lir_visit_expr(init_tmpvar, expr->val.new_.init, block))
+			return false;
+	} else {
+		if (!lir_put_opcode(OP_DCONST))
+			return false;
+		if (!lir_put_tmpvar((uint16_t)init_tmpvar))
+			return false;
+	}
 
 	/* Put a bytecode sequence. */
 	if (!lir_put_opcode(OP_CALL))

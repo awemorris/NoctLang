@@ -1867,9 +1867,11 @@ hir_visit_new_expr(
 	}
 
 	/* Visit an expr. */
-	if (!hir_visit_expr(&e->val.new_.init, aexpr->val.new_.init)) {
-		hir_free_expr(e);
-		return false;
+	if (aexpr->val.new_.init != NULL) {
+		if (!hir_visit_expr(&e->val.new_.init, aexpr->val.new_.init)) {
+			hir_free_expr(e);
+			return false;
+		}
 	}
 
 	*hexpr = e;
@@ -2236,7 +2238,8 @@ hir_free_expr(
 		break;
 	case HIR_EXPR_NEW:
 		hir_free(e->val.new_.cls);
-		hir_free_expr(e->val.new_.init);
+		if (e->val.new_.init != NULL)
+			hir_free_expr(e->val.new_.init);
 		break;
 	default:
 		assert(NEVER_COME_HERE);
