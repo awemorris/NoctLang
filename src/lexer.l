@@ -303,6 +303,27 @@ extern YYLTYPE yylloc;
 			ast_yylloc.last_line++;
 			ast_yylloc.last_column = 0;
 		}
+"null"		{
+			ast_yylval.ival = 0;
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_INT;
+		}
+"true"		{
+			ast_yylval.ival = 1;
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_INT;
+		}
+"false"		{
+			ast_yylval.ival = 0;
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_INT;
+		}
 [a-zA-Z_0-9]+	{
 			ast_yylval.sval = ast_strdup(yytext);
 			ast_yylloc.first_line = ast_yylloc.last_line;
