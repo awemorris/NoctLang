@@ -52,7 +52,7 @@ found together in scripting languages:
 - **Generational GC** — Young semi-space copying + old mark-sweep-compact.
 - **Portable ANSI C** — No dependencies; runs everywhere.
 - **Tiny Footprint** — Runtime fits in 154 KB.
-- **AOT Compilation** — Translate to C for JIT-restricted platforms. (e.g. iOS)
+- **AOT Compilation** — Translate to C for JIT-restricted platforms. (e.g. iOS, Android)
 
 While most languages compromise on at least one of these,  
 Noct delivers all without sacrificing clarity or speed.
@@ -89,25 +89,41 @@ and .NET.
 
 Noct is simple enough to try right now — no setup, no hassle.
 
-Just run the `noct` command and type the following on the REPL:
+Save the following as `first.noct`, and just run `noct first.noct`.
 
 ```
-for (i in 0..10) {
-    print("Hello, World!");
+func main() {
+    Person = class {
+        name: ""
+    };
+
+    var jessie = new Person { name: "Jessie" };
+    var tom = new Person { name: "Tom" };
+
+    var people = [jessie, tom];
+    for (person in people) {
+        print("Hello, " + person.name + "!");
+    }
 }
 ```
 
-That’s it. You’ve written your first Noct program.
+Output:
+```
+Hello, Jessie!
+Hello, Tom!
+```
 
-### Installation
+That's it. You've written your first Noct program.
 
-## Download Prebuild Binaries
+## Installation
+
+### Download Prebuild Binaries
 
 Visit
 [the release page](https://github.com/awemorris/NoctLang/releases)
 to obtain the latest prebuilt binaries.
 
-## Or Manually Build from Source
+### Manually Build from Source
 
 Clone the repository, build it with CMake, and you’re ready to go:
 
@@ -119,7 +135,7 @@ cmake --build build
 ./build/noct
 ```
 
-## Run
+### Run
 
 To run a script:
 
@@ -175,27 +191,39 @@ func main() {
 
 ### Objective Notation
 
-This example demonstrates how Noct can express object-like structures
-using method-style lambdas with explicit `this`, without relying on
-implicit closures.
+The object-oriented model in Noct is a lightweight variation of prototype-based OOP.
 
-Note: In this case, `this` refers to the object literal returned by
-`new_apple()`.
+- Classes are simply dictionary templates
+- Inheritance and instantiation are realized by dictionary merging
+- There is no prototype chain, and modifying a class does not affect existing instances
+
+This design treats dictionaries as first-class objects, and the author refers to it as Dictionary-based OOP (D-OOP).
 
 ```
 func main() {
-    var apple = new_apple();
-    print(apple->getName());
-    print(apple->getPrice());
-}
+    // The base class definition. (A class is just a dictionary.)
+    Animal = class {
+        name: "Animal",
+        cry: (this) => {
+        }
+    };
 
-func new_apple() {
-   return {
-      name: "Apple",
-      price: 100,
-      getName: (this) => { return this.name; },
-      getPrice: (this) => { return this.price; }
-   };
+    // The subclass definition. (Just a dictionary merging.)
+    Cat = extend Animal {
+        name: "Cat",
+        voice: "meow",
+        cry: (this) => {
+            print(this.name + " cries like " + this.voice);
+        }
+    };
+
+    // Instantiation. (Just a dictionary merging.)
+    var myCat = new Cat {
+        voice: "neee"
+    };
+
+    // This-call uses -> () syntax. (Equal to myCat.cry(myCat))
+    myCat->cry();
 }
 ```
 
@@ -265,7 +293,7 @@ across supported platforms.
 Noct is open source, released under the MIT license.
 
 This means you can use it freely — for personal, educational, or
-commercial purposes.  You’re also free to modify, redistribute, and
+commercial purposes.  You're also free to modify, redistribute, and
 build upon it, with minimal restrictions.
 
 ---
@@ -279,7 +307,7 @@ features.
 We're also building the broader `NoctVM` family, including a game
 engine designed to empower creators.
 
-Whether you're here to code, teach, test, or explore — we’d love to
+Whether you're here to code, teach, test, or explore — we'd love to
 have you with us.
 
 [Join the community on Discord](https://discord.gg/ybHWSqDVEX)
