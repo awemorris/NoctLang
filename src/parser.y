@@ -36,6 +36,8 @@ struct ast_stmt *ast_accept_expr_stmt(int line, struct ast_expr *expr);
 struct ast_stmt *ast_accept_assign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs, bool is_var);
 struct ast_stmt *ast_accept_plusassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
 struct ast_stmt *ast_accept_minusassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
+struct ast_stmt *ast_accept_plusplus_stmt(int line, struct ast_expr *expr);
+struct ast_stmt *ast_accept_minusminus_stmt(int line, struct ast_expr *expr);
 struct ast_stmt *ast_accept_if_stmt(int line, struct ast_expr *cond, struct ast_stmt_list *stmt_list);
 struct ast_stmt *ast_accept_elif_stmt(int line, struct ast_expr *cond, struct ast_stmt_list *stmt_list);
 struct ast_stmt *ast_accept_else_stmt(int line, struct ast_stmt_list *stmt_list);
@@ -115,12 +117,10 @@ extern void ast_yyerror(void *scanner, char *s);
 %token <sval> TOKEN_SYMBOL TOKEN_STR
 %token <ival> TOKEN_INT
 %token <fval> TOKEN_FLOAT
-%token TOKEN_FUNC TOKEN_CLASS TOKEN_NEW TOKEN_LAMBDA TOKEN_LARR TOKEN_RARR
-%token TOKEN_PLUS TOKEN_MINUS TOKEN_MUL
-%token TOKEN_DIV TOKEN_MOD TOKEN_ASSIGN TOKEN_PLUSASSIGN TOKEN_MINUSASSIGN
+%token TOKEN_FUNC TOKEN_CLASS TOKEN_NEW TOKEN_LAMBDA TOKEN_LARR TOKEN_RARR TOKEN_PLUS TOKEN_MINUS TOKEN_MUL
+%token TOKEN_DIV TOKEN_MOD TOKEN_ASSIGN TOKEN_PLUSASSIGN TOKEN_MINUSASSIGN TOKEN_PLUSPLUS TOKEN_MINUSMINUS
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
-%token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_WHILE
-%token TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
+%token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
 %token TOKEN_CONTINUE TOKEN_ARROW TOKEN_DARROW TOKEN_AND TOKEN_OR TOKEN_VAR
 
@@ -133,6 +133,8 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <stmt> assign_stmt;
 %type <stmt> plusassign_stmt;
 %type <stmt> minusassign_stmt;
+%type <stmt> plusplus_stmt;
+%type <stmt> minusminus_stmt;
 %type <stmt> if_stmt;
 %type <stmt> elif_stmt;
 %type <stmt> else_stmt;
@@ -247,6 +249,14 @@ stmt		: expr_stmt
 		{
 			$$ = $1;
 		}
+		| plusplus_stmt
+		{
+			$$ = $1;
+		}
+		| minusminus_stmt
+		{
+			$$ = $1;
+		}
 		| if_stmt
 		{
 			$$ = $1;
@@ -307,6 +317,18 @@ minusassign_stmt: expr TOKEN_MINUSASSIGN expr TOKEN_SEMICOLON
 		{
 			$$ = ast_accept_minusassign_stmt(@1.first_line + 1, $1, $3);
 			debug("minusassign_stmt");
+		}
+		;
+plusplus_stmt	: expr TOKEN_PLUSPLUS TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_plusplus_stmt(@1.first_line + 1, $1);
+			debug("plusplus_stmt");
+		}
+		;
+minusminus_stmt	: expr TOKEN_MINUSMINUS TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_minusminus_stmt(@1.first_line + 1, $1);
+			debug("plusplus_stmt");
 		}
 		;
 if_stmt		: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK

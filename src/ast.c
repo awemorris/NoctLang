@@ -410,6 +410,126 @@ ast_accept_minusassign_stmt(
 	return stmt;
 }
 
+/* Called from the parser when it accepted a plusplus_stmt. */
+struct ast_stmt *
+ast_accept_plusplus_stmt(
+	int line,
+	struct ast_expr *expr)
+{
+	struct ast_stmt *stmt;
+	struct ast_expr *plus_expr, *lhs, *rhs0, *rhs1;
+	struct ast_term *term;
+
+	lhs = ast_copy_expr(expr);
+	if (lhs == NULL)
+		return NULL;
+
+	rhs0 = ast_copy_expr(expr);
+	if (lhs == NULL)
+		return NULL;
+
+	term = ast_malloc(sizeof(struct ast_term));
+	if (term == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(term, 0, sizeof(struct ast_term));
+	term->type = AST_TERM_INT;
+	term->val.i = 1;
+
+	rhs1 = ast_malloc(sizeof(struct ast_expr));
+	if (rhs1 == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(rhs1, 0, sizeof(struct ast_expr));
+	rhs1->type = AST_EXPR_TERM;
+	rhs1->val.term.term = term;
+
+	plus_expr = ast_malloc(sizeof(struct ast_expr));
+	if (plus_expr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(plus_expr, 0, sizeof(struct ast_expr));
+	plus_expr->type = AST_EXPR_PLUS;
+	plus_expr->val.binary.expr[0] = rhs0;
+	plus_expr->val.binary.expr[1] = rhs1;
+
+	stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt, 0, sizeof(struct ast_stmt));
+	stmt->type = AST_STMT_ASSIGN;
+	stmt->val.assign.lhs = lhs;
+	stmt->val.assign.rhs = plus_expr;
+	stmt->line = line;
+
+	return stmt;
+}
+
+/* Called from the parser when it accepted a minusminus_stmt. */
+struct ast_stmt *
+ast_accept_minusminus_stmt(
+	int line,
+	struct ast_expr *expr)
+{
+	struct ast_stmt *stmt;
+	struct ast_expr *minus_expr, *lhs, *rhs0, *rhs1;
+	struct ast_term *term;
+
+	lhs = ast_copy_expr(expr);
+	if (lhs == NULL)
+		return NULL;
+
+	rhs0 = ast_copy_expr(expr);
+	if (lhs == NULL)
+		return NULL;
+
+	term = ast_malloc(sizeof(struct ast_term));
+	if (term == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(term, 0, sizeof(struct ast_term));
+	term->type = AST_TERM_INT;
+	term->val.i = 1;
+
+	rhs1 = ast_malloc(sizeof(struct ast_expr));
+	if (rhs1 == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(rhs1, 0, sizeof(struct ast_expr));
+	rhs1->type = AST_EXPR_TERM;
+	rhs1->val.term.term = term;
+
+	minus_expr = ast_malloc(sizeof(struct ast_expr));
+	if (minus_expr == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(minus_expr, 0, sizeof(struct ast_expr));
+	minus_expr->type = AST_EXPR_MINUS;
+	minus_expr->val.binary.expr[0] = rhs0;
+	minus_expr->val.binary.expr[1] = rhs1;
+
+	stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt, 0, sizeof(struct ast_stmt));
+	stmt->type = AST_STMT_ASSIGN;
+	stmt->val.assign.lhs = lhs;
+	stmt->val.assign.rhs = minus_expr;
+	stmt->line = line;
+
+	return stmt;
+}
+
 /* Called from the parser when it accepted a if_stmt. */
 struct ast_stmt *
 ast_accept_if_stmt(
