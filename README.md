@@ -26,14 +26,14 @@ Actively developed and constantly evolving.
 - Misc
     - PowerPC 32-bit, PowerPC 64-bit, MIPS 32-bit, MIPS 64-bit
 
-## OSes:
+### Supported OSes:
 
 - Desktop
     - Windows, macOS, Linux
 - Mobile
     - iOS, Android
 - Server
-    - FreeBSD, NetBSD, OpenBSD
+    - *BSD
 - Game Consoles
 
 Note: On major smartphones and consoles, runtime code generation (JIT)
@@ -72,7 +72,7 @@ _"What if a programming language could be learned in a single
 afternoon — and used the next day to create real games?"_
 
 Noct was born from this question: a desire to create a language
-that’s minimal yet meaningful — **simple enough for beginners, fast
+that's minimal yet meaningful — **simple enough for beginners, fast
 enough for production**.  It bridges the gap between **play** and
 **production**, letting you focus on making games, not fighting tools.
 
@@ -189,7 +189,7 @@ func main() {
 }
 ```
 
-### Objective Notation
+### Objective Oriented Model
 
 The object-oriented model in Noct is a lightweight variation of prototype-based OOP.
 
@@ -208,7 +208,7 @@ func main() {
         }
     };
 
-    // The subclass definition. (Just a dictionary merging.)
+    // The subclass definition. (This is just a dictionary merging.)
     Cat = extend Animal {
         name: "Cat",
         voice: "meow",
@@ -217,12 +217,12 @@ func main() {
         }
     };
 
-    // Instantiation. (Just a dictionary merging.)
+    // Make an instance. (Just a dictionary merging.)
     var myCat = new Cat {
         voice: "neee"
     };
 
-    // This-call uses -> () syntax. (Equal to myCat.cry(myCat))
+    // This-call uses the "-> ()" syntax. (Equal to myCat.cry(myCat))
     myCat->cry();
 }
 ```
