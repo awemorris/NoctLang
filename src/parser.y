@@ -411,7 +411,11 @@ return_stmt	: TOKEN_RETURN expr TOKEN_SEMICOLON
 			$$ = ast_accept_return_stmt(@1.first_line + 1, $2);
 			debug("rerurn_stmt:");
 		}
-		;
+		| TOKEN_RETURN TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_return_stmt(@1.first_line + 1, NULL);
+			debug("rerurn_stmt NULL:");
+		}		;
 break_stmt	: TOKEN_BREAK TOKEN_SEMICOLON
 		{
 			$$ = ast_accept_break_stmt(@1.first_line + 1);

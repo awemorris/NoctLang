@@ -10,6 +10,8 @@ func main() {
     } else {
         print("False");
     }
+
+    no_value();
 }
 
 func foo() {
@@ -36,4 +38,8 @@ func bar() {
     }
     print("BAD");
     return 0;
+}
+
+func no_value() {
+     return;
 }

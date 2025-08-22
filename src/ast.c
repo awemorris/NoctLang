@@ -709,6 +709,26 @@ ast_accept_return_stmt(
 	struct ast_expr *expr)
 {
 	struct ast_stmt *stmt;
+	struct ast_term *term;
+	struct ast_expr *expr0;
+
+	term = ast_malloc(sizeof(struct ast_term));
+	if (term == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(term, 0, sizeof(struct ast_term));
+	term->type = AST_TERM_INT;
+	term->val.i = 1;
+
+	expr0 = ast_malloc(sizeof(struct ast_expr));
+	if (expr0 == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(expr0, 0, sizeof(struct ast_expr));
+	expr0->type = AST_EXPR_TERM;
+	expr0->val.term.term = term;
 
 	stmt = ast_malloc(sizeof(struct ast_stmt));
 	if (stmt == NULL) {
@@ -717,7 +737,7 @@ ast_accept_return_stmt(
 	}
 	memset(stmt, 0, sizeof(struct ast_stmt));
 	stmt->type = AST_STMT_RETURN;
-	stmt->val.return_.expr = expr;
+	stmt->val.return_.expr = expr0;
 	stmt->line = line;
 
 	return stmt;
