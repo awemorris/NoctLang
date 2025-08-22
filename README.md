@@ -1,5 +1,5 @@
-NoctLang
-========
+NoctLang - The Noct Programming Language
+========================================
 
 Noct is a tiny yet mighty programming language for scripting.
 Small enough to learn today, powerful enough to ship tomorrow!
@@ -8,7 +8,7 @@ Just ~160 KB — featuring a fast JIT compiler, robust generational GC,
 and clean C/JS-like syntax with a novel Dictionary-based OOP.
 
 Written in portable ANSI C with no external dependencies, it runs
-everywhere — from desktop PCs down to single-chip environments.
+everywhere — from desktop PCs down to smartphones.
 
 Try it now — launch REPL or write your first program.  It might take
 less time than you think.
@@ -19,21 +19,17 @@ Actively developed and constantly evolving.
 
 ### JIT Targets:
 
-- Mainstream
-    - x86, x86_64, ARMv7, Arm64
-- Next Generation
-    - RISC-V 32-bit, RISC-V 64-bit
-- Misc
-    - PowerPC 32-bit, PowerPC 64-bit, MIPS 32-bit, MIPS 64-bit
+- x86, x86_64
+- ARMv7, Arm64
+- RISC-V 32-bit, RISC-V 64-bit
+- PowerPC 32-bit, PowerPC 64-bit
+- MIPS 32-bit, MIPS 64-bit
 
 ### Supported OSes:
 
-- Desktop
-    - Windows, macOS, Linux
-- Mobile
-    - iOS, Android
-- Server
-    - *BSD
+- Windows, macOS, Linux
+- iOS, Android
+- *BSD
 - Game Consoles
 
 Note: On major smartphones and consoles, runtime code generation (JIT)
@@ -270,7 +266,7 @@ Noct uses two intermediate representations:
   Structured control flow graph (CFG) for flow-sensitive optimizations.
 
 - **LIR (Low-level Intermediate Representation)**  
-  VM bytecode, used for execution or code generation.
+  VM bytecode, used for execution and code generation.
 
 Their separation enables a lightweight JIT pipeline with a clear,
 analyzable architecture.
@@ -279,8 +275,7 @@ analyzable architecture.
 
 ## Test and CI
 
-Noct is tested on Windows, macOS, and Linux.  It also supports
-FreeBSD, NetBSD, OpenBSD, and Haiku.
+Noct is tested on Windows, macOS, and Linux.
 
 Continuous integration is powered by GitHub Actions.  Each push to the
 main branch triggers builds and binary releases, ensuring stability
