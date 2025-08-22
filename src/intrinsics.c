@@ -18,18 +18,19 @@
 
 #define NEVER_COME_HERE		0
 
-static bool rt_intrin_new(struct rt_env *rt);
-static bool rt_intrin_int(struct rt_env *rt);
-static bool rt_intrin_float(struct rt_env *rt);
-static bool rt_intrin_push(struct rt_env *rt);
-static bool rt_intrin_pop(struct rt_env *rt);
-static bool rt_intrin_unset(struct rt_env *rt);
-static bool rt_intrin_newArray(struct rt_env *rt);
-static bool rt_intrin_resize(struct rt_env *rt);
-static bool rt_intrin_substring(struct rt_env *rt);
-static bool rt_intrin_fast_gc(struct rt_env *rt);
-static bool rt_intrin_full_gc(struct rt_env *rt);
-static bool rt_intrin_compact_gc(struct rt_env *rt);
+static bool rt_intrin_new(struct rt_env *env);
+static bool rt_intrin_int(struct rt_env *env);
+static bool rt_intrin_float(struct rt_env *env);
+static bool rt_intrin_push(struct rt_env *env);
+static bool rt_intrin_pop(struct rt_env *env);
+static bool rt_intrin_unset(struct rt_env *env);
+static bool rt_intrin_newArray(struct rt_env *env);
+static bool rt_intrin_resize(struct rt_env *env);
+static bool rt_intrin_charat(struct rt_env *env);
+static bool rt_intrin_substring(struct rt_env *env);
+static bool rt_intrin_fast_gc(struct rt_env *env);
+static bool rt_intrin_full_gc(struct rt_env *env);
+static bool rt_intrin_compact_gc(struct rt_env *env);
 
 struct intrin_item {
 	const char *field_name;
@@ -47,6 +48,7 @@ struct intrin_item {
 	{"pop",        "__pop",       1, {"this"                }, rt_intrin_pop,        true,  NULL},
 	{"newArray",   "newArray",    1, {"size"                }, rt_intrin_newArray,   true,  NULL},
 	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true,  NULL},
+	{"charAt",     "__charAt",    2, {"this", "index"       }, rt_intrin_charat,     true,  NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true,  NULL},
 	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    false, NULL},
 	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    false, NULL},
@@ -295,6 +297,43 @@ rt_intrin_resize(
 	if (!noct_resize_array(env, &arr, size_i))
 		return false;
 
+	return true;
+}
+
+/* charAt() */
+static bool
+rt_intrin_charat(
+	struct rt_env *env)
+{
+	struct rt_value str, index, ret;
+	const char *str_s;
+	int index_i;
+	size_t len;
+	char s[2];
+
+	noct_pin_local(env, 2, &str, &index, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_int(env, 1, &index, &index_i))
+		return false;
+
+	if (!noct_get_string_len(env, &str, &len))
+		return false;
+
+	if (index_i < 0 || index_i >= (int)len) {
+		if (!noct_make_string(env, &ret, ""))
+			return false;
+		if (!noct_set_return(env, &ret))
+			return false;
+		return true;
+	}
+
+	s[0] = str_s[index_i];
+	s[1] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, s))
+		return false;
 	return true;
 }
 
