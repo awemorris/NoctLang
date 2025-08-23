@@ -65,6 +65,10 @@ int ast_yylex_destroy(yyscan_t scanner);
 int ast_yyparse(yyscan_t scanner);
 
 /* Forward Declarations */
+static struct ast_stmt *ast_accept_xassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs, int type);
+static struct ast_stmt *ast_accept_plusplus_or_minusminus_stmt(int line, struct ast_expr *expr,int type);
+static struct ast_expr *ast_accept_binary_expr(struct ast_expr *expr1, struct ast_expr *expr2, int type);
+static struct ast_expr *ast_accept_unary_expr(struct ast_expr *e, int type);
 static void ast_free_func_list(struct ast_func_list *func_list);
 static void ast_free_func(struct ast_func *func);
 static void ast_free_arg_list(struct ast_arg_list *arg_list);
@@ -341,35 +345,7 @@ ast_accept_plusassign_stmt(
 	struct ast_expr *lhs,
 	struct ast_expr *rhs)
 {
-	struct ast_stmt *stmt;
-	struct ast_expr *expr, *rhs0;
-
-	rhs0 = ast_copy_expr(lhs);
-	if (rhs0 == NULL)
-		return NULL;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_PLUS;
-	expr->val.binary.expr[0] = rhs0;
-	expr->val.binary.expr[1] = rhs;
-
-	stmt = ast_malloc(sizeof(struct ast_stmt));
-	if (stmt == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(stmt, 0, sizeof(struct ast_stmt));
-	stmt->type = AST_STMT_ASSIGN;
-	stmt->val.assign.lhs = lhs;
-	stmt->val.assign.rhs = expr;
-	stmt->line = line;
-
-	return stmt;
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_PLUS);
 }
 
 /* Called from the parser when it accepted a minusassign_stmt. */
@@ -378,6 +354,66 @@ ast_accept_minusassign_stmt(
 	int line,
 	struct ast_expr *lhs,
 	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_MINUS);
+}
+
+/* Called from the parser when it accepted a mulassign_stmt. */
+struct ast_stmt *
+ast_accept_mulassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_MUL);
+}
+
+/* Called from the parser when it accepted a mulassign_stmt. */
+struct ast_stmt *
+ast_accept_divassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_DIV);
+}
+
+/* Called from the parser when it accepted a modassign_stmt. */
+struct ast_stmt *
+ast_accept_modassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_MOD);
+}
+
+/* Called from the parser when it accepted a andassign_stmt. */
+struct ast_stmt *
+ast_accept_andassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_AND);
+}
+
+/* Called from the parser when it accepted a orassign_stmt. */
+struct ast_stmt *
+ast_accept_orassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_OR);
+}
+
+static struct ast_stmt *
+ast_accept_xassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs,
+	int type)
 {
 	struct ast_stmt *stmt;
 	struct ast_expr *expr, *rhs0;
@@ -392,7 +428,7 @@ ast_accept_minusassign_stmt(
 		return NULL;
 	}
 	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_MINUS;
+	expr->type = type;
 	expr->val.binary.expr[0] = rhs0;
 	expr->val.binary.expr[1] = rhs;
 
@@ -416,58 +452,7 @@ ast_accept_plusplus_stmt(
 	int line,
 	struct ast_expr *expr)
 {
-	struct ast_stmt *stmt;
-	struct ast_expr *plus_expr, *lhs, *rhs0, *rhs1;
-	struct ast_term *term;
-
-	lhs = ast_copy_expr(expr);
-	if (lhs == NULL)
-		return NULL;
-
-	rhs0 = ast_copy_expr(expr);
-	if (lhs == NULL)
-		return NULL;
-
-	term = ast_malloc(sizeof(struct ast_term));
-	if (term == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(term, 0, sizeof(struct ast_term));
-	term->type = AST_TERM_INT;
-	term->val.i = 1;
-
-	rhs1 = ast_malloc(sizeof(struct ast_expr));
-	if (rhs1 == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(rhs1, 0, sizeof(struct ast_expr));
-	rhs1->type = AST_EXPR_TERM;
-	rhs1->val.term.term = term;
-
-	plus_expr = ast_malloc(sizeof(struct ast_expr));
-	if (plus_expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(plus_expr, 0, sizeof(struct ast_expr));
-	plus_expr->type = AST_EXPR_PLUS;
-	plus_expr->val.binary.expr[0] = rhs0;
-	plus_expr->val.binary.expr[1] = rhs1;
-
-	stmt = ast_malloc(sizeof(struct ast_stmt));
-	if (stmt == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(stmt, 0, sizeof(struct ast_stmt));
-	stmt->type = AST_STMT_ASSIGN;
-	stmt->val.assign.lhs = lhs;
-	stmt->val.assign.rhs = plus_expr;
-	stmt->line = line;
-
-	return stmt;
+	return ast_accept_plusplus_or_minusminus_stmt(line, expr, AST_EXPR_PLUS);
 }
 
 /* Called from the parser when it accepted a minusminus_stmt. */
@@ -475,6 +460,15 @@ struct ast_stmt *
 ast_accept_minusminus_stmt(
 	int line,
 	struct ast_expr *expr)
+{
+	return ast_accept_plusplus_or_minusminus_stmt(line, expr, AST_EXPR_MINUS);
+}
+
+static struct ast_stmt *
+ast_accept_plusplus_or_minusminus_stmt(
+	int line,
+	struct ast_expr *expr,
+	int type)
 {
 	struct ast_stmt *stmt;
 	struct ast_expr *minus_expr, *lhs, *rhs0, *rhs1;
@@ -512,7 +506,7 @@ ast_accept_minusminus_stmt(
 		return NULL;
 	}
 	memset(minus_expr, 0, sizeof(struct ast_expr));
-	minus_expr->type = AST_EXPR_MINUS;
+	minus_expr->type = type;
 	minus_expr->val.binary.expr[0] = rhs0;
 	minus_expr->val.binary.expr[1] = rhs1;
 
@@ -807,19 +801,7 @@ ast_accept_lt_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_LT;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_LT);
 }
 
 /* Called from the parser when it accepted a expr with a <= operator. */
@@ -828,19 +810,7 @@ ast_accept_lte_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_LTE;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_LTE);
 }
 
 /* Called from the parser when it accepted a expr with a == operator. */
@@ -849,19 +819,7 @@ ast_accept_eq_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_EQ;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_EQ);
 }
 
 /* Called from the parser when it accepted a expr with a != operator. */
@@ -870,19 +828,7 @@ ast_accept_neq_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_NEQ;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_NEQ);
 }
 
 /* Called from the parser when it accepted a expr with a >= operator. */
@@ -891,19 +837,7 @@ ast_accept_gte_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_GTE;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_GTE);
 }
 
 /* Called from the parser when it accepted a expr with a > operator. */
@@ -912,19 +846,7 @@ ast_accept_gt_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_GT;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_GT);
 }
 
 /* Called from the parser when it accepted a expr with a + operator. */
@@ -933,19 +855,7 @@ ast_accept_plus_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_PLUS;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_PLUS);
 }
 
 /* Called from the parser when it accepted a expr with a - operator. */
@@ -954,19 +864,7 @@ ast_accept_minus_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_MINUS;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_MINUS);
 }
 
 /* Called from the parser when it accepted a expr with a * operator. */
@@ -975,19 +873,7 @@ ast_accept_mul_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_MUL;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_MUL);
 }
 
 /* Called from the parser when it accepted a expr with a / operator. */
@@ -996,19 +882,7 @@ ast_accept_div_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_DIV;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_DIV);
 }
 
 /* Called from the parser when it accepted a expr with a % operator. */
@@ -1017,19 +891,7 @@ ast_accept_mod_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_MOD;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_MOD);
 }
 
 /* Called from the parser when it accepted a expr with a && operator. */
@@ -1038,19 +900,7 @@ ast_accept_and_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_AND;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_AND);
 }
 
 /* Called from the parser when it accepted a expr with a || operator. */
@@ -1058,6 +908,15 @@ struct ast_expr *
 ast_accept_or_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_OR);
+}
+
+static struct ast_expr *
+ast_accept_binary_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2,
+	int type)
 {
 	struct ast_expr *expr;
 
@@ -1067,7 +926,7 @@ ast_accept_or_expr(
 		return NULL;
 	}
 	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_OR;
+	expr->type = type;
 	expr->val.binary.expr[0] = expr1;
 	expr->val.binary.expr[1] = expr2;
 
@@ -1079,24 +938,21 @@ struct ast_expr *
 ast_accept_neg_expr(
 	struct ast_expr *e)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_NEG;
-	expr->val.binary.expr[0] = e;
-
-	return expr;
+	return ast_accept_unary_expr(e, AST_EXPR_NEG);
 }
 
 /* Called from the parser when it accepted a expr with a ! operator. */
 struct ast_expr *
 ast_accept_not_expr(
 	struct ast_expr *e)
+{
+	return ast_accept_unary_expr(e, AST_EXPR_NOT);
+}
+
+static struct ast_expr *
+ast_accept_unary_expr(
+	struct ast_expr *e,
+	int type)
 {
 	struct ast_expr *expr;
 
@@ -1106,8 +962,8 @@ ast_accept_not_expr(
 		return NULL;
 	}
 	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_NOT;
-	expr->val.binary.expr[0] = e;
+	expr->type = type;
+	expr->val.unary.expr = e;
 
 	return expr;
 }
@@ -1137,19 +993,7 @@ ast_accept_subscr_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
-	struct ast_expr *expr;
-
-	expr = ast_malloc(sizeof(struct ast_expr));
-	if (expr == NULL) {
-		ast_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(struct ast_expr));
-	expr->type = AST_EXPR_SUBSCR;
-	expr->val.binary.expr[0] = expr1;
-	expr->val.binary.expr[1] = expr2;
-
-	return expr;
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_SUBSCR);
 }
 
 /* Called from the parser when it accepted a expr with a object.receiver syntax. */
