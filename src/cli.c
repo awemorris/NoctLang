@@ -95,9 +95,7 @@ int main(int argc, char *argv[])
 /* Show the usage message. */
 static void show_usage(void)
 {
-	wide_printf(N_TR("Noct Programming Language "));
-	wide_printf(N_TR("Version %s\n"), VERSION);
-	wide_printf("\n");
+	wide_printf(N_TR("Noct Programming Language\n"));
 	wide_printf(N_TR("Usage\n"));
 	wide_printf(N_TR("  noct <file>                        ... run a program\n"));
 	wide_printf(N_TR("  noct --compile <files>             ... convert to bytecode files\n"));
