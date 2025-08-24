@@ -21,5 +21,4 @@ func main() {
     print(0xf0f0);
     print(0x0f0f0);
     print(0xffffFFFF);
-    print(0x100000000);
 }

@@ -50,7 +50,7 @@ extern YYLTYPE yylloc;
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_INT;
 		}
-0x[0-9a-fA-F]*	{
+0x[0-9a-fA-F]{1,8}	{
 			sscanf(yytext, "%x", &ast_yylval.ival);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;

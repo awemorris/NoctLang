@@ -62,7 +62,22 @@ func arch_test(name, toolchain, qemu) {
         "syntax/13-call-args.noct",
         "syntax/14-ret-val.noct",
         "syntax/15-while.noct",
-        "syntax/16-unary.noct"
+        "syntax/16-unary.noct",
+		"syntax/17-return.noct",
+		"syntax/18-break.noct",
+		"syntax/19-continue.noct",
+		"syntax/20-return-dict.noct",
+		"syntax/21-global-dict-key.noct",
+		"syntax/22-large-dict.noct",
+		"syntax/23-array-resize.noct",
+		"syntax/24-intrin.noct",
+		"syntax/25-new.noct",
+		"syntax/26-empty-class.noct",
+		"syntax/27-plusminusassign.noct",
+		"syntax/28-plusplusminusminus.noct",
+		"syntax/29-charat.noct",
+		"syntax/30-hex.noct",
+		"syntax/31-logical.noct"
     ];
 
     // Run tests without JIT.
