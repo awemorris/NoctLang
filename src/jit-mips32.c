@@ -392,7 +392,7 @@ jit_visit_fconst_op(
 		/* li $t0, dst */		IW(0x24080000 | lo16((uint32_t)dst));
 		/* addu $t0, $t0, $s1 */	IW(0x01114021);
 
-		/* rt->frame->tmpvar[dst].type = RT_VALUE_INT */
+		/* rt->frame->tmpvar[dst].type = RT_VALUE_FLOAT */
 		/* li $t1, 1 */			IW(0x24090001);
 		/* sw $t1, 0($t0) */		IW(0xad090000);
 
@@ -1561,6 +1561,7 @@ jit_visit_bytecode(
 
 		/* Push the general-purpose registers. */
 		/* addui $sp, $sp, -32 */	IW(0x27bdffe0);
+		/* addui $sp, $sp, -4 */	IW(0x27bdfffc);		/* It seems required for 8-byte alignment. */
 		/* sw $s0, 28($sp) */		IW(0xafb0001c);
 		/* sw $s1, 24($sp) */		IW(0xafb10018);
 		/* sw $s2, 20($sp) */		IW(0xafb20014);
@@ -1807,6 +1808,7 @@ jit_visit_bytecode(
 		/* lw $s0, 28($sp) */		IW(0x8fb0001c);
 		/* lw $s1, 24($sp) */		IW(0x8fb10018);
 		/* addiu $sp, $sp, 32 */	IW(0x27bd0020);
+		/* addiu $sp, $sp, 4 */		IW(0x27bd0004);
 		/* ori $v0, $zero, 1 */		IW(0x34020001);
 		/* jr $ra */			IW(0x03e00008);
 		/* nop */			IW(0x00000000);

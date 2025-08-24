@@ -327,7 +327,7 @@ struct ast_term {
 	union {
 		/* Value. */
 		int i;
-		double f;
+		float f;
 		char *s;
 		char *symbol;
 	} val;
