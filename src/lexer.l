@@ -50,6 +50,13 @@ extern YYLTYPE yylloc;
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_INT;
 		}
+0x[0-9a-fA-F]*	{
+			sscanf(yytext, "%x", &ast_yylval.ival);
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_INT;
+		}
 ["]([^"\\\n]|\\(.|\n))*["] {
 			ast_yylval.sval = ast_strdup(yytext + 1);
 			ast_yylval.sval[yyleng - 2] = '\0';
