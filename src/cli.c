@@ -25,11 +25,6 @@
 #include <unistd.h>
 #endif
 
-/* Version */
-#ifndef VERSION
-#define VERSION			"0.1.0"
-#endif
-
 /* Bytecode File Header */
 #define BYTECODE_HEADER		"Noct Bytecode"
 
@@ -562,8 +557,7 @@ int command_repl(void)
 	if (!register_ffi(env))
 		return 1;
 
-	wide_printf(N_TR("Noct Programming Language "));
-	wide_printf(N_TR("Version %s\n"), VERSION);
+	wide_printf(N_TR("Noct Programming Language"));
 	wide_printf(N_TR("Entering REPL mode.\n"));
 	wide_printf("\n");
 
