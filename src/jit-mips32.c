@@ -1292,7 +1292,7 @@ jit_visit_call_op(
 		/* Arg5 arg */
 		/* lui $t0, arg@h */		IW(0x3c080000 | hi16(arg_addr));
 		/* ori $t0, $t0, arg@l */	IW(0x35080000 | lo16(arg_addr));
-		/* addiu $sp, $sp, -20 */	IW(0x27bdffec);
+		/* addiu $sp, $sp, -24 */	IW(0x27bdffe8);
 		/* sw $t0, 16($sp) */		IW(0xafa80010);
 
 		/* Call rt_call_helper(). */
@@ -1302,7 +1302,7 @@ jit_visit_call_op(
 		/* jalr $t0 */			IW(0x0100f809);
 		/* nop */			IW(0x00000000);
 		/* move $ra, $s2 */		IW(0x0240f825);
-		/* addiu $sp, $sp, 20 */	IW(0x27bd0014);
+		/* addiu $sp, $sp, 24 */	IW(0x27bd0018);
 
 		/* If failed: */
 		/* beqz $v0, $zero, exc */	IW(0x10400000 | EXC());
@@ -1561,7 +1561,6 @@ jit_visit_bytecode(
 
 		/* Push the general-purpose registers. */
 		/* addui $sp, $sp, -32 */	IW(0x27bdffe0);
-		/* addui $sp, $sp, -4 */	IW(0x27bdfffc);		/* It seems required for 8-byte alignment. */
 		/* sw $s0, 28($sp) */		IW(0xafb0001c);
 		/* sw $s1, 24($sp) */		IW(0xafb10018);
 		/* sw $s2, 20($sp) */		IW(0xafb20014);
@@ -1808,7 +1807,6 @@ jit_visit_bytecode(
 		/* lw $s0, 28($sp) */		IW(0x8fb0001c);
 		/* lw $s1, 24($sp) */		IW(0x8fb10018);
 		/* addiu $sp, $sp, 32 */	IW(0x27bd0020);
-		/* addiu $sp, $sp, 4 */		IW(0x27bd0004);
 		/* ori $v0, $zero, 1 */		IW(0x34020001);
 		/* jr $ra */			IW(0x03e00008);
 		/* nop */			IW(0x00000000);
