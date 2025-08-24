@@ -920,6 +920,44 @@ jit_visit_xor_op(
 	return true;
 }
 
+/* Visit a OP_SHL instruction. */
+static INLINE bool
+jit_visit_shl_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!jit_shl_helper(rt, dst, src1, src2)) return false; */
+        ASM_BINARY_OP(rt_shl_helper);
+
+        return true;
+}
+
+/* Visit a OP_SHR instruction. */
+static INLINE bool
+jit_visit_shr_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!jit_shr_helper(rt, dst, src1, src2)) return false; */
+        ASM_BINARY_OP(rt_shr_helper);
+
+        return true;
+}
+
 /* Visit a OP_NEG instruction. */
 static INLINE bool
 jit_visit_neg_op(
@@ -1759,6 +1797,14 @@ jit_visit_bytecode(
 			if (!jit_visit_xor_op(ctx))
 				return false;
 			break;
+                case OP_SHL:
+                        if (!jit_visit_shl_op(ctx))
+                                return false;
+                        break;
+                case OP_SHR:
+                        if (!jit_visit_shr_op(ctx))
+                                return false;
+                        break;
 		case OP_NEG:
 			if (!jit_visit_neg_op(ctx))
 				return false;
