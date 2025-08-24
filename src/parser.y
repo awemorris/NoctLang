@@ -41,6 +41,8 @@ struct ast_stmt *ast_accept_divassign_stmt(int line, struct ast_expr *lhs, struc
 struct ast_stmt *ast_accept_modassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
 struct ast_stmt *ast_accept_andassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
 struct ast_stmt *ast_accept_orassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
+struct ast_stmt *ast_accept_shlassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
+struct ast_stmt *ast_accept_shrassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
 struct ast_stmt *ast_accept_plusplus_stmt(int line, struct ast_expr *expr);
 struct ast_stmt *ast_accept_minusminus_stmt(int line, struct ast_expr *expr);
 struct ast_stmt *ast_accept_if_stmt(int line, struct ast_expr *cond, struct ast_stmt_list *stmt_list);
@@ -67,6 +69,9 @@ struct ast_expr *ast_accept_div_expr(struct ast_expr *expr1, struct ast_expr *ex
 struct ast_expr *ast_accept_mod_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_and_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_or_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_xor_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_shl_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_shr_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_neg_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_not_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_par_expr(struct ast_expr *expr);
@@ -123,13 +128,13 @@ extern void ast_yyerror(void *scanner, char *s);
 %token <ival> TOKEN_INT
 %token <fval> TOKEN_FLOAT
 %token TOKEN_FUNC TOKEN_CLASS TOKEN_NEW TOKEN_LAMBDA TOKEN_LARR TOKEN_RARR TOKEN_PLUS TOKEN_MINUS TOKEN_MUL
-%token TOKEN_DIV TOKEN_MOD
-%token TOKEN_ASSIGN TOKEN_PLUSASSIGN TOKEN_MINUSASSIGN TOKEN_MULASSIGN TOKEN_DIVASSIGN TOKEN_MODASSIGN TOKEN_ANDASSIGN TOKEN_ORASSIGN
-%token TOKEN_PLUSPLUS TOKEN_MINUSMINUS
+%token TOKEN_DIV TOKEN_MOD TOKEN_SHL TOKEN_SHR
+%token TOKEN_ASSIGN TOKEN_PLUSASSIGN TOKEN_MINUSASSIGN TOKEN_MULASSIGN TOKEN_DIVASSIGN TOKEN_MODASSIGN TOKEN_ANDASSIGN TOKEN_ORASSIGN TOKEN_SHLASSIGN TOKEN_SHRASSIGN
+%token TOKEN_PLUSPLUS TOKEN_MINUSMINUS TOKEN_ANDAND TOKEN_OROR
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
 %token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
-%token TOKEN_CONTINUE TOKEN_ARROW TOKEN_DARROW TOKEN_AND TOKEN_OR TOKEN_VAR
+%token TOKEN_CONTINUE TOKEN_ARROW TOKEN_DARROW TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR
 
 %type <func_list> func_list;
 %type <func> func;
@@ -145,6 +150,8 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <stmt> modassign_stmt;
 %type <stmt> andassign_stmt;
 %type <stmt> orassign_stmt;
+%type <stmt> shlassign_stmt;
+%type <stmt> shrassign_stmt;
 %type <stmt> plusplus_stmt;
 %type <stmt> minusminus_stmt;
 %type <stmt> if_stmt;
@@ -162,9 +169,12 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <arg_list> arg_list;
 
 %left UNARYMINUS
+%left TOKEN_OROR
+%left TOKEN_ANDAND
 %left TOKEN_NOT
 %left TOKEN_OR
 %left TOKEN_AND
+%left TOKEN_XOR
 %left TOKEN_LT
 %left TOKEN_LTE
 %left TOKEN_GT
@@ -281,6 +291,14 @@ stmt		: expr_stmt
 		{
 			$$ = $1;
 		}
+		| shlassign_stmt
+		{
+			$$ = $1;
+		}
+		| shrassign_stmt
+		{
+			$$ = $1;
+		}
 		| plusplus_stmt
 		{
 			$$ = $1;
@@ -379,6 +397,18 @@ orassign_stmt	: expr TOKEN_ORASSIGN expr TOKEN_SEMICOLON
 		{
 			$$ = ast_accept_orassign_stmt(@1.first_line + 1, $1, $3);
 			debug("orassign_stmt");
+		}
+		;
+shlassign_stmt	: expr TOKEN_SHLASSIGN expr TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_shlassign_stmt(@1.first_line + 1, $1, $3);
+			debug("shlassign_stmt");
+		}
+		;
+shrassign_stmt	: expr TOKEN_SHRASSIGN expr TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_shrassign_stmt(@1.first_line + 1, $1, $3);
+			debug("shrassign_stmt");
 		}
 		;
 plusplus_stmt	: expr TOKEN_PLUSPLUS TOKEN_SEMICOLON
@@ -515,6 +545,21 @@ expr		: term
 			$$ = ast_accept_and_expr($1, $3);
 			debug("expr: expr and expr");
 		}
+		| expr TOKEN_XOR expr
+		{
+			$$ = ast_accept_xor_expr($1, $3);
+			debug("expr: expr xor expr");
+		}
+		| expr TOKEN_OROR expr
+		{
+			$$ = ast_accept_or_expr($1, $3);
+			debug("expr: expr or expr");
+		}
+		| expr TOKEN_ANDAND expr
+		{
+			$$ = ast_accept_and_expr($1, $3);
+			debug("expr: expr and expr");
+		}
 		| expr TOKEN_LT expr
 		{
 			$$ = ast_accept_lt_expr($1, $3);
@@ -569,6 +614,16 @@ expr		: term
 		{
 			$$ = ast_accept_mod_expr($1, $3);
 			debug("expr: expr div expr");
+		}
+		| expr TOKEN_SHL expr
+		{
+			$$ = ast_accept_shl_expr($1, $3);
+			debug("expr: expr shl expr");
+		}
+		| expr TOKEN_SHR expr
+		{
+			$$ = ast_accept_shr_expr($1, $3);
+			debug("expr: expr shr expr");
 		}
 		| TOKEN_MINUS expr %prec UNARYMINUS
 		{

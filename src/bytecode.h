@@ -36,6 +36,8 @@ enum bytecode {
 	OP_AND,			/* 0x0f: dst = src1 & src2 */
 	OP_OR,			/* 0x10: dst = src1 | src2 */
 	OP_XOR,			/* 0x11: dst = src1 ^ src2 */
+	OP_SHL,			/* 0x11: dst = src1 << src2 */
+	OP_SHR,			/* 0x11: dst = src1 >> src2 */
 	OP_LT,			/* 0x12: dst = src1 <  src2 [0 or 1] */
 	OP_LTE,			/* 0x13: dst = src1 <= src2 [0 or 1] */
 	OP_GT,			/* 0x14: dst = src1 >  src2 [0 or 1] */

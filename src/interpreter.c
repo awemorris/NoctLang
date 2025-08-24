@@ -478,6 +478,30 @@ rt_visit_xor_op(
 	BINARY_OP(rt_xor_helper);
 }
 
+/* Visit a OP_SHL instruction. */
+static inline bool
+rt_visit_shl_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc)
+{
+	DEBUG_TRACE(*pc, "SHL");
+
+	BINARY_OP(rt_shl_helper);
+}
+
+/* Visit a OP_SHR instruction. */
+static inline bool
+rt_visit_shr_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc)
+{
+	DEBUG_TRACE(*pc, "SHR");
+
+	BINARY_OP(rt_shr_helper);
+}
+
 /* Visit a OP_NEG instruction. */
 static inline bool
 rt_visit_neg_op(
@@ -1092,6 +1116,14 @@ rt_visit_op(
 		break;
 	case OP_XOR:
 		if (!rt_visit_xor_op(env, func, pc))
+			return false;
+		break;
+	case OP_SHL:
+		if (!rt_visit_shl_op(env, func, pc))
+			return false;
+		break;
+	case OP_SHR:
+		if (!rt_visit_shr_op(env, func, pc))
 			return false;
 		break;
 	case OP_NEG:

@@ -533,7 +533,7 @@ jit_put_ret(
  * Bytecode visitors
  */
 
-/* Visit a ROP_LINEINFO instruction. */
+/* Visit a OP_LINEINFO instruction. */
 static INLINE bool
 jit_visit_lineinfo_op(
 	struct jit_context *ctx)
@@ -551,7 +551,7 @@ jit_visit_lineinfo_op(
 	return true;
 }
 
-/* Visit a ROP_ASSIGN instruction. */
+/* Visit a OP_ASSIGN instruction. */
 static INLINE bool
 jit_visit_assign_op(
 	struct jit_context *ctx)
@@ -585,7 +585,7 @@ jit_visit_assign_op(
 	return true;
 }
 
-/* Visit a ROP_ICONST instruction. */
+/* Visit a OP_ICONST instruction. */
 static INLINE bool
 jit_visit_iconst_op(
 	struct jit_context *ctx)
@@ -617,7 +617,7 @@ jit_visit_iconst_op(
 	return true;
 }
 
-/* Visit a ROP_FCONST instruction. */
+/* Visit a OP_FCONST instruction. */
 static INLINE bool
 jit_visit_fconst_op(
 	struct jit_context *ctx)
@@ -649,7 +649,7 @@ jit_visit_fconst_op(
 	return true;
 }
 
-/* Visit a ROP_SCONST instruction. */
+/* Visit a OP_SCONST instruction. */
 static INLINE bool
 jit_visit_sconst_op(
 	struct jit_context *ctx)
@@ -696,7 +696,7 @@ jit_visit_sconst_op(
 	return true;
 }
 
-/* Visit a ROP_ACONST instruction. */
+/* Visit a OP_ACONST instruction. */
 static INLINE bool
 jit_visit_aconst_op(
 	struct jit_context *ctx)
@@ -735,7 +735,7 @@ jit_visit_aconst_op(
 	return true;
 }
 
-/* Visit a ROP_DCONST instruction. */
+/* Visit a OP_DCONST instruction. */
 static INLINE bool
 jit_visit_dconst_op(
 	struct jit_context *ctx)
@@ -774,7 +774,7 @@ jit_visit_dconst_op(
 	return true;
 }
 
-/* Visit a ROP_INC instruction. */
+/* Visit a OP_INC instruction. */
 static INLINE bool
 jit_visit_inc_op(
 	struct jit_context *ctx)
@@ -800,7 +800,7 @@ jit_visit_inc_op(
 	return true;
 }
 
-/* Visit a ROP_ADD instruction. */
+/* Visit a OP_ADD instruction. */
 static INLINE bool
 jit_visit_add_op(
 	struct jit_context *ctx)
@@ -819,7 +819,7 @@ jit_visit_add_op(
 	return true;
 }
 
-/* Visit a ROP_SUB instruction. */
+/* Visit a OP_SUB instruction. */
 static INLINE bool
 jit_visit_sub_op(
 	struct jit_context *ctx)
@@ -838,7 +838,7 @@ jit_visit_sub_op(
 	return true;
 }
 
-/* Visit a ROP_MUL instruction. */
+/* Visit a OP_MUL instruction. */
 static INLINE bool
 jit_visit_mul_op(
 	struct jit_context *ctx)
@@ -857,7 +857,7 @@ jit_visit_mul_op(
 	return true;
 }
 
-/* Visit a ROP_DIV instruction. */
+/* Visit a OP_DIV instruction. */
 static INLINE bool
 jit_visit_div_op(
 	struct jit_context *ctx)
@@ -876,7 +876,7 @@ jit_visit_div_op(
 	return true;
 }
 
-/* Visit a ROP_MOD instruction. */
+/* Visit a OP_MOD instruction. */
 static INLINE bool
 jit_visit_mod_op(
 	struct jit_context *ctx)
@@ -895,7 +895,7 @@ jit_visit_mod_op(
 	return true;
 }
 
-/* Visit a ROP_AND instruction. */
+/* Visit a OP_AND instruction. */
 static INLINE bool
 jit_visit_and_op(
 	struct jit_context *ctx)
@@ -914,7 +914,7 @@ jit_visit_and_op(
 	return true;
 }
 
-/* Visit a ROP_OR instruction. */
+/* Visit a OP_OR instruction. */
 static INLINE bool
 jit_visit_or_op(
 	struct jit_context *ctx)
@@ -933,7 +933,7 @@ jit_visit_or_op(
 	return true;
 }
 
-/* Visit a ROP_XOR instruction. */
+/* Visit a OP_XOR instruction. */
 static INLINE bool
 jit_visit_xor_op(
 	struct jit_context *ctx)
@@ -952,7 +952,45 @@ jit_visit_xor_op(
 	return true;
 }
 
-/* Visit a ROP_NEG instruction. */
+/* Visit a OP_SHL instruction. */
+static INLINE bool
+jit_visit_shl_op(
+	struct jit_context *ctx)
+{
+	int dst;
+	int src1;
+	int src2;
+
+	CONSUME_TMPVAR(dst);
+	CONSUME_TMPVAR(src1);
+	CONSUME_TMPVAR(src2);
+
+	/* if (!rt_shl_helper(rt, dst, src1, src2)) return false; */
+	ASM_BINARY_OP(rt_shl_helper);
+
+	return true;
+}
+
+/* Visit a OP_SHR instruction. */
+static INLINE bool
+jit_visit_shr_op(
+	struct jit_context *ctx)
+{
+	int dst;
+	int src1;
+	int src2;
+
+	CONSUME_TMPVAR(dst);
+	CONSUME_TMPVAR(src1);
+	CONSUME_TMPVAR(src2);
+
+	/* if (!rt_shl_helper(rt, dst, src1, src2)) return false; */
+	ASM_BINARY_OP(rt_shr_helper);
+
+	return true;
+}
+
+/* Visit a OP_NEG instruction. */
 static INLINE bool
 jit_visit_neg_op(
 	struct jit_context *ctx)
@@ -969,7 +1007,7 @@ jit_visit_neg_op(
 	return true;
 }
 
-/* Visit a ROP_NOT instruction. */
+/* Visit a OP_NOT instruction. */
 static INLINE bool
 jit_visit_not_op(
 	struct jit_context *ctx)
@@ -986,7 +1024,7 @@ jit_visit_not_op(
 	return true;
 }
 
-/* Visit a ROP_LT instruction. */
+/* Visit a OP_LT instruction. */
 static INLINE bool
 jit_visit_lt_op(
 	struct jit_context *ctx)
@@ -1005,7 +1043,7 @@ jit_visit_lt_op(
 	return true;
 }
 
-/* Visit a ROP_LTE instruction. */
+/* Visit a OP_LTE instruction. */
 static INLINE bool
 jit_visit_lte_op(
 	struct jit_context *ctx)
@@ -1024,7 +1062,7 @@ jit_visit_lte_op(
 	return true;
 }
 
-/* Visit a ROP_EQ instruction. */
+/* Visit a OP_EQ instruction. */
 static INLINE bool
 jit_visit_eq_op(
 	struct jit_context *ctx)
@@ -1043,7 +1081,7 @@ jit_visit_eq_op(
 	return true;
 }
 
-/* Visit a ROP_NEQ instruction. */
+/* Visit a OP_NEQ instruction. */
 static INLINE bool
 jit_visit_neq_op(
 	struct jit_context *ctx)
@@ -1062,7 +1100,7 @@ jit_visit_neq_op(
 	return true;
 }
 
-/* Visit a ROP_GTE instruction. */
+/* Visit a OP_GTE instruction. */
 static INLINE bool
 jit_visit_gte_op(
 	struct jit_context *ctx)
@@ -1081,7 +1119,7 @@ jit_visit_gte_op(
 	return true;
 }
 
-/* Visit a ROP_GT instruction. */
+/* Visit a OP_GT instruction. */
 static INLINE bool
 jit_visit_gt_op(
 	struct jit_context *ctx)
@@ -1100,7 +1138,7 @@ jit_visit_gt_op(
 	return true;
 }
 
-/* Visit a ROP_EQI instruction. */
+/* Visit a OP_EQI instruction. */
 static INLINE bool
 jit_visit_eqi_op(
 	struct jit_context *ctx)
@@ -1135,7 +1173,7 @@ jit_visit_eqi_op(
 	return true;
 }
 
-/* Visit a ROP_LOADARRAY instruction. */
+/* Visit a OP_LOADARRAY instruction. */
 static INLINE bool
 jit_visit_loadarray_op(
 	struct jit_context *ctx)
@@ -1154,7 +1192,7 @@ jit_visit_loadarray_op(
 	return true;
 }
 
-/* Visit a ROP_STOREARRAY instruction. */
+/* Visit a OP_STOREARRAY instruction. */
 static INLINE bool
 jit_visit_storearray_op(
 	struct jit_context *ctx)
@@ -1173,7 +1211,7 @@ jit_visit_storearray_op(
 	return true;
 }
 
-/* Visit a ROP_LEN instruction. */
+/* Visit a OP_LEN instruction. */
 static INLINE bool
 jit_visit_len_op(
 	struct jit_context *ctx)
@@ -1190,7 +1228,7 @@ jit_visit_len_op(
 	return true;
 }
 
-/* Visit a ROP_GETDICTKEYBYINDEX instruction. */
+/* Visit a OP_GETDICTKEYBYINDEX instruction. */
 static INLINE bool
 jit_visit_getdictkeybyindex_op(
 	struct jit_context *ctx)
@@ -1209,7 +1247,7 @@ jit_visit_getdictkeybyindex_op(
 	return true;
 }
 
-/* Visit a ROP_GETDICTVALBYINDEX instruction. */
+/* Visit a OP_GETDICTVALBYINDEX instruction. */
 static INLINE bool
 jit_visit_getdictvalbyindex_op(
 	struct jit_context *ctx)
@@ -1228,7 +1266,7 @@ jit_visit_getdictvalbyindex_op(
 	return true;
 }
 
-/* Visit a ROP_LOADSYMBOL instruction. */
+/* Visit a OP_LOADSYMBOL instruction. */
 static INLINE bool
 jit_visit_loadsymbol_op(
 	struct jit_context *ctx)
@@ -1274,7 +1312,7 @@ jit_visit_loadsymbol_op(
 	return true;
 }
 
-/* Visit a ROP_STORESYMBOL instruction. */
+/* Visit a OP_STORESYMBOL instruction. */
 static INLINE bool
 jit_visit_storesymbol_op(
 	struct jit_context *ctx)
@@ -1320,7 +1358,7 @@ jit_visit_storesymbol_op(
 	return true;
 }
 
-/* Visit a ROP_LOADDOT instruction. */
+/* Visit a OP_LOADDOT instruction. */
 static INLINE bool
 jit_visit_loaddot_op(
 	struct jit_context *ctx)
@@ -1371,7 +1409,7 @@ jit_visit_loaddot_op(
 	return true;
 }
 
-/* Visit a ROP_STOREDOT instruction. */
+/* Visit a OP_STOREDOT instruction. */
 static INLINE bool
 jit_visit_storedot_op(
 	struct jit_context *ctx)
@@ -1422,7 +1460,7 @@ jit_visit_storedot_op(
 	return true;
 }
 
-/* Visit a ROP_CALL instruction. */
+/* Visit a OP_CALL instruction. */
 static inline bool
 jit_visit_call_op(
 	struct jit_context *ctx)
@@ -1496,7 +1534,7 @@ jit_visit_call_op(
 	return true;
 }
 
-/* Visit a ROP_THISCALL instruction. */
+/* Visit a OP_THISCALL instruction. */
 static inline bool
 jit_visit_thiscall_op(
 	struct jit_context *ctx)
@@ -1574,7 +1612,7 @@ jit_visit_thiscall_op(
 	return true;
 }
 
-/* Visit a ROP_JMP instruction. */
+/* Visit a OP_JMP instruction. */
 static inline bool
 jit_visit_jmp_op(
 	struct jit_context *ctx)
@@ -1601,7 +1639,7 @@ jit_visit_jmp_op(
 	return true;
 }
 
-/* Visit a ROP_JMPIFTRUE instruction. */
+/* Visit a OP_JMPIFTRUE instruction. */
 static inline bool
 jit_visit_jmpiftrue_op(
 	struct jit_context *ctx)
@@ -1642,7 +1680,7 @@ jit_visit_jmpiftrue_op(
 	return true;
 }
 
-/* Visit a ROP_JMPIFFALSE instruction. */
+/* Visit a OP_JMPIFFALSE instruction. */
 static inline bool
 jit_visit_jmpiffalse_op(
 	struct jit_context *ctx)
@@ -1683,7 +1721,7 @@ jit_visit_jmpiffalse_op(
 	return true;
 }
 
-/* Visit a ROP_JMPIFEQ instruction. */
+/* Visit a OP_JMPIFEQ instruction. */
 static inline bool
 jit_visit_jmpifeq_op(
 	struct jit_context *ctx)
@@ -1847,6 +1885,14 @@ jit_visit_bytecode(
 			break;
 		case OP_XOR:
 			if (!jit_visit_xor_op(ctx))
+				return false;
+			break;
+		case OP_SHL:
+			if (!jit_visit_shl_op(ctx))
+				return false;
+			break;
+		case OP_SHR:
+			if (!jit_visit_shr_op(ctx))
 				return false;
 			break;
 		case OP_NEG:

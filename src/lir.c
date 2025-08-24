@@ -1101,6 +1101,9 @@ lir_visit_expr(
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
 	case HIR_EXPR_OR:
+	case HIR_EXPR_XOR:
+	case HIR_EXPR_SHL:
+	case HIR_EXPR_SHR:
 	case HIR_EXPR_SUBSCR:
 		/* For the binary operators. */
 		if (!lir_visit_binary_expr(dst_tmpvar, expr, block))
@@ -1253,6 +1256,15 @@ lir_visit_binary_expr(
 		break;
 	case HIR_EXPR_OR:
 		opcode = OP_OR;
+		break;
+	case HIR_EXPR_XOR:
+		opcode = OP_XOR;
+		break;
+	case HIR_EXPR_SHL:
+		opcode = OP_SHL;
+		break;
+	case HIR_EXPR_SHR:
+		opcode = OP_SHR;
 		break;
 	case HIR_EXPR_SUBSCR:
 		opcode = OP_LOADARRAY;

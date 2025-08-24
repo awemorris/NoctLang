@@ -76,6 +76,20 @@ rt_xor_helper(
 	int src2);
 
 bool
+rt_shl_helper(
+	struct rt_env *rt,
+	int dst,
+	int src1,
+	int src2);
+
+bool
+rt_shr_helper(
+	struct rt_env *rt,
+	int dst,
+	int src1,
+	int src2);
+
+bool
 rt_neg_helper(
 	struct rt_env *rt,
 	int dst,

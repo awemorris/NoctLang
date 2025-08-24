@@ -408,6 +408,26 @@ ast_accept_orassign_stmt(
 	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_OR);
 }
 
+/* Called from the parser when it accepted a shlassign_stmt. */
+struct ast_stmt *
+ast_accept_shlassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_SHL);
+}
+
+/* Called from the parser when it accepted a orassign_stmt. */
+struct ast_stmt *
+ast_accept_shrassign_stmt(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs)
+{
+	return ast_accept_xassign_stmt(line, lhs, rhs, AST_EXPR_SHR);
+}
+
 static struct ast_stmt *
 ast_accept_xassign_stmt(
 	int line,
@@ -894,7 +914,7 @@ ast_accept_mod_expr(
 	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_MOD);
 }
 
-/* Called from the parser when it accepted a expr with a && operator. */
+/* Called from the parser when it accepted a expr with a & or && operator. */
 struct ast_expr *
 ast_accept_and_expr(
 	struct ast_expr *expr1,
@@ -903,13 +923,40 @@ ast_accept_and_expr(
 	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_AND);
 }
 
-/* Called from the parser when it accepted a expr with a || operator. */
+/* Called from the parser when it accepted a expr with a | or || operator. */
 struct ast_expr *
 ast_accept_or_expr(
 	struct ast_expr *expr1,
 	struct ast_expr *expr2)
 {
 	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_OR);
+}
+
+/* Called from the parser when it accepted a expr with a ^ operator. */
+struct ast_expr *
+ast_accept_xor_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_XOR);
+}
+
+/* Called from the parser when it accepted a expr with a << operator. */
+struct ast_expr *
+ast_accept_shl_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_SHL);
+}
+
+/* Called from the parser when it accepted a expr with a >> operator. */
+struct ast_expr *
+ast_accept_shr_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_SHR);
 }
 
 static struct ast_expr *

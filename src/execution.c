@@ -440,6 +440,82 @@ rt_xor_helper(
 }
 
 /*
+ * SHL helper.
+ */
+bool
+rt_shl_helper(
+	struct rt_env *env,
+	int dst,
+	int src1,
+	int src2)
+{
+	struct rt_value *dst_val;
+	struct rt_value *src1_val;
+	struct rt_value *src2_val;
+
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
+
+	switch (src1_val->type) {
+	case NOCT_VALUE_INT:
+		switch (src2_val->type) {
+		case NOCT_VALUE_INT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = src1_val->val.i << src2_val->val.i;
+			break;
+		default:
+			rt_error(env, N_TR("Value is not an integer."));
+			return false;
+		}
+		break;
+	default:
+		rt_error(env, N_TR("Value is not an integer."));
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * SHR helper.
+ */
+bool
+rt_shr_helper(
+	struct rt_env *env,
+	int dst,
+	int src1,
+	int src2)
+{
+	struct rt_value *dst_val;
+	struct rt_value *src1_val;
+	struct rt_value *src2_val;
+
+	dst_val = &env->frame->tmpvar[dst];
+	src1_val = &env->frame->tmpvar[src1];
+	src2_val = &env->frame->tmpvar[src2];
+
+	switch (src1_val->type) {
+	case NOCT_VALUE_INT:
+		switch (src2_val->type) {
+		case NOCT_VALUE_INT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = src1_val->val.i >> src2_val->val.i;
+			break;
+		default:
+			rt_error(env, N_TR("Value is not an integer."));
+			return false;
+		}
+		break;
+	default:
+		rt_error(env, N_TR("Value is not an integer."));
+		return false;
+	}
+
+	return true;
+}
+
+/*
  * NEG helper.
  */
 bool
