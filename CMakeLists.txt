@@ -14,6 +14,7 @@ option(NOCTLANG_ENABLE_MULTITHREAD  "Enable multithread support"  OFF)
 option(NOCTLANG_ENABLE_I18N         "Enable translation feature"  OFF)
 option(NOCTLANG_TARGET_WASM         "Build for Emscripten"        OFF)
 option(NOCTLANG_TARGET_UNITY        "Build for Unity"             OFF)
+option(NOCTLANG_USE_MDOC            "Install mdoc(7) man page"    OFF)
 
 #
 # Debug/Release
@@ -218,21 +219,21 @@ endif()
 
 include(GNUInstallDirs)
 
-install(TARGETS noctlang RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR})
-
 install(FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/include/noct/noct.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/noct/c89compat.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/noct)
 
+install(TARGETS noctlang RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
 if(NOCTLANG_ENABLE_CLI)
   install(TARGETS noct RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
-option(NOCT_USE_MDOC "Install mdoc(7) flavored man page" "${CMAKE_SYSTEM_NAME} STREQUAL FreeBSD")
-if (NOCT_USE_MDOC)
-  set(NOCT_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.mdoc")
+if (NOCTLANG_USE_MDOC)
+  set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.mdoc")
 else()
-  set(NOCT_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.man")
+  set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.man")
 endif()
+
 install(FILES ${NOCT_MANPAGE} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 RENAME noct.1)
