@@ -12,9 +12,9 @@ option(NOCTLANG_ENABLE_SHARED       "Build a shared library"      OFF)
 option(NOCTLANG_ENABLE_OBJECT       "Build objects only"          OFF)
 option(NOCTLANG_ENABLE_MULTITHREAD  "Enable multithread support"  OFF)
 option(NOCTLANG_ENABLE_I18N         "Enable translation feature"  OFF)
+option(NOCTLANG_ENABLE_MDOC         "Install mdoc(7) man page"    OFF)
 option(NOCTLANG_TARGET_WASM         "Build for Emscripten"        OFF)
 option(NOCTLANG_TARGET_UNITY        "Build for Unity"             OFF)
-option(NOCTLANG_USE_MDOC            "Install mdoc(7) man page"    OFF)
 
 #
 # Debug/Release
@@ -230,7 +230,7 @@ if(NOCTLANG_ENABLE_CLI)
   install(TARGETS noct RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
-if (NOCTLANG_USE_MDOC)
+if (NOCTLANG_ENABLE_MDOC)
   set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.mdoc")
 else()
   set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.man")
