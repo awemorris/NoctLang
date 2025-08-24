@@ -106,22 +106,20 @@ cback_translate_func(
 	func_count++;
 
 	/* Put a prologue code. */
-	fprintf(fp, "#include <noctlang/runtime.h>\n");
+	fprintf(fp, "#include \"runtime.h\"\n");
+	fprintf(fp, "#include \"execution.h\"\n");
 	fprintf(fp, "\n");
-	fprintf(fp, "#include <stdio.h>\n");
-	fprintf(fp, "#include <string.h>\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "bool L_%s(struct rt_env *rt)\n", func->func_name);
+	fprintf(fp, "bool L_%s(struct rt_env *env)\n", func->func_name);
 	fprintf(fp, "{\n");
 	fprintf(fp, "    struct rt_value tmpvar[%d];\n", func->tmpvar_size);
-	fprintf(fp, "    rt->frame->tmpvar = &tmpvar[0];\n");
+	fprintf(fp, "    env->frame->tmpvar = &tmpvar[0];\n");
 
 	/* Visit a bytecode array. */
 	if (!cback_visit_bytecode(func))
 		return false;
 
 	/* Put an epilogue code. */
-	fprintf(fp, "    rt->frame->tmpvar = NULL;\n");
+	fprintf(fp, "    env->frame->tmpvar = NULL;\n");
 	fprintf(fp, "    return true;\n");
 	fprintf(fp, "}\n\n");
 
@@ -168,7 +166,7 @@ cback_visit_bytecode(
 		return false;							\
 	}									\
 	*pc += 1 + 2 + 2;							\
-	fprintf(fp, "if (!" #helper "(rt, (int)dst, (int)src))");		\
+	fprintf(fp, "if (!" #helper "(env, (int)dst, (int)src))");		\
 	fprintf(fp, "    return false;\n");
 
 #define BINARY_OP(helper)							\
@@ -199,7 +197,7 @@ cback_visit_bytecode(
 		return false;							\
 	}									\
 	*pc += 1 + 2 + 2 + 2;							\
-	fprintf(fp, "if (!" #helper "(rt, (int)dst, (int)src1, (int)src2))");	\
+	fprintf(fp, "if (!" #helper "(env, (int)dst, (int)src1, (int)src2))");	\
 	fprintf(fp, "    return false;\n");
 
 /* Visit a LOP_LINEINFO instruction. */
@@ -258,7 +256,7 @@ cback_visit_assign_op(
 
 	*pc += 5;
 
-	fprintf(fp, "rt->frame->tmpvar[dst] = tmpvar[src];\n");
+	fprintf(fp, "env->frame->tmpvar[dst] = tmpvar[src];\n");
 
 	return true;
 }
@@ -293,8 +291,8 @@ cback_visit_iconst_op(
 
 	*pc += 1 + 2 + 4;
 
-	fprintf(fp, "    rt->frame->tmpvar[%d].type = RT_VALUE_INT;\n", dst);
-	fprintf(fp, "    rt->frame->tmpvar[%d].val.i = %d;\n", dst, val);
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i = %d;\n", dst, val);
 
 	return true;
 }
@@ -332,8 +330,8 @@ cback_visit_fconst_op(
 
 	*pc += 1 + 2 + 4;
 
-	fprintf(fp, "    rt->frame->tmpvar[%d].type = RT_VALUE_FLOAT;\n", dst);
-	fprintf(fp, "    rt->frame->tmpvar[%d].val.f = %f;\n", dst, val);
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_FLOAT;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.f = %f;\n", dst, val);
 
 	return true;
 }
@@ -371,7 +369,7 @@ cback_visit_sconst_op(
 
 	*pc += 1 + 2 + len + 1;
 
-	fprintf(fp, "    if (!rt_make_string(rt, &rt->frame->tmpvar[%d], \"%s\"))\n", dst, s);
+	fprintf(fp, "    if (!rt_make_string(env, &env->frame->tmpvar[%d], \"%s\"))\n", dst, s);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -401,7 +399,7 @@ cback_visit_aconst_op(
 
 	*pc += 1 + 2;
 
-	fprintf(fp, "    if (!rt_make_empty_array(rt, &rt->frame->tmpvar[%d]))\n", dst);
+	fprintf(fp, "    if (!rt_make_empty_array(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -431,7 +429,7 @@ cback_visit_dconst_op(
 
 	*pc += 1 + 2;
 
-	fprintf(fp, "    if (!rt_make_empty_dict(rt, &rt->frame->tmpvar[%d]))\n", dst);
+	fprintf(fp, "    if (!rt_make_empty_dict(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -461,7 +459,7 @@ cback_visit_inc_op(
 
 	*pc += 1 + 2;
 
-	fprintf(fp, "    rt->frame->tmpvar[%d].val.i++;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i++;\n", dst);
 
 	return true;
 }
@@ -551,6 +549,28 @@ cback_visit_xor_op(
 {
 	LABEL(*pc);
 	BINARY_OP(rt_xor_helper);
+	return true;
+}
+
+/* Visit a LOP_XOR instruction. */
+static INLINE bool
+cback_visit_shl_op(
+	struct lir_func *func,
+	int *pc)
+{
+	LABEL(*pc);
+	BINARY_OP(rt_shl_helper);
+	return true;
+}
+
+/* Visit a LOP_XOR instruction. */
+static INLINE bool
+cback_visit_shr_op(
+	struct lir_func *func,
+	int *pc)
+{
+	LABEL(*pc);
+	BINARY_OP(rt_shr_helper);
 	return true;
 }
 
@@ -714,7 +734,7 @@ cback_visit_loadsymbol_op(
 
 	*pc += 1 + 2 + len + 1;
 
-	fprintf(fp, "    if (!rt_loadsymbol_helper(rt, %d, \"%s\"))\n", dst, symbol);
+	fprintf(fp, "    if (!rt_loadsymbol_helper(env, %d, \"%s\"))\n", dst, symbol);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -744,7 +764,7 @@ cback_visit_storesymbol_op(
 
 	*pc += 1 + len + 1 + 2;
 
-	fprintf(fp, "    if (!rt_storesymbol_helper(rt, \"%s\", %d))\n", symbol, src);
+	fprintf(fp, "    if (!rt_storesymbol_helper(env, \"%s\", %d))\n", symbol, src);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -791,7 +811,7 @@ cback_visit_loaddot_op(
 
 	*pc += 1 + 2 + 2 + len + 1;
 
-	fprintf(fp, "    if (!rt_loaddot_helper(rt, %d, %d, \"%s\"))\n", dst, dict, field);
+	fprintf(fp, "    if (!rt_loaddot_helper(env, %d, %d, \"%s\"))\n", dst, dict, field);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -838,7 +858,7 @@ cback_visit_storedot_op(
 
 	*pc += 1 + 2 + 2 + len + 1;
 
-	fprintf(fp, "    if (!rt_storedot_helper(rt, %d, \"%s\", %d))\n", dict, field, src);
+	fprintf(fp, "    if (!rt_storedot_helper(env, %d, \"%s\", %d))\n", dict, field, src);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -885,7 +905,7 @@ cback_visit_call_op(
 	for (i = 0; i < arg_count; i++)
 		fprintf(fp, "%d,", arg[i]);
 	fprintf(fp, "};\n");
-	fprintf(fp, "        if (!rt_call_helper(rt, %d, %d, %d, arg))\n", dst_tmpvar, func_tmpvar, arg_count);
+	fprintf(fp, "        if (!rt_call_helper(env, %d, %d, %d, arg))\n", dst_tmpvar, func_tmpvar, arg_count);
 	fprintf(fp, "            return false;\n");
 	fprintf(fp, "    };\n");
 
@@ -947,7 +967,7 @@ cback_visit_thiscall_op(
 	for (i = 0; i < arg_count; i++)
 		fprintf(fp, "%d,", arg[i]);
 	fprintf(fp, "};\n");
-	fprintf(fp, "        if (!rt_thiscall_helper(rt, %d, %d, \"%s\", %d, arg))\n", dst_tmpvar, obj_tmpvar, name, arg_count);
+	fprintf(fp, "        if (!rt_thiscall_helper(env, %d, %d, \"%s\", %d, arg))\n", dst_tmpvar, obj_tmpvar, name, arg_count);
 	fprintf(fp, "            return false;\n");
 	fprintf(fp, "    };\n");
 
@@ -1019,7 +1039,7 @@ cback_visit_jmpiftrue_op(
 
 	*pc += 1 + 2 + 4;
 
-	fprintf(fp, "    if (rt->frame->tmpvar[%d].val.i != 0)\n", src);
+	fprintf(fp, "    if (env->frame->tmpvar[%d].val.i != 0)\n", src);
 	fprintf(fp, "        goto L_pc_%d;\n", target);
 
 	return true;
@@ -1059,7 +1079,7 @@ cback_visit_jmpiffalse_op(
 
 	*pc += 1 + 2 + 4;
 
-	fprintf(fp, "    if (rt->frame->tmpvar[%d].val.i == 0)\n", src);
+	fprintf(fp, "    if (env->frame->tmpvar[%d].val.i == 0)\n", src);
 	fprintf(fp, "        goto L_pc_%d;\n", target);
 
 	return true;
@@ -1257,119 +1277,11 @@ bool cback_finalize_dll(void)
 	return true;
 }
 
-/*
- * Put a finalization code for a standalone app.
- */
-bool cback_finalize_standalone(void)
-{
-	if (!cback_write_dll_init())
-		return false;
-
-	fprintf(fp, "bool L_print(struct rt_env *rt)\n");
-	fprintf(fp, "{\n");
-	fprintf(fp, "    struct rt_value msg;\n");
-	fprintf(fp, "    const char *s;\n");
-	fprintf(fp, "    float f;\n");
-	fprintf(fp, "    int i;\n");
-	fprintf(fp, "    int type;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    if (!rt_get_local(rt, \"msg\", &msg))\n");
-	fprintf(fp, "        return false;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    if (!rt_get_value_type(rt, &msg, &type))\n");
-	fprintf(fp, "        return false;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    switch (type) {\n");
-	fprintf(fp, "    case RT_VALUE_INT:\n");
-	fprintf(fp, "        if (!rt_get_int(rt, &msg, &i))\n");
-	fprintf(fp, "            return false;\n");
-	fprintf(fp, "        printf(\"%%i\\n\", i);\n");
-	fprintf(fp, "        break;\n");
-	fprintf(fp, "    case RT_VALUE_FLOAT:\n");
-	fprintf(fp, "        if (!rt_get_float(rt, &msg, &f))\n");
-	fprintf(fp, "            return false;\n");
-	fprintf(fp, "        printf(\"%%f\\n\", f);\n");
-	fprintf(fp, "        break;\n");
-	fprintf(fp, "    case RT_VALUE_STRING:\n");
-	fprintf(fp, "        if (!rt_get_string(rt, &msg, &s))\n");
-	fprintf(fp, "            return false;\n");
-	fprintf(fp, "        printf(\"%%s\\n\", s);\n");
-	fprintf(fp, "        break;\n");
-	fprintf(fp, "    default:\n");
-	fprintf(fp, "        printf(\"[object]\\n\");\n");
-	fprintf(fp, "        break;\n");
-	fprintf(fp, "    }\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    return true;\n");
-	fprintf(fp, "}\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "static bool L_readline(struct rt_env *rt)\n");
-	fprintf(fp, "{\n");
-	fprintf(fp, "    struct rt_value ret;\n");
-	fprintf(fp, "    char buf[1024];\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    memset(buf, 0, sizeof(buf));\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    fgets(buf, sizeof(buf) - 1, stdin);\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    if (!rt_make_string(rt, &ret, buf))\n");
-	fprintf(fp, "        return false;\n");
-	fprintf(fp, "    if (!rt_set_local(rt, \"$return\", &ret))\n");
-	fprintf(fp, "        return false;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    return true;\n");
-	fprintf(fp, "}\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "static bool install_intrinsics(struct rt_env *rt)\n");
-	fprintf(fp, "{\n");
-	fprintf(fp, "    if (!rt_register_cfunc(rt, \"print\", 1, print_param, L_print))\n");
-	fprintf(fp, "        return 1;\n");
-	fprintf(fp, "    if (!rt_register_cfunc(rt, \"readline\", 0, NULL, L_readline))\n");
-	fprintf(fp, "        return 1;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    return true;\n");
-	fprintf(fp, "}\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "int main(int argc, char *argv)");
-	fprintf(fp, "{\n");
-	fprintf(fp, "    struct rt_env *rt;\n");
-	fprintf(fp, "    struct rt_value ret;\n");
-	fprintf(fp, "    const char *print_param[] = {\"msg\"};\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    /* Create a runtime. */\n");
-	fprintf(fp, "    if (!rt_create(&rt))\n");
-	fprintf(fp, "        return 1;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    /* Install intrinsics. */\n");
-	fprintf(fp, "    if (!install_intrinsics(rt))\n");
-	fprintf(fp, "        return 1;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    /* Install app functions. */");
-	fprintf(fp, "    if (!L_dll_init(rt))\n");
-	fprintf(fp, "        return 1;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    /* Call app main. */\n");
-	fprintf(fp, "    if (!rt_call_with_name(rt, \"main\", NULL, 0, NULL, &ret))\n");
-	fprintf(fp, "        return 1;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    /* Destroy a runtime. */\n");
-	fprintf(fp, "    if (!rt_destroy(rt))\n");
-	fprintf(fp, "        return 1;\n");
-	fprintf(fp, "\n");
-	fprintf(fp, "    return ret.val.i;\n");
-	fprintf(fp, "}\n");
-
-	fclose(fp);
-	fp = NULL;
-
-	return true;
-}
-
 static bool cback_write_dll_init(void)
 {
 	int i, j;
 
-	fprintf(fp, "bool L_dll_init(struct rt_env *rt)\n");
+	fprintf(fp, "bool init_aot_code(NoctEnv *env)\n");
 	fprintf(fp, "{\n");
 	for (i = 0; i < func_count; i++) {
 		fprintf(fp, "    {\n");
@@ -1378,11 +1290,11 @@ static bool cback_write_dll_init(void)
 			for (j = 0; j < func_table[i].param_count; j++)
 				fprintf(fp, "\"%s\",", func_table[i].param_name[i]);
 			fprintf(fp, "};\n");
-			fprintf(fp, "        if (!rt_register_cfunc(rt, \"%s\", %d, params, L_%s))\n",
+			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", %d, params, L_%s, NULL))\n",
 				func_table[i].name, func_table[i].param_count, func_table[i].name);
 			fprintf(fp, "            return false;\n");
 		} else {
-			fprintf(fp, "        if (!rt_register_cfunc(rt, \"%s\", 0, NULL, L_%s))\n",
+			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", 0, NULL, L_%s, NULL))\n",
 				func_table[i].name, func_table[i].name);
 			fprintf(fp, "            return false;\n");
 		}
