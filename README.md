@@ -8,7 +8,7 @@ Just ~160 KB — featuring a fast JIT compiler, robust generational GC,
 and clean C/JS-like syntax with a novel Dictionary-based OOP.
 
 Written in portable ANSI C with no external dependencies, it runs
-everywhere — from desktop PCs down to smartphones.
+everywhere — from desktop PCs down to Raspberry Pi.
 
 Try it now — launch REPL or write your first program.  It might take
 less time than you think.
@@ -185,12 +185,12 @@ func main() {
 }
 ```
 
-### Object Oriented Model
+### Object-Oriented Model
 
 The object-oriented model in Noct is a lightweight variation of prototype-based OOP.
 
 - Classes are simply dictionary templates
-- Inheritance and instantiation are realized by dictionary merging
+- Inheritance and instantiation are realized by dictionary copying and merging
 - There is no prototype chain, and modifying a class does not affect existing instances
 
 This design treats dictionaries as first-class objects, and the author refers to it as Dictionary-based OOP (D-OOP).
@@ -238,6 +238,31 @@ balance high-level program analysis with efficient execution:
     - Basis for future advanced optimizations.
 
 ```
+CFG for "func foo(a) { if (a > 0) { return a; } else { return -a; } }"
+
+  +---------------+
+  | 0: Func Block |         -- pred: none, succ: 1
+  +---------------+
+     +-------------+
+     | 1: IF Block |        -- pred: 0, succ: 2 (true), 3 (false)
+     +-------------+
+        +----------------+
+        | 2: Basic Block |  -- pred 1, succ 5
+        +----------------+
+     +---------------+
+     | 3: Else Block |      -- pred 1, succ 4
+     +---------------+
+        +----------------+
+        | 4: Basic Block |  -- pred 3, succ 5
+        +----------------+
+  +--------------+
+  | 5: End Block |          -- pred 2, 4
+  +--------------+
+                                 (pred = predecessor, succ = successor)
+     
+```
+
+```
   DAG for "a = 1 + 2"
 
 
@@ -271,7 +296,7 @@ balance high-level program analysis with efficient execution:
  | SRC | --> | AST | --> | HIR | --> | LIR | ----> <<Interpreter>>
  +-----+     +-----+     +-----+     +-----+
                                         |
-                                        +--------> <<JIT CodeGen>>
+                                        +--------> <<JIT Codegen>>
 ```
 
 - The AST captures the syntactic structure.
@@ -290,14 +315,14 @@ As shown above, HIR expresses structure, while LIR expresses execution.
 This split allows Noct to keep the JIT pipeline lightweight without sacrificing optimization opportunities.
 
 Because all JIT backends translate from the same LIR, portability across architectures comes naturally.
-This is the key to Noct’s portability.
+This unified approach is what makes Noct both portable and maintainable.
 
 ---
 
 ## FFI API
 
 The Noct runtime can be embedded in C applications. This allows you to
-load, compile, and execute scripts directly within your software.
+load, compile, and execute scripts and bytecode directly within your software.
 
 ```
 void call_noct(const char *file_name, const char *file_text)
