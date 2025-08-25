@@ -237,19 +237,41 @@ balance high-level program analysis with efficient execution:
     - Expression DAG for algebraic simplification.
     - Basis for future advanced optimizations.
 
+```
+  DAG for "a = 1 + 2"
+
+
+     LHS   ---- ASSIGN  ----   RHS
+      |                         |
+     term                      ADD
+      |                        / \
+   symbol a                 term  term
+                             |       |
+                           int 1   int 2
+```
+
 - **LIR (Low-level Intermediate Representation)**
-    - VM bytecode, serving as the primary format for both interpretation and JIT code generator input.
-    - High abstraction level for fast, portable interpretation.
+    - VM bytecode, serving as the primary format for both interpretation and JIT codegen input.
+    - High abstraction level to achieve fast, portable interpretation.
     - Compact enough for efficient machine code lowering in the JIT.
+
+```
+  LIR for "a = 1 + 2"
+
+    ICONST       %0, 1               ; Load constant 1
+    ICONST       %1, 2               ; Load constant 2
+    ADD          %2, %0, %1          ; Compute sum
+    STORESYMBOL  "a", %2             ; Store result into global variable "a"
+```
 
 ### Compilation Stages
 
 ```
  +-----+     +-----+     +-----+     +-----+
- | Src | --> | AST | --> | HIR | --> | LIR | ----> <<Interpreter>>
+ | SRC | --> | AST | --> | HIR | --> | LIR | ----> <<Interpreter>>
  +-----+     +-----+     +-----+     +-----+
                                         |
-                                        +--------> <<JIT>>
+                                        +--------> <<JIT CodeGen>>
 ```
 
 - The AST captures the syntactic structure.
@@ -264,7 +286,11 @@ The separation of HIR and LIR enables:
 - **Clarity in architecture**: each stage has a well-defined role, simplifying maintenance.
 - **Portability**: the same LIR can be interpreted directly or lowered into optimized machine code.
 
+As shown above, HIR expresses structure, while LIR expresses execution.
 This split allows Noct to keep the JIT pipeline lightweight without sacrificing optimization opportunities.
+
+Because all JIT backends translate from the same LIR, portability across architectures comes naturally.
+This is the key to Noct’s portability.
 
 ---
 
@@ -278,13 +304,13 @@ void call_noct(const char *file_name, const char *file_text)
 {
     // Create a VM.
     NoctVM *vm;
-    NoctEnv *env
+    NoctEnv *env;
     noct_create_vm(&vm, &env);
 
     // Compile source.
     noct_register_source(env, file_name, file_text);
 
-    // Call the main() function.
+    // Call the main() function with no arguments.
     NoctValue ret = NOCT_ZERO;
     noct_enter_vm(env, "main", 0, NULL, &ret);
 
