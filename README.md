@@ -185,7 +185,7 @@ func main() {
 }
 ```
 
-### Objective Oriented Model
+### Object Oriented Model
 
 The object-oriented model in Noct is a lightweight variation of prototype-based OOP.
 
@@ -225,6 +225,49 @@ func main() {
 
 ---
 
+## JIT Pipeline
+
+### Intermediate Representations
+
+Noct employs two distinct intermediate representations (IRs) to
+balance high-level program analysis with efficient execution:
+
+- **HIR (High-level Intermediate Representation)**
+    - Structured control flow graph (CFG) for program analysis.
+    - Expression DAG for algebraic simplification.
+    - Basis for future advanced optimizations.
+
+- **LIR (Low-level Intermediate Representation)**
+    - VM bytecode, serving as the primary format for both interpretation and JIT code generator input.
+    - High abstraction level for fast, portable interpretation.
+    - Compact enough for efficient machine code lowering in the JIT.
+
+### Compilation Stages
+
+```
+ +-----+     +-----+     +-----+     +-----+
+ | Src | --> | AST | --> | HIR | --> | LIR | ----> <<Interpreter>>
+ +-----+     +-----+     +-----+     +-----+
+                                        |
+                                        +--------> <<JIT>>
+```
+
+- The AST captures the syntactic structure.
+- The HIR provides an analyzable, optimization-friendly form.
+- The LIR bridges execution, serving both the interpreter and JIT.
+
+### Design Rationale
+
+The separation of HIR and LIR enables:
+
+- **A lightweight JIT pipeline**: minimal overhead from analysis to code generation.
+- **Clarity in architecture**: each stage has a well-defined role, simplifying maintenance.
+- **Portability**: the same LIR can be interpreted directly or lowered into optimized machine code.
+
+This split allows Noct to keep the JIT pipeline lightweight without sacrificing optimization opportunities.
+
+---
+
 ## FFI API
 
 The Noct runtime can be embedded in C applications. This allows you to
@@ -255,21 +298,6 @@ appropriate header (`noct/noct.h`).
 
 Error handling and result introspection are left to the host
 application, giving full control over integration.
-
----
-
-## Intermediate Representations
-
-Noct uses two intermediate representations:
-
-- **HIR (High-level Intermediate Representation)**  
-  Structured control flow graph (CFG) for flow-sensitive optimizations.
-
-- **LIR (Low-level Intermediate Representation)**  
-  VM bytecode, used for execution and code generation.
-
-Their separation enables a lightweight JIT pipeline with a clear,
-analyzable architecture.
 
 ---
 
