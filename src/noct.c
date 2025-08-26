@@ -1095,8 +1095,8 @@ noct_get_array_elem_check_string(
 	/* Check the element value type. */
 	if (!noct_get_value_type(env, val, &type))
 		return false;
-	if (type != NOCT_VALUE_FLOAT) {
-		rt_error(env, N_TR("Element %d is not a float."), index);
+	if (type != NOCT_VALUE_STRING) {
+		rt_error(env, N_TR("Element %d is not a string."), index);
 		return false;
 	}
 
