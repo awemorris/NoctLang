@@ -555,7 +555,7 @@ int command_repl(void)
 	if (!register_ffi(env))
 		return 1;
 
-	wide_printf(N_TR("Noct Programming Language"));
+	wide_printf(N_TR("Noct Programming Language\n"));
 	wide_printf(N_TR("Entering REPL mode.\n"));
 	wide_printf("\n");
 
@@ -953,10 +953,10 @@ struct ffi_item {
 } ffi_items[] = {
 	{"import", 1, {"file"}, cfunc_import},
 	{"print", 1, {"msg"}, cfunc_print},
-	{"readline", 0, {NULL}, cfunc_readline},
-	{"readint", 0, {NULL}, cfunc_readint},
-	{"readfilelines", 1, {"file"}, cfunc_readfilelines},
-	{"writefilelines", 2, {"file", "lines"}, cfunc_writefilelines},
+	{"readLine", 0, {NULL}, cfunc_readline},
+	{"readInt", 0, {NULL}, cfunc_readint},
+	{"readFileLines", 1, {"file"}, cfunc_readfilelines},
+	{"writeFileLines", 2, {"file", "lines"}, cfunc_writefilelines},
 	{"shell", 1, {"cmd"}, cfunc_shell},
 };
 
