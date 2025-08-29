@@ -567,6 +567,38 @@ ast_accept_if_stmt(
 	return stmt;
 }
 
+/* Called from the parser when it accepted a if_stmt. */
+struct ast_stmt *
+ast_accept_if_stmt_single(
+	int line,
+	struct ast_expr *cond,
+	struct ast_stmt *stmt)
+{
+	struct ast_stmt_list *stmt_list;
+	struct ast_stmt *if_stmt;
+
+	stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+	if (stmt_list == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt_list, 0, sizeof(struct ast_stmt_list));
+	stmt_list->list = stmt;
+
+	if_stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (if_stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(if_stmt, 0, sizeof(struct ast_stmt));
+	if_stmt->type = AST_STMT_IF;
+	if_stmt->val.if_.cond = cond;
+	if_stmt->val.if_.stmt_list = stmt_list;
+	if_stmt->line = line;
+
+	return if_stmt;
+}
+
 /* Called from the parser when it accepted a elif_stmt. */
 struct ast_stmt *
 ast_accept_elif_stmt(
@@ -590,6 +622,38 @@ ast_accept_elif_stmt(
 	return stmt;
 }
 
+/* Called from the parser when it accepted a elif_stmt. */
+struct ast_stmt *
+ast_accept_elif_stmt_single(
+	int line,
+	struct ast_expr *cond,
+	struct ast_stmt *stmt)
+{
+	struct ast_stmt_list *stmt_list;
+	struct ast_stmt *elif_stmt;
+
+	stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+	if (stmt_list == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt_list, 0, sizeof(struct ast_stmt_list));
+	stmt_list->list = stmt;
+
+	elif_stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (elif_stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(elif_stmt, 0, sizeof(struct ast_stmt));
+	elif_stmt->type = AST_STMT_ELIF;
+	elif_stmt->val.elif.cond = cond;
+	elif_stmt->val.elif.stmt_list = stmt_list;
+	elif_stmt->line = line;
+
+	return elif_stmt;
+}
+
 /* Called from the parser when it accepted a else_stmt. */
 struct ast_stmt *
 ast_accept_else_stmt(
@@ -609,6 +673,36 @@ ast_accept_else_stmt(
 	stmt->line = line;
 
 	return stmt;
+}
+
+/* Called from the parser when it accepted a else_stmt. */
+struct ast_stmt *
+ast_accept_else_stmt_single(
+	int line,
+	struct ast_stmt *stmt)
+{
+	struct ast_stmt_list *stmt_list;
+	struct ast_stmt *else_stmt;
+
+	stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+	if (stmt_list == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt_list, 0, sizeof(struct ast_stmt_list));
+	stmt_list->list = stmt;
+
+	else_stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (else_stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(else_stmt, 0, sizeof(struct ast_stmt));
+	else_stmt->type = AST_STMT_ELSE;
+	else_stmt->val.else_.stmt_list = stmt_list;
+	else_stmt->line = line;
+
+	return else_stmt;
 }
 
 /* Called from the parser when it accepted a while_stmt. */
@@ -632,6 +726,38 @@ ast_accept_while_stmt(
 	stmt->line = line;
 
 	return stmt;
+}
+
+/* Called from the parser when it accepted a while_stmt. */
+struct ast_stmt *
+ast_accept_while_stmt_single(
+	int line,
+	struct ast_expr *cond,
+	struct ast_stmt *stmt)
+{
+	struct ast_stmt_list *stmt_list;
+	struct ast_stmt *while_stmt;
+
+	stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+	if (stmt_list == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt_list, 0, sizeof(struct ast_stmt_list));
+	stmt_list->list = stmt;
+
+	while_stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (while_stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(while_stmt, 0, sizeof(struct ast_stmt));
+	while_stmt->type = AST_STMT_WHILE;
+	while_stmt->val.while_.cond = cond;
+	while_stmt->val.while_.stmt_list = stmt_list;
+	while_stmt->line = line;
+
+	return while_stmt;
 }
 
 /* Called from the parser when it accepted a for_stmt with for(v in) syntax. */
@@ -658,6 +784,41 @@ ast_accept_for_v_stmt(
 	stmt->line = line;
 
 	return stmt;
+}
+
+/* Called from the parser when it accepted a for_stmt with for(v in) syntax. */
+struct ast_stmt *
+ast_accept_for_v_stmt_single(
+	int line,
+	char *iter_sym,
+	struct ast_expr *array,
+	struct ast_stmt *stmt)
+{
+	struct ast_stmt_list *stmt_list;
+	struct ast_stmt *for_stmt;
+
+	stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+	if (stmt_list == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt_list, 0, sizeof(struct ast_stmt_list));
+	stmt_list->list = stmt;
+
+	for_stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (for_stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(for_stmt, 0, sizeof(struct ast_stmt));
+	for_stmt->type = AST_STMT_FOR;
+	for_stmt->val.for_.is_range = false;
+	for_stmt->val.for_.value_symbol = iter_sym;
+	for_stmt->val.for_.collection = array;
+	for_stmt->val.for_.stmt_list = stmt_list;
+	for_stmt->line = line;
+
+	return for_stmt;
 }
 
 /* Called from the parser when it accepted a for_stmt with for(k, v in) syntax. */
@@ -688,6 +849,43 @@ ast_accept_for_kv_stmt(
 	return stmt;
 }
 
+/* Called from the parser when it accepted a for_stmt with for(k, v in) syntax. */
+struct ast_stmt *
+ast_accept_for_kv_stmt_single(
+	int line,
+	char *key_sym,
+	char *val_sym,
+	struct ast_expr *array,
+	struct ast_stmt *stmt)
+{
+	struct ast_stmt_list *stmt_list;
+	struct ast_stmt *for_stmt;
+
+	stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+	if (stmt_list == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt_list, 0, sizeof(struct ast_stmt_list));
+	stmt_list->list = stmt;
+
+	for_stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (for_stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(for_stmt, 0, sizeof(struct ast_stmt));
+	for_stmt->type = AST_STMT_FOR;
+	for_stmt->val.for_.is_range = false;
+	for_stmt->val.for_.key_symbol = key_sym;
+	for_stmt->val.for_.value_symbol = val_sym;
+	for_stmt->val.for_.collection = array;
+	for_stmt->val.for_.stmt_list = stmt_list;
+	for_stmt->line = line;
+
+	return for_stmt;
+}
+
 /* Called from the parser when it accepted a for_stmt with for(i in ..) syntax. */
 struct ast_stmt *
 ast_accept_for_range_stmt(
@@ -714,6 +912,43 @@ ast_accept_for_range_stmt(
 	stmt->line = line;
 
 	return stmt;
+}
+
+/* Called from the parser when it accepted a for_stmt with for(i in ..) syntax. */
+struct ast_stmt *
+ast_accept_for_range_stmt_single(
+	int line,
+	char *counter_sym,
+	struct ast_expr *start,
+	struct ast_expr *stop,
+	struct ast_stmt *stmt)
+{
+	struct ast_stmt_list *stmt_list;
+	struct ast_stmt *for_stmt;
+
+	stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+	if (stmt_list == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt_list, 0, sizeof(struct ast_stmt_list));
+	stmt_list->list = stmt;
+
+	for_stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (for_stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(for_stmt, 0, sizeof(struct ast_stmt));
+	for_stmt->type = AST_STMT_FOR;
+	for_stmt->val.for_.is_range = true;
+	for_stmt->val.for_.counter_symbol = counter_sym;
+	for_stmt->val.for_.start = start;
+	for_stmt->val.for_.stop = stop;
+	for_stmt->val.for_.stmt_list = stmt_list;
+	for_stmt->line = line;
+
+	return for_stmt;
 }
 
 /* Called from the parser when it accepted a return_stmt. */

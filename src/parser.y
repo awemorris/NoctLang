@@ -46,12 +46,19 @@ struct ast_stmt *ast_accept_shrassign_stmt(int line, struct ast_expr *lhs, struc
 struct ast_stmt *ast_accept_plusplus_stmt(int line, struct ast_expr *expr);
 struct ast_stmt *ast_accept_minusminus_stmt(int line, struct ast_expr *expr);
 struct ast_stmt *ast_accept_if_stmt(int line, struct ast_expr *cond, struct ast_stmt_list *stmt_list);
+struct ast_stmt *ast_accept_if_stmt_single(int line, struct ast_expr *cond, struct ast_stmt *stmt);
 struct ast_stmt *ast_accept_elif_stmt(int line, struct ast_expr *cond, struct ast_stmt_list *stmt_list);
+struct ast_stmt *ast_accept_elif_stmt_single(int line, struct ast_expr *cond, struct ast_stmt *stmt);
 struct ast_stmt *ast_accept_else_stmt(int line, struct ast_stmt_list *stmt_list);
+struct ast_stmt *ast_accept_else_stmt_single(int line, struct ast_stmt *stmt);
 struct ast_stmt *ast_accept_while_stmt(int line, struct ast_expr *cond, struct ast_stmt_list *stmt_list);
+struct ast_stmt *ast_accept_while_stmt_single(int line, struct ast_expr *cond, struct ast_stmt *stmt);
 struct ast_stmt *ast_accept_for_kv_stmt(int line, char *key_sym, char *val_sym, struct ast_expr *array, struct ast_stmt_list *stmt_list);
+struct ast_stmt *ast_accept_for_kv_stmt_single(int line, char *key_sym, char *val_sym, struct ast_expr *array, struct ast_stmt *stmt);
 struct ast_stmt *ast_accept_for_v_stmt(int line, char *iter_sym, struct ast_expr *array, struct ast_stmt_list *stmt_list);
+struct ast_stmt *ast_accept_for_v_stmt_single(int line, char *iter_sym, struct ast_expr *array, struct ast_stmt *stmt);
 struct ast_stmt *ast_accept_for_range_stmt(int line, char *counter_sym, struct ast_expr *start, struct ast_expr *stop, struct ast_stmt_list *stmt_list);
+struct ast_stmt *ast_accept_for_range_stmt_single(int line, char *counter_sym, struct ast_expr *start, struct ast_expr *stop, struct ast_stmt *stmt);
 struct ast_stmt *ast_accept_return_stmt(int line, struct ast_expr *expr);
 struct ast_stmt *ast_accept_break_stmt(int line);
 struct ast_stmt *ast_accept_continue_stmt(int line);
@@ -132,7 +139,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_ASSIGN TOKEN_PLUSASSIGN TOKEN_MINUSASSIGN TOKEN_MULASSIGN TOKEN_DIVASSIGN TOKEN_MODASSIGN TOKEN_ANDASSIGN TOKEN_ORASSIGN TOKEN_SHLASSIGN TOKEN_SHRASSIGN
 %token TOKEN_PLUSPLUS TOKEN_MINUSMINUS TOKEN_ANDAND TOKEN_OROR
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
-%token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
+%token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
 %token TOKEN_CONTINUE TOKEN_ARROW TOKEN_DARROW TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR
 
@@ -428,20 +435,30 @@ if_stmt		: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
 			$$ = ast_accept_if_stmt(@1.first_line + 1, $3, $6);
 			debug("if_stmt: stmt_list");
 		}
+		| TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_if_stmt_single(@1.first_line + 1, $3, $5);
+			debug("if_stmt: stmt");
+		}
 		| TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
 		{
 			$$ = ast_accept_if_stmt(@1.first_line + 1, $3, NULL);
 			debug("if_stmt: empty");
 		}
 		;
-elif_stmt	: TOKEN_ELSE TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
+elif_stmt	: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_elif_stmt(@1.first_line + 1, $4, $7);
+			$$ = ast_accept_elif_stmt(@1.first_line + 1, $3, $6);
 			debug("elif_stmt: stmt_list");
 		}
-		| TOKEN_ELSE TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
+		| TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR stmt
 		{
-			$$ = ast_accept_elif_stmt(@1.first_line + 1, $4, NULL);
+			$$ = ast_accept_elif_stmt_single(@1.first_line + 1, $3, $5);
+			debug("elif_stmt: stmt");
+		}
+		| TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
+		{
+			$$ = ast_accept_elif_stmt(@1.first_line + 1, $3, NULL);
 			debug("elif_stmt: empty");
 		}
 		;
@@ -449,6 +466,11 @@ else_stmt	: TOKEN_ELSE TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_else_stmt(@1.first_line + 1, $3);
 			debug("else_stmt: stmt_list");
+		}
+		| TOKEN_ELSE stmt
+		{
+			$$ = ast_accept_else_stmt_single(@1.first_line + 1, $2);
+			debug("else_stmt: stmt");
 		}
 		| TOKEN_ELSE TOKEN_LBLK TOKEN_RBLK
 		{
@@ -461,6 +483,11 @@ while_stmt	: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_R
 			$$ = ast_accept_while_stmt(@1.first_line + 1, $3, $6);
 			debug("while_stmt: stmt_list");
 		}
+		| TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_while_stmt_single(@1.first_line + 1, $3, $5);
+			debug("while_stmt: stmt");
+		}
 		| TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
 		{
 			$$ = ast_accept_while_stmt(@1.first_line + 1, $3, NULL);
@@ -470,6 +497,11 @@ while_stmt	: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_R
 for_stmt	: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_for_kv_stmt(@1.first_line + 1, $3, $5, $7, $10);
+			debug("for_stmt: for(k, v in array) { stmt_list }");
+		}
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_for_kv_stmt_single(@1.first_line + 1, $3, $5, $7, $9);
 			debug("for_stmt: for(k, v in array) { stmt_list }");
 		}
 		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
@@ -482,6 +514,11 @@ for_stmt	: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN e
 			$$ = ast_accept_for_v_stmt(@1.first_line + 1, $3, $5, $8);
 			debug("for_stmt: for(v in array) { stmt_list }");
 		}
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_for_v_stmt_single(@1.first_line + 1, $3, $5, $7);
+			debug("for_stmt: for(v in array) { stmt_list }");
+		}
 		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
 		{
 			$$ = ast_accept_for_v_stmt(@1.first_line + 1, $3, $5, NULL);
@@ -490,6 +527,11 @@ for_stmt	: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN e
 		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_for_range_stmt(@1.first_line + 1, $3, $5, $7, $10);
+			debug("for_stmt: for(i in x..y) { stmt_list }");
+		}
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_for_range_stmt_single(@1.first_line + 1, $3, $5, $7, $9);
 			debug("for_stmt: for(i in x..y) { stmt_list }");
 		}
 		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK

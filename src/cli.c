@@ -1084,8 +1084,11 @@ cfunc_readline(
 
 	memset(buf, 0, sizeof(buf));
 
-	if (fgets(buf, sizeof(buf) - 1, stdin) == NULL)
-		strcpy(buf, "");
+	if (fgets(buf, sizeof(buf) - 1, stdin) == NULL) {
+		if (!noct_set_return_make_int(rt, &ret, 0))
+			return false;
+		return true;
+	}
 
 	len = (int)strlen(buf);
 	if (len > 0)
