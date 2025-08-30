@@ -271,8 +271,6 @@ ast_accept_stmt_list(
 	struct ast_stmt_list *stmt_list,
 	struct ast_stmt *stmt)
 {
-	assert(stmt != NULL);
-
 	if (stmt_list == NULL) {
 		/* If this is a top element, allocate a list. */
 		stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
