@@ -86,7 +86,7 @@ BISON_TARGET(Parser
   ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.y
   ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.c
   DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.h
-  COMPILE_FLAGS "-p ast_yy"
+  COMPILE_FLAGS "-p ast_yy -Wcounterexamples"
 )
 
 #

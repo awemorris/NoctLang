@@ -138,10 +138,10 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_DIV TOKEN_MOD TOKEN_SHL TOKEN_SHR
 %token TOKEN_ASSIGN TOKEN_PLUSASSIGN TOKEN_MINUSASSIGN TOKEN_MULASSIGN TOKEN_DIVASSIGN TOKEN_MODASSIGN TOKEN_ANDASSIGN TOKEN_ORASSIGN TOKEN_SHLASSIGN TOKEN_SHRASSIGN
 %token TOKEN_PLUSPLUS TOKEN_MINUSMINUS TOKEN_ANDAND TOKEN_OROR
-%token TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
+%token TOKEN_LPAR TOKEN_RPAR TOKEN_RPAR_LBLK TOKEN_LBLK TOKEN_LBLK_BLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
 %token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
-%token TOKEN_CONTINUE TOKEN_ARROW TOKEN_DARROW TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR
+%token TOKEN_CONTINUE TOKEN_ARROW TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR
 
 %type <func_list> func_list;
 %type <func> func;
@@ -170,6 +170,9 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <stmt> break_stmt;
 %type <stmt> continue_stmt;
 %type <expr> expr;
+%type <expr> call_expr;
+%type <expr> thiscall_expr;
+%type <expr> lambda_expr;
 %type <kv_list> kv_list;
 %type <kv> kv;
 %type <term> term;
@@ -190,15 +193,19 @@ extern void ast_yyerror(void *scanner, char *s);
 %left TOKEN_NEQ
 %left TOKEN_PLUS
 %left TOKEN_MINUS
+%left TOKEN_SHL
+%left TOKEN_SHR
 %left TOKEN_MUL
 %left TOKEN_DIV
 %left TOKEN_MOD
 %left TOKEN_DOT
-%right TOKEN_DARROW
+%right TOKEN_RPAR_DARROW_LBLK
 %right TOKEN_ARROW
 %right TOKEN_LBLK
 %right TOKEN_LARR
 %right TOKEN_LPAR
+
+%precedence CALL
 
 %locations
 
@@ -219,25 +226,15 @@ func_list	: func
 			debug("func_list: func_list func");
 		}
 		;
-func		: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
+func		: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func($2, $4, $7);
+			$$ = ast_accept_func($2, $4, $6);
 			debug("func: func name(param_list) { stmt_list }");
 		}
-		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
+		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func($2, $4, NULL);
-			debug("func: func name(param_list) { empty }");
-		}
-		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
-		{
-			$$ = ast_accept_func($2, NULL, $6);
+			$$ = ast_accept_func($2, NULL, $5);
 			debug("func: func name() { stmt_list }");
-		}
-		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_func($2, NULL, NULL);
-			debug("func: func name() { empty }");
 		}
 		;
 param_list	: TOKEN_SYMBOL
@@ -251,10 +248,10 @@ param_list	: TOKEN_SYMBOL
 			debug("param_list: param_list symbol");
 		}
 		;
-stmt_list	: stmt
+stmt_list	: /* empty */
 		{
-			$$ = ast_accept_stmt_list(NULL, $1);
-			debug("stmt_list: stmt");
+			$$ = ast_accept_stmt_list(NULL, NULL);
+			debug("stmt_list: empty");
 		}
 		| stmt_list stmt
 		{
@@ -430,36 +427,21 @@ minusminus_stmt	: expr TOKEN_MINUSMINUS TOKEN_SEMICOLON
 			debug("plusplus_stmt");
 		}
 		;
-if_stmt		: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
+if_stmt		: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_if_stmt(@1.first_line + 1, $3, $6);
+			$$ = ast_accept_if_stmt(@1.first_line + 1, $3, $5);
 			debug("if_stmt: stmt_list");
 		}
 		| TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR stmt
 		{
 			$$ = ast_accept_if_stmt_single(@1.first_line + 1, $3, $5);
-			debug("if_stmt: stmt");
-		}
-		| TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_if_stmt(@1.first_line + 1, $3, NULL);
-			debug("if_stmt: empty");
+			debug("if_stmt: stmt_list");
 		}
 		;
-elif_stmt	: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
+elif_stmt	: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_elif_stmt(@1.first_line + 1, $3, $6);
+			$$ = ast_accept_elif_stmt(@1.first_line + 1, $3, $5);
 			debug("elif_stmt: stmt_list");
-		}
-		| TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR stmt
-		{
-			$$ = ast_accept_elif_stmt_single(@1.first_line + 1, $3, $5);
-			debug("elif_stmt: stmt");
-		}
-		| TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_elif_stmt(@1.first_line + 1, $3, NULL);
-			debug("elif_stmt: empty");
 		}
 		;
 else_stmt	: TOKEN_ELSE TOKEN_LBLK stmt_list TOKEN_RBLK
@@ -467,77 +449,27 @@ else_stmt	: TOKEN_ELSE TOKEN_LBLK stmt_list TOKEN_RBLK
 			$$ = ast_accept_else_stmt(@1.first_line + 1, $3);
 			debug("else_stmt: stmt_list");
 		}
-		| TOKEN_ELSE stmt
-		{
-			$$ = ast_accept_else_stmt_single(@1.first_line + 1, $2);
-			debug("else_stmt: stmt");
-		}
-		| TOKEN_ELSE TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_else_stmt(@1.first_line + 1, NULL);
-			debug("else_stmt: empty");
-		}
 		;
-while_stmt	: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
+while_stmt	: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_while_stmt(@1.first_line + 1, $3, $6);
+			$$ = ast_accept_while_stmt(@1.first_line + 1, $3, $5);
 			debug("while_stmt: stmt_list");
 		}
-		| TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR stmt
-		{
-			$$ = ast_accept_while_stmt_single(@1.first_line + 1, $3, $5);
-			debug("while_stmt: stmt");
-		}
-		| TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_while_stmt(@1.first_line + 1, $3, NULL);
-			debug("while_stmt: empty");
-		}
 		;
-for_stmt	: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
+for_stmt	: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_for_kv_stmt(@1.first_line + 1, $3, $5, $7, $10);
+			$$ = ast_accept_for_kv_stmt(@1.first_line + 1, $3, $5, $7, $9);
 			debug("for_stmt: for(k, v in array) { stmt_list }");
 		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_for_kv_stmt_single(@1.first_line + 1, $3, $5, $7, $9);
-			debug("for_stmt: for(k, v in array) { stmt_list }");
-		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_for_kv_stmt(@1.first_line + 1, $3, $5, $7, NULL);
-			debug("for_stmt: for(k, v in array) { empty }");
-		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
-		{
-			$$ = ast_accept_for_v_stmt(@1.first_line + 1, $3, $5, $8);
+			$$ = ast_accept_for_v_stmt(@1.first_line + 1, $3, $5, $7);
 			debug("for_stmt: for(v in array) { stmt_list }");
 		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_for_v_stmt_single(@1.first_line + 1, $3, $5, $7);
-			debug("for_stmt: for(v in array) { stmt_list }");
-		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_for_v_stmt(@1.first_line + 1, $3, $5, NULL);
-			debug("for_stmt: for(v in array) { empty }");
-		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR TOKEN_LBLK stmt_list TOKEN_RBLK
-		{
-			$$ = ast_accept_for_range_stmt(@1.first_line + 1, $3, $5, $7, $10);
+			$$ = ast_accept_for_range_stmt(@1.first_line + 1, $3, $5, $7, $9);
 			debug("for_stmt: for(i in x..y) { stmt_list }");
-		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR stmt
-		{
-			$$ = ast_accept_for_range_stmt_single(@1.first_line + 1, $3, $5, $7, $9);
-			debug("for_stmt: for(i in x..y) { stmt_list }");
-		}
-		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_for_range_stmt(@1.first_line + 1, $3, $5, $7, NULL);
-			debug("for_stmt: for(i in x..y) { empty}");
 		}
 		;
 return_stmt	: TOKEN_RETURN expr TOKEN_SEMICOLON
@@ -682,25 +614,13 @@ expr		: term
 			$$ = ast_accept_dot_expr($1, $3);
 			debug("expr: expr.symbol");
 		}
-		| expr TOKEN_LPAR arg_list TOKEN_RPAR
+		| call_expr
 		{
-			$$ = ast_accept_call_expr($1, $3);
-			debug("expr: call(param_list)");
+			$$ = $1;
 		}
-		| expr TOKEN_LPAR TOKEN_RPAR
+		| thiscall_expr
 		{
-			$$ = ast_accept_call_expr($1, NULL);
-			debug("expr: call()");
-		}
-		| expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR arg_list TOKEN_RPAR
-		{
-			$$ = ast_accept_thiscall_expr($1, $3, $5);
-			debug("expr: thiscall(param_list)");
-		}
-		| expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR
-		{
-			$$ = ast_accept_thiscall_expr($1, $3, NULL);
-			debug("expr: thiscall(param_list)");
+			$$ = $1;
 		}
 		| TOKEN_LARR arg_list TOKEN_RARR
 		{
@@ -724,25 +644,9 @@ expr		: term
 			$$ = ast_accept_dict_expr(NULL);
 			debug("expr: dict");
 		}
-		| TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK
+		| lambda_expr
 		{
-			$$ = ast_accept_func_expr($2, $6);
-			debug("expr: func param_list stmt_list");
-		}
-		| TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK stmt_list TOKEN_RBLK
-		{
-			$$ = ast_accept_func_expr(NULL, $5);
-			debug("expr: func stmt_list");
-		}
-		| TOKEN_LPAR param_list TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_func_expr($2, NULL);
-			debug("expr: func param_list");
-		}
-		| TOKEN_LPAR TOKEN_RPAR TOKEN_DARROW TOKEN_LBLK TOKEN_RBLK
-		{
-			$$ = ast_accept_func_expr(NULL, NULL);
-			debug("expr: func");
+			$$ = $1;
 		}
 		| TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK
 		{
@@ -753,6 +657,39 @@ expr		: term
 		{
 			$$ = ast_accept_new_expr($2, NULL);
 			debug("expr: new");
+		}
+		;
+call_expr	: expr TOKEN_LPAR arg_list TOKEN_RPAR
+		{
+			$$ = ast_accept_call_expr($1, $3);
+			debug("expr: call(param_list)");
+		}
+		| expr TOKEN_LPAR TOKEN_RPAR
+		{
+			$$ = ast_accept_call_expr($1, NULL);
+			debug("expr: call()");
+		}
+		;
+thiscall_expr	: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR arg_list TOKEN_RPAR
+		{
+			$$ = ast_accept_thiscall_expr($1, $3, $5);
+			debug("expr: thiscall(param_list)");
+		}
+		| expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR
+		{
+			$$ = ast_accept_thiscall_expr($1, $3, NULL);
+			debug("expr: thiscall(param_list)");
+		}
+
+lambda_expr	: TOKEN_LPAR param_list TOKEN_RPAR_DARROW_LBLK stmt_list TOKEN_RBLK
+		{
+			$$ = ast_accept_func_expr($2, $4);
+			debug("expr: func param_list stmt_list");
+		}
+		| TOKEN_LPAR TOKEN_RPAR_DARROW_LBLK stmt_list TOKEN_RBLK
+		{
+			$$ = ast_accept_func_expr(NULL, $3);
+			debug("expr: func stmt_list");
 		}
 		;
 arg_list	: expr
