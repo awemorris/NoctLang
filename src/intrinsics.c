@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <assert.h>
 
 #define NEVER_COME_HERE		0
@@ -28,6 +29,9 @@ static bool rt_intrin_newArray(struct rt_env *env);
 static bool rt_intrin_resize(struct rt_env *env);
 static bool rt_intrin_charat(struct rt_env *env);
 static bool rt_intrin_substring(struct rt_env *env);
+static bool rt_intrin_sin(struct rt_env *env);
+static bool rt_intrin_cos(struct rt_env *env);
+static bool rt_intrin_tan(struct rt_env *env);
 static bool rt_intrin_fast_gc(struct rt_env *env);
 static bool rt_intrin_full_gc(struct rt_env *env);
 static bool rt_intrin_compact_gc(struct rt_env *env);
@@ -50,6 +54,9 @@ struct intrin_item {
 	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true,  NULL},
 	{"charAt",     "__charAt",    2, {"this", "index"       }, rt_intrin_charat,     true,  NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true,  NULL},
+	{"sin",        "sin",         1, {"x"                   }, rt_intrin_sin,        false, NULL},
+	{"cos",        "cos",         1, {"x"                   }, rt_intrin_cos,        false, NULL},
+	{"tan",        "tan",         1, {"x"                   }, rt_intrin_tan,        false, NULL},
 	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    false, NULL},
 	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    false, NULL},
 	{"compact_gc", "compact_gc",  0, {NULL},                   rt_intrin_compact_gc, true,  NULL},
@@ -375,6 +382,72 @@ rt_intrin_substring(
 		return false;
 
 	noct_free(s);
+
+	return true;
+}
+
+/* sin() */
+static bool
+rt_intrin_sin(
+	struct rt_env *env)
+{
+	struct rt_value x, ret;
+	float x_f;
+	float sinx;
+
+	noct_pin_local(env, 2, &x, &ret);
+
+	if (!noct_get_arg_check_float(env, 0, &x, &x_f))
+		return false;
+
+	sinx = sinf(x_f);
+
+	if (!noct_set_return_make_float(env, &ret, sinx))
+		return false;
+
+	return true;
+}
+
+/* cos() */
+static bool
+rt_intrin_cos(
+	struct rt_env *env)
+{
+	struct rt_value x, ret;
+	float x_f;
+	float cosx;
+
+	noct_pin_local(env, 2, &x, &ret);
+
+	if (!noct_get_arg_check_float(env, 0, &x, &x_f))
+		return false;
+
+	cosx = cosf(x_f);
+
+	if (!noct_set_return_make_float(env, &ret, cosx))
+		return false;
+
+	return true;
+}
+
+/* tan() */
+static bool
+rt_intrin_tan(
+	struct rt_env *env)
+{
+	struct rt_value x, ret;
+	float x_f;
+	float tanx;
+
+	noct_pin_local(env, 2, &x, &ret);
+
+	if (!noct_get_arg_check_float(env, 0, &x, &x_f))
+		return false;
+
+	tanx = tanf(x_f);
+
+	if (!noct_set_return_make_float(env, &ret, tanx))
+		return false;
 
 	return true;
 }

@@ -1567,7 +1567,7 @@ noct_get_arg_check_int(
 
 NOCT_DLL
 bool
-noct_get_arg_float(
+noct_get_arg_check_float(
 	NoctEnv *env,
 	int index,
 	NoctValue *val,
