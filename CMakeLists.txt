@@ -211,6 +211,10 @@ if(NOCTLANG_ENABLE_CLI)
       target_compile_options(noct PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
     endif()
   endif()
+
+  if(UNIX)
+    target_link_libraries(noct PRIVATE m)
+  endif()
 endif()
 
 #
