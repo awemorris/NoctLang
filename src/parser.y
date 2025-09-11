@@ -139,7 +139,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_ASSIGN TOKEN_PLUSASSIGN TOKEN_MINUSASSIGN TOKEN_MULASSIGN TOKEN_DIVASSIGN TOKEN_MODASSIGN TOKEN_ANDASSIGN TOKEN_ORASSIGN TOKEN_SHLASSIGN TOKEN_SHRASSIGN
 %token TOKEN_PLUSPLUS TOKEN_MINUSMINUS TOKEN_ANDAND TOKEN_OROR
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_RPAR_LBLK TOKEN_LBLK TOKEN_LBLK_BLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
-%token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
+%token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSE_LBLK TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
 %token TOKEN_CONTINUE TOKEN_ARROW TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR
 
@@ -443,10 +443,20 @@ elif_stmt	: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 			$$ = ast_accept_elif_stmt(@1.first_line + 1, $3, $5);
 			debug("elif_stmt: stmt_list");
 		}
-		;
-else_stmt	: TOKEN_ELSE TOKEN_LBLK stmt_list TOKEN_RBLK
+		| TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR stmt
 		{
-			$$ = ast_accept_else_stmt(@1.first_line + 1, $3);
+			$$ = ast_accept_elif_stmt_single(@1.first_line + 1, $3, $5);
+			debug("elif_stmt: stmt_list");
+		}
+		;
+else_stmt	: TOKEN_ELSE_LBLK stmt_list TOKEN_RBLK
+		{
+			$$ = ast_accept_else_stmt(@1.first_line + 1, $2);
+			debug("else_stmt: stmt_list");
+		}
+		| TOKEN_ELSE stmt
+		{
+			$$ = ast_accept_else_stmt_single(@1.first_line + 1, $2);
 			debug("else_stmt: stmt_list");
 		}
 		;
@@ -455,21 +465,41 @@ while_stmt	: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 			$$ = ast_accept_while_stmt(@1.first_line + 1, $3, $5);
 			debug("while_stmt: stmt_list");
 		}
+		| TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_while_stmt_single(@1.first_line + 1, $3, $5);
+			debug("while_stmt: stmt_list");
+		}
 		;
 for_stmt	: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_for_kv_stmt(@1.first_line + 1, $3, $5, $7, $9);
 			debug("for_stmt: for(k, v in array) { stmt_list }");
 		}
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_for_kv_stmt_single(@1.first_line + 1, $3, $5, $7, $9);
+			debug("for_stmt: for(k, v in array) stmt");
+		}
 		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_for_v_stmt(@1.first_line + 1, $3, $5, $7);
 			debug("for_stmt: for(v in array) { stmt_list }");
 		}
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_for_v_stmt_single(@1.first_line + 1, $3, $5, $7);
+			debug("for_stmt: for(v in array) stmt_list");
+		}
 		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_for_range_stmt(@1.first_line + 1, $3, $5, $7, $9);
 			debug("for_stmt: for(i in x..y) { stmt_list }");
+		}
+		| TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR stmt
+		{
+			$$ = ast_accept_for_range_stmt_single(@1.first_line + 1, $3, $5, $7, $9);
+			debug("for_stmt: for(i in x..y) stmt");
 		}
 		;
 return_stmt	: TOKEN_RETURN expr TOKEN_SEMICOLON
