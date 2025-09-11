@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <assert.h>
 
 #define NEVER_COME_HERE		0
@@ -32,6 +33,7 @@ static bool rt_intrin_substring(struct rt_env *env);
 static bool rt_intrin_sin(struct rt_env *env);
 static bool rt_intrin_cos(struct rt_env *env);
 static bool rt_intrin_tan(struct rt_env *env);
+static bool rt_intrin_random(struct rt_env *env);
 static bool rt_intrin_fast_gc(struct rt_env *env);
 static bool rt_intrin_full_gc(struct rt_env *env);
 static bool rt_intrin_compact_gc(struct rt_env *env);
@@ -57,6 +59,7 @@ struct intrin_item {
 	{"sin",        "sin",         1, {"x"                   }, rt_intrin_sin,        false, NULL},
 	{"cos",        "cos",         1, {"x"                   }, rt_intrin_cos,        false, NULL},
 	{"tan",        "tan",         1, {"x"                   }, rt_intrin_tan,        false, NULL},
+	{"random",     "random",      0, {NULL                  }, rt_intrin_random,     false, NULL},
 	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    false, NULL},
 	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    false, NULL},
 	{"compact_gc", "compact_gc",  0, {NULL},                   rt_intrin_compact_gc, true,  NULL},
@@ -447,6 +450,25 @@ rt_intrin_tan(
 	tanx = tanf(x_f);
 
 	if (!noct_set_return_make_float(env, &ret, tanx))
+		return false;
+
+	return true;
+}
+
+/* random() */
+static bool
+rt_intrin_random(
+	struct rt_env *env)
+{
+	struct rt_value ret;
+	float r;
+
+	noct_pin_local(env, 1, &ret);
+
+	srand(time(NULL));
+	r = (float)rand() / (float)(RAND_MAX / 2) - 1.0f;
+
+	if (!noct_set_return_make_float(env, &ret, r))
 		return false;
 
 	return true;
