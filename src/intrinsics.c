@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <time.h>
 #include <assert.h>
 
 #define NEVER_COME_HERE		0
@@ -465,7 +464,6 @@ rt_intrin_random(
 
 	noct_pin_local(env, 1, &ret);
 
-	srand(time(NULL));
 	r = (float)rand() / (float)RAND_MAX;
 
 	if (!noct_set_return_make_float(env, &ret, r))

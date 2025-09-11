@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <time.h>
 #include <assert.h>
 
 /* False assertion */
@@ -62,6 +63,8 @@ rt_create_vm(
 	struct rt_vm **vm,
 	struct rt_env **default_env)
 {
+	srand(time(NULL));
+
 	/* Allocate a struct rt_vm. */
 	*vm = noct_malloc(sizeof(struct rt_vm));
 	if (*vm == NULL) {
