@@ -27,7 +27,7 @@ static bool rt_intrin_pop(struct rt_env *env);
 static bool rt_intrin_unset(struct rt_env *env);
 static bool rt_intrin_newArray(struct rt_env *env);
 static bool rt_intrin_resize(struct rt_env *env);
-static bool rt_intrin_charat(struct rt_env *env);
+static bool rt_intrin_charAt(struct rt_env *env);
 static bool rt_intrin_substring(struct rt_env *env);
 static bool rt_intrin_sin(struct rt_env *env);
 static bool rt_intrin_cos(struct rt_env *env);
@@ -53,7 +53,7 @@ struct intrin_item {
 	{"pop",        "__pop",       1, {"this"                }, rt_intrin_pop,        true,  NULL},
 	{"newArray",   "newArray",    1, {"size"                }, rt_intrin_newArray,   true,  NULL},
 	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true,  NULL},
-	{"charAt",     "__charAt",    2, {"this", "index"       }, rt_intrin_charat,     true,  NULL},
+	{"charAt",     "__charAt",    2, {"this", "index"       }, rt_intrin_charAt,     true,  NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true,  NULL},
 	{"sin",        "sin",         1, {"x"                   }, rt_intrin_sin,        false, NULL},
 	{"cos",        "cos",         1, {"x"                   }, rt_intrin_cos,        false, NULL},
@@ -66,6 +66,8 @@ struct intrin_item {
 	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true,  NULL},
 #endif
 };
+
+static int utf8_to_utf32(const char *mbs, uint32_t *wc);
 
 bool
 rt_register_intrinsics(
@@ -311,14 +313,16 @@ rt_intrin_resize(
 
 /* charAt() */
 static bool
-rt_intrin_charat(
+rt_intrin_charAt(
 	struct rt_env *env)
 {
 	struct rt_value str, index, ret;
 	const char *str_s;
 	int index_i;
 	size_t len;
-	char s[2];
+	const char *s;
+	char d[8];
+	int i, ofs;
 
 	noct_pin_local(env, 2, &str, &index, &ret);
 
@@ -330,7 +334,7 @@ rt_intrin_charat(
 	if (!noct_get_string_len(env, &str, &len))
 		return false;
 
-	if (index_i < 0 || index_i >= (int)len) {
+	if (index_i < 0) {
 		if (!noct_make_string(env, &ret, ""))
 			return false;
 		if (!noct_set_return(env, &ret))
@@ -338,12 +342,113 @@ rt_intrin_charat(
 		return true;
 	}
 
-	s[0] = str_s[index_i];
-	s[1] = '\0';
+	s = str_s;
+	i = 0;
+	ofs = 0;
+	while (*s != '\0' && i <= index_i) {
+		uint32_t codepoint;
+		int mblen;
 
-	if (!noct_set_return_make_string(env, &ret, s))
+		mblen = utf8_to_utf32(s, &codepoint);
+		if (mblen <= 0) {
+			/* UTF-8 error. */
+			break;
+		}
+
+		if (i == index_i) {
+			/* Succeeded. */
+			strncpy(d, &str_s[ofs], mblen);
+			d[mblen] = '\0';
+			if (!noct_set_return_make_string(env, &ret, d))
+				return false;
+			return true;
+		}
+
+		s += mblen;
+		ofs += mblen;
+		i++;
+	}
+
+	/* Failed. */
+	if (!noct_make_string(env, &ret, ""))
+		return false;
+	if (!noct_set_return(env, &ret))
 		return false;
 	return true;
+}
+
+/* Get a top character of a utf-8 string as a utf-32. */
+static int utf8_to_utf32(const char *mbs, uint32_t *wc)
+{
+	size_t mbslen, octets, i;
+	uint32_t ret;
+
+	assert(mbs != NULL);
+
+	/* If mbs is empty. */
+	mbslen = strlen(mbs);
+	if(mbslen == 0)
+		return 0;
+
+	/* Check the first byte, get an octet count. */
+	if (mbs[0] == '\0')
+		octets = 0;
+	else if ((mbs[0] & 0x80) == 0)
+		octets = 1;
+	else if ((mbs[0] & 0xe0) == 0xc0)
+		octets = 2;
+	else if ((mbs[0] & 0xf0) == 0xe0)
+		octets = 3;
+	else if ((mbs[0] & 0xf8) == 0xf0)
+		octets = 4;
+	else
+		return -1;	/* Not suppoerted. */
+
+	/* Check the mbs length. */
+	if (mbslen < octets)
+		return -1;	/* mbs is too short. */
+
+	/* Check for 2-4 bytes. */
+	for (i = 1; i < octets; i++) {
+		if((mbs[i] & 0xc0) != 0x80)
+			return -1;	/* Non-understandable */
+	}
+
+	/* Compose a utf-32 character. */
+	switch (octets) {
+	case 0:
+		ret = 0;
+		break;
+	case 1:
+		ret = (uint32_t)mbs[0];
+		break;
+	case 2:
+		ret = (uint32_t)(((mbs[0] & 0x1f) << 6) |
+				 (mbs[1] & 0x3f));
+		break;
+	case 3:
+		ret = (uint32_t)(((mbs[0] & 0x0f) << 12) |
+				 ((mbs[1] & 0x3f) << 6) |
+				 (mbs[2] & 0x3f));
+		break;
+	case 4:
+		ret = (uint32_t)(((mbs[0] & 0x07) << 18) |
+				 ((mbs[1] & 0x3f) << 12) |
+				 ((mbs[2] & 0x3f) << 6) |
+				 (mbs[3] & 0x3f));
+		break;
+	default:
+		/* never come here */
+		assert(0);
+		return -1;
+	}
+
+	/* Store the result. */
+	if(wc != NULL)
+		*wc = ret;
+
+	/* Return the octet count. */
+	return (int)octets;
 }
 
 /* substring() */
