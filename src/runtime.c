@@ -1058,7 +1058,7 @@ rt_resize_array(
 		RELEASE_OBJ(real_arr);
 	} else {
 		/* Remove (zero-fill) the reminder. */
-		memset(&real_arr->table[size], 0, sizeof(struct rt_value) * (size_t)(real_arr->size - size - 1));
+		memset(&real_arr->table[size], 0, sizeof(struct rt_value) * (size_t)(real_arr->alloc_size - size));
 
 		/* Set the element count. */
 		real_arr->size = size;
