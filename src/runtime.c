@@ -39,7 +39,6 @@
  */
 bool noct_conf_use_jit = true;
 int noct_conf_optimize = 0;
-bool noct_conf_repl_mode = 0;
 
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);

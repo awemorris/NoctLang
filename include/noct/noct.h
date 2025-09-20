@@ -104,6 +104,7 @@ struct rt_value {
  */
 
 #define noct_malloc	malloc
+#define noct_calloc	calloc
 #define noct_strdup	strdup
 #define noct_free	free
 
@@ -1189,5 +1190,30 @@ noct_set_return_make_string(
 	NoctEnv *env,
 	NoctValue *val,
 	const char *data);
+
+/*
+ * Configuration
+ */
+
+/* Enable JIT. */
+extern bool noct_conf_use_jit;
+
+/* Optimization level. */
+extern int noct_conf_optimize;
+
+/* GC nursery region size. */
+extern size_t noct_conf_gc_nursery_size;
+
+/* GC graduate region size. */
+extern size_t noct_conf_gc_graduate_size;
+
+/* GC tenure region size. */
+extern size_t noct_conf_gc_tenure_size;
+
+/* GC large-object-promotion threshold. */
+extern size_t noct_conf_gc_lop_threshold;
+
+/* GC tenure-promotion threshold. */
+extern size_t noct_conf_gc_promotion_threshold;
 
 #endif

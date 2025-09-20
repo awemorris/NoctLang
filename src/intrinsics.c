@@ -29,6 +29,7 @@ static bool rt_intrin_newArray(struct rt_env *env);
 static bool rt_intrin_resize(struct rt_env *env);
 static bool rt_intrin_charAt(struct rt_env *env);
 static bool rt_intrin_substring(struct rt_env *env);
+static bool rt_intrin_abs(struct rt_env *env);
 static bool rt_intrin_sin(struct rt_env *env);
 static bool rt_intrin_cos(struct rt_env *env);
 static bool rt_intrin_tan(struct rt_env *env);
@@ -55,6 +56,7 @@ struct intrin_item {
 	{"resize",     "__resize",    2, {"this", "size"        }, rt_intrin_resize,     true,  NULL},
 	{"charAt",     "__charAt",    2, {"this", "index"       }, rt_intrin_charAt,     true,  NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true,  NULL},
+	{"abs",        "abs",         1, {"x"                   }, rt_intrin_abs,        false, NULL},
 	{"sin",        "sin",         1, {"x"                   }, rt_intrin_sin,        false, NULL},
 	{"cos",        "cos",         1, {"x"                   }, rt_intrin_cos,        false, NULL},
 	{"tan",        "tan",         1, {"x"                   }, rt_intrin_tan,        false, NULL},
@@ -493,6 +495,50 @@ rt_intrin_substring(
 	return true;
 }
 
+/* abs() */
+static bool
+rt_intrin_abs(
+	struct rt_env *env)
+{
+	struct rt_value x, ret;
+	int type;
+	int ival;
+	float fval;
+
+	noct_pin_local(env, 2, &x, &ret);
+
+	if (!noct_get_arg(env, 0, &x))
+		return false;
+	if (!noct_get_value_type(env, &x, &type))
+		return false;
+
+	switch (type) {
+	case NOCT_VALUE_INT:
+		if (!noct_get_int(env, &x, &ival))
+			return false;
+		if (ival < 0)
+			ival = -ival;
+		if (!noct_set_return_make_int(env, &ret, ival))
+			return false;
+		break;
+	case NOCT_VALUE_FLOAT:
+		if (!noct_get_float(env, &x, &fval))
+			return false;
+		if (fval < 0)
+			fval = -fval;
+		if (!noct_set_return_make_float(env, &ret, fval))
+			return false;
+		break;
+	default:
+		noct_error(env, N_TR("Value is not a number."));
+		return false;
+	}
+
+	noct_unpin_local(env, 2, &x, &ret);
+
+	return true;
+}
+
 /* sin() */
 static bool
 rt_intrin_sin(
@@ -511,6 +557,8 @@ rt_intrin_sin(
 
 	if (!noct_set_return_make_float(env, &ret, sinx))
 		return false;
+
+	noct_unpin_local(env, 2, &x, &ret);
 
 	return true;
 }
@@ -534,6 +582,8 @@ rt_intrin_cos(
 	if (!noct_set_return_make_float(env, &ret, cosx))
 		return false;
 
+	noct_unpin_local(env, 2, &x, &ret);
+
 	return true;
 }
 
@@ -556,6 +606,8 @@ rt_intrin_tan(
 	if (!noct_set_return_make_float(env, &ret, tanx))
 		return false;
 
+	noct_unpin_local(env, 2, &x, &ret);
+
 	return true;
 }
 
@@ -573,6 +625,8 @@ rt_intrin_random(
 
 	if (!noct_set_return_make_float(env, &ret, r))
 		return false;
+
+	noct_unpin_local(env, 1, &ret);
 
 	return true;
 }

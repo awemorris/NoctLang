@@ -11,6 +11,8 @@
 #ifndef NOCT_ARENA_H
 #define NOCT_ARENA_H
 
+#include <noct/noct.h>
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,10 +32,9 @@ arena_init(
 	struct arena_info *arena,
 	size_t size)
 {
-	arena->top = malloc(size);
+	arena->top = noct_calloc(1, size);
 	if (arena->top == NULL)
 		return false;
-	memset(arena->top, 0, size);
 	arena->cur = arena->top;
 	arena->size = size;
 	return true;

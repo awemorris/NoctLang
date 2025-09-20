@@ -63,6 +63,16 @@
 #define IS_YOUNG_OBJ(o)			((o)->region < RT_GC_REGION_TENURE)
 
 /*
+ * Configuration
+ */
+
+size_t noct_conf_gc_nursery_size        = RT_GC_NURSERY_SIZE;
+size_t noct_conf_gc_graduate_size       = RT_GC_GRADUATE_SIZE;
+size_t noct_conf_gc_tenure_size         = RT_GC_TENURE_SIZE;
+size_t noct_conf_gc_lop_threshold       = RT_GC_LOP_THRESHOLD;
+size_t noct_conf_gc_promotion_threshold = RT_GC_PROMOTION_THRESHOLD;
+
+/*
  * Forward declaration.
  */
 static struct rt_string *rt_gc_alloc_string_graduate(struct rt_env *env, size_t len, const char *data);
@@ -107,23 +117,22 @@ rt_gc_init(
 	memset(&vm->gc, 0, sizeof(struct rt_gc_info));
 
 	/* Initialize the nursery allocator. */
-	if (!arena_init(&vm->gc.nursery_arena, RT_GC_NURSERY_SIZE))
+	if (!arena_init(&vm->gc.nursery_arena, noct_conf_gc_nursery_size))
 		return false;
 
 	/* Initialize the graduate allocators. */
-	if (!arena_init(&vm->gc.graduate_arena[0], RT_GC_GRADUATE_SIZE))
+	if (!arena_init(&vm->gc.graduate_arena[0], noct_conf_gc_graduate_size))
 		return false;
-	if (!arena_init(&vm->gc.graduate_arena[1], RT_GC_GRADUATE_SIZE))
+	if (!arena_init(&vm->gc.graduate_arena[1], noct_conf_gc_graduate_size))
 		return false;
 	vm->gc.cur_grad_from = 0;
 	vm->gc.cur_grad_to = 1;
 
 	/* Initialize the tenure allocator.  */
-	vm->gc.tenure_freelist.top = noct_malloc(RT_GC_TENURE_SIZE);
+	vm->gc.tenure_freelist.top = noct_calloc(1, noct_conf_gc_tenure_size);
 	if (vm->gc.tenure_freelist.top == NULL)
 		return false;
-	memset(vm->gc.tenure_freelist.top, 0, RT_GC_TENURE_SIZE);
-	vm->gc.tenure_freelist.end = vm->gc.tenure_freelist.top + RT_GC_TENURE_SIZE;
+	vm->gc.tenure_freelist.end = vm->gc.tenure_freelist.top + noct_conf_gc_tenure_size;
 
 	return true;
 }
@@ -167,7 +176,7 @@ rt_gc_alloc_string(
 	 * [Large Object Promotion]
 	 *  - If the string is large, allocate in the tenure region.
 	 */
-	if (len >= RT_GC_LOP_THRESHOLD)
+	if (len >= noct_conf_gc_lop_threshold)
 		return rt_gc_alloc_string_tenure(env, len, data);
 
 	/* Allocate in the nursery region. */
@@ -269,6 +278,11 @@ rt_gc_alloc_string_tenure(
 	char *s;
 	int retry;
 
+	if (sizeof(struct rt_string) + len >= noct_conf_gc_tenure_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_string buffer. */
@@ -332,7 +346,7 @@ rt_gc_alloc_array(
 	 *  - If the array is large, allocate in the tenure region.
 	 */
 	len = size * sizeof(struct rt_value);
-	if (len >= RT_GC_LOP_THRESHOLD)
+	if (len >= noct_conf_gc_lop_threshold)
 		return rt_gc_alloc_array_tenure(env, size);
 
 	/* Allocate in the nursery region. */
@@ -510,7 +524,7 @@ rt_gc_alloc_dict(
 	 * [Large Object Promotion]
 	 *  - If the array is large, allocate in the tenure region.
 	 */
-	if (size * sizeof(char *) + size * sizeof(struct rt_value *) >= RT_GC_LOP_THRESHOLD)
+	if (size * sizeof(char *) + size * sizeof(struct rt_value *) >= noct_conf_gc_lop_threshold)
 		return rt_gc_alloc_dict_tenure(env, size);
 
 	/* Allocate in the nursery region. */
@@ -978,7 +992,7 @@ rt_gc_copy_young_object_recursively(
 	new_obj = NULL;
 	if ((*obj)->region != RT_GC_REGION_TENURE) {
 		/* Check for the promotion. */
-		if ((*obj)->promotion_count < RT_GC_PROMOTION_THRESHOLD) {
+		if ((*obj)->promotion_count < noct_conf_gc_promotion_threshold) {
 			/* No promotion, just copy the object. */
 			switch ((*obj)->type) {
 			case RT_GC_TYPE_STRING:
@@ -1253,10 +1267,10 @@ rt_gc_copy_string_to_graduate(
 	struct rt_string *new_obj;
 
 	/*
-	 * Strings larger than RT_GC_LOP_THRESHOLD must not be in the
+	 * Strings larger than noct_conf_gc_lop_threshold must not be in the
 	 * nursery or graduate regions.
 	 */
-	assert(old_obj->len < RT_GC_LOP_THRESHOLD);
+	assert(old_obj->len < noct_conf_gc_lop_threshold);
 
 	/* Allocate in the graduate region. */
 	new_obj = rt_gc_alloc_string_graduate(env, old_obj->len, old_obj->data);
@@ -1286,10 +1300,10 @@ rt_gc_copy_array_to_graduate(
 		size = old_obj->alloc_size;
 
 	/*
-	 * Arrays larger than RT_GC_LOP_THRESHOLD/sizeof(struct rt_value *) must not be in the
+	 * Arrays larger than noct_conf_gc_lop_threshold/sizeof(struct rt_value *) must not be in the
 	 * nursery or graduate regions.
 	 */
-	assert(size < RT_GC_LOP_THRESHOLD / sizeof(struct rt_value *));
+	assert(size < noct_conf_gc_lop_threshold / sizeof(struct rt_value *));
 
 	/* Allocate in the graduate region. (If failed, in the tenure region.) */
 	new_obj = rt_gc_alloc_array_graduate(env, size);
@@ -1334,10 +1348,10 @@ rt_gc_copy_dict_to_graduate(
 		size = old_obj->alloc_size;
 
 	/*
-	 * Arrays larger than RT_GC_LOP_THRESHOLD/sizeof(struct rt_value *)/2 must not be in the
+	 * Arrays larger than noct_conf_gc_lop_threshold/sizeof(struct rt_value *)/2 must not be in the
 	 * nursery or graduate regions.
 	 */
-	assert(size < RT_GC_LOP_THRESHOLD / sizeof(struct rt_value *) / 2);
+	assert(size < noct_conf_gc_lop_threshold / sizeof(struct rt_value *) / 2);
 
 	/* Allocate in the graduate region. (If failed, in the tenure region.) */
 	new_obj = rt_gc_alloc_dict_graduate(env, size);
