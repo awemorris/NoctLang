@@ -69,6 +69,7 @@ struct intrin_item {
 #endif
 };
 
+size_t get_string_length(const char *text);
 static int utf8_to_utf32(const char *mbs, uint32_t *wc);
 
 bool
@@ -313,6 +314,32 @@ rt_intrin_resize(
 	return true;
 }
 
+size_t
+get_string_length(
+	const char *text)
+{
+	const char *s;
+	size_t i;
+
+	s = text;
+	i = 0;
+	while (*s != '\0') {
+		uint32_t codepoint;
+		int mblen;
+
+		mblen = utf8_to_utf32(s, &codepoint);
+		if (mblen <= 0) {
+			/* UTF-8 error. */
+			return 0;
+		}
+
+		i++;
+		s += mblen;
+	}
+
+	return i;
+}
+
 /* charAt() */
 static bool
 rt_intrin_charAt(
@@ -326,15 +353,14 @@ rt_intrin_charAt(
 	char d[8];
 	int i, ofs;
 
-	noct_pin_local(env, 2, &str, &index, &ret);
+	noct_pin_local(env, 3, &str, &index, &ret);
 
 	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
 		return false;
 	if (!noct_get_arg_check_int(env, 1, &index, &index_i))
 		return false;
 
-	if (!noct_get_string_len(env, &str, &len))
-		return false;
+	len = get_string_length(str_s);
 
 	if (index_i < 0) {
 		if (!noct_make_string(env, &ret, ""))
@@ -376,6 +402,73 @@ rt_intrin_charAt(
 		return false;
 	if (!noct_set_return(env, &ret))
 		return false;
+
+	noct_unpin_local(env, 3, &str, &index, &ret);
+
+	return true;
+}
+
+/* substring() */
+static bool
+rt_intrin_substring(
+	struct rt_env *env)
+{
+	struct rt_value str, start, len, ret;
+	const char *str_s;
+	int start_i, len_i, slen, i, ofs, copy_start, copy_mblen;
+	const char *s;
+	char *tmp;
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_int(env, 1, &start, &start_i))
+		return false;
+	if (!noct_get_arg_check_int(env, 2, &len, &len_i))
+		return false;
+
+	if (start_i < 0)
+		start_i = 0;
+
+	s = str_s;
+	i = 0;
+	ofs = 0;
+	copy_start = -1;
+	copy_mblen = 0;
+	while (*s != '\0') {
+		uint32_t codepoint;
+		int mblen;
+
+		mblen = utf8_to_utf32(s, &codepoint);
+		if (mblen <= 0) {
+			/* UTF-8 error. */
+			break;
+		}
+		if (i == start_i)
+			copy_start = ofs;
+		if (i == (size_t)start_i + (size_t)len_i)
+			break;
+		if (copy_start != -1)
+			copy_mblen += mblen;
+
+		s += mblen;
+		ofs += mblen;
+		i++;
+	}
+
+	tmp = noct_malloc((size_t)copy_mblen + 1);
+	if (tmp == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	strncpy(tmp, str_s + copy_start, (size_t)copy_mblen);
+	tmp[copy_mblen] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, tmp))
+		return false;
+
+	noct_free(tmp);
+
 	return true;
 }
 
@@ -451,48 +544,6 @@ static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 
 	/* Return the octet count. */
 	return (int)octets;
-}
-
-/* substring() */
-static bool
-rt_intrin_substring(
-	struct rt_env *env)
-{
-	struct rt_value str, start, len, ret;
-	const char *str_s;
-	int start_i, len_i, slen;
-	char *s;
-
-	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
-		return false;
-	if (!noct_get_arg_check_int(env, 1, &start, &start_i))
-		return false;
-	if (!noct_get_arg_check_int(env, 2, &len, &len_i))
-		return false;
-
-	if (start_i == -1)
-		start_i = 0;
-
-	slen = (int)strlen(str_s);
-	if (len_i < 0)
-		len_i = slen;
-	if (start_i + len_i > slen)
-		len_i = slen - start_i;
-
-	s = noct_malloc((size_t)(len_i + 1));
-	if (s == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-
-	strncpy(s, str_s + start_i, (size_t)len_i);
-
-	if (!noct_set_return_make_string(env, &ret, s))
-		return false;
-
-	noct_free(s);
-
-	return true;
 }
 
 /* abs() */

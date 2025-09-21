@@ -16,6 +16,9 @@
 #include <string.h>
 #include <assert.h>
 
+/* intrinsic.c */
+size_t get_string_length(const char *text);
+
 /*
  * Add helper.
  */
@@ -1324,7 +1327,7 @@ rt_loaddot_helper(
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = strlen(env->frame->tmpvar[dict].val.str->data);
+			env->frame->tmpvar[dst].val.i = get_string_length(env->frame->tmpvar[dict].val.str->data);
 			return true;
 		}
 	}
