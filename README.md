@@ -362,6 +362,8 @@ appropriate header (`noct/noct.h`).
 Error handling and result introspection are left to the host
 application, giving full control over integration.
 
+For more details, see [the FFI API document](docs/ffi.md).
+
 ---
 
 ## Test and CI
