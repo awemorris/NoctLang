@@ -205,23 +205,6 @@ static int command_run(int argc, char *argv[])
 		return 1;
 	}
 
-	/*
-	 * XXX: Testing
-	 */
-#if 0
-	rt_gc_level1_gc(env);
-	rt_gc_level1_gc(env);
-	rt_gc_level1_gc(env);
-	rt_gc_level1_gc(env);
-	rt_gc_level1_gc(env);
-	rt_gc_level1_gc(env);
-
-	struct rt_value zero = NOCT_ZERO;
-	rt_set_global(env, "b", &zero);
-
-	rt_gc_level2_gc(env);
-#endif
-
 	/* Destroy the runtime. */
 	if (!noct_destroy_vm(vm))
 		return 1;
@@ -779,7 +762,7 @@ static int wide_printf(const char *format, ...)
 #if !defined(_WIN32)
 	return printf("%s", buf);
 #else
-	/* MSVC or MinGW: Use wprintf() and wide-string. (Otherwise, we'll see garbages.) */
+	/* MSVC or MinGW: Use WriteConsoleW(). (Otherwise we can't write CJK.) */
 	static wchar_t wbuf[4096];
 	DWORD dwWritten;
 	memset(wbuf, 0, sizeof(wbuf));
@@ -950,7 +933,7 @@ struct ffi_item {
 	const char *name;
 	int param_count;
 	const char *param[NOCT_ARG_MAX];
-	bool (*cfunc)(struct rt_env *rt);
+	bool (*cfunc)(NoctEnv *env);
 } ffi_items[] = {
 	{"import", 1, {"file"}, cfunc_import},
 	{"print", 1, {"msg"}, cfunc_print},
@@ -964,7 +947,7 @@ struct ffi_item {
 /* Register FFI functions. */
 static bool
 register_ffi(
-	struct rt_env *env)
+	NoctEnv *env)
 {
 	int i;
 
@@ -991,7 +974,7 @@ register_ffi(
 /* Implementation of import() */
 static bool
 cfunc_import(
-	struct rt_env *env)
+	NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *file;
@@ -1246,31 +1229,31 @@ cfunc_readfilelines(
 /* Implementation of writefilelines() */
 static bool
 cfunc_writefilelines(
-	struct rt_env *rt)
+	NoctEnv *env)
 {
 	const char *file;
 	NoctValue array, tmp;
 	FILE *fp;
 	int i, size;
 
-	if (!noct_get_arg_check_string(rt, 0, &tmp, &file))
+	if (!noct_get_arg_check_string(env, 0, &tmp, &file))
 		return false;
-	if (!noct_get_arg_check_array(rt, 1, &array))
+	if (!noct_get_arg_check_array(env, 1, &array))
 		return false;
 
 	fp = fopen(file, "wb");
 	if (fp == NULL) {
-		noct_error(rt, N_TR("Cannon open file %s."), file);
+		noct_error(env, N_TR("Cannon open file %s."), file);
 		return false;
 	}
 
-	if (!noct_get_array_size(rt, &array, &size))
+	if (!noct_get_array_size(env, &array, &size))
 		return false;
 
 	for (i = 0; i < size; i++) {
 		const char *line;
 
-		if (!noct_get_array_elem_check_string(rt, &array, i, &tmp, &line))
+		if (!noct_get_array_elem_check_string(env, &array, i, &tmp, &line))
 			return false;
 
 		fprintf(fp, "%s\n", line);
@@ -1278,7 +1261,7 @@ cfunc_writefilelines(
 
 	fclose(fp);
 
-	if (!noct_set_return_make_int(rt, &tmp, 1))
+	if (!noct_set_return_make_int(env, &tmp, 1))
 		return false;
 
 	return true;
@@ -1287,21 +1270,21 @@ cfunc_writefilelines(
 /* Implementation of shell() */
 static bool
 cfunc_shell(
-	struct rt_env *rt)
+	NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *s;
 	int cmd_ret;
 
 	/* Get a "cmd" parameer. */
-	if (!noct_get_arg_check_string(rt, 0, &tmp, &s))
+	if (!noct_get_arg_check_string(env, 0, &tmp, &s))
 		return false;
 
 	/* Run a command. */
 	cmd_ret = system(s);
 
 	/* Make a return value. */
-	if (!noct_set_return_make_int(rt, &tmp, cmd_ret))
+	if (!noct_set_return_make_int(env, &tmp, cmd_ret))
 		return false;
 
 	return true;
