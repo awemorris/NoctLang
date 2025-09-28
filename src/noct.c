@@ -197,22 +197,6 @@ noct_call(
 
 NOCT_DLL
 bool
-noct_assign(
-	NoctEnv *env,
-	NoctValue *dst,
-	NoctValue *src)
-{
-	assert(env != NULL);
-	assert(dst != NULL);
-	assert(src != NULL);
-
-	*dst = *src;
-
-	return true;
-}
-
-NOCT_DLL
-bool
 noct_make_int(
 	NoctEnv *env,
 	NoctValue *val,

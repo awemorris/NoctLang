@@ -5,7 +5,7 @@
  */
 
 /*
- * NoctVM Public Interface
+ * Noct Virtual Machine Public Interface
  */
 
 #ifndef NOCT_NOCT_H
@@ -136,7 +136,8 @@ noct_destroy_vm(
  */
 #if defined(USE_MULTITHREAD)
 NOCT_DLL
-bool noct_create_thread_env(
+bool
+noct_create_thread_env(
 	NoctEnv *prev_evm,
 	NoctEnv **new_env);
 #endif
@@ -229,17 +230,7 @@ noct_call(
 	NoctValue *ret);
 
 /*
- * Assigns an value.
- */
-NOCT_DLL
-bool
-noct_assign(
-	NoctEnv *env,
-	NoctValue *dst,
-	NoctValue *src);
-
-/*
- * Creates an integer value.
+ * Makes an integer value.
  */
 NOCT_DLL
 bool
@@ -573,7 +564,7 @@ noct_set_global(
 	NoctValue *val);
 
 /*
- * Declare a native global variable for use within an FFI function.
+ * Declares a native global variable for use within an FFI function.
  *
  * This informs the GC that the given NoctValue variable is
  * in use and should not be collected during GC.
@@ -585,7 +576,7 @@ noct_pin_global(
 	NoctValue *val);
 
 /*
- * Undeclare a native global variable for use within an FFI function.
+ * Undeclares a native global variable for use within an FFI function.
  */
 NOCT_DLL
 bool
@@ -594,7 +585,7 @@ noct_unpin_global(
 	NoctValue *val);
 
 /*
- * Declare native local variables for use within an FFI function.
+ * Declares native local variables for use within an FFI function.
  *
  * This informs the GC that the given stack-local NoctValue variables
  * are in use and should not be collected during GC. Returning from an
@@ -611,7 +602,7 @@ noct_pin_local(
 	...);
 
 /*
- * Undeclare a native local variables for use within an FFI function.
+ * Undeclares a native local variables for use within an FFI function.
  */
 NOCT_DLL
 bool

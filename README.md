@@ -2,20 +2,32 @@ NoctLang - The Noct Programming Language
 ========================================
 
 Noct is a tiny yet mighty programming language for scripting.
-Small enough to learn today, powerful enough to ship tomorrow!
 
-Just ~160 KB — featuring a fast JIT compiler, robust generational GC,
-and clean C/JS-like syntax with a novel Dictionary-based OOP.
+**Small enough to learn today, powerful enough to ship tomorrow!**
+
+---
+
+## Feature Highlights
+
+### Small, Fast, and Robust
+
+Only about 160 KB — with a fast JIT compiler, a robust generational GC,
+and a clean C/JS-like syntax featuring a novel Dictionary-based OOP model.
+
+### Portable
 
 Written in portable ANSI C with no external dependencies, it runs
 everywhere — from desktop PCs down to Raspberry Pi.
 
-Try it now — launch REPL or write your first program.  It might take
-less time than you think.
+### Easy to Embed
+
+Embed Noct into your app and rebrand it as you like!
+For example, in [Playfield Engine](https://github.com/awemorris/PlayfieldEngine),
+we combine Noct with the game-specific APIs and call it Playfield Script.
 
 ## Status
 
-Actively developed and constantly evolving.
+Actively developed while remaining stable.
 
 ### JIT Targets:
 
@@ -340,7 +352,7 @@ void call_noct(const char *file_name, const char *file_text)
     noct_enter_vm(env, "main", 0, NULL, &ret);
 
     // Destroy the runtime.
-    noct_destroy_vm(rt);
+    noct_destroy_vm(vm);
 }
 ```
 
@@ -364,7 +376,7 @@ across supported platforms.
 
 ## License
 
-Noct is open source, released under the MIT license.
+Noct is open source, released under the zlib license.
 
 This means you can use it freely — for personal, educational, or
 commercial purposes.  You're also free to modify, redistribute, and

@@ -1036,7 +1036,7 @@ cfunc_import(
 /* Implementation of print() */
 static bool
 cfunc_print(
-	struct rt_env *env)
+	NoctEnv *env)
 {
 	char buf[8192];
 	NoctValue value;
@@ -1059,7 +1059,12 @@ cfunc_print(
 	return true;
 }
 	
-static bool serialize_printer(NoctEnv *env, char *buf, size_t size, NoctValue *value, bool is_inside_obj)
+static bool serialize_printer(
+	NoctEnv *env,
+	char *buf,
+	size_t size,
+	NoctValue *value,
+	bool is_inside_obj)
 {
 	int type;
 	int ival;
@@ -1143,7 +1148,7 @@ static bool serialize_printer(NoctEnv *env, char *buf, size_t size, NoctValue *v
 /* Implementation of readline() */
 static bool
 cfunc_readline(
-	struct rt_env *rt)
+	NoctEnv *env)
 {
 	struct rt_value ret;
 	char buf[1024];
@@ -1152,7 +1157,7 @@ cfunc_readline(
 	memset(buf, 0, sizeof(buf));
 
 	if (fgets(buf, sizeof(buf) - 1, stdin) == NULL) {
-		if (!noct_set_return_make_int(rt, &ret, 0))
+		if (!noct_set_return_make_int(env, &ret, 0))
 			return false;
 		return true;
 	}
@@ -1161,16 +1166,18 @@ cfunc_readline(
 	if (len > 0)
 		buf[len - 1] = '\0';
 	
-	if (!noct_make_string(rt, &ret, buf))
+	if (!noct_make_string(env, &ret, buf))
 		return false;
-	if (!noct_set_return(rt, &ret))
+	if (!noct_set_return(env, &ret))
 		return false;
 
 	return true;
 }
 
 /* Implementation of readint() */
-static bool cfunc_readint(struct rt_env *rt)
+static bool
+cfunc_readint(
+	NoctEnv *env)
 {
 	NoctValue tmp;
 	char buf[1024];
@@ -1180,7 +1187,7 @@ static bool cfunc_readint(struct rt_env *rt)
 	if (fgets(buf, sizeof(buf) - 1, stdin) == NULL)
 		strcpy(buf, "");
 	
-	if (!noct_set_return_make_int(rt, &tmp, atoi(buf)))
+	if (!noct_set_return_make_int(env, &tmp, atoi(buf)))
 		return false;
 
 	return true;
@@ -1189,7 +1196,7 @@ static bool cfunc_readint(struct rt_env *rt)
 /* Implementation of readfilelines() */
 static bool
 cfunc_readfilelines(
-	struct rt_env *rt)
+	NoctEnv *env)
 {
 	const char *file;
 	FILE *fp;
@@ -1199,16 +1206,16 @@ cfunc_readfilelines(
 	int index;
 	NoctValue tmp;
 
-	if (!noct_get_arg_check_string(rt, 0, &tmp, &file))
+	if (!noct_get_arg_check_string(env, 0, &tmp, &file))
 		return false;
 
 	fp = fopen(file, "r");
 	if (fp == NULL) {
-		noct_error(rt, N_TR("Cannon open file %s."), file);
+		noct_error(env, N_TR("Cannon open file %s."), file);
 		return false;
 	}
 
-	if (!noct_make_empty_array(rt, &array))
+	if (!noct_make_empty_array(env, &array))
 		return false;
 
 	index = 0;
@@ -1221,16 +1228,16 @@ cfunc_readfilelines(
 				buf[len - 1] = '\0';
 		}
 
-		if (!noct_make_string(rt, &line, buf))
+		if (!noct_make_string(env, &line, buf))
 			return false;
-		if (!noct_set_array_elem(rt, &array, index, &line))
+		if (!noct_set_array_elem(env, &array, index, &line))
 			return false;
 		index++;
 	}
 
 	fclose(fp);
 
-	if (!noct_set_return(rt, &array))
+	if (!noct_set_return(env, &array))
 		return false;
 
 	return true;

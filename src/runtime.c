@@ -46,7 +46,7 @@ static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, uint32_t size, int *pos, char *file_name);
 static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
-static void rt_leave_frame(struct rt_env *env, struct rt_value *ret);
+static void rt_leave_frame(struct rt_env *env);
 static bool rt_expand_array(struct rt_env *env, struct rt_array *old_arr, struct rt_array **new_arr_pp, size_t size);
 static bool rt_expand_dict(struct rt_env *env, struct rt_dict *old_dict, struct rt_dict **new_dict_pp, size_t size);
 
@@ -736,7 +736,8 @@ rt_call(
 	}
 
 	/* Get a return value. */
-	*ret = env->frame->tmpvar[0];
+	if (ret != NULL)
+		*ret = env->frame->tmpvar[0];
 
 	/* Commit JIT-compiled code for dynamically imported inside the function. */
 	if (noct_conf_use_jit && env->vm->is_jit_dirty) {
@@ -745,7 +746,7 @@ rt_call(
 	}
 
 	/* Succeeded. */
-	rt_leave_frame(env, ret);
+	rt_leave_frame(env);
 
 	return true;
 }
@@ -779,8 +780,7 @@ rt_enter_frame(
 /* Leave the current calling frame. */
 static void
 rt_leave_frame(
-	struct rt_env *env,
-	struct rt_value *ret)
+	struct rt_env *env)
 {
 	struct rt_frame *frame;
 
