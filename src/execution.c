@@ -1163,11 +1163,11 @@ rt_len_helper(
 		break;
 	case NOCT_VALUE_ARRAY:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = src_val->val.arr->size;
+		rt_get_array_size(env, src_val->val.arr, &dst_val->val.i);
 		break;
 	case NOCT_VALUE_DICT:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = src_val->val.dict->size;
+		rt_get_dict_size(env, src_val->val.dict, &dst_val->val.i);
 		break;
 	default:
 		rt_error(env, N_TR("Value is not a string, an array, or a dictionary."));
