@@ -30,6 +30,7 @@ static bool rt_intrin_resize(struct rt_env *env);
 static bool rt_intrin_charAt(struct rt_env *env);
 static bool rt_intrin_substring(struct rt_env *env);
 static bool rt_intrin_abs(struct rt_env *env);
+static bool rt_intrin_sqrt(struct rt_env *env);
 static bool rt_intrin_sin(struct rt_env *env);
 static bool rt_intrin_cos(struct rt_env *env);
 static bool rt_intrin_tan(struct rt_env *env);
@@ -57,6 +58,7 @@ struct intrin_item {
 	{"charAt",     "__charAt",    2, {"this", "index"       }, rt_intrin_charAt,     true,  NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true,  NULL},
 	{"abs",        "abs",         1, {"x"                   }, rt_intrin_abs,        false, NULL},
+	{"sqrt",       "sqrt",        1, {"x"                   }, rt_intrin_sqrt,       false, NULL},
 	{"sin",        "sin",         1, {"x"                   }, rt_intrin_sin,        false, NULL},
 	{"cos",        "cos",         1, {"x"                   }, rt_intrin_cos,        false, NULL},
 	{"tan",        "tan",         1, {"x"                   }, rt_intrin_tan,        false, NULL},
@@ -176,18 +178,42 @@ rt_intrin_int(
 	struct rt_env *env)
 {
 	struct rt_value val, ret;
-	const char *val_s;
-	int val_i;
+	int type;
 
 	noct_pin_local(env, 2, &val, &ret);
 
-	if (!noct_get_arg_check_string(env, 0, &val, &val_s))
+	if (!noct_get_arg(env, 0, &val))
+		return false;
+	if (!noct_get_value_type(env, &val, &type))
 		return false;
 
-	val_i = atoi(val_s);
-
-	if (!noct_set_return_make_int(env, &ret, val_i))
+	switch (type) {
+	case NOCT_VALUE_INT:
+		if (!noct_set_return(env, &val))
+			return false;
+		break;
+	case NOCT_VALUE_FLOAT:
+	{
+		float val_f;
+		if (!noct_get_float(env, &val, &val_f))
+			return false;
+		if (!noct_set_return_make_int(env, &ret, (int)val_f))
+			return false;
+		break;
+	}
+	case NOCT_VALUE_STRING:
+	{
+		const char *val_s;
+		if (!noct_get_string(env, &val, &val_s))
+			return false;
+		if (!noct_set_return_make_int(env, &ret, atoi(val_s)))
+			return false;
+		break;
+	}
+	default:
+		noct_error(env, N_TR("Value is not a number or a string."));
 		return false;
+	}
 
 	return true;
 }
@@ -198,18 +224,42 @@ rt_intrin_float(
 	struct rt_env *env)
 {
 	struct rt_value val, ret;
-	const char *val_s;
-	float val_f;
+	int type;
 
 	noct_pin_local(env, 2, &val, &ret);
 
-	if (!noct_get_arg_check_string(env, 0, &val, &val_s))
+	if (!noct_get_arg(env, 0, &val))
+		return false;
+	if (!noct_get_value_type(env, &val, &type))
 		return false;
 
-	val_f = (float)atof(val_s);
-
-	if (!noct_set_return_make_float(env, &ret, val_f))
+	switch (type) {
+	case NOCT_VALUE_INT:
+	{
+		int val_i;
+		if (!noct_get_int(env, &val, &val_i))
+			return false;
+		if (!noct_set_return_make_float(env, &ret, (float)val_i))
+			return false;
+		break;
+	}
+	case NOCT_VALUE_FLOAT:
+		if (!noct_set_return(env, &val))
+			return false;
+		break;
+	case NOCT_VALUE_STRING:
+	{
+		const char *val_s;
+		if (!noct_get_string(env, &val, &val_s))
+			return false;
+		if (!noct_set_return_make_float(env, &ret, (float)atof(val_s)))
+			return false;
+		break;
+	}
+	default:
+		noct_error(env, N_TR("Value is not a number or a string."));
 		return false;
+	}
 
 	return true;
 }
@@ -589,6 +639,47 @@ rt_intrin_abs(
 
 	return true;
 }
+
+/* sqrt() */
+static bool
+rt_intrin_sqrt(
+	struct rt_env *env)
+{
+	struct rt_value x, ret;
+	int type;
+	int ival;
+	float fval;
+
+	noct_pin_local(env, 2, &x, &ret);
+
+	if (!noct_get_arg(env, 0, &x))
+		return false;
+	if (!noct_get_value_type(env, &x, &type))
+		return false;
+
+	switch (type) {
+	case NOCT_VALUE_INT:
+		if (!noct_get_int(env, &x, &ival))
+			return false;
+		if (!noct_set_return_make_float(env, &ret, sqrtf((float)ival)))
+			return false;
+		break;
+	case NOCT_VALUE_FLOAT:
+		if (!noct_get_float(env, &x, &fval))
+			return false;
+		if (!noct_set_return_make_float(env, &ret, sqrtf(fval)))
+			return false;
+		break;
+	default:
+		noct_error(env, N_TR("Value is not a number."));
+		return false;
+	}
+
+	noct_unpin_local(env, 2, &x, &ret);
+
+	return true;
+}
+
 
 /* sin() */
 static bool
