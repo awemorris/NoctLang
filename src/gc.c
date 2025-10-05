@@ -10,6 +10,7 @@
 
 #include "runtime.h"
 #include "gc.h"
+#include "hash.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -741,7 +742,6 @@ void
 rt_gc_dict_write_barrier(
 	struct rt_env *env,
 	struct rt_dict *dict,
-	int index,
 	struct rt_value *val)
 {
 	/*
@@ -884,7 +884,9 @@ rt_gc_young_gc_body(
 			}
 		} else {
 			struct rt_dict *dict = (struct rt_dict *)obj;
-			for (i = 0; i < dict->size; i++) {
+			for (i = 0; i < dict->alloc_size; i++) {
+				if (dict->key[i].type != NOCT_VALUE_STRING)
+					continue; /* Removed or empty. */
 				if (dict->key[i].val.obj->region == RT_GC_REGION_GRADUATE &&
 				    dict->key[i].val.obj->forward != NULL) {
 					dict->key[i].val.obj = dict->key[i].val.obj->forward;
@@ -914,7 +916,9 @@ rt_gc_young_gc_body(
 			}
 		} else {
 			struct rt_dict *dict = (struct rt_dict *)obj;
-			for (i = 0; i < dict->size; i++) {
+			for (i = 0; i < dict->alloc_size; i++) {
+				if (dict->key[i].type != NOCT_VALUE_STRING)
+					continue; /* Removed or empty. */
 				if (IS_YOUNG_OBJ(dict->key[i].val.obj)) {
 					has_cross_gen_ref = true;
 					break;
@@ -1047,7 +1051,9 @@ rt_gc_copy_young_object_recursively(
 		break;
 	case RT_GC_TYPE_DICT:
 		dict = (struct rt_dict *)*obj;
-		for (i = 0; i < dict->size; i++) {
+		for (i = 0; i < dict->alloc_size; i++) {
+			if (dict->key[i].type != NOCT_VALUE_STRING)
+				continue; /* Removed or empty. */
 			if (!rt_gc_copy_young_object_recursively(env, &dict->key[i].val.obj))
 				return false;
 			if (IS_REF_VAL(&dict->value[i])) {
@@ -1084,7 +1090,10 @@ rt_gc_copy_young_object_recursively(
 		} else if ((*obj)->type == RT_GC_TYPE_DICT) {
 			/* Check for dictionary cross-generation references. */
 			dict = (struct rt_dict *)*obj;
-			for (i = 0; i < dict->size; i++) {
+			for (i = 0; i < dict->alloc_size; i++) {
+				if (dict->key[i].type != NOCT_VALUE_STRING)
+					continue; /* Removed or empty. */
+
 				/* If the key is young generation. */
 				if (IS_YOUNG_OBJ(dict->key[i].val.obj)) {
 					/* And if the element is not promoted to the tenure region. */
@@ -1231,13 +1240,11 @@ rt_gc_promote_dict(
 	struct rt_gc_object *obj)
 {
 	struct rt_dict *old_dict, *new_dict;
-	int alloc_size;
+	int alloc_size, index, i, j;
 
 	/* Get the allocation size. */
 	old_dict = (struct rt_dict *)obj;
-	alloc_size = old_dict->size;
-	if (alloc_size == 0)
-		alloc_size = old_dict->alloc_size;
+	alloc_size = old_dict->alloc_size;
 
 	/* Allocate a dictionary object. */
 	new_dict = rt_gc_alloc_dict_tenure(env, alloc_size);
@@ -1245,11 +1252,27 @@ rt_gc_promote_dict(
 		return false;
 
 	/* Copy the keys and values. */
-	new_dict->size = old_dict->size;
-	if (new_dict->size > 0) {
-		memcpy(new_dict->key, old_dict->key, new_dict->size * sizeof(struct rt_value));
-		memcpy(new_dict->value, old_dict->value, new_dict->size * sizeof(struct rt_value));
+	for (i = 0; i < old_dict->alloc_size; i++) {
+		if (old_dict->key[i].type != NOCT_VALUE_STRING)
+			continue; /* Removed or empty. */
+
+		index = string_hash(old_dict->key[i].val.str->data) & (new_dict->alloc_size - 1);
+		for (j = index;
+		     j != (index - 1) & (new_dict->alloc_size - 1);
+		     j = (j + 1) & (new_dict->alloc_size - 1)) {
+			if (new_dict->key[i].type == NOCT_VALUE_STRING)
+				continue; /* Used. */
+
+			/* Copy the item. */
+			new_dict->key[i] = old_dict->key[i];
+			new_dict->value[i] = old_dict->value[i];
+
+			/* Write barrier. */
+			rt_gc_dict_write_barrier(env, new_dict, &new_dict->key[j]);
+			rt_gc_dict_write_barrier(env, new_dict, &new_dict->value[j]);
+		}
 	}
+	new_dict->size = old_dict->size;
 
 	/* Set the forwarding pointer. */
 	obj->forward = &new_dict->head;
@@ -1342,9 +1365,7 @@ rt_gc_copy_dict_to_graduate(
 	assert(old_obj != NULL);
 	assert(old_obj->alloc_size > 0);
 
-	size = old_obj->size;
-	if (size == 0)
-		size = old_obj->alloc_size;
+	size = old_obj->alloc_size;
 
 	/*
 	 * Arrays larger than noct_conf_gc_lop_threshold/sizeof(struct rt_value *)/2 must not be in the
@@ -1357,12 +1378,10 @@ rt_gc_copy_dict_to_graduate(
 	if (new_obj == NULL)
 		return NULL;
 
-	/* Copy the keys. */
+	/* Copy the keys and values. */
 	new_obj->size = old_obj->size;
-	memcpy(new_obj->key, old_obj->key, old_obj->size * sizeof(struct rt_value));
-
-	/* Copy the value. */
-	memcpy(new_obj->value, old_obj->value, old_obj->size * sizeof(struct rt_value));
+	memcpy(new_obj->key, old_obj->key, old_obj->alloc_size * sizeof(struct rt_value));
+	memcpy(new_obj->value, old_obj->value, old_obj->alloc_size * sizeof(struct rt_value));
 
 	/* Check for cross-generation references. */
 	if (new_obj->head.region == RT_GC_REGION_TENURE) {
@@ -1515,7 +1534,10 @@ rt_gc_mark_old_object_recursively(
 		}
 	} else if ((*obj)->type == RT_GC_TYPE_DICT) {
 		struct rt_dict *dict = (struct rt_dict *)*obj;
-		for (i = 0; i < dict->size; i++) {
+		for (i = 0; i < dict->alloc_size; i++) {
+			if (dict->key[i].type != NOCT_VALUE_STRING)
+				continue; /* Removed or empty. */
+
 			rt_gc_mark_old_object_recursively(env, &dict->key[i].val.obj);
 			if (IS_REF_VAL(&dict->value[i]))
 				rt_gc_mark_old_object_recursively(env, &dict->value[i].val.obj);
@@ -1783,7 +1805,10 @@ rt_gc_update_tenure_ref_recursively(
 		}
 	} else if ((*obj)->type == RT_GC_TYPE_DICT) {
 		struct rt_dict *dict = (struct rt_dict *)*obj;
-		for (i = 0; i < dict->size; i++) {
+		for (i = 0; i < dict->alloc_size; i++) {
+			if (dict->key[i].type != NOCT_VALUE_STRING)
+				continue; /* Removed or empty. */
+
 			rt_gc_update_tenure_ref_recursively(env, &dict->key[i].val.obj);
 			if (IS_REF_VAL(&dict->value[i]))
 				rt_gc_update_tenure_ref_recursively(env, &dict->value[i].val.obj);

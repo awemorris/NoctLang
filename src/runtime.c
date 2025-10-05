@@ -35,6 +35,11 @@
 #define NEVER_COME_HERE		0
 #define PINNED_VAR_NOT_FOUND	0
 
+/* Dictionary key. */
+#define IS_DICT_KEY_EMPTY(k)	(k.type == NOCT_VALUE_INT)
+#define IS_DICT_KEY_REMOVED(k)	(k.type == NOCT_VALUE_FLOAT)
+#define REMOVE_DICT_KEY(k)	do { k.type = NOCT_VALUE_FLOAT; } while (0)
+
 /*
  * Config
  */
@@ -49,7 +54,7 @@ static const char *rt_read_bytecode_line(uint8_t *data, uint32_t size, int *pos)
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_leave_frame(struct rt_env *env);
 static bool rt_expand_array(struct rt_env *env, struct rt_array *old_arr, struct rt_array **new_arr_pp, size_t size);
-static bool rt_expand_dict(struct rt_env *env, struct rt_dict *old_dict, struct rt_dict **new_dict_pp, size_t size);
+static bool rt_expand_dict(struct rt_env *env, struct rt_dict *old_dict, struct rt_dict **new_dict_pp);
 static bool rt_init_global(struct rt_env *env);
 static void rt_cleanup_global(struct rt_env *env);
 static bool rt_expand_global(struct rt_env *env);
@@ -1243,6 +1248,7 @@ rt_get_dict_key_by_index(
 	struct rt_value *key)
 {
 	struct rt_dict *real_dict;
+	int count, i;
 
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1259,11 +1265,23 @@ rt_get_dict_key_by_index(
 		return false;
 	}
 
-	/* Load the key. */
-	*key = real_dict->key[index];
+	count = 0;
+	for (i = 0; i < real_dict->alloc_size; i++) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
+		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
+			continue;
+		if (count == index) {
+			/* Load the key. */
+			*key = real_dict->key[i];
+			RELEASE_OBJ(real_dict);
+			return true;
+		}
+		count++;
+	}
 
+	assert(NEVER_COME_HERE);
 	RELEASE_OBJ(real_dict);
-	return true;
+	return false;
 }
 
 /*
@@ -1277,6 +1295,7 @@ rt_get_dict_value_by_index(
 	struct rt_value *val)
 {
 	struct rt_dict *real_dict;
+	int count, i;
 
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1293,9 +1312,21 @@ rt_get_dict_value_by_index(
 		return false;
 	}
 
-	/* Load the value. */
-	*val = real_dict->value[index];
+	count = 0;
+	for (i = 0; i < real_dict->alloc_size; i++) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
+		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
+			continue;
+		if (count == index) {
+			/* Load the value. */
+			*val = real_dict->value[i];
+			RELEASE_OBJ(real_dict);
+			return true;
+		}
+		count++;
+	}
 
+	assert(NEVER_COME_HERE);
 	RELEASE_OBJ(real_dict);
 	return true;
 }
@@ -1311,7 +1342,7 @@ rt_get_dict_elem(
 	struct rt_value *val)
 {
 	struct rt_dict *real_dict;
-	int i;
+	int index, i;
 
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1320,20 +1351,24 @@ rt_get_dict_elem(
 
 	ACQUIRE_OBJ(dict, real_dict);
 
-	/* Search the key. */
-	for (i = 0; i < real_dict->size; i++) {
+	index = string_hash(key) & (real_dict->alloc_size - 1);
+	for (i = index;
+	     i != (index - 1) & (real_dict->alloc_size - 1);
+	     i = (i + 1) & (real_dict->alloc_size - 1)) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]))
+			continue;
+		if (IS_DICT_KEY_EMPTY(real_dict->key[i]))
+			break;
 		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Succeeded. */
 			*val = real_dict->value[i];
-
 			RELEASE_OBJ(real_dict);
 			return true;
 		}
 	}
 
+	/* Not found. */
 	RELEASE_OBJ(real_dict);
-
-	/* Failed. */
 	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
 	return false;
 }
@@ -1348,8 +1383,8 @@ rt_set_dict_elem(
 	const char *key,
 	struct rt_value *val)
 {
-	struct rt_dict *real_dict;
-	int i;
+	struct rt_dict *real_dict, *append_dict;
+	int index, i;
 
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1359,65 +1394,68 @@ rt_set_dict_elem(
 
 	ACQUIRE_OBJ(*dict, real_dict);
 
-	/* Search for the key. */
-	for (i = 0; i < real_dict->size; i++) {
+	/* Search for the key to replace the value. */
+	index = string_hash(key) & (real_dict->alloc_size - 1);
+	for (i = index;
+	     i != (index - 1) & (real_dict->alloc_size - 1);
+	     i = (i + 1) & (real_dict->alloc_size - 1)) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
+		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
+			goto make_new;
 		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
-			/* Found, store the value. */
+			/* Found, replace the value. */
 			real_dict->value[i] = *val;
-
 			RELEASE_OBJ(real_dict);
 			return true;
 		}
 	}
 
-	/* Expand the size. */
-	if (real_dict->size + 1 >= real_dict->alloc_size) {
-		struct rt_dict *new_dict;
+	/* Fall-thru. */
+make_new:
+	/* Key doesn't exist. Add new one. */
 
+	/* Expand the size if 75% is used. */
+	if (real_dict->size >= real_dict->alloc_size / 4 * 3) {
 		/* Reallocate a dictionary. */
-		if (!rt_expand_dict(env, real_dict, dict, real_dict->size + 1)) {
+		if (!rt_expand_dict(env, real_dict, dict)) {
 			RELEASE_OBJ(real_dict);
 			return false;
 		}
 
-		/* Get the new dictionary which is only visible to this thread.. */
-		new_dict = *dict;
-
-		/* Append the key. */
-		if (!rt_make_string(env, &new_dict->key[new_dict->size], key)) {
-			RELEASE_OBJ(real_dict);
-			return false;
-		}
-		new_dict->value[new_dict->size] = *val;
-		new_dict->size++;
-
-		/* GC: Write barrier for the remember set. */
-		if (val->type == NOCT_VALUE_STRING ||
-		    val->type == NOCT_VALUE_ARRAY ||
-		    val->type == NOCT_VALUE_DICT) {
-			rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->key[new_dict->size]);
-			rt_gc_dict_write_barrier(env, new_dict, i, val);
-		}
-
-		/* Publication is done by a release to the old dictionary. */
-		RELEASE_OBJ(real_dict);
-		return true;
+		/* Get the new dictionary which is only visible to this thread until a publication. */
+		append_dict = *dict;
+	} else {
+		append_dict = real_dict;
 	}
+	assert(append_dict->size < append_dict->alloc_size);
 
-	/* Append the key. */
-	if (!rt_make_string(env, &real_dict->key[real_dict->size], key))
-		return false;
-	real_dict->value[real_dict->size] = *val;
-	real_dict->size++;
+	/* Append. */
+	index = string_hash(key) & (append_dict->alloc_size - 1);
+	for (i = index;
+	     i != (index - 1) & (append_dict->alloc_size - 1);
+	     i = (i + 1) & (append_dict->alloc_size - 1)) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
+		    IS_DICT_KEY_EMPTY(real_dict->key[i])) {
+			/* Make a key value. */
+			if (!rt_make_string(env, &real_dict->key[i], key)) {
+				RELEASE_OBJ(real_dict);
+				return false;
+			}
+			append_dict->value[i] = *val;
+			break;
+		}
+	}
+	append_dict->size++;
 
 	/* GC: Write barrier for the remember set. */
 	if (val->type == NOCT_VALUE_STRING ||
 	    val->type == NOCT_VALUE_ARRAY ||
 	    val->type == NOCT_VALUE_DICT) {
-		rt_gc_dict_write_barrier(env, real_dict, i, &real_dict->key[real_dict->size]);
-		rt_gc_dict_write_barrier(env, real_dict, i, val);
+		rt_gc_dict_write_barrier(env, append_dict, &real_dict->key[real_dict->size]);
+		rt_gc_dict_write_barrier(env, append_dict, val);
 	}
 
+	/* Publication. (In case of expand, the new dictionaty will appear to other threads.) */
 	RELEASE_OBJ(real_dict);
 	return true;
 }
@@ -1427,47 +1465,51 @@ static bool
 rt_expand_dict(
 	struct rt_env *env,
 	struct rt_dict *old_dict,
-	struct rt_dict **new_dict_pp,
-	size_t size)
+	struct rt_dict **new_dict_pp)
 {
 	struct rt_dict *new_dict;
-	size_t old_size;
-	int i;
+	size_t old_size, new_size;
+	int index, i, j;
 
 	assert(env != NULL);
 	assert(old_dict != NULL);
 	assert(old_dict->newer == NULL);
-	assert(old_dict->size < size);
 	assert(new_dict_pp != NULL);
 
 	old_size = old_dict->alloc_size;
-
-	/* Get the next size. */
-	if (size < old_size * 2)
-		size = old_size * 2;
-	else
-		size = size * 2;
+	new_size = old_size * 2;
 
 	/* Allocate the new array. */
-	new_dict = rt_gc_alloc_dict(env, size);
+	new_dict = rt_gc_alloc_dict(env, new_size);
 	if (new_dict == NULL) {
 		rt_out_of_memory(env);
 		return false;
 	}
 
 	/* Copy the values with write barrier. */
-	new_dict->size = old_dict->size;
-	for (i = 0; i < (int)old_dict->size; i++) {
-		/* Copy the key. */
-		new_dict->key[i] = old_dict->key[i];
+	for (i = 0; i < old_size; i++) {
+		if (IS_DICT_KEY_REMOVED(old_dict->key[i]) || IS_DICT_KEY_EMPTY(old_dict->key[i]))
+			continue;
 
-		/* Copy the value. */
-		new_dict->value[i] = old_dict->value[i];
+		index = string_hash(old_dict->key[i].val.str->data) & (new_dict->alloc_size - 1);
+		for (j = index;
+		     j != (index - 1) & (new_dict->alloc_size - 1);
+		     j = (j + 1) & (new_dict->alloc_size - 1)) {
+			if (IS_DICT_KEY_EMPTY(new_dict->key[i])) {
+				/* Copy the key. */
+				new_dict->key[j] = old_dict->key[i];
 
-		/* Write barrier. */
-		rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->key[i]);
-		rt_gc_dict_write_barrier(env, new_dict, i, &new_dict->value[i]);
+				/* Copy the value. */
+				new_dict->value[j] = old_dict->value[i];
+
+				/* Write barrier. */
+				rt_gc_dict_write_barrier(env, new_dict, &new_dict->key[j]);
+				rt_gc_dict_write_barrier(env, new_dict, &new_dict->value[j]);
+				break;
+			}
+		}
 	}
+	new_dict->size = old_dict->size;
 
 	/* Set the forwarding pointer. */
 	old_dict->newer = new_dict;
@@ -1478,11 +1520,8 @@ rt_expand_dict(
 	return true;
 }
 
-#if !defined(USE_MULTITHREAD)
 /*
  * Remove a dictionary key.
- *
- * Note: this is not thread-safe and not defined in the multithreaded build.
  */
 bool
 rt_remove_dict_elem(
@@ -1490,44 +1529,40 @@ rt_remove_dict_elem(
 	struct rt_dict *dict,
 	const char *key)
 {
-	struct rt_dict *d;
-	int i;
+	struct rt_dict *real_dict;
+	int index, i;
 
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
 	
-	ACQUIRE_OBJ(dict, d);
+	ACQUIRE_OBJ(dict, real_dict);
 
 	/* Search for the key. */
-	for (i = 0; i < d->size; i++) {
-		if (strcmp(d->key[i].val.str->data, key) == 0) {
-			/* Remove the key and value. */
-			memmove(&d->key[i],
-				&d->key[i + 1],
-				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
-			memmove(&d->value[i],
-				&d->value[i + 1],
-				sizeof(struct rt_value) * (size_t)(d->size - i - 1));
-			d->key[d->size - 1].type = NOCT_VALUE_INT;
-			d->key[d->size - 1].val.i = 0;
-			d->value[d->size - 1].type = NOCT_VALUE_INT;
-			d->value[d->size - 1].val.i = 0;
-			d->size--;
+	index = string_hash(key) & (real_dict->alloc_size - 1);
+	for (i = index;
+	     i != (index - 1) & (real_dict->alloc_size - 1);
+	     i = (i + 1) & (real_dict->alloc_size - 1)) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]))
+			continue;
+		if (IS_DICT_KEY_EMPTY(real_dict->key[i]))
+			break;
+		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+			REMOVE_DICT_KEY(real_dict->key[i]);
+			real_dict->value[i].type = NOCT_VALUE_INT;
+			real_dict->value[i].val.i = 0;
 
 			/* Succeeded. */
-			RELEASE_OBJ(d);
+			RELEASE_OBJ(real_dict);
 			return true;
 		}
 	}
 
+	/* Not found. */
 	RELEASE_OBJ(d);
-
-	/* Failed. */
 	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
 	return false;
 }
-#endif
 
 /*
  * Make a shallow copy of a dictionary.
@@ -1556,7 +1591,7 @@ rt_make_dict_copy(
 
 	/* Copy the array with write-barrier. */
 	d->size = src_real->size;
-	for (i = 0; i < (int)src_real->size; i++) {
+	for (i = 0; i < (int)src_real->alloc_size; i++) {
 		/* Copy the key. */
 		d->key[i] = src_real->key[i];
 
@@ -1564,8 +1599,11 @@ rt_make_dict_copy(
 		d->value[i] = src_real->value[i];
 
 		/* Write barrier. */
-		rt_gc_dict_write_barrier(env, d, i, &d->key[i]);
-		rt_gc_dict_write_barrier(env, d, i, &d->value[i]);
+		if (!IS_DICT_KEY_REMOVED(src_real->key[i]) &&
+		    !IS_DICT_KEY_EMPTY(src_real->key[i])) {
+			rt_gc_dict_write_barrier(env, d, &d->key[i]);
+			rt_gc_dict_write_barrier(env, d, &d->value[i]);
+		}
 	}
 
 	RELEASE_OBJ(src_real);

@@ -193,7 +193,7 @@ struct rt_dict *rt_gc_alloc_dict(struct rt_env *env, size_t size);
 void rt_gc_array_write_barrier(struct rt_env *env, struct rt_array *arr, int index, struct rt_value *val);
 
 /* Write barrier: registers a container in the remember set if it references a young object. */
-void rt_gc_dict_write_barrier(struct rt_env *env, struct rt_dict *dict,int index, struct rt_value *val);
+void rt_gc_dict_write_barrier(struct rt_env *env, struct rt_dict *dict, struct rt_value *val);
 
 /* Pins a C global variable. */
 bool rt_gc_pin_global(struct rt_env *env, struct rt_value *val);

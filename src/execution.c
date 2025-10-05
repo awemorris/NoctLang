@@ -1207,7 +1207,8 @@ rt_getdictkeybyindex_helper(
 	}
 
 	/* Load the element. */
-	*dst_val = dict_val->val.dict->key[subscr_val->val.i];
+	if (!rt_get_dict_key_by_index(env, dict_val->val.dict, subscr_val->val.i, dst_val))
+		return false;
 
 	return true;
 }
@@ -1244,7 +1245,8 @@ rt_getdictvalbyindex_helper(
 	}
 
 	/* Load the element. */
-	*dst_val = dict_val->val.dict->value[subscr_val->val.i];
+	if (!rt_get_dict_value_by_index(env, dict_val->val.dict, subscr_val->val.i, dst_val))
+		return false;
 
 	return true;
 }

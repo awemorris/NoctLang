@@ -101,6 +101,8 @@ struct rt_dict {
 #endif
 };
 
+#define RT_DICT_KEY_REMOVED ((struct rt_value *)((intptr_t)-1))
+
 /*
  * Function object.
  */

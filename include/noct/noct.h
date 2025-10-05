@@ -502,8 +502,6 @@ noct_set_dict_elem(
 
 /*
  * Removes a key-value pair from a dictionary by key.
- *
- * Note: this is not thread-safe and not defined in the multithreaded build.
  */
 NOCT_DLL
 bool
