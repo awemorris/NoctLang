@@ -1221,6 +1221,9 @@ rt_check_dict_key(
 
 	/* Search the key. */
 	for (i = 0; i < real_dict->size; i++) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
+		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
+			continue;
 		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Found. */
 			RELEASE_OBJ(real_dict);
@@ -1592,15 +1595,13 @@ rt_make_dict_copy(
 	/* Copy the array with write-barrier. */
 	d->size = src_real->size;
 	for (i = 0; i < (int)src_real->alloc_size; i++) {
-		/* Copy the key. */
-		d->key[i] = src_real->key[i];
-
-		/* Copy the value. */
-		d->value[i] = src_real->value[i];
-
-		/* Write barrier. */
 		if (!IS_DICT_KEY_REMOVED(src_real->key[i]) &&
 		    !IS_DICT_KEY_EMPTY(src_real->key[i])) {
+			/* Copy the key and value. */
+			d->key[i] = src_real->key[i];
+			d->value[i] = src_real->value[i];
+
+			/* Write barrier. */
 			rt_gc_dict_write_barrier(env, d, &d->key[i]);
 			rt_gc_dict_write_barrier(env, d, &d->value[i]);
 		}
