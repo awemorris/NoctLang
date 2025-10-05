@@ -1258,11 +1258,11 @@ rt_loadsymbol_helper(
 	int dst,
 	const char *symbol)
 {
-	struct rt_bindglobal *global;
+	struct rt_value val;
 
 	/* Search a global variable. */
-	if (rt_find_global(env, symbol, &global)) {
-		env->frame->tmpvar[dst] = global->val;
+	if (rt_find_global(env, symbol, &val)) {
+		env->frame->tmpvar[dst] = val;
 	} else {
 		rt_error(env, N_TR("Symbol \"%s\" not found."), symbol);
 		return false;
@@ -1280,19 +1280,10 @@ rt_storesymbol_helper(
 	const char *symbol,
 	int src)
 {
-	struct rt_bindglobal *global;
+	struct rt_value *val;
 
-	/* Search a global variable. */
-	if (rt_find_global(env, symbol, &global)) {
-		/* Found. */
-		global->val = env->frame->tmpvar[src];
-	} else {
-		/* Not found. Bind a global variable. */
-		assert(global == NULL);
-		if (!rt_add_global(env, symbol, &global))
-			return false;
-		global->val = env->frame->tmpvar[src];
-	}
+	if (!rt_set_global(env, symbol, &env->frame->tmpvar[src]))
+		return false;
 
 	return true;
 }

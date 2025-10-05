@@ -779,7 +779,6 @@ rt_gc_young_gc_body(
 	struct rt_env *env)
 {
 	struct rt_gc_object *obj;
-	struct rt_bindglobal *global;
 	struct rt_frame *frame;
 	int sp, i;
 
@@ -821,13 +820,13 @@ rt_gc_young_gc_body(
 	 */
 
 	/* For all global variables. */
-	global = env->vm->global;
-	while (global != NULL) {
-		if (IS_REF_VAL(&global->val)) {
-			if (!rt_gc_copy_young_object_recursively(env, &global->val.val.obj))
+	for (i = 0; i < env->vm->global_alloc_size; i++) {
+		if (env->vm->global[i].name == NULL || env->vm->global[i].is_removed)
+			continue;
+		if (IS_REF_VAL(&env->vm->global[i].val)) {
+			if (!rt_gc_copy_young_object_recursively(env, &env->vm->global[i].val.val.obj))
 				return;
 		}
-		global = global->next;
 	}
 
 	/* For all call frames. */
@@ -1442,11 +1441,11 @@ rt_gc_old_gc_body(
 	 */
 
 	/* For all global variables. */
-	global = env->vm->global;
-	while (global != NULL) {
-		if (IS_REF_VAL(&global->val))
-			rt_gc_mark_old_object_recursively(env, &global->val.val.obj);
-		global = global->next;
+	for (i = 0; i < env->vm->global_alloc_size; i++) {
+		if (env->vm->global[i].name == NULL || env->vm->global[i].is_removed)
+			continue;
+		if (IS_REF_VAL(&env->vm->global[i].val))
+			rt_gc_mark_old_object_recursively(env, &env->vm->global[i].val.val.obj);
 	}
 
 	/* For all call frames. */
@@ -1690,11 +1689,11 @@ rt_gc_compact_gc(
 	}
 
 	/* For all global variables. */
-	global = env->vm->global;
-	while (global != NULL) {
+	for (i = 0; i < env->vm->global_alloc_size; i++) {
+		if (env->vm->global[i].name == NULL || env->vm->global[i].is_removed)
+			continue;
 		if (IS_REF_VAL(&global->val))
 			rt_gc_update_tenure_ref_recursively(env, &global->val.val.obj);
-		global = global->next;
 	}
 
 	/* For all call frames. */

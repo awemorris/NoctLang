@@ -134,7 +134,7 @@ struct rt_func {
 struct rt_bindglobal {
 	char *name;
 	struct rt_value val;
-	struct rt_bindglobal *next;
+	bool is_removed;
 };
 
 /*
@@ -227,6 +227,8 @@ struct rt_env {
  */
 struct rt_vm {
 	/* Global symbols. */
+	int global_alloc_size;
+	int global_size;
 	struct rt_bindglobal *global;
 
 	/* Function list. */
@@ -359,13 +361,10 @@ bool rt_make_dict_copy(struct rt_env *env, struct rt_dict **dst, struct rt_dict 
 bool rt_get_global(struct rt_env *env, const char *name, struct rt_value *val);
 
 /* Find a global variable. */
-bool rt_find_global(struct rt_env *env, const char *name, struct rt_bindglobal **global);
+bool rt_find_global(struct rt_env *env, const char *name, struct rt_value *val);
 
 /* Set a global variable. */
 bool rt_set_global(struct rt_env *env, const char *name, struct rt_value *val);
-
-/* Add a global variable. */
-bool rt_add_global(struct rt_env *env, const char *name, struct rt_bindglobal **global);
 
 /*
  * FFI Pin

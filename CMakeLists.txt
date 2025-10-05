@@ -107,6 +107,7 @@ set(NOCTLANG_BASE_SOURCE
   src/execution.c
   src/intrinsics.c
   src/gc.c
+  src/hash.c
 )
 
 if(NOCTLANG_ENABLE_I18N)
