@@ -1122,22 +1122,11 @@ rt_loadarray_helper(
 		subscript = -1;
 		key = subscr_val->val.str->data;
 
-		/* Get the newer reference. */
-		real_dict = arr_val->val.dict;
-		while (real_dict->newer != NULL)
-			real_dict = real_dict->newer;
-
 		/* Search the key. */
-		for (i = 0; i < real_dict->size; i++) {
-			if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
-				/* Succeeded. */
-				*dst_val = real_dict->value[i];
-				return true;
-			}
-		}
+		if (!rt_get_dict_elem(env, arr_val->val.dict, key, dst_val))
+			return false;
 		
-		rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
-		return false;
+		return true;
 	}
 }
 
@@ -1188,6 +1177,7 @@ rt_getdictkeybyindex_helper(
 	struct rt_value *dst_val;
 	struct rt_value *dict_val;
 	struct rt_value *subscr_val;
+	int size;
 
 	dst_val = &env->frame->tmpvar[dst];
 	dict_val = &env->frame->tmpvar[dict];
@@ -1199,10 +1189,6 @@ rt_getdictkeybyindex_helper(
 	}
 	if (subscr_val->type != NOCT_VALUE_INT) {
 		rt_error(env, N_TR("Subscript not an integer."));
-		return false;
-	}
-	if (subscr_val->val.i >= dict_val->val.dict->size) {
-		rt_error(env, N_TR("Dictionary index out-of-range."));
 		return false;
 	}
 
@@ -1237,10 +1223,6 @@ rt_getdictvalbyindex_helper(
 	}
 	if (subscr_val->type != NOCT_VALUE_INT) {
 		rt_error(env, N_TR("Subscript not an integer."));
-		return false;
-	}
-	if (subscr_val->val.i >= dict_val->val.dict->size) {
-		rt_error(env, N_TR("Dictionary index out-of-range."));
 		return false;
 	}
 

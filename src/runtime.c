@@ -1164,7 +1164,7 @@ rt_make_empty_dict(
 {
 	struct rt_dict *dict;
 
-	const int START_SIZE = 16;
+	const int START_SIZE = 2;
 
 	/* Allocate a dictionary. */
 	dict = rt_gc_alloc_dict(env, START_SIZE);
@@ -1437,10 +1437,10 @@ make_new:
 	for (i = index;
 	     i != (index - 1) & (append_dict->alloc_size - 1);
 	     i = (i + 1) & (append_dict->alloc_size - 1)) {
-		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
-		    IS_DICT_KEY_EMPTY(real_dict->key[i])) {
+		if (IS_DICT_KEY_REMOVED(append_dict->key[i]) ||
+		    IS_DICT_KEY_EMPTY(append_dict->key[i])) {
 			/* Make a key value. */
-			if (!rt_make_string(env, &real_dict->key[i], key)) {
+			if (!rt_make_string(env, &append_dict->key[i], key)) {
 				RELEASE_OBJ(real_dict);
 				return false;
 			}
