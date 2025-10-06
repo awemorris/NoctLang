@@ -955,10 +955,6 @@ hir_visit_else_stmt(
 	}
 	assert((*prev_block)->val.if_.chain_next == NULL);
 
-	/* Get the exit block. */
-	assert(parent_block->type != HIR_BLOCK_IF);
-	assert(parent_block->succ != NULL);
-
 	/* Alloc an else block. */
 	else_block = hir_malloc(sizeof(struct hir_block));
 	if (else_block == NULL) {
