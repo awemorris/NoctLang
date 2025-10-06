@@ -222,83 +222,85 @@ jit_put_qword(
 
 #define ASM_BINARY_OP(f)                                                                                            \
     if (IS_MSABI) {                                                                                                 \
-        /* if (!f(rt, dst, src1, src2)) return false; */                                                            \
+        /* if (!f(env, dst, src1, src2)) return false; */                                                           \
         ASM {                                                                                                       \
             /* r13: exception_handler */                                                                            \
-            /* r14: rt */                                                                                           \
+            /* r14: env */                                                                                          \
+            /* r15: &env->frame->tmpvar[0] */                                                                       \
                                                                                                                     \
-            /* mov r14 -> rcx (1st) */       IB(0x4C); IB(0x89); IB(0xF1);                                          \
-            /* mov dst -> rdx (2nd) */       IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);                       \
-            /* mov src1 -> r8 (3rd) */       IB(0x49); IB(0xB8); IQ((uint64_t)src1); IB(0x4D); IB(0x89); IB(0xC0);  \
-            /* mov src2 -> r9 (4th) */       IB(0x49); IB(0xB9); IQ((uint64_t)src2); IB(0x4D); IB(0x89); IB(0xC9);  \
-            /* movabs f -> rax */            IB(0x48); IB(0xB8); IQ((uint64_t)f);                                   \
-            /* sub rsp, 32 (shadow space) */ IB(0x48); IB(0x83); IB(0xEC); IB(0x20);                                \
-            /* call rax */                   IB(0xFF); IB(0xD0);                                                    \
-            /* add rsp, 32 */                IB(0x48); IB(0x83); IB(0xC4); IB(0x20);                                \
+            /* subq %rsp, 32 */              IB(0x48); IB(0x83); IB(0xec); IB(0x20);                                \
+            /* (1st) movq %r14 -> %rcx */    IB(0x4c); IB(0x89); IB(0xf1);                                          \
+            /* (2nd) movq dst -> %rdx */     IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);                       \
+            /* (3rd) movq src1 -> %r8 */     IB(0x49); IB(0xb8); IQ((uint64_t)src1);                                \
+            /* (4th) movq src2 -> %r9 */     IB(0x49); IB(0xb9); IQ((uint64_t)src2);                                \
+            /* movabs f -> %rax */           IB(0x48); IB(0xb8); IQ((uint64_t)f);                                   \
+            /* call *%rax */                 IB(0xff); IB(0xd0);                                                    \
+            /* addq %rsp, 32 */              IB(0x48); IB(0x83); IB(0xc4); IB(0x20);                                \
                                                                                                                     \
-            /* test eax, eax */              IB(0x83); IB(0xF8); IB(0x00);                                          \
+            /* test %eax, %eax */            IB(0x83); IB(0xF8); IB(0x00);                                          \
             /* jne 8 <next> */               IB(0x75); IB(0x03);                                                    \
             /* jmp *%r13 */                  IB(0x41); IB(0xFF); IB(0xE5);                                          \
         /* next: */                                                                                                 \
         }                                                                                                           \
     } else {                                                                                                        \
-        /* if (!f(rt, dst, src1, src2)) return false; */                                                            \
+        /* if (!f(env, dst, src1, src2)) return false; */                                                           \
         ASM {                                                                                                       \
-                /* r13: exception_handler */                                                                        \
-                /* r14: rt */                                                                                       \
-                /* r14: &rt->frame->tmpvar[0] */                                                                    \
+            /* r13: exception_handler */                                                                            \
+            /* r14: env */                                                                                          \
+            /* r15: &env->frame->tmpvar[0] */                                                                       \
                                                                                                                     \
-                /* movq %r14, %rdi */        IB(0x4c); IB(0x89); IB(0xf7);                                          \
-                /* movq dst, %rsi */         IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);                       \
-                /* movq src1, %rdx */        IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)src1);                      \
-                /* movq src2, %rcx */        IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src2);                      \
-                /* movabs f, %r8 */          IB(0x49); IB(0xb8); IQ((uint64_t)f);                                   \
-                /* call *%r8 */              IB(0x41); IB(0xff); IB(0xd0);                                          \
+            /* (1st) movq %r14 -> %rdi */    IB(0x4c); IB(0x89); IB(0xf7);                                          \
+            /* (2st) movq dst -> %rsi */     IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);                       \
+            /* (3rd) movq src1 -> %rdx */    IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)src1);                      \
+            /* (4th) movq src2 -> %rcx */    IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src2);                      \
+            /* movabs f -> %rax */           IB(0x48); IB(0xb8); IQ((uint64_t)f);                                   \
+            /* call *%rax */                 IB(0xff); IB(0xd0);                                                    \
                                                                                                                     \
-                /* cmpl $0, %eax */          IB(0x83); IB(0xf8); IB(0x00);                                          \
-                /* jne 8 <next> */           IB(0x75); IB(0x03);                                                    \
-                /* jmp *%r13 */              IB(0x41); IB(0xff); IB(0xe5);                                          \
-                /* next:*/                                                                                          \
+            /* test %eax, %eax */            IB(0x83); IB(0xF8); IB(0x00);                                          \
+            /* jne 8 <next> */               IB(0x75); IB(0x03);                                                    \
+            /* jmp *%r13 */                  IB(0x41); IB(0xff); IB(0xe5);                                          \
+            /* next: */                                                                                             \
         }                                                                                                           \
     }
 
 #define ASM_UNARY_OP(f)                                                                                             \
     if (IS_MSABI) {                                                                                                 \
-        /* if (!f(rt, dst, src)) return false; */                                                                   \
+        /* if (!f(env, dst, src)) return false; */                                                                  \
         ASM {                                                                                                       \
             /* r13: exception_handler */                                                                            \
-            /* r14: rt */                                                                                           \
+            /* r14: env */                                                                                          \
+            /* r15: &env->frame->tmpvar[0] */                                                                       \
                                                                                                                     \
-            /* mov r14 -> rcx (1st) */       IB(0x4C); IB(0x89); IB(0xF1);                                          \
-            /* mov dst -> rdx (2nd) */       IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);                       \
-            /* mov src -> r8 (3rd) */        IB(0x49); IB(0xB8); IQ((uint64_t)src); IB(0x4D); IB(0x89); IB(0xC0);   \
-            /* movabs f -> rax */            IB(0x48); IB(0xB8); IQ((uint64_t)f);                                   \
-            /* sub rsp, 32 (shadow space) */ IB(0x48); IB(0x83); IB(0xEC); IB(0x20);                                \
-            /* call rax */                   IB(0xFF); IB(0xD0);                                                    \
-            /* add rsp, 32 */                IB(0x48); IB(0x83); IB(0xC4); IB(0x20);                                \
+            /* subq %rsp, 32 */              IB(0x48); IB(0x83); IB(0xec); IB(0x20);                                \
+            /* (1st) mov %r14 -> %rcx */     IB(0x4c); IB(0x89); IB(0xf1);                                          \
+            /* (2nd) mov dst -> %rdx */      IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);                       \
+            /* (3rd) mov src -> %r8 */       IB(0x49); IB(0xb8); IQ((uint64_t)src);                                 \
+            /* movabs f -> %rax */           IB(0x48); IB(0xb8); IQ((uint64_t)f);                                   \
+            /* call *%rax */                 IB(0xff); IB(0xd0);                                                    \
+            /* addq %rsp, 32 */              IB(0x48); IB(0x83); IB(0xc4); IB(0x20);                                \
                                                                                                                     \
-            /* cmpl $0, %eax */              IB(0x83); IB(0xf8); IB(0x00);                                          \
+            /* test %eax, %eax */            IB(0x83); IB(0xf8); IB(0x00);                                          \
             /* jne 8 <next> */               IB(0x75); IB(0x03);                                                    \
             /* jmp *%r13 */                  IB(0x41); IB(0xff); IB(0xe5);                                          \
             /* next:*/                                                                                              \
         /* next: */                                                                                                 \
         }                                                                                                           \
     } else {                                                                                                        \
-        /* if (!f(rt, dst, src)) return false; */                                                                   \
+        /* if (!f(env, dst, src)) return false; */                                                                   \
         ASM {                                                                                                       \
             /* r13: exception_handler */                                                                            \
-            /* r14: rt */                                                                                           \
-            /* r14: &rt->frame->tmpvar[0] */                                                                        \
+            /* r14: env */                                                                                          \
+            /* r15: &env->frame->tmpvar[0] */                                                                       \
                                                                                                                     \
-            /* movq %r14, %rdi */        IB(0x4c); IB(0x89); IB(0xf7);                                              \
-            /* movq dst, %rsi */         IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);                           \
-            /* movq src, %rdx */         IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)src);                           \
-            /* movabs f, %r8 */          IB(0x49); IB(0xb8); IQ((uint64_t)f);                                       \
-            /* call *%r8 */              IB(0x41); IB(0xff); IB(0xd0);                                              \
+            /* (1st) movq %r14 -> %rdi */    IB(0x4c); IB(0x89); IB(0xf7);                                          \
+            /* (2nd) movq dst -> %rsi */     IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);                       \
+            /* (3rd) movq src -> %rdx */     IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)src);                       \
+            /* movabs f -> %r8 */            IB(0x49); IB(0xb8); IQ((uint64_t)f);                                   \
+            /* call *%r8 */                  IB(0x41); IB(0xff); IB(0xd0);                                          \
                                                                                                                     \
-            /* cmpl $0, %eax */          IB(0x83); IB(0xf8); IB(0x00);                                              \
-            /* jne 8 <next> */           IB(0x75); IB(0x03);                                                        \
-            /* jmp *%r13 */              IB(0x41); IB(0xff); IB(0xe5);                                              \
+            /* test %eax, %eax */            IB(0x83); IB(0xf8); IB(0x00);                                          \
+            /* jne 8 <next> */               IB(0x75); IB(0x03);                                                    \
+            /* jmp *%r13 */                  IB(0x41); IB(0xff); IB(0xe5);                                          \
         /* next:*/                                                                                                  \
         }                                                                                                           \
     }
@@ -316,14 +318,14 @@ jit_visit_lineinfo_op(
 
         CONSUME_IMM32(line);
 
-        /* rt->line = line; */
+        /* env->line = line; */
         ASM {
 		/* r13: exception_handler */
-		/* r14: rt */
-		/* r15: &rt->frame->tmpvar[0] */
+		/* r14: evn */
+		/* r15: &env->frame->tmpvar[0] */
 
-                /* movl line, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID(line);
-                /* movq %rax, 0x8(%r14) */        IB(0x49); IB(0x89); IB(0x46); IB(0x08);
+                /* movl line -> %rax */              IB(0x48); IB(0xc7); IB(0xc0); ID(line);
+                /* movq %rax -> [%r14 + 8] */        IB(0x49); IB(0x89); IB(0x46); IB(0x08);
         }
 
         return true;
@@ -343,20 +345,20 @@ jit_visit_assign_op(
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
 
-        /* rt->frame->tmpvar[dst] = rt->frame->tmpvar[src]; */
+        /* env->frame->tmpvar[dst] = env->frame->tmpvar[src]; */
         ASM {
 		/* r13: exception_handler */
-		/* r14: rt */
-		/* r15: &rt->frame->tmpvar[0] */
+		/* r14: env */
+		/* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
-                /* movq src, %rbx */                IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src);
-                /* addq %r15, %rax */                IB(0x4c); IB(0x01); IB(0xf8);
-                /* addq %r15, %rbx */                IB(0x4c); IB(0x01); IB(0xfb);
-                /* movq (%rbx), %rcx */                IB(0x48); IB(0x8b); IB(0x0b);
-                /* movq 8(%rbx), %rdx */        IB(0x48); IB(0x8b); IB(0x53); IB(0x08);
-                /* movq %rcx, (%rax) */                IB(0x48); IB(0x89); IB(0x08);
-                /* movq %rdx, 8(%rax) */        IB(0x48); IB(0x89); IB(0x50); IB(0x08);
+                /* movq dst -> %rax */            IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* movq src -> %rbx */            IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src);
+                /* addq %rax -> %r15  */          IB(0x4c); IB(0x01); IB(0xf8);
+                /* addq %rbx -> %r15  */          IB(0x4c); IB(0x01); IB(0xfb);
+                /* movq (%rbx) -> %rcx */         IB(0x48); IB(0x8b); IB(0x0b);
+                /* movq 8(%rbx) -> %rdx */        IB(0x48); IB(0x8b); IB(0x53); IB(0x08);
+                /* movq %rcx -> (%rax) */         IB(0x48); IB(0x89); IB(0x08);
+                /* movq %rdx -> 8(%rax) */        IB(0x48); IB(0x89); IB(0x50); IB(0x08);
         }
 
         return true;
@@ -375,17 +377,17 @@ jit_visit_iconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &rt->frame->tmpvar[dst].type = RT_VALUE_INT; */
-        /* &rt->frame->tmpvar[dst].val.i = val; */
+        /* &env->frame->tmpvar[dst].type = RT_VALUE_INT; */
+        /* &env->frame->tmpvar[dst].val.i = val; */
         ASM {
 		/* r13: exception_handler */
-		/* r14: rt */
-		/* r15: &rt->frame->tmpvar[0] */
+		/* r14: env */
+		/* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
-                /* addq %r15, %rax */                IB(0x4c); IB(0x01); IB(0xf8);
-                /* movl $0, (%rax) */                IB(0xc7); IB(0x00); ID(0);
-                /* movl val, 8(%rax) */                IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
+                /* movq dst -> %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* addq %r15 -> %rax */               IB(0x4c); IB(0x01); IB(0xf8);
+                /* movl $0 -> (%rax) */               IB(0xc7); IB(0x00); ID(0);
+                /* movl val ->8(%rax) */              IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
         }
 
         return true;
@@ -404,17 +406,17 @@ jit_visit_fconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &rt->frame->tmpvar[dst].type = RT_VALUE_INT; */
-        /* &rt->frame->tmpvar[dst].val.i = val; */
+        /* &env->frame->tmpvar[dst].type = RT_VALUE_INT; */
+        /* &env->frame->tmpvar[dst].val.i = val; */
         ASM {
 		/* r13: exception_handler */
-		/* r14: rt */
-		/* r15: &rt->frame->tmpvar[0] */
+		/* r14: env */
+		/* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst, %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
-                /* addq %r15, %rax */                IB(0x4c); IB(0x01); IB(0xf8);
-                /* movl $1, (%rax) */                IB(0xc7); IB(0x00); ID(1);
-                /* movl val, 8(%rax) */                IB(0xc7); IB(0x40); IB(0x08); ID(val);
+                /* movq dst -> %rax */                IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* addq %r15 -> %rax */               IB(0x4c); IB(0x01); IB(0xf8);
+                /* movl $1 -> (%rax) */               IB(0xc7); IB(0x00); ID(1);
+                /* movl val -> 8(%rax) */             IB(0xc7); IB(0x40); IB(0x08); ID(val);
         }
 
         return true;
@@ -426,51 +428,56 @@ jit_visit_sconst_op(
         struct jit_context *ctx)
 {
         int dst;
-        struct rt_string_imm val;
+        const char *val;
+	uint32_t len, hash;
 
         CONSUME_TMPVAR(dst);
-        CONSUME_STRING(val);
+	CONSUME_STRING(val, len, hash);
 
         dst *= (int)sizeof(struct rt_value);
 
         if (IS_MSABI) {
-                /* rt_make_string(rt, &rt->frame->tmpvar[dst], val); */
+                /* rt_make_string_with_hash(env, &env->frame->tmpvar[dst], val, len, hash); */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
-                        /* r15: &rt->frame->tmpvar[0] */
+                        /* r14: env */
+                        /* r15: &env->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */     IB(0x4C); IB(0x89); IB(0xF1);
-                        /* mov dst -> rdx (2nd arg) */         IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
-                        /* add r15 -> rdx (rdx = r15 + dst) */ IB(0x4C); IB(0x01); IB(0xFA);
-                        /* movabs val -> r8 (3rd arg: val) */  IB(0x49); IB(0xB8); IQ((uint64_t)val);
-                        /* movabs r_make_string -> rax */      IB(0x48); IB(0xB8); IQ((uint64_t)rt_make_string);
-                        /* sub rsp, 32 (shadow space) */       IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
-                        /* call rax */                         IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                      IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* subq %rsp, 64 */                            IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* (1st) movq %r14 -> %rcx */                  IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) movq dst -> %rdx */                   IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /*       addq %r15 -> %rdx */                  IB(0x4c); IB(0x01); IB(0xfa);
+                        /* (3rd) movabs val -> %r8 */                  IB(0x49); IB(0xb8); IQ((uint64_t)val);
+                        /* (4th) movq len -> %r9 */                    IB(0x49); IB(0xc7); IB(0xc1); ID(len);
+                        /* (5th) movq hash -> [%rsp+32] */             IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID(hash);
+                        /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string);
+                        /* call *%rax */                               IB(0xff); IB(0xd0);
+                        /* addq %rsp, 64 */                            IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
-                        /* cmpl $0, %eax */                    IB(0x83); IB(0xf8); IB(0x00);
-                        /* jne 8 <next> */                     IB(0x75); IB(0x03);
-                        /* jmp *%r13 */                        IB(0x41); IB(0xff); IB(0xe5);
+                        /* test %eax, %eax */                          IB(0x83); IB(0xf8); IB(0x00);
+                        /* jne 8 <next> */                             IB(0x75); IB(0x03);
+                        /* jmp *%r13 */                                IB(0x41); IB(0xff); IB(0xe5);
                 /* next: */
                 }
         } else {
-                /* rt_make_string(rt, &rt->frame->tmpvar[dst], val); */
+                /* rt_make_string_with_hash(env, &rt->frame->tmpvar[dst], val, len, hash); */
                 ASM {
                         /* r13 = exception_handler */
                         /* r14 = rt */
                         /* r15 = &rt->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                  IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movq dst, %rsi */                   IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* addq %r15, %rsi */                  IB(0x4c); IB(0x01); IB(0xfe);
-                        /* movabs val, %rdx */                 IB(0x48); IB(0xba); IQ((uint64_t)val);
-                        /* movabs rt_make_string, %r8 */       IB(0x49); IB(0xb8); IQ((uint64_t)rt_make_string);
-                        /* call *%r8 */                        IB(0x41); IB(0xff); IB(0xd0);
+                        /* (1st) movq %r14, %rdi */                    IB(0x4c); IB(0x89); IB(0xf7);
+                        /* (2nd) movq dst, %rsi */                     IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /*       addq %r15, %rsi */                    IB(0x4c); IB(0x01); IB(0xfe);
+                        /* (3rd) movabs val, %rdx */                   IB(0x48); IB(0xba); IQ((uint64_t)val);
+                        /* (4th) movq len, %rcx */                     IB(0x48); IB(0xc7); IB(0xc1); ID(len);
+                        /* (5th) movq hash, %r8 */                     IB(0x49); IB(0xc7); IB(0xc0); ID(hash);
+                        /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string);
+                        /* call *%rax */                               IB(0xff); IB(0xd0);
 
-                        /* cmpl $0, %eax */                    IB(0x83); IB(0xf8); IB(0x00);
-                        /* jne 8 <next> */                     IB(0x75); IB(0x03);
-                        /* jmp *%r13 */                        IB(0x41); IB(0xff); IB(0xe5);
+                        /* test %eax, %eax */                          IB(0x83); IB(0xf8); IB(0x00);
+                        /* jne 8 <next> */                             IB(0x75); IB(0x03);
+                        /* jmp *%r13 */                                IB(0x41); IB(0xff); IB(0xe5);
                 /* next: */
                 }
         }
@@ -490,39 +497,39 @@ jit_visit_aconst_op(
         dst *= (int)sizeof(struct rt_value);
 
         if (IS_MSABI) {
-                /* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+                /* rt_make_empty_array(env, &env->frame->tmpvar[dst]); */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
-                        /* r15: &rt->frame->tmpvar[0] */
+                        /* r14: env */
+                        /* r15: &env->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */        IB(0x4C); IB(0x89); IB(0xF1);
-                        /* mov dst -> rdx (2nd arg) */            IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
-                        /* add r15 -> rdx (rdx = r15 + dst) */    IB(0x4C); IB(0x01); IB(0xFA);
-                        /* movabs rt_make_empty_array -> rax */   IB(0x48); IB(0xB8); IQ((uint64_t)rt_make_empty_array);
-                        /* sub rsp, 32 (shadow space) */          IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
-                        /* call rax */                            IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                         IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* subq %rsp, 32 */                       IB(0x48); IB(0x83); IB(0xEhec); IB(0x20);
+                        /* (1st) mov %r14 -> %rcx */              IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) mov dst -> %rdx */               IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /*       add %r15 -> %rdx */              IB(0x4c); IB(0x01); IB(0xfa);
+                        /* movabs rt_make_empty_array -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_empty_array);
+                        /* call *%rax */                          IB(0xff); IB(0xd0);
+                        /* add %rsp, 32 */                        IB(0x48); IB(0x83); IB(0xc4); IB(0x20);
 
-                        /* cmpl $0, %eax */                       IB(0x83); IB(0xf8); IB(0x00);
+                        /* test %eax, %eax */                     IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                        IB(0x75); IB(0x03);
                         /* jmp *%r13 */                           IB(0x41); IB(0xff); IB(0xe5);
                 /* next: */
                 }
         } else {
-                /* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+                /* rt_make_empty_array(env, &env->frame->tmpvar[dst]); */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
-                        /* r15: &rt->frame->tmpvar[0] */
+                        /* r14: env */
+                        /* r15: &env->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                     IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movq dst, %rsi */                      IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* addq %r15, %rsi */                     IB(0x4c); IB(0x01); IB(0xfe);
-                        /* movabs rt_make_empty_array, %r8 */     IB(0x49); IB(0xb8); IQ((uint64_t)rt_make_empty_array);
-                        /* call *%r8 */                           IB(0x41); IB(0xff); IB(0xd0);
+                        /* (1st) movq %r14 -> %rdi */             IB(0x4c); IB(0x89); IB(0xf7);
+                        /* (2nd) movq dst -> %rsi */              IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /*       addq %r15 -> %rsi */             IB(0x4c); IB(0x01); IB(0xfe);
+                        /* movabs rt_make_empty_array -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_empty_array);
+                        /* call *%rax */                          IB(0xff); IB(0xd0);
 
-                        /* cmpl $0, %eax */                       IB(0x83); IB(0xf8); IB(0x00);
+                        /* test %eax, %eax */                     IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                        IB(0x75); IB(0x03);
                         /* jmp *%r13 */                           IB(0x41); IB(0xff); IB(0xe5);
                 /* next: */
@@ -544,39 +551,39 @@ jit_visit_dconst_op(
         dst *= (int)sizeof(struct rt_value);
 
         if (IS_MSABI) {
-                /* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+                /* rt_make_empty_dict(env, &env->frame->tmpvar[dst]); */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
-                        /* r15: &rt->frame->tmpvar[0] */
+                        /* r14: env */
+                        /* r15: &env->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */      IB(0x4C); IB(0x89); IB(0xF1);
-                        /* mov dst -> rdx (2nd arg) */          IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
-                        /* add r15 -> rdx (rdx = r15 + dst) */  IB(0x4C); IB(0x01); IB(0xFA);
-                        /* movabs rt_make_empty_dict -> rax */  IB(0x48); IB(0xB8); IQ((uint64_t)rt_make_empty_dict);
-                        /* sub rsp, 32 (shadow space) */        IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
-                        /* call rax */                          IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                       IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* subq %rsp, 32 */                     IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
+                        /* (1st) mov %r14 -> rb%cx */           IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) mov dst -> %rdx */             IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /*       add %r15 -> %rdx */            IB(0x4c); IB(0x01); IB(0xfa);
+                        /* movabs rt_make_empty_dict -> %rax */ IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_empty_dict);
+                        /* call *%rax */                        IB(0xff); IB(0xd0);
+                        /* addq %rsp, 32 */                     IB(0x48); IB(0x83); IB(0xc4); IB(0x20);
 
-                        /* cmpl $0, %eax */                     IB(0x83); IB(0xf8); IB(0x00);
+                        /* test %eax, %eax */                   IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                      IB(0x75); IB(0x03);
                         /* jmp *%r13 */                         IB(0x41); IB(0xff); IB(0xe5);
                 /* next: */
                 }
         } else {
-                /* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+                /* rt_make_empty_dict(env, &env->frame->tmpvar[dst]); */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
-                        /* r15: &rt->frame->tmpvar[0] */
+                        /* r14: env */
+                        /* r15: &env->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                   IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movq dst, %rsi */                    IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* addq %r15, %rsi */                   IB(0x4c); IB(0x01); IB(0xfe);
+                        /* (1st) movq %r14 -> %rdi */           IB(0x4c); IB(0x89); IB(0xf7);
+                        /* (2nd) movq dst, %rsi */              IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /*       addq %r15, %rsi */             IB(0x4c); IB(0x01); IB(0xfe);
                         /* movabs rt_make_empty_dict, %r8 */    IB(0x49); IB(0xb8); IQ((uint64_t)rt_make_empty_dict);
                         /* call *%r8 */                         IB(0x41); IB(0xff); IB(0xd0);
 
-                        /* cmpl $0, %eax */                     IB(0x83); IB(0xf8); IB(0x00);
+                        /* test %eax, %eax */                   IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                      IB(0x75); IB(0x03);
                         /* jmp *%r13 */                         IB(0x41); IB(0xff); IB(0xe5);
                 /* next: */
@@ -597,15 +604,15 @@ jit_visit_inc_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &rt->frame->tmpvar[dst].val.i++ */
+        /* &env->frame->tmpvar[dst].val.i++ */
         ASM {
 		/* r13: exception_handler */
-		/* r14: rt */
-		/* r15: &rt->frame->tmpvar[0] */
+		/* r14: env */
+		/* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst, %rax */                        IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
-                /* addq %r15, %rax */                        IB(0x4c); IB(0x01); IB(0xf8);
-                /* incq 8(%rax) */                        IB(0x48); IB(0xff); IB(0x40); IB(0x08);
+                /* movq dst -> %rax */       IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* addq %r15 -> %rax */      IB(0x4c); IB(0x01); IB(0xf8);
+                /* incq 8(%rax) */           IB(0x48); IB(0xff); IB(0x40); IB(0x08);
         }
 
         return true;
