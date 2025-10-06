@@ -12,12 +12,10 @@
 #include "runtime.h"
 #include "execution.h"
 #include "intrinsics.h"
+#include "hash.h"
 
 #include <string.h>
 #include <assert.h>
-
-/* intrinsic.c */
-size_t get_string_length(const char *text);
 
 /*
  * Add helper.
@@ -291,7 +289,7 @@ rt_div_helper(
 }
 
 /*
- * Modulo helper.
+ * MOD helper. (modulo)
  */
 bool
 rt_mod_helper(
@@ -1008,52 +1006,48 @@ rt_storearray_helper(
 	struct rt_value *arr_val;
 	struct rt_value *subscr_val;
 	struct rt_value *val_val;
-	int subscript;
-	const char *key;
+	int index;
 	bool is_dict;
 
 	/* Get the container. */
 	arr_val = &env->frame->tmpvar[arr];
-	if (arr_val->type == NOCT_VALUE_ARRAY) {
-		is_dict = false;
-	} else if (arr_val->type == NOCT_VALUE_DICT) {
-		is_dict = true;
-	} else {
-		rt_error(env, N_TR("Not an array or a dictionary."));
-		return false;
-	}
 
 	/* Get the subscription. */
 	subscr_val = &env->frame->tmpvar[subscr];
-	if (!is_dict) {
-		if (subscr_val->type != NOCT_VALUE_INT) {
-			rt_error(env, N_TR("Subscript not an integer."));
-			return false;
-		}
-		subscript = subscr_val->val.i;
-		key = NULL;
-	} else {
-		if (subscr_val->type != NOCT_VALUE_STRING) {
-			rt_error(env, N_TR("Subscript not a string."));
-			return false;
-		}
-		subscript = -1;
-		key = subscr_val->val.str->data;
-	}
 
 	/* Get the value to assign. */
 	val_val = &env->frame->tmpvar[val];
 
-	/* Store the value as a container element. */
-	if (!is_dict) {
-		if (!rt_set_array_elem(env, &arr_val->val.arr, subscript, val_val))
+	if (arr_val->type == NOCT_VALUE_ARRAY) {
+		if (subscr_val->type != NOCT_VALUE_INT) {
+			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
-	} else {
-		if (!rt_set_dict_elem(env, &arr_val->val.dict, key, val_val))
+		}
+
+		/* Store to the array. */
+		if (!rt_set_array_elem(env, &arr_val->val.arr, subscr_val->val.i, val_val))
+			return false;
+	} else if (arr_val->type == NOCT_VALUE_DICT) {
+		if (subscr_val->type != NOCT_VALUE_STRING) {
+			rt_error(env, N_TR("Subscript not a string."));
+			return false;
+		}
+
+		/* Cache the key string hash. */
+		rt_cache_string_hash(subscr_val->val.str);
+
+		/* Store to the dictionary. */
+		if (!rt_set_dict_elem_with_hash(env,
+						&arr_val->val.dict,
+						subscr_val->val.str->data,
+						subscr_val->val.str->hash,
+						subscr_val->val.str->len,
+						val_val))
 			return false;
 	}
 
-	return true;
+	rt_error(env, N_TR("Not an array or a dictionary."));
+	return false;
 }
 
 /*
@@ -1069,9 +1063,6 @@ rt_loadarray_helper(
 	struct rt_value *dst_val;
 	struct rt_value *arr_val;
 	struct rt_value *subscr_val;
-	int subscript;
-	const char *key;
-	bool is_dict;
 
 	dst_val = &env->frame->tmpvar[dst];
 	arr_val = &env->frame->tmpvar[arr];
@@ -1079,58 +1070,41 @@ rt_loadarray_helper(
 
 	/* Check the array type. */
 	if (arr_val->type == NOCT_VALUE_ARRAY) {
-		is_dict = false;
-	} else if (arr_val->type == NOCT_VALUE_DICT) {
-		is_dict = true;
-	} else {
-		rt_error(env, N_TR("Not an array or a dictionary."));
-		return false;
-	}
-
-	/* Check the subscript type and value, then load the element. */
-	if (!is_dict) {
-		struct rt_array *real_arr;
-
 		/* Get the subscript value. */
 		if (subscr_val->type != NOCT_VALUE_INT) {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
 		}
-		subscript = subscr_val->val.i;
-		key = NULL;
 
-		/* Get the newer reference. */
-		real_arr = arr_val->val.arr;
-		while (real_arr->newer != NULL)
-			real_arr = real_arr->newer;
-
-		/* Check the index range. */
-		if (subscript >= real_arr->size) {
-			rt_error(env, N_TR("Array index %d is out-of-range."), subscript);
+		/* Load the array element. */
+		if (!rt_get_array_elem(env, arr_val->val.arr, subscr_val->val.i, dst_val))
 			return false;
-		}
 
-		/* Load. */
-		*dst_val = real_arr->table[subscript];
 		return true;
-	} else {
-		struct rt_dict *real_dict;
-		int i;
-
+	} else if (arr_val->type == NOCT_VALUE_DICT) {
 		/* Get the key string. */
 		if (subscr_val->type != NOCT_VALUE_STRING) {
 			rt_error(env, N_TR("Subscript not a string."));
 			return false;
 		}
-		subscript = -1;
-		key = subscr_val->val.str->data;
 
-		/* Search the key. */
-		if (!rt_get_dict_elem(env, arr_val->val.dict, key, dst_val))
+		/* Cache the key string hash. */
+		rt_cache_string_hash(subscr_val->val.str);
+
+		/* Get the dictionary element. */
+		if (!rt_get_dict_elem_with_hash(env,
+						arr_val->val.dict,
+						subscr_val->val.str->data,
+						subscr_val->val.str->len,
+						subscr_val->val.str->hash,
+						dst_val))
 			return false;
 		
 		return true;
 	}
+
+	rt_error(env, N_TR("Not an array or a dictionary."));
+	return false;
 }
 
 /*
@@ -1244,12 +1218,16 @@ bool
 rt_loadsymbol_helper(
 	struct rt_env *env,
 	int dst,
-	const char *symbol)
+	struct rt_string_imm *symbol)
 {
 	struct rt_value val;
 
 	/* Search a global variable. */
-	if (rt_find_global(env, symbol, &val)) {
+	if (rt_find_global_with_hash(env,
+				     symbol->s,
+				     symbol->len,
+				     symbol->hash,
+				     &val)) {
 		env->frame->tmpvar[dst] = val;
 	} else {
 		rt_error(env, N_TR("Symbol \"%s\" not found."), symbol);
@@ -1265,12 +1243,14 @@ rt_loadsymbol_helper(
 bool
 rt_storesymbol_helper(
 	struct rt_env *env,
-	const char *symbol,
+	struct rt_string_imm *symbol,
 	int src)
 {
-	struct rt_value *val;
-
-	if (!rt_set_global(env, symbol, &env->frame->tmpvar[src]))
+	if (!rt_set_global_with_hash(env,
+				     symbol->s,
+				     symbol->len,
+				     symbol->hash,
+				     &env->frame->tmpvar[src]))
 		return false;
 
 	return true;
@@ -1284,15 +1264,15 @@ rt_loaddot_helper(
 	struct rt_env *env,
 	int dst,
 	int dict,
-	const char *field)
+	struct rt_string_imm *field)
 {
 	/* Special field "length". */
-	if (strcmp(field, "length") == 0) {
+	/* TODO: hash check for "length" */
+	if (strcmp(field->s, "length") == 0) {
 		if (env->frame->tmpvar[dict].type == NOCT_VALUE_DICT) {
 			int size;
 			if (!noct_get_dict_size(env, &env->frame->tmpvar[dict], &size))
 				return false;
-
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
 			env->frame->tmpvar[dst].val.i = size;
 			return true;
@@ -1300,13 +1280,12 @@ rt_loaddot_helper(
 			int size;
 			if (!noct_get_array_size(env, &env->frame->tmpvar[dict], &size))
 				return false;
-
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
 			env->frame->tmpvar[dst].val.i = size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = get_string_length(env->frame->tmpvar[dict].val.str->data);
+			env->frame->tmpvar[dst].val.i = env->frame->tmpvar[dict].val.str->len;
 			return true;
 		}
 	}
@@ -1316,7 +1295,12 @@ rt_loaddot_helper(
 		return false;
 	}
 
-	if (!rt_get_dict_elem(env, env->frame->tmpvar[dict].val.dict, field, &env->frame->tmpvar[dst]))
+	if (!rt_get_dict_elem_with_hash(env,
+					env->frame->tmpvar[dict].val.dict,
+					field->s,
+					field->len,
+					field->hash,
+					&env->frame->tmpvar[dst]))
 		return false;
 
 	return true;
@@ -1329,7 +1313,7 @@ bool
 rt_storedot_helper(
 	struct rt_env *env,
 	int dict,
-	const char *field,
+	struct rt_string_imm *field,
 	int src)
 {
 	struct rt_value *dict_val, *val;
@@ -1345,7 +1329,12 @@ rt_storedot_helper(
 	val = &env->frame->tmpvar[src];
 
 	/* Store the source value to the dictionary with the key. */
-	if (!rt_set_dict_elem(env, &dict_val->val.dict, field, val))
+	if (!rt_set_dict_elem_with_hash(env,
+					&dict_val->val.dict,
+					field->s,
+					field->len,
+					field->hash,
+					val))
 		return false;
 
 	return true;
@@ -1394,7 +1383,7 @@ rt_thiscall_helper(
 	struct rt_env *env,
 	int dst,
 	int obj,
-	const char *name,
+	struct rt_string_imm *name,
 	int arg_count,
 	int *arg)
 {
@@ -1419,7 +1408,12 @@ rt_thiscall_helper(
 		}
 
 		/* Get a function from a receiver object. */
-		if (!noct_get_dict_elem(env, &env->frame->tmpvar[obj], name, &callee_value))
+		if (!rt_get_dict_elem_with_hash(env,
+						&env->frame->tmpvar[obj],
+						name->s,
+						name->len,
+						name->hash,
+						&callee_value))
 			return false;
 		if (callee_value.type != NOCT_VALUE_FUNC) {
 			rt_error(env, N_TR("Not a function."));
