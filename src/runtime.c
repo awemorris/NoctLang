@@ -1498,11 +1498,9 @@ rt_expand_dict(
 		for (j = index;
 		     j != (index - 1) & (new_dict->alloc_size - 1);
 		     j = (j + 1) & (new_dict->alloc_size - 1)) {
-			if (IS_DICT_KEY_EMPTY(new_dict->key[i])) {
-				/* Copy the key. */
+			if (IS_DICT_KEY_EMPTY(new_dict->key[j])) {
+				/* Copy the key and values. */
 				new_dict->key[j] = old_dict->key[i];
-
-				/* Copy the value. */
 				new_dict->value[j] = old_dict->value[i];
 
 				/* Write barrier. */
