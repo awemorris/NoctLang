@@ -1218,21 +1218,16 @@ bool
 rt_loadsymbol_helper(
 	struct rt_env *env,
 	int dst,
-	struct rt_string_imm *symbol)
+	const char *symbol,
+	uint32_t symbol_len,
+	uint32_t symbol_hash)
 {
 	struct rt_value val;
 
-	/* Search a global variable. */
-	if (rt_find_global_with_hash(env,
-				     symbol->s,
-				     symbol->len,
-				     symbol->hash,
-				     &val)) {
-		env->frame->tmpvar[dst] = val;
-	} else {
-		rt_error(env, N_TR("Symbol \"%s\" not found."), symbol);
+	if (!rt_get_global_with_hash(env, symbol, symbol_len, symbol_hash, &val))
 		return false;
-	}
+
+	env->frame->tmpvar[dst] = val;
 
 	return true;
 }
@@ -1243,14 +1238,12 @@ rt_loadsymbol_helper(
 bool
 rt_storesymbol_helper(
 	struct rt_env *env,
-	struct rt_string_imm *symbol,
+	const char *symbol,
+	uint32_t symbol_len,
+	uint32_t symbol_hash,
 	int src)
 {
-	if (!rt_set_global_with_hash(env,
-				     symbol->s,
-				     symbol->len,
-				     symbol->hash,
-				     &env->frame->tmpvar[src]))
+	if (!rt_set_global_with_hash(env, symbol, symbol_len, symbol_hash, &env->frame->tmpvar[src]))
 		return false;
 
 	return true;
@@ -1264,7 +1257,9 @@ rt_loaddot_helper(
 	struct rt_env *env,
 	int dst,
 	int dict,
-	struct rt_string_imm *field)
+	const char *field,
+	uint32_t field_len,
+	uint32_t field_hash)
 {
 	/* Special field "length". */
 	/* TODO: hash check for "length" */
@@ -1295,12 +1290,7 @@ rt_loaddot_helper(
 		return false;
 	}
 
-	if (!rt_get_dict_elem_with_hash(env,
-					env->frame->tmpvar[dict].val.dict,
-					field->s,
-					field->len,
-					field->hash,
-					&env->frame->tmpvar[dst]))
+	if (!rt_get_dict_elem_with_hash(env, env->frame->tmpvar[dict].val.dict, field, field_len, field_hash, &env->frame->tmpvar[dst]))
 		return false;
 
 	return true;
@@ -1313,7 +1303,9 @@ bool
 rt_storedot_helper(
 	struct rt_env *env,
 	int dict,
-	struct rt_string_imm *field,
+	const char *field,
+	uint32_t field_len,
+	uint32_t field_hash,
 	int src)
 {
 	struct rt_value *dict_val, *val;
@@ -1329,12 +1321,7 @@ rt_storedot_helper(
 	val = &env->frame->tmpvar[src];
 
 	/* Store the source value to the dictionary with the key. */
-	if (!rt_set_dict_elem_with_hash(env,
-					&dict_val->val.dict,
-					field->s,
-					field->len,
-					field->hash,
-					val))
+	if (!rt_set_dict_elem_with_hash(env, &dict_val->val.dict, field, field_len, field_hash, val))
 		return false;
 
 	return true;
@@ -1383,7 +1370,9 @@ rt_thiscall_helper(
 	struct rt_env *env,
 	int dst,
 	int obj,
-	struct rt_string_imm *name,
+	const char *name,
+	uint32_t name_len,
+	uint32_t name_hash,
 	int arg_count,
 	int *arg)
 {
@@ -1408,12 +1397,7 @@ rt_thiscall_helper(
 		}
 
 		/* Get a function from a receiver object. */
-		if (!rt_get_dict_elem_with_hash(env,
-						&env->frame->tmpvar[obj],
-						name->s,
-						name->len,
-						name->hash,
-						&callee_value))
+		if (!rt_get_dict_elem_with_hash(env, &env->frame->tmpvar[obj], name, name_len, name_hash, &callee_value))
 			return false;
 		if (callee_value.type != NOCT_VALUE_FUNC) {
 			rt_error(env, N_TR("Not a function."));

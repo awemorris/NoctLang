@@ -145,6 +145,9 @@ rt_destroy_vm(
 	if (noct_conf_use_jit)
 		jit_free(vm->env_list);
 
+	/* Free global variables. */
+	rt_cleanup_global(vm->env_list);
+
 	/* Free thread environments. */
 	env = vm->env_list;
 	while (env != NULL) {
@@ -1644,7 +1647,7 @@ rt_init_global(
 	assert(env->vm->global == NULL);
 
 	/* Allocate the table. */
-	env->vm->global = calloc(sizeof(struct rt_bindglobal) * START_SIZE, 1);
+	env->vm->global = noct_calloc(sizeof(struct rt_bindglobal) * START_SIZE, 1);
 	if (env->vm->global == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -1676,27 +1679,12 @@ rt_cleanup_global(
 }
 
 /*
- * Get a global variable.
+ * Check if a global variable exists.
  */
 bool
-rt_get_global(
+rt_check_global(
 	struct rt_env *env,
-	const char *name,
-	struct rt_value *val)
-{
-	if (!rt_find_global(env, name, val)) {
-		noct_error(env, N_TR("Global variable \"%s\" not found."), name);
-		return false;
-	}
-	return true;
-}
-
-/* Find a global variable. */
-bool
-rt_find_global(
-	struct rt_env *env,
-	const char *name,
-	struct rt_value *val)
+	const char *name)
 {
 	int index, i;
 
@@ -1717,12 +1705,74 @@ rt_find_global(
 			continue;
 
 		/* Found. */
-		*val = env->vm->global[i].val;
+		RELEASE_GLOBAL();
 		return true;
 	}
 
 	/* Not found. */
 	RELEASE_GLOBAL();
+	return false;
+}
+
+/*
+ * Get a global variable.
+ */
+bool
+rt_get_global(
+	struct rt_env *env,
+	const char *name,
+	struct rt_value *val)
+{
+	uint32_t len, hash;
+
+	len = strlen(name);
+	hash = string_hash(name);
+
+	if (!rt_get_global_with_hash(env, name, len, hash, val))
+		return false;
+
+	return true;
+}
+
+/*
+ * Find a global variable.
+ */
+bool
+rt_get_global_with_hash(
+	struct rt_env *env,
+	const char *name,
+	uint32_t len,
+	uint32_t hash,
+	struct rt_value *val)
+{
+	int index, i;
+
+	ACQUIRE_GLOBAL();
+
+	index = hash & (env->vm->global_alloc_size - 1) ;
+	for (i = index;
+	     i != (index - 1) & (env->vm->global_alloc_size - 1);
+	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
+		if (env->vm->global[i].is_removed)
+			continue;
+		if (env->vm->global[i].name == NULL)
+			break;
+		if (env->vm->global[i].name_len != len)
+			continue;
+		if (env->vm->global[i].name_hash != hash)
+			continue;
+		if (strcmp(env->vm->global[i].name, name) != 0)
+			continue;
+
+		/* Found. */
+		*val = env->vm->global[i].val;
+		RELEASE_GLOBAL();
+		return true;
+	}
+
+	/* Not found. */
+	RELEASE_GLOBAL();
+	rt_error(env, N_TR("Symbol \"%s\" not found."), symbol);
 	return false;
 }
 
@@ -1733,6 +1783,27 @@ bool
 rt_set_global(
 	struct rt_env *env,
 	const char *name,
+	struct rt_value *val)
+{
+	uint32_t len, hash;
+
+	len = strlen(name);
+	hash = string_hash(name);
+	if (!rt_set_global_with_hash(env, name, len, hash, val))
+		return false;
+
+	return true;
+}
+
+/*
+ * Set a global variable.
+ */
+bool
+rt_set_global_with_hash(
+	struct rt_env *env,
+	const char *name,
+	uint32_t len,
+	uint32_t hash,
 	struct rt_value *val)
 {
 	int index, i;
@@ -1746,10 +1817,11 @@ rt_set_global(
 	}
 
 	/* Search a place to insert or overwrite. */
-	index = string_hash(name) & (env->vm->global_alloc_size - 1) ;
+	index = hash & (env->vm->global_alloc_size - 1) ;
 	for (i = index;
 	     i != (index - 1) & (env->vm->global_alloc_size - 1);
 	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
+		/* If found an empty entry. */
 		if (env->vm->global[i].is_removed ||
 		    env->vm->global[i].name == NULL) {
 			/* Insert a new entry. */
@@ -1759,11 +1831,19 @@ rt_set_global(
 				rt_out_of_memory(env);
 				return false;
 			}
+			env->vm->global[i].name_len = len;
+			env->vm->global[i].name_hash = hash;
 			env->vm->global[i].val = *val;
 			env->vm->global_size++;
 			RELEASE_GLOBAL();
 			return true;
 		}
+
+		/* If found an existing entry. */
+		if (env->vm->global[i].len != len)
+			continue;
+		if (env->vm->global[i].hash != hash)
+			continue;
 		if (strcmp(env->vm->global[i].name, name) == 0) {
 			/* Overwrite the existing entry value. */
 			env->vm->global[i].val = *val;
@@ -1790,7 +1870,7 @@ rt_expand_global(
 	old_size = env->vm->global_alloc_size;
 	old_tbl = env->vm->global;
 	new_size = old_size * 2;
-	new_tbl = calloc(sizeof(struct rt_bindglobal) * new_size, 1);
+	new_tbl = noct_calloc(sizeof(struct rt_bindglobal) * new_size, 1);
 	if (new_tbl == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -1806,6 +1886,8 @@ rt_expand_global(
 		     j = (j + 1) & (new_size - 1)) {
 			if (new_tbl[j].name == NULL) {
 				new_tbl[j].name = old_tbl[i].name;
+				new_tbl[j].name_len = old_tbl[i].name_len;
+				new_tbl[j].name_hash = old_tbl[i].name_hash;
 				new_tbl[j].val = old_tbl[i].val;
 				break;
 			}

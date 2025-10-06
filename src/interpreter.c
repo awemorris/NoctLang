@@ -899,10 +899,13 @@ rt_visit_op(
 	struct rt_func *func,
 	int *pc)
 {
-	switch (func->bytecode[*pc]) {
+	uint8_t op;
+
+	GET_U8(op);
+
+	switch (op) {
 	case OP_NOP:
 		/* NOP */
-		(*pc)++;
 		break;
 	case OP_LINEINFO:
 		if (!rt_visit_lineinfo_op(env, func, pc))

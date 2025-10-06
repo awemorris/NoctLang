@@ -426,7 +426,7 @@ jit_visit_sconst_op(
         struct jit_context *ctx)
 {
         int dst;
-        const char *val;
+        struct rt_string_imm val;
 
         CONSUME_TMPVAR(dst);
         CONSUME_STRING(val);
@@ -1088,36 +1088,38 @@ jit_visit_loadsymbol_op(
         struct jit_context *ctx)
 {
         int dst;
-        const char *src_s;
+        const char src_s;
+	uint32_t src_len, src_hash;
         uint64_t src;
 
         CONSUME_TMPVAR(dst);
-        CONSUME_STRING(src_s);
+        CONSUME_STRING(src_s, src_len, src_hash);
         src = (uint64_t)(intptr_t)src_s;
 
         if (IS_MSABI) {
-                /* if (!rt_loadsymbol_helper(rt, dst, src)) return false; */
+                /* if (!rt_loadsymbol_helper(rt, dst, src, src_len, src_hash)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
                         /* r14: &rt->frame->tmpvar[0] */
 
+                        /* sub rsp, 64 (incl. shadow space) */   IB(0x48); IB(0x83); IB(0xEC); IB(0x40);
                         /* mov r14 -> rcx (1st arg: rt) */       IB(0x4C); IB(0x89); IB(0xF1);
                         /* mov dst -> rdx (2nd arg) */           IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
                         /* movabs src -> r8 (3rd arg) */         IB(0x49); IB(0xB8); IQ((uint64_t)src);
+			/* mov src_len -> r9 (4th arg) */        IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)src_len);
+			/* mov src_hash -> [rsp+32] (5th arg) */ IB(0xC7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src_hash);
                         /* movabs rt_loadsymbol_helper -> rax */ IB(0x48); IB(0xB8); IQ((uint64_t)rt_loadsymbol_helper);
-
-                        /* sub rsp, 32 (shadow space) */         IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
                         /* call rax */                           IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                        IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* add rsp, 64 */                        IB(0x48); IB(0x83); IB(0xC4); IB(0x40);
 
-                        /* cmpl $0, %eax */                       IB(0x83); IB(0xf8); IB(0x00);
-                        /* jne 8 <next> */                        IB(0x75); IB(0x03);
-                        /* jmp *%r13 */                           IB(0x41); IB(0xff); IB(0xe5);
+                        /* cmpl $0, %eax */                      IB(0x83); IB(0xf8); IB(0x00);
+                        /* jne 8 <next> */                       IB(0x75); IB(0x03);
+                        /* jmp *%r13 */                          IB(0x41); IB(0xff); IB(0xe5);
                 /* next: */
                 }
         } else {
-                /* if (!rt_loadsymbol_helper(rt, dst, src)) return false; */
+                /* if (!rt_loadsymbol_helper(rt, dst, src, src_len, src_hash)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
@@ -1126,8 +1128,10 @@ jit_visit_loadsymbol_op(
                         /* movq %r14, %rdi */                    IB(0x4c); IB(0x89); IB(0xf7);
                         /* movq dst, %rsi */                     IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
                         /* movabs src, %rdx */                   IB(0x48); IB(0xba); IQ(src);
-                        /* movabs rt_loadsymbol_helper, %r8 */   IB(0x49); IB(0xb8); IQ((uint64_t)rt_loadsymbol_helper);
-                        /* call *%r8 */                          IB(0x41); IB(0xff); IB(0xd0);
+			/* movq src_len, %rcx */                 IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src_len);
+			/* mov src_hash, %r8 */                  IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)src_hash);
+			/* movabs rt_loadsymbol_helper, %r9 */   IB(0x49); IB(0xb9); IQ((uint64_t)rt_loadsymbol_helper);
+                        /* call *%r9 */                          IB(0x41); IB(0xff); IB(0xd1);
 
                         /* cmpl $0, %eax */                      IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                       IB(0x75); IB(0x03);
@@ -1145,27 +1149,30 @@ jit_visit_storesymbol_op(
         struct jit_context *ctx)
 {
         const char *dst_s;
+	uint32_t dst_len, dst_hash;
         uint64_t dst;
         int src;
 
-        CONSUME_STRING(dst_s);
+        CONSUME_STRING(dst_s, dst_len, dst_hash);
         CONSUME_TMPVAR(src);
         dst = (uint64_t)(intptr_t)dst_s;
 
         if (IS_MSABI) {
-                /* if (!rt_storesymbol_helper(rt, dst, src)) return false; */
+                /* if (!rt_storesymbol_helper(env, dst, dst_len, dst_hash, src)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */        IB(0x4C); IB(0x89); IB(0xF1);
+                        /* sub rsp, 64 */                         IB(0x48); IB(0x83); IB(0xEC); IB(0x40);
+                        /* mov r14 -> rcx (1st arg) */           IB(0x4C); IB(0x89); IB(0xF1);
                         /* movabs dst -> rdx (2nd arg) */         IB(0x48); IB(0xBA); IQ((uint64_t)dst);
-                        /* mov src -> r8 (3rd arg) */             IB(0x49); IB(0xB8); IQ((uint64_t)src);
+			/* mov dst_len -> r8 (3rd arg) */         IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)dst_len);
+                        /* mov dst_hash -> r9 (4th arg) */        IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)dst_hash);
+                        /* mov src -> [rsp+32] (5th arg) */       IB(0x48); IB(0xC7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src);
                         /* movabs rt_storesymbol_helper -> rax */ IB(0x48); IB(0xB8); IQ((uint64_t)rt_storesymbol_helper);
-                        /* sub rsp, 32 (shadow space) */          IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
                         /* call rax */                            IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                         IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* add rsp, 64 */                         IB(0x48); IB(0x83); IB(0xC4); IB(0x40);
 
                         /* cmpl $0, %eax */                       IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                        IB(0x75); IB(0x03);
@@ -1173,17 +1180,20 @@ jit_visit_storesymbol_op(
                 /* next: */
                 }
         } else {
-                /* if (!rt_storesymbol_helper(rt, dst, src)) return false; */
+                /* if (!rt_storesymbol_helper(env, dst, dst_len, dst_hash, src)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                     IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movabs dst, %rsi */                    IB(0x48); IB(0xbe); IQ(dst);
-                        /* movq src, %rdx */                      IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)src);
-                        /* movabs rt_storesymbol_helper, %r8 */   IB(0x49); IB(0xb8); IQ((uint64_t)rt_storesymbol_helper);
-                        /* call *%r8 */                           IB(0x41); IB(0xff); IB(0xd0);
+                        /* movq %r14, %rdi (1st arg) */           IB(0x4c); IB(0x89); IB(0xf7);
+                        /* movabs dst, %rsi (2nd arg) */          IB(0x48); IB(0xbe); IQ(dst);
+                        /* mov dst_len, %rdx (3rd arg) */         IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst_len);
+                        /* mov dst_hash, %rcx (4th arg) */        IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)dst_hash);
+			/* mov src, %r8 (5th arg) */              IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)src);
+
+                        /* movabs rt_storesymbol_helper, %r9 */   IB(0x49); IB(0xb9); IQ((uint64_t)rt_storesymbol_helper);
+                        /* call *%r9 */                           IB(0x41); IB(0xff); IB(0xd1);
 
                         /* cmpl $0, %eax */                       IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                        IB(0x75); IB(0x03);
@@ -1203,28 +1213,32 @@ jit_visit_loaddot_op(
         int dst;
         int dict;
         const char *field_s;
+	uint32_t field_len;
+	uint32_t field_hash;
         uint64_t field;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(dict);
-        CONSUME_STRING(field_s);
+        CONSUME_STRING(field_s, field_len, field_hash);
         field = (uint64_t)(intptr_t)field_s;
 
         if (IS_MSABI) {
-                /* if (!rt_loaddot_helper(rt, dst, dict, field)) return false; */
+                /* if (!rt_loaddot_helper(env, dst, dict, field, field_len, field_hash)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */        IB(0x4C); IB(0x89); IB(0xF1);
-                        /* mov dst -> rdx (2nd arg) */            IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
-                        /* mov dict -> r8 (3rd arg) */            IB(0x49); IB(0xB8); IQ((uint64_t)dict);
-                        /* movabs field -> r9 (4th arg) */        IB(0x49); IB(0xB9); IQ((uint64_t)field);
-                        /* movabs rt_loaddot_helper -> rax */     IB(0x48); IB(0xB8); IQ((uint64_t)rt_loaddot_helper);
-                        /* sub rsp, 32 (shadow space) */          IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
-                        /* call rax */                            IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                         IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+			/* sub rsp, 64 */                         IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* mov r14 -> rcx (1st arg) */            IB(0x4c); IB(0x89); IB(0xf1);
+                        /* mov dst -> rdx (2nd arg) */            IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* mov dict -> r8 (3rd arg) */            IB(0x49); IB(0xb8); IQ((uint64_t)dict);
+                        /* movabs field -> r9 (4th arg) */        IB(0x49); IB(0xb9); IQ((uint64_t)field);
+                        /* mov field_len -> [rsp+32] (5th arg) */ IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)field_len);
+                        /* mov field_hash -> [rsp+40] (6th arg) */IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)field_hash);
+                        /* movabs rt_loaddot_helper -> rax */     IB(0x48); IB(0xb8); IQ((uint64_t)rt_loaddot_helper);
+                        /* call rax */                            IB(0xff); IB(0xd0);
+                        /* add rsp, 64 */                         IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
                         /* cmpl $0, %eax */                       IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                        IB(0x75); IB(0x03);
@@ -1232,18 +1246,20 @@ jit_visit_loaddot_op(
                 /* next: */
                 }
         } else {
-                /* if (!rt_loaddot_helper(rt, dst, dict, field)) return false; */
+                /* if (!rt_loaddot_helper(rt, dst, dict, field, field_len, field_hash)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                     IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movq dst, %rsi */                      IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* movq dict, %rdx */                     IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dict);
-                        /* movabs field, %rcx */                  IB(0x48); IB(0xb9); IQ(field);
-                        /* movabs rt_loaddot_helper, %r8 */       IB(0x49); IB(0xb8); IQ((uint64_t)rt_loaddot_helper);
-                        /* call *%r8 */                           IB(0x41); IB(0xff); IB(0xd0);
+                        /* movq %r14, %rdi (1st) */               IB(0x4c); IB(0x89); IB(0xf7);
+                        /* movq dst, %rsi (2nd) */                IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* movq dict, %rdx (3rd) */               IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dict);
+                        /* movabs field, %rcx (4th) */            IB(0x48); IB(0xb9); IQ(field);
+			/* movq field_len, %r8 (5th) */           IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)field_len);
+                        /* movq field_hash, %r9 (6th) */          IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)field_hash);
+			/* r10 = rt_loaddot_helper (func ptr) */  IB(0x49); IB(0xba); IQ((uint64_t)rt_loaddot_helper);
+                        /* call *%r10 */                          IB(0x41); IB(0xff); IB(0xd2);
 
                         /* cmpl $0, %eax */                       IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                        IB(0x75); IB(0x03);
@@ -1262,29 +1278,33 @@ jit_visit_storedot_op(
 {
         int dict;
         const char *field_s;
+	uint32_t field_len;
+	uint32_t field_hash;
         uint64_t field;
         int src;
 
         CONSUME_TMPVAR(dict);
-        CONSUME_STRING(field_s);
+        CONSUME_STRING(field_s, field_len, field_hash);
         CONSUME_TMPVAR(src);
         field = (uint64_t)(intptr_t)field_s;
 
         if (IS_MSABI) {
-                /* if (!jit_storedot_helper(rt, dict, field, src)) return false; */
+                /* if (!rt_storedot_helper(rt, dict, field, field_len, field_hash, src)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */      IB(0x4C); IB(0x89); IB(0xF1);
-                        /* mov dict -> rdx (2nd arg) */         IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dict);
-                        /* movabs field -> r8 (3rd arg) */      IB(0x49); IB(0xB8); IQ((uint64_t)field);
-                        /* mov src -> r9 (4th arg) */           IB(0x49); IB(0xB9); IQ((uint64_t)src);
+			/* sub rsp, 64 */                       IB(0x48); IB(0x83); IB(0xEC); IB(0x40);
+                        /* mov r14 -> rcx (1st) */              IB(0x4C); IB(0x89); IB(0xF1);
+                        /* mov dict -> rdx (2nd) */             IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dict);
+                        /* movabs field -> r8 (3rd) */          IB(0x49); IB(0xB8); IQ((uint64_t)field);
+			/* mov field_len -> r9d (4th arg) */    IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)field_len);
+                        /* mov field_hash -> [rsp+32] (5th) */  IB(0xC7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)field_hash);
+                        /* mov src -> [rsp+40] (6th arg) */     IB(0x48); IB(0xC7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)src);
                         /* movabs rt_storedot_helper -> rax */  IB(0x48); IB(0xB8); IQ((uint64_t)rt_storedot_helper);
-                        /* sub rsp, 32 (shadow space) */        IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
                         /* call rax */                          IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                       IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* add rsp, 64 */                       IB(0x48); IB(0x83); IB(0xC4); IB(0x40);
 
                         /* test eax, eax */                     IB(0x83); IB(0xF8); IB(0x00);
                         /* jne 8 <next> */                      IB(0x75); IB(0x03);
@@ -1292,18 +1312,20 @@ jit_visit_storedot_op(
                 /* next: */
                 }
         } else {
-                /* if (!jit_storedot_helper(rt, dict, field, src)) return false; */
+                /* if (!rt_storedot_helper(rt, dict, field, field_len, field_hash, src)) return false; */
                 ASM {
                         /* r13: exception_handler */
                         /* r14: rt */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                   IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movq dict, %rsi */                   IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dict);
-                        /* movabs field, %rdx */                IB(0x48); IB(0xba); IQ(field);
-                        /* movq src, %rcx */                    IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src);
-                        /* movabs rt_storedot_helper, %r8 */    IB(0x49); IB(0xb8); IQ((uint64_t)rt_storedot_helper);
-                        /* call *%r8 */                         IB(0x41); IB(0xff); IB(0xd0);
+                        /* movq %r14, %rdi (1st) */             IB(0x4c); IB(0x89); IB(0xf7);
+                        /* movq dict, %rsi (2nd) */             IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dict);
+                        /* movabs field, %rdx (3rd) */          IB(0x48); IB(0xba); IQ(field);
+			/* mov field_len -> %rcx (4th) */       IB(0x48); IB(0xC7); IB(0xC1); ID((uint32_t)field_len);
+                        /* mov field_hash -> %r8d (5th) */      IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)field_hash);
+                        /* mov src -> %r9d (6th) */             IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)src);
+                        /* movabs jit_storedot_helper, %r10 */  IB(0x49); IB(0xBA); IQ((uint64_t)jit_storedot_helper);
+                        /* call *%r10 */                        IB(0x41); IB(0xFF); IB(0xD2);
 
                         /* cmpl $0, %eax */                     IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                      IB(0x75); IB(0x03);
@@ -1353,22 +1375,22 @@ jit_visit_call_op(
         }
 
         if (IS_MSABI) {
-                /* if (!rt_call_helper(rt, dst, func, arg_count, arg)) return false; */
+                /* if (!rt_call_helper(env, dst, func, arg_count, arg)) return false; */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
-                        /* r14: &rt->frame->tmpvar[0] */
+                        /* r14: env */
+                        /* r14: &env->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */       IB(0x4C); IB(0x89); IB(0xF1);
-                        /* mov dst -> rdx (2nd arg) */           IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
-                        /* mov func -> r8 (3rd arg) */           IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)func);
-                        /* mov arg_count -> r9 (4th arg) */      IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)arg_count);
-                        /* shadow space */                       IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
-                        /* movabs rax, arg_addr */               IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
-                        /* mov [rsp+32], rax (5th arg) */        IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x20);
+                        /* sub rsp, 32 */                        IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
+                        /* (1st) mov r14 -> rcx */               IB(0x4C); IB(0x89); IB(0xF1);
+                        /* (2nd) mov dst -> rdx */               IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
+                        /* (3rd) mov func -> r8 */               IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)func);
+                        /* (4th) mov arg_count -> r9 */          IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)arg_count);
+                        /* (5th) movabs arg_addr -> rax */       IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
+                        /*       movq rax -> [rsp+32] */         IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x20);
                         /* movabs rt_call_helper -> rax */       IB(0x48); IB(0xB8); IQ((uint64_t)rt_call_helper);
                         /* call rax */                           IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 (shadow) */               IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* add rsp, 32 */                        IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
 
                         /* test eax, eax */                      IB(0x83); IB(0xF8); IB(0x00);
                         /* jne 8 <next> */                       IB(0x75); IB(0x03);
@@ -1376,17 +1398,17 @@ jit_visit_call_op(
                 /* next: */
                 }
         } else {
-                /* if (!rt_call_helper(rt, dst, func, arg_count, arg)) return false; */
+                /* if (!rt_call_helper(env, dst, func, arg_count, arg)) return false; */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
-                        /* r14: &rt->frame->tmpvar[0] */
+                        /* r14: env */
+                        /* r14: &env->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                    IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movq dst, %rsi */                     IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* movq func, %rdx */                    IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)func);
-                        /* movq arg_count, %rcx */               IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)arg_count);
-                        /* movabs arg_addr, %r8 */               IB(0x49); IB(0xb8); IQ(arg_addr);
+                        /* (1st) movq %r14, %rdi */              IB(0x4c); IB(0x89); IB(0xf7);
+                        /* (2nd) movq dst, %rsi */               IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (3rd) movq func, %rdx */              IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)func);
+                        /* (4th) movq arg_count, %rcx */         IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)arg_count);
+                        /* (5th) movabs arg_addr, %r8 */         IB(0x49); IB(0xb8); IQ(arg_addr);
                         /* movabs rt_call_helper, %r9 */         IB(0x49); IB(0xb9); IQ((uint64_t)rt_call_helper);
                         /* call *%r9 */                          IB(0x41); IB(0xff); IB(0xd1);
 
@@ -1408,6 +1430,8 @@ jit_visit_thiscall_op(
         int dst;
         int obj;
         const char *symbol;
+	uint32_t symbol_len;
+	uint32_t symbol_hash;
         int arg_count;
         int arg_tmp;
         int arg[NOCT_ARG_MAX];
@@ -1416,7 +1440,7 @@ jit_visit_thiscall_op(
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(obj);
-        CONSUME_STRING(symbol);
+        CONSUME_STRING(symbol, symbol_len, symbol_hash);
         CONSUME_IMM8(arg_count);
         for (i = 0; i < arg_count; i++) {
                 CONSUME_TMPVAR(arg_tmp);
@@ -1436,44 +1460,51 @@ jit_visit_thiscall_op(
         }
 
         if (IS_MSABI) {
-                /* if (!rt_thiscall_helper(rt, dst, obj, symbol, arg_count, arg)) return false; */
+                /* if (!rt_thiscall_helper(env, dst, obj, symbol, symbol_len, symbol_hash, arg_count, arg)) return false; */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
+                        /* r14: env */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* mov r14 -> rcx (1st arg: rt) */             IB(0x4C); IB(0x89); IB(0xF1);
-                        /* mov dst -> rdx (2nd arg) */                 IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
-                        /* mov obj -> r8 (3rd arg) */                  IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)obj);
-                        /* mov symbol -> r9 (4th arg) */               IB(0x49); IB(0xB9); IQ((uint64_t)symbol);
-                        /* shadow space */                             IB(0x48); IB(0x83); IB(0xEC); IB(0x40);
-                        /* mov arg_count -> [rsp+0x20] (5th arg) */    IB(0xC7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)arg_count);
-                        /* movabs arg_addr -> rax */                   IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
-                        /* mov  rax -> [rsp+0x28] (6th arg) */         IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x28);
-                        /* movabs rt_thiscall_helper -> rax */         IB(0x48); IB(0xB8); IQ((uint64_t)rt_thiscall_helper);
-                        /* call rax */                                 IB(0xFF); IB(0xD0);
-                        /* shadow space */                             IB(0x48); IB(0x83); IB(0xC4); IB(0x40);
+                        /* sub rsp, 64 */                              IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* (1st) movq %r14 -> rcx */                   IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) movq dst -> rdx */                    IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* (3rd) movq obj -> r8 */                     IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)obj);
+                        /* (4th) movabs symbol -> r9 */                IB(0x49); IB(0xb9); IQ((uint64_t)symbol);
+                        /* (5th) mov symbol_len -> [rsp+32] */         IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)symbol_len);
+                        /* (6th) mov symbol_hash -> [rsp+40] */        IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)symbol_hash);
+                        /* (7th) mov arg_count -> [rsp+48] */          IB(0xc7); IB(0x44); IB(0x24); IB(0x30); ID((uint32_t)arg_count);
+                        /* (8th) movabs arg_addr -> rax */             IB(0x48); IB(0xb8); IQ((uint64_t)arg_addr);
+                        /*       mov rax -> [rsp+56] */                IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x38);
+                        /* movabs rt_thiscall_helper -> rax */         IB(0x48); IB(0xb8); IQ((uint64_t)rt_thiscall_helper);
+                        /* call *rax */                                IB(0xff); IB(0xd0);
+                        /* add rsp, 64 */                              IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
                         /* test eax, eax */                            IB(0x83); IB(0xF8); IB(0x00);
                         /* jne 8 <next> */                             IB(0x75); IB(0x03);
-                        /* jmp *r13 */                                 IB(0x41); IB(0xFF); IB(0xE5);
+                        /* jmp *r13 */                                 IB(0x41); IB(0xFF); IB(0xe5);
                 /* next: */
                 }
         } else {
-                /* if (!rt_thiscall_helper(rt, dst, obj, symbol, arg_count, arg)) return false; */
+                /* if (!rt_thiscall_helper(env, dst, obj, symbol, symbol_len, symbol_hash, arg_count, arg)) return false; */
                 ASM {
                         /* r13: exception_handler */
-                        /* r14: rt */
+                        /* r14: env */
                         /* r14: &rt->frame->tmpvar[0] */
 
-                        /* movq %r14, %rdi */                         IB(0x4c); IB(0x89); IB(0xf7);
-                        /* movq dst, %rsi */                          IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* movq obj, %rdx */                          IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)obj);
-                        /* movabs symbol, %rcx */                     IB(0x48); IB(0xb9); IQ((uint64_t)symbol);
-                        /* movq arg_count, %r8 */                     IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)arg_count);
-                        /* movabs arg_addr, %r9 */                    IB(0x49); IB(0xb9); IQ(arg_addr);
-                        /* movabs rt_thiscall_helper, %r10 */         IB(0x49); IB(0xba); IQ((uint64_t)rt_thiscall_helper);
+                        /* sub rsp, 32 */                             IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
+                        /* (1st) movq %r14 -> %rdi */                 IB(0x4c); IB(0x89); IB(0xf7);
+                        /* (2nd) movq dst -> %rsi */                  IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (3rd) movq obj -> %rdx */                  IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)obj);
+                        /* (4th) movabs symbol -> %rcx */             IB(0x48); IB(0xb9); IQ((uint64_t)symbol);
+                        /* (5th) movq symbol_len -> %r8 */            IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)symbol_len);
+                        /* (6th) movq symbol_hash -> %r9 */           IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)symbol_hash);
+                        /* (7th) movq arg_count -> [rsp+0] */         IB(0xC7); IB(0x44); IB(0x24); IB(0x00); ID((uint32_t)arg_count);
+                        /* (8th) movabs arg -> rax */                 IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
+                        /*       movq rax -> [rsp+8] */               IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x08);
+                        /* movabs rt_thiscall_helper -> %r10 */       IB(0x49); IB(0xba); IQ((uint64_t)rt_thiscall_helper);
                         /* call *%r10 */                              IB(0x41); IB(0xff); IB(0xd2);
+                        /* add %rsp, 32 */                            IB(0x48); IB(0x83); IB(0xc4); IB(0x20);
 
                         /* cmpl $0, %eax */                           IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                            IB(0x75); IB(0x03);

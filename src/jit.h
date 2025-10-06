@@ -210,20 +210,36 @@ jit_get_imm8(
 static INLINE bool
 jit_get_opr_string(
 	struct jit_context *ctx,
-	const char **d)
+	struct rt_string_imm **d)
 {
-	int len;
+	uint32_t len, hash;
+	const char *s;
 
-	len = (int)strlen((const char *)&ctx->func->bytecode[ctx->lpc]);
-	if (ctx->lpc + len + 1 > ctx->func->bytecode_size) {
+	if (ctx->lpc + 8 > ctx->func->bytecode_size) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		*d = 0;
+		return false;
+	}
+
+	d->len = ((uint32_t)ctx->func->bytecode[ctx->lpc] << 24) |
+		(uint32_t)(ctx->func->bytecode[ctx->lpc + 1] << 16) |
+		(uint32_t)(ctx->func->bytecode[ctx->lpc + 2] << 8) |
+		(uint32_t)ctx->func->bytecode[ctx->lpc + 3];
+
+	d->hash = ((uint32_t)ctx->func->bytecode[ctx->lpc + 4] << 24) |
+		(uint32_t)(ctx->func->bytecode[ctx->lpc + 5] << 16) |
+		(uint32_t)(ctx->func->bytecode[ctx->lpc + 6] << 8) |
+		(uint32_t)ctx->func->bytecode[ctx->lpc + 7];
+
+	if (ctx->lpc + 8 + len + 1 > ctx->func->bytecode_size) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		*d = NULL;
 		return false;
 	}
 
-	*d = (const char *)&ctx->func->bytecode[ctx->lpc];
+	d->s = (const char *)&ctx->func->bytecode[ctx->lpc];
 
-	ctx->lpc += len + 1;
+	ctx->lpc += 8 + len + 1;
 
 	return true;
 }

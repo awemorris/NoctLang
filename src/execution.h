@@ -13,12 +13,6 @@
 
 #include <noct/c89compat.h>
 
-struct rt_string_imm {
-	uint32_t len;
-	uint32_t hash;
-	const char *s;
-};
-
 bool
 rt_assign_helper(
 	struct rt_env *rt,
@@ -187,12 +181,16 @@ bool
 rt_loadsymbol_helper(
 	struct rt_env *rt,
 	int dst,
-	struct rt_string_imm *symbol);
+	const char *symbol,
+	uint32_t symbol_len,
+	uint32_t symbol_hash);
 
 bool
 rt_storesymbol_helper(
 	struct rt_env *rt,
-	struct rt_string_imm *symbol,
+	const char *symbol,
+	uint32_t symbol_len,
+	uint32_t symbol_hash,
 	int src);
 
 bool
@@ -200,13 +198,17 @@ rt_loaddot_helper(
 	struct rt_env *rt,
 	int dst,
 	int dict,
-	struct rt_string_imm *field);
+	const char *field,
+	uint32_t field_len,
+	uint32_t field_hash);
 
 bool
 rt_storedot_helper(
 	struct rt_env *rt,
 	int dict,
-	struct rt_string_imm *field,
+	const char *field,
+	uint32_t field_len,
+	uint32_t field_hash,
 	int src);
 
 bool
@@ -222,7 +224,9 @@ rt_thiscall_helper(
 	struct rt_env *rt,
 	int dst,
 	int obj,
-	struct rt_string_imm *name,
+	const char *name,
+	uint32_t name_len,
+	uint32_t name_hash,
 	int arg_count,
 	int *arg);
 
