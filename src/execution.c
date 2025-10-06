@@ -905,7 +905,10 @@ rt_eq_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) == 0 ? 1 : 0;
+			if (src1_val->val.str->len == src2_val->val.str->len)
+				dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) == 0 ? 1 : 0;
+			else
+				dst_val->val.i = 0;
 			break;
 		default:
 			dst_val->type = NOCT_VALUE_INT;
@@ -1148,7 +1151,8 @@ rt_len_helper(
 	switch (src_val->type) {
 	case NOCT_VALUE_STRING:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = (int)strlen(src_val->val.str->data);
+		dst_val->val.i = src_val->val.str->len;
+		assert(src_val->val.str->len == strlen(src_val->val.str->data));
 		break;
 	case NOCT_VALUE_ARRAY:
 		dst_val->type = NOCT_VALUE_INT;

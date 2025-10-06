@@ -1919,9 +1919,19 @@ static bool
 lir_put_string(
 	const char *s)
 {
-	size_t i, len;
+	uint32_t len, hash, i;
 
-	len = strlen(s);
+	/* Put the length. */
+	len = (uint32_t)strlen(s);
+	if (!lir_put_u32(len))
+		return false;
+
+	/* Put the hash. */
+	hash = string_hash(s);
+	if (!lir_put_u32(hash))
+		return false;
+
+	/* Put the string. */
 	for (i = 0; i < len; i++) {
 		if (!lir_put_u8((uint8_t)*s++))
 			return false;
