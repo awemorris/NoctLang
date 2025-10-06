@@ -1,5 +1,5 @@
 ABC123あいう
-s.length = 9
+s.length = 15
 s.substring(0, 0) = 
 s.substring(0, 1) = A
 s.substring(0, 2) = AB

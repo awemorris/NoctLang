@@ -1921,8 +1921,8 @@ lir_put_string(
 {
 	uint32_t len, hash, i;
 
-	/* Put the length. */
-	len = (uint32_t)strlen(s);
+	/* Put the length. (including NUL)*/
+	len = (uint32_t)strlen(s) + 1;
 	if (!lir_put_u32(len))
 		return false;
 
@@ -1931,13 +1931,11 @@ lir_put_string(
 	if (!lir_put_u32(hash))
 		return false;
 
-	/* Put the string. */
+	/* Put the string. (including NUL terminator) */
 	for (i = 0; i < len; i++) {
 		if (!lir_put_u8((uint8_t)*s++))
 			return false;
 	}
-	if (!lir_put_u8('\0'))
-		return false;
 
 	return true;
 }

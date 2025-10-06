@@ -649,7 +649,9 @@ rt_call_with_name(
 	/* Search a function. */
 	func_ok = false;
 	do {
-		if (!rt_find_global(env, func_name, &global))
+		if (!rt_check_global(env, func_name))
+			break;
+		if (!rt_get_global(env, func_name, &global))
 			break;
 		if (global.type != NOCT_VALUE_FUNC)
 			break;
@@ -805,10 +807,31 @@ rt_make_string(
 	struct rt_value *val,
 	const char *data)
 {
+	uint32_t len, hash;
+
+	len = strlen(data) + 1;
+	hash = 0;
+	if (!rt_make_string_with_hash(env, val, data, len, hash))
+		return false;
+
+	return true;
+}
+
+/*
+ * Make a string value. (hash version)
+ */
+bool
+rt_make_string_with_hash(
+	struct rt_env *env,
+	struct rt_value *val,
+	const char *data,
+	uint32_t len,		/* Including NUL */
+	uint32_t hash)
+{
 	struct rt_string *rts;
 
 	/* Allocate a string. */
-	rts = rt_gc_alloc_string(env, strlen(data) + 1, data);
+	rts = rt_gc_alloc_string(env, data, len, hash);
 	if (rts == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -817,8 +840,20 @@ rt_make_string(
 	/* Setup a value. */
 	val->type = NOCT_VALUE_STRING;
 	val->val.str = rts;
+	val->val.str->hash = hash;
 
 	return true;
+}
+
+/*
+ * Cache the hash of a string.
+ */
+void
+rt_cache_string_hash(
+	struct rt_string *rts)
+{
+	if (rts->hash == 0)
+		rts->hash = string_hash(rts->data);
 }
 
 /*
@@ -936,7 +971,6 @@ rt_get_array_elem(
 	assert(env != NULL);
 	assert(arr != NULL);
 	assert(index >= 0);
-	assert(index < arr->size);
 	assert(val != NULL);
 
 	ACQUIRE_OBJ(arr, real_arr);
@@ -1218,16 +1252,27 @@ rt_check_dict_key(
 	bool *ret)
 {
 	struct rt_dict *real_dict;
+	uint32_t hash, len;
 	int i;
 
 	ACQUIRE_OBJ(dict, real_dict);
+
+	len = len;
+	hash = string_hash(key);
 
 	/* Search the key. */
 	for (i = 0; i < real_dict->size; i++) {
 		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
 		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
 			continue;
-		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+
+		/* Make a hash cache. */
+		if (real_dict->key[i].val.str->hash == 0)
+			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+
+		if (real_dict->key[i].val.str->len == len &&
+		    real_dict->key[i].val.str->hash == hash &&
+		    strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Found. */
 			RELEASE_OBJ(real_dict);
 			*ret = true;
@@ -1347,6 +1392,28 @@ rt_get_dict_elem(
 	const char *key,
 	struct rt_value *val)
 {
+	uint32_t len, hash;
+
+	len = strlen(key) + 1;
+	hash = string_hash(key);
+	if (!rt_get_dict_elem_with_hash(env, dict, key, len, hash, val))
+		return false;
+
+	return true;
+}
+
+/*
+ * Retrieves the value by a key in a dictionary.
+ */
+bool
+rt_get_dict_elem_with_hash(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	const char *key,
+	uint32_t len,
+	uint32_t hash,
+	struct rt_value *val)
+{
 	struct rt_dict *real_dict;
 	int index, i;
 
@@ -1354,10 +1421,11 @@ rt_get_dict_elem(
 	assert(dict != NULL);
 	assert(key != NULL);
 	assert(val != NULL);
+	assert(hash != 0);
 
 	ACQUIRE_OBJ(dict, real_dict);
 
-	index = string_hash(key) & (real_dict->alloc_size - 1);
+	index = hash & (real_dict->alloc_size - 1);
 	for (i = index;
 	     i != (index - 1) & (real_dict->alloc_size - 1);
 	     i = (i + 1) & (real_dict->alloc_size - 1)) {
@@ -1365,7 +1433,14 @@ rt_get_dict_elem(
 			continue;
 		if (IS_DICT_KEY_EMPTY(real_dict->key[i]))
 			break;
-		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+
+		/* Make a hash cache. */
+		if (real_dict->key[i].val.str->hash == 0)
+			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+		
+		if (real_dict->key[i].val.str->len == len &&
+		    real_dict->key[i].val.str->hash == hash &&
+		    strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Succeeded. */
 			*val = real_dict->value[i];
 			RELEASE_OBJ(real_dict);
@@ -1389,6 +1464,28 @@ rt_set_dict_elem(
 	const char *key,
 	struct rt_value *val)
 {
+	uint32_t len, hash;
+
+	len = strlen(key) + 1;	/* Including NUL. */
+	hash = string_hash(key);
+	if (!rt_set_dict_elem_with_hash(env, dict, key, len, hash, val))
+		return false;
+
+	return true;
+}
+
+/*
+ * Stores a key-value-pair to a dictionary. (hash version)
+ */
+bool
+rt_set_dict_elem_with_hash(
+	struct rt_env *env,
+	struct rt_dict **dict,
+	const char *key,
+	uint32_t len,
+	uint32_t hash,
+	struct rt_value *val)
+{
 	struct rt_dict *real_dict, *append_dict;
 	int index, i;
 
@@ -1397,18 +1494,26 @@ rt_set_dict_elem(
 	assert(*dict != NULL);
 	assert(key != NULL);
 	assert(val != NULL);
+	assert(hash != 0);
 
 	ACQUIRE_OBJ(*dict, real_dict);
 
 	/* Search for the key to replace the value. */
-	index = string_hash(key) & (real_dict->alloc_size - 1);
+	index = hash & (real_dict->alloc_size - 1);
 	for (i = index;
 	     i != (index - 1) & (real_dict->alloc_size - 1);
 	     i = (i + 1) & (real_dict->alloc_size - 1)) {
 		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
 		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
-			goto make_new;
-		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+			break;
+
+		/* Make a hash cache. */
+		if (real_dict->key[i].val.str->hash == 0)
+			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+
+		if (real_dict->key[i].val.str->len == len &&
+		    real_dict->key[i].val.str->hash == hash &&
+		    strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			/* Found, replace the value. */
 			real_dict->value[i] = *val;
 			RELEASE_OBJ(real_dict);
@@ -1416,8 +1521,6 @@ rt_set_dict_elem(
 		}
 	}
 
-	/* Fall-thru. */
-make_new:
 	/* Key doesn't exist. Add new one. */
 
 	/* Expand the size if 75% is used. */
@@ -1436,14 +1539,14 @@ make_new:
 	assert(append_dict->size < append_dict->alloc_size);
 
 	/* Append. */
-	index = string_hash(key) & (append_dict->alloc_size - 1);
+	index = hash & (append_dict->alloc_size - 1);
 	for (i = index;
 	     i != (index - 1) & (append_dict->alloc_size - 1);
 	     i = (i + 1) & (append_dict->alloc_size - 1)) {
 		if (IS_DICT_KEY_REMOVED(append_dict->key[i]) ||
 		    IS_DICT_KEY_EMPTY(append_dict->key[i])) {
 			/* Make a key value. */
-			if (!rt_make_string(env, &append_dict->key[i], key)) {
+			if (!rt_make_string_with_hash(env, &append_dict->key[i], key, len, hash)) {
 				RELEASE_OBJ(real_dict);
 				return false;
 			}
@@ -1533,17 +1636,39 @@ rt_remove_dict_elem(
 	struct rt_dict *dict,
 	const char *key)
 {
+	uint32_t len, hash;
+
+	len = strlen(key) + 1;	/* Including NUL. */
+	hash = string_hash(key);
+	if (!rt_remove_dict_elem_with_hash(env, dict, key, len, hash))
+		return false;
+
+	return true;
+}
+
+/*
+ * Remove a dictionary key. (hash version)
+ */
+bool
+rt_remove_dict_elem_with_hash(
+	struct rt_env *env,
+	struct rt_dict *dict,
+	const char *key,
+	uint32_t len,
+	uint32_t hash)
+{
 	struct rt_dict *real_dict;
 	int index, i;
 
 	assert(env != NULL);
 	assert(dict != NULL);
 	assert(key != NULL);
-	
+	assert(hash != 0);
+
 	ACQUIRE_OBJ(dict, real_dict);
 
 	/* Search for the key. */
-	index = string_hash(key) & (real_dict->alloc_size - 1);
+	index = hash & (real_dict->alloc_size - 1);
 	for (i = index;
 	     i != (index - 1) & (real_dict->alloc_size - 1);
 	     i = (i + 1) & (real_dict->alloc_size - 1)) {
@@ -1551,7 +1676,14 @@ rt_remove_dict_elem(
 			continue;
 		if (IS_DICT_KEY_EMPTY(real_dict->key[i]))
 			break;
-		if (strcmp(real_dict->key[i].val.str->data, key) == 0) {
+
+		/* Make a hash cache. */
+		if (real_dict->key[i].val.str->hash == 0)
+			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+		
+		if (real_dict->key[i].val.str->len == len &&
+		    real_dict->key[i].val.str->hash == hash &&
+		    strcmp(real_dict->key[i].val.str->data, key) == 0) {
 			REMOVE_DICT_KEY(real_dict->key[i]);
 			real_dict->value[i].type = NOCT_VALUE_INT;
 			real_dict->value[i].val.i = 0;
@@ -1687,10 +1819,14 @@ rt_check_global(
 	const char *name)
 {
 	int index, i;
+	uint32_t len, hash;
 
 	ACQUIRE_GLOBAL();
 
-	index = string_hash(name) & (env->vm->global_alloc_size - 1) ;
+	string_hash_and_len(name, &hash, &len);
+	len++;	/* Including NUL. */
+
+	index = hash & (env->vm->global_alloc_size - 1) ;
 	for (i = index;
 	     i != (index - 1) & (env->vm->global_alloc_size - 1);
 	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
@@ -1701,6 +1837,10 @@ rt_check_global(
 			RELEASE_GLOBAL();
 			return false;
 		}
+		if (env->vm->global[i].name_len != len)
+			continue;
+		if (env->vm->global[i].name_hash != hash)
+			continue;
 		if (strcmp(env->vm->global[i].name, name) != 0)
 			continue;
 
@@ -1725,7 +1865,7 @@ rt_get_global(
 {
 	uint32_t len, hash;
 
-	len = strlen(name);
+	len = strlen(name) + 1;
 	hash = string_hash(name);
 
 	if (!rt_get_global_with_hash(env, name, len, hash, val))
@@ -1735,7 +1875,7 @@ rt_get_global(
 }
 
 /*
- * Find a global variable.
+ * Get a global variable. (hash version)
  */
 bool
 rt_get_global_with_hash(
@@ -1772,7 +1912,7 @@ rt_get_global_with_hash(
 
 	/* Not found. */
 	RELEASE_GLOBAL();
-	rt_error(env, N_TR("Symbol \"%s\" not found."), symbol);
+	rt_error(env, N_TR("Symbol \"%s\" not found."), name);
 	return false;
 }
 
@@ -1787,7 +1927,7 @@ rt_set_global(
 {
 	uint32_t len, hash;
 
-	len = strlen(name);
+	len = strlen(name) + 1;	/* Including NUL. */
 	hash = string_hash(name);
 	if (!rt_set_global_with_hash(env, name, len, hash, val))
 		return false;
@@ -1802,7 +1942,7 @@ bool
 rt_set_global_with_hash(
 	struct rt_env *env,
 	const char *name,
-	uint32_t len,
+	uint32_t len,		/* Including NUL. */
 	uint32_t hash,
 	struct rt_value *val)
 {
@@ -1840,9 +1980,9 @@ rt_set_global_with_hash(
 		}
 
 		/* If found an existing entry. */
-		if (env->vm->global[i].len != len)
+		if (env->vm->global[i].name_len != len)
 			continue;
-		if (env->vm->global[i].hash != hash)
+		if (env->vm->global[i].name_hash != hash)
 			continue;
 		if (strcmp(env->vm->global[i].name, name) == 0) {
 			/* Overwrite the existing entry value. */

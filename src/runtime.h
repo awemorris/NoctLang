@@ -47,7 +47,8 @@ struct rt_string {
 	struct rt_gc_object head;
 
 	char *data;
-	size_t len;
+	size_t len;	/* Including the tail NUL character*/
+	uint32_t hash;
 };
 
 /*
@@ -313,6 +314,12 @@ bool rt_call(struct rt_env *env, struct rt_func *func, int arg_count, struct rt_
 /* Make a string value. */
 bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data);
 
+/* Make a string value. (hash version) */
+bool rt_make_string_with_hash(struct rt_env *env, struct rt_value *val, const char *data, uint32_t len, uint32_t hash);
+
+/* Cache the hash of a string. */
+void rt_cache_string_hash(struct rt_string *rts);
+
 /*
  * Array and Dictionary
  */
@@ -364,6 +371,9 @@ bool rt_set_dict_elem_with_hash(struct rt_env *env, struct rt_dict **dict, const
 
 /* Remove a dictionary key. */
 bool rt_remove_dict_elem(struct rt_env *env, struct rt_dict *dict, const char *key);
+
+/* Remove a dictionary key. (hash version) */
+bool rt_remove_dict_elem_with_hash(struct rt_env *env, struct rt_dict *dict, const char *key, uint32_t len, uint32_t hash);
 
 /* Make a shallow copy of a dictionary. */
 bool rt_make_dict_copy(struct rt_env *env, struct rt_dict **dst, struct rt_dict *src);

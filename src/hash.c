@@ -22,3 +22,17 @@ uint32_t string_hash(const char *s)
 	}
 	return hash;
 }
+
+/*
+ * FNV-1a
+ */
+void string_hash_and_len(const char *s, uint32_t *hash, uint32_t *len)
+{
+	*len = 0;
+	*hash = 2166136261u;
+	while (*s) {
+		*hash ^= (uint8_t)*s++;
+		*hash *= 16777619u;
+		*len = *len + 1;
+	}
+}

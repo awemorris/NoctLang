@@ -76,8 +76,8 @@ size_t noct_conf_gc_promotion_threshold = RT_GC_PROMOTION_THRESHOLD;
 /*
  * Forward declaration.
  */
-static struct rt_string *rt_gc_alloc_string_graduate(struct rt_env *env, size_t len, const char *data);
-static struct rt_string *rt_gc_alloc_string_tenure(struct rt_env *env, size_t len, const char *data);
+static struct rt_string *rt_gc_alloc_string_graduate(struct rt_env *env, const char *data, uint32_t len, uint32_t hash);
+static struct rt_string *rt_gc_alloc_string_tenure(struct rt_env *env, const char *data, uint32_t len, uint32_t hash);
 static struct rt_array *rt_gc_alloc_array_graduate(struct rt_env *env, size_t size);
 static struct rt_array *rt_gc_alloc_array_tenure(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size);
@@ -166,8 +166,9 @@ void env_gc_cleanup(struct rt_vm *vm)
 struct rt_string *
 rt_gc_alloc_string(
 	struct rt_env *env,
-	size_t len,
-	const char *data)
+	const char *data,
+	uint32_t len,
+	uint32_t hash)
 {
 	struct rt_string *rts;
 	char *s;
@@ -178,7 +179,7 @@ rt_gc_alloc_string(
 	 *  - If the string is large, allocate in the tenure region.
 	 */
 	if (len >= noct_conf_gc_lop_threshold)
-		return rt_gc_alloc_string_tenure(env, len, data);
+		return rt_gc_alloc_string_tenure(env, data, len, hash);
 
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 1; retry++) {
@@ -209,6 +210,7 @@ rt_gc_alloc_string(
 		INSERT_TO_LIST(&rts->head, env->vm->gc.nursery_list, prev, next);
 		rts->data = s;
 		rts->len = len;
+		rts->hash = hash;
 
 		/* Succeeded. */
 		return rts;
@@ -223,8 +225,9 @@ rt_gc_alloc_string(
 static struct rt_string *
 rt_gc_alloc_string_graduate(
 	struct rt_env *env,
-	size_t len,
-	const char *data)
+	const char *data,
+	uint32_t len,
+	uint32_t hash)
 {
 	struct rt_string *rts;
 	char *s;
@@ -254,13 +257,14 @@ rt_gc_alloc_string_graduate(
 		INSERT_TO_LIST(&rts->head, env->vm->gc.graduate_new_list, prev, next);
 		rts->data = s;
 		rts->len = len;
+		rts->hash = hash;
 
 		/* Succeeded. (graduate) */
 		return rts;
 	} while (0);
 
 	/* Failed. Try allocating in the tenure region. */
-	rts = rt_gc_alloc_string_tenure(env, len, data);
+	rts = rt_gc_alloc_string_tenure(env, data, len, hash);
 	if (rts == NULL)
 		return NULL;
 
@@ -272,8 +276,9 @@ rt_gc_alloc_string_graduate(
 static struct rt_string *
 rt_gc_alloc_string_tenure(
 	struct rt_env *env,
-	size_t len,
-	const char *data)
+	const char *data,
+	uint32_t len,
+	uint32_t hash)
 {
 	struct rt_string *rts;
 	char *s;
@@ -316,6 +321,7 @@ rt_gc_alloc_string_tenure(
 		INSERT_TO_LIST(&rts->head, env->vm->gc.tenure_list, prev, next);
 		rts->data = s;
 		rts->len = len;
+		rts->hash = hash;
 
 		/* Succeeded. */
 		return rts;
@@ -1192,7 +1198,7 @@ rt_gc_promote_string(
 
 	/* Allocate a string object. */
 	old_rts = (struct rt_string *)obj;
-	new_rts = rt_gc_alloc_string_tenure(env, old_rts->len, old_rts->data);
+	new_rts = rt_gc_alloc_string_tenure(env, old_rts->data, old_rts->len, old_rts->hash);
 	if (new_rts == NULL)
 		return false;
 
@@ -1295,7 +1301,7 @@ rt_gc_copy_string_to_graduate(
 	assert(old_obj->len < noct_conf_gc_lop_threshold);
 
 	/* Allocate in the graduate region. */
-	new_obj = rt_gc_alloc_string_graduate(env, old_obj->len, old_obj->data);
+	new_obj = rt_gc_alloc_string_graduate(env, old_obj->data, old_obj->len, old_obj->hash);
 	if (new_obj == NULL)
 		return NULL;
 

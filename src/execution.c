@@ -902,8 +902,12 @@ rt_eq_helper(
 	case NOCT_VALUE_STRING:
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
+			rt_cache_string_hash(src1_val->val.str);
+			rt_cache_string_hash(src2_val->val.str);
+
 			dst_val->type = NOCT_VALUE_INT;
-			if (src1_val->val.str->len == src2_val->val.str->len)
+			if (src1_val->val.str->len == src2_val->val.str->len &&
+			    src1_val->val.str->hash == src2_val->val.str->hash)
 				dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) == 0 ? 1 : 0;
 			else
 				dst_val->val.i = 0;
@@ -1027,6 +1031,7 @@ rt_storearray_helper(
 		/* Store to the array. */
 		if (!rt_set_array_elem(env, &arr_val->val.arr, subscr_val->val.i, val_val))
 			return false;
+		return true;
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
 		if (subscr_val->type != NOCT_VALUE_STRING) {
 			rt_error(env, N_TR("Subscript not a string."));
@@ -1040,10 +1045,11 @@ rt_storearray_helper(
 		if (!rt_set_dict_elem_with_hash(env,
 						&arr_val->val.dict,
 						subscr_val->val.str->data,
-						subscr_val->val.str->hash,
 						subscr_val->val.str->len,
+						subscr_val->val.str->hash,
 						val_val))
 			return false;
+		return true;
 	}
 
 	rt_error(env, N_TR("Not an array or a dictionary."));
@@ -1079,7 +1085,6 @@ rt_loadarray_helper(
 		/* Load the array element. */
 		if (!rt_get_array_elem(env, arr_val->val.arr, subscr_val->val.i, dst_val))
 			return false;
-
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
 		/* Get the key string. */
@@ -1099,7 +1104,6 @@ rt_loadarray_helper(
 						subscr_val->val.str->hash,
 						dst_val))
 			return false;
-		
 		return true;
 	}
 
@@ -1125,7 +1129,7 @@ rt_len_helper(
 	switch (src_val->type) {
 	case NOCT_VALUE_STRING:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = src_val->val.str->len;
+		dst_val->val.i = src_val->val.str->len - 1; /* Exclude NUL */
 		assert(src_val->val.str->len == strlen(src_val->val.str->data));
 		break;
 	case NOCT_VALUE_ARRAY:
@@ -1262,25 +1266,26 @@ rt_loaddot_helper(
 	uint32_t field_hash)
 {
 	/* Special field "length". */
-	/* TODO: hash check for "length" */
-	if (strcmp(field->s, "length") == 0) {
+	if (field_len == 7 &&
+	    /* TODO: hash check for "length" */
+	    strcmp(field, "length") == 0) {
 		if (env->frame->tmpvar[dict].type == NOCT_VALUE_DICT) {
 			int size;
-			if (!noct_get_dict_size(env, &env->frame->tmpvar[dict], &size))
+			if (!rt_get_dict_size(env, env->frame->tmpvar[dict].val.dict, &size))
 				return false;
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
 			env->frame->tmpvar[dst].val.i = size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_ARRAY) {
 			int size;
-			if (!noct_get_array_size(env, &env->frame->tmpvar[dict], &size))
+			if (!rt_get_array_size(env, env->frame->tmpvar[dict].val.arr, &size))
 				return false;
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
 			env->frame->tmpvar[dst].val.i = size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = env->frame->tmpvar[dict].val.str->len;
+			env->frame->tmpvar[dst].val.i = env->frame->tmpvar[dict].val.str->len - 1; /* Exclude NUL */
 			return true;
 		}
 	}
@@ -1397,7 +1402,7 @@ rt_thiscall_helper(
 		}
 
 		/* Get a function from a receiver object. */
-		if (!rt_get_dict_elem_with_hash(env, &env->frame->tmpvar[obj], name, name_len, name_hash, &callee_value))
+		if (!rt_get_dict_elem_with_hash(env, env->frame->tmpvar[obj].val.dict, name, name_len, name_hash, &callee_value))
 			return false;
 		if (callee_value.type != NOCT_VALUE_FUNC) {
 			rt_error(env, N_TR("Not a function."));
