@@ -1489,7 +1489,7 @@ rt_expand_dict(
 		return false;
 	}
 
-	/* Copy the values with write barrier. */
+	/* Rehash. (Copy the values with write barrier.) */
 	for (i = 0; i < old_size; i++) {
 		if (IS_DICT_KEY_REMOVED(old_dict->key[i]) || IS_DICT_KEY_EMPTY(old_dict->key[i]))
 			continue;
@@ -1639,7 +1639,7 @@ static bool
 rt_init_global(
 	struct rt_env *env)
 {
-	const int START_SIZE = 128;
+	const int START_SIZE = 2;
 
 	assert(env->vm->global == NULL);
 
@@ -1703,8 +1703,9 @@ rt_find_global(
 	ACQUIRE_GLOBAL();
 
 	index = string_hash(name) & (env->vm->global_alloc_size - 1) ;
-
-	for (i = index; i < env->vm->global_alloc_size; i++) {
+	for (i = index;
+	     i != (index - 1) & (env->vm->global_alloc_size - 1);
+	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
 		if (env->vm->global[i].is_removed)
 			continue;
 		if (env->vm->global[i].name == NULL) {
@@ -1718,23 +1719,6 @@ rt_find_global(
 		/* Found. */
 		*val = env->vm->global[i].val;
 		return true;
-	}
-	if (index != 0) {
-		for (i = 0; i < index; i++) {
-			if (env->vm->global[i].is_removed)
-				continue;
-			if (env->vm->global[i].name == NULL) {
-				/* Not found. */
-				RELEASE_GLOBAL();
-				return false;
-			}
-			if (strcmp(env->vm->global[i].name, name) != 0)
-				continue;
-
-			/* Found. */
-			*val = env->vm->global[i].val;
-			return true;
-		}
 	}
 
 	/* Not found. */
@@ -1761,41 +1745,37 @@ rt_set_global(
 			return false;
 	}
 
+	/* Search a place to insert or overwrite. */
 	index = string_hash(name) & (env->vm->global_alloc_size - 1) ;
-	for (i = index; i < env->vm->global_alloc_size; i++) {
+	for (i = index;
+	     i != (index - 1) & (env->vm->global_alloc_size - 1);
+	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
 		if (env->vm->global[i].is_removed ||
-		    env->vm->global[i].name == NULL)
-			goto add_new;
-		if (strcmp(env->vm->global[i].name, name) == 0)
-			goto change_value;
-	}
-	if (index != 0) {
-		for (i = 0; i < index; i++) {
-			if (env->vm->global[i].is_removed ||
-			    env->vm->global[i].name == NULL)
-				goto add_new;
-			if (strcmp(env->vm->global[i].name, name) == 0)
-				goto change_value;
+		    env->vm->global[i].name == NULL) {
+			/* Insert a new entry. */
+			env->vm->global[i].name = strdup(name);
+			if (env->vm->global[i].name == NULL) {
+				RELEASE_GLOBAL();
+				rt_out_of_memory(env);
+				return false;
+			}
+			env->vm->global[i].val = *val;
+			env->vm->global_size++;
+			RELEASE_GLOBAL();
+			return true;
+		}
+		if (strcmp(env->vm->global[i].name, name) == 0) {
+			/* Overwrite the existing entry value. */
+			env->vm->global[i].val = *val;
+			RELEASE_GLOBAL();
+			return true;
 		}
 	}
+
+	/* No empty entry. */
 	assert(NEVER_COME_HERE);
-
-add_new:
-	env->vm->global[i].name = strdup(name);
-	if (env->vm->global[i].name == NULL) {
-		RELEASE_GLOBAL();
-		rt_out_of_memory(env);
-		return false;
-	}
-	env->vm->global[i].val = *val;
-	env->vm->global_size++;
 	RELEASE_GLOBAL();
-	return true;
-
-change_value:
-	env->vm->global[i].val = *val;
-	RELEASE_GLOBAL();
-	return true;
+	return false;
 }
 
 /* Expand the global variable table. */
@@ -1820,37 +1800,14 @@ rt_expand_global(
 	for (i = 0; i < old_size; i++) {
 		if (old_tbl[i].name == NULL || old_tbl[i].is_removed)
 			continue;
-
 		index = string_hash(old_tbl[i].name) & (new_size - 1) ;
-
-		/* No conflict. */
-		if (new_tbl[index].name == NULL) {
-			new_tbl[index].name = old_tbl[i].name;
-			new_tbl[index].val = old_tbl[i].val;
-			continue;
-		}
-
-		/* Conflict. (linear search) */
-		if (index != new_size - 1) {
-			/* After `index`. */
-			for (j = index + 1; j < new_size; j++) {
-				if (new_tbl[j].name == NULL) {
-					new_tbl[j].name = old_tbl[i].name;
-					new_tbl[j].val = old_tbl[i].val;
-					break;
-				}
-			}
-			if (j != new_size)
-				continue;
-		}
-		if (index != 0) {
-			/* Before `index`. */
-			for (j = 0; j < index; j++) {
-				if (new_tbl[j].name == NULL) {
-					new_tbl[j].name = old_tbl[i].name;
-					new_tbl[j].val = old_tbl[i].val;
-					break;
-				}
+		for (j = index;
+		     j != (index - 1) & (new_size - 1);
+		     j = (j + 1) & (new_size - 1)) {
+			if (new_tbl[j].name == NULL) {
+				new_tbl[j].name = old_tbl[i].name;
+				new_tbl[j].val = old_tbl[i].val;
+				break;
 			}
 		}
 	}

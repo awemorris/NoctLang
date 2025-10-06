@@ -26,13 +26,13 @@
 /*
  *Link an element to a list.
  */
-#define INSERT_TO_LIST(elem, list, prev, next)				\
-	do { 								\
-		(elem)->prev = NULL;					\
-		(elem)->next = (list);					\
-		if ((list) != NULL)					\
-			(list)->prev = (elem);				\
-		(list) = (elem);					\
+#define INSERT_TO_LIST(elem, list, prev, next)	\
+	do {					\
+		(elem)->prev = NULL;		\
+		(elem)->next = (list);		\
+		if ((list) != NULL)		\
+			(list)->prev = (elem);	\
+		(list) = (elem);		\
 	} while (0)
 
 /*
@@ -659,9 +659,9 @@ rt_gc_alloc_dict_tenure(
 	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate the rt_dict buffer. */
 		dict = rt_gc_tenure_alloc(env,
-				    sizeof(struct rt_dict) +
-				    size * sizeof(struct rt_value) +
-				    size * sizeof(struct rt_value));
+					  sizeof(struct rt_dict) +
+					  size * sizeof(struct rt_value) +
+					  size * sizeof(struct rt_value));
 		if (dict == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -1251,7 +1251,7 @@ rt_gc_promote_dict(
 	if (new_dict == NULL)
 		return false;
 
-	/* Copy the keys and values. */
+	/* Rehash. (Copy the keys and values.) */
 	for (i = 0; i < old_dict->alloc_size; i++) {
 		if (old_dict->key[i].type != NOCT_VALUE_STRING)
 			continue; /* Removed or empty. */
@@ -1260,16 +1260,16 @@ rt_gc_promote_dict(
 		for (j = index;
 		     j != (index - 1) & (new_dict->alloc_size - 1);
 		     j = (j + 1) & (new_dict->alloc_size - 1)) {
-			if (new_dict->key[i].type == NOCT_VALUE_STRING)
-				continue; /* Used. */
+			if (new_dict->key[j].type != NOCT_VALUE_STRING) {
+				/* Copy the item. */
+				new_dict->key[j] = old_dict->key[i];
+				new_dict->value[j] = old_dict->value[i];
 
-			/* Copy the item. */
-			new_dict->key[i] = old_dict->key[i];
-			new_dict->value[i] = old_dict->value[i];
-
-			/* Write barrier. */
-			rt_gc_dict_write_barrier(env, new_dict, &new_dict->key[j]);
-			rt_gc_dict_write_barrier(env, new_dict, &new_dict->value[j]);
+				/* Write barrier. */
+				rt_gc_dict_write_barrier(env, new_dict, &new_dict->key[j]);
+				rt_gc_dict_write_barrier(env, new_dict, &new_dict->value[j]);
+				break;
+			}
 		}
 	}
 	new_dict->size = old_dict->size;
