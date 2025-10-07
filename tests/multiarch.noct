@@ -7,8 +7,8 @@ func main() {
     var arch_list = [
 //        {name: "i386",    toolchain: "qemu-i386-toolchain.cmake",    qemu: "qemu-i386-static"},
 //        {name: "x86_64",  toolchain: "qemu-x86_64-toolchain.cmake",  qemu: "qemu-x86_64-static"},
-//        {name: "arm32",   toolchain: "qemu-arm32-toolchain.cmake",   qemu: "qemu-armhf-static"},
-        {name: "arm64",   toolchain: "qemu-arm64-toolchain.cmake",   qemu: "qemu-aarch64-static"}
+        {name: "arm32",   toolchain: "qemu-arm32-toolchain.cmake",   qemu: "qemu-armhf-static"}
+//        {name: "arm64",   toolchain: "qemu-arm64-toolchain.cmake",   qemu: "qemu-aarch64-static"},
 //        {name: "riscv32", toolchain: "qemu-riscv32-toolchain.cmake", qemu: "qemu-riscv32-static"},
 //        {name: "riscv64", toolchain: "qemu-riscv64-toolchain.cmake", qemu: "qemu-riscv64-static"},
 //        {name: "ppc32",   toolchain: "qemu-ppc32-toolchain.cmake",   qemu: "qemu-ppc-static"},
