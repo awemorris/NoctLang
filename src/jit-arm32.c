@@ -475,7 +475,7 @@ jit_put_pop2(
                 /* r11 = env */                                                                 \
                 /* r12 = &env->frame->tmpvar[0] */                                              \
                                                                                                 \
-                PUSH            (REG_R10);                                                      \
+                PUSH            (REG_R4);                                                       \
                 PUSH            (REG_R11);                                                      \
                 PUSH            (REG_R12);                                                      \
                 PUSH            (REG_LR);                                                       \
@@ -502,7 +502,7 @@ jit_put_pop2(
                 POP             (REG_LR);                                                       \
                 POP             (REG_R12);                                                      \
                 POP             (REG_R11);                                                      \
-                POP             (REG_R10);                                                      \
+                POP             (REG_R4);                                                       \
                 BEQ             ((uint32_t)ctx->exception_code - (uint32_t)ctx->code);          \
         }
 
@@ -511,7 +511,7 @@ jit_put_pop2(
                 /* r11 = env */                                                                 \
                 /* r12 = &env->frame->tmpvar[0] */                                              \
                                                                                                 \
-                PUSH            (REG_R10);                                                      \
+                PUSH            (REG_R4);                                                       \
                 PUSH            (REG_R11);                                                      \
                 PUSH            (REG_R12);                                                      \
                 PUSH            (REG_LR);                                                       \
@@ -535,7 +535,7 @@ jit_put_pop2(
                 POP             (REG_LR);                                                       \
                 POP             (REG_R12);                                                      \
                 POP             (REG_R11);                                                      \
-                POP             (REG_R10);                                                      \
+                POP             (REG_R4);                                                       \
                 BEQ             ((uint32_t)ctx->exception_code - (uint32_t)ctx->code);          \
         }
 
@@ -750,7 +750,7 @@ jit_visit_aconst_op(
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
-                PUSH            (REG_R10); /* dummy */
+                PUSH            (REG_R4); /* dummy */
                 PUSH            (REG_R11);
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
@@ -772,7 +772,7 @@ jit_visit_aconst_op(
                 POP             (REG_LR);
                 POP             (REG_R12);
                 POP             (REG_R11);
-                POP             (REG_R10);
+                POP             (REG_R4);
                 BEQ             ((uint32_t)ctx->exception_code - (uint32_t)ctx->code);
         }
 
@@ -795,7 +795,7 @@ jit_visit_dconst_op(
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
-                PUSH            (REG_R10); /* dummy */
+                PUSH            (REG_R4); /* dummy */
                 PUSH            (REG_R11);
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
@@ -817,7 +817,7 @@ jit_visit_dconst_op(
                 POP             (REG_LR);
                 POP             (REG_R12);
                 POP             (REG_R11);
-                POP             (REG_R10);
+                POP             (REG_R4);
                 BEQ             ((uint32_t)ctx->exception_code - (uint32_t)ctx->code);
         }
 
