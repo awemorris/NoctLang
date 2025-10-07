@@ -12,6 +12,7 @@
 #include "lir.h"
 #include "hir.h"
 #include "bytecode.h"
+#include "hash.h"
 
 #include <stdio.h>
 #include <stdlib.h>
