@@ -709,11 +709,11 @@ jit_visit_sconst_op(
                 MOVZ            (REG_X4, IMM16(hash & 0xffff), LSL_0);
                 MOVK            (REG_X4, IMM16((hash >> 16) & 0xffff), LSL_16);
 
-                /* Call rt_make_string(). */
-                MOVZ            (REG_X5, IMM16(((uint64_t)rt_make_string) & 0xffff), LSL_0);
-                MOVK            (REG_X5, IMM16((((uint64_t)rt_make_string) >> 16) & 0xffff), LSL_16);
-                MOVK            (REG_X5, IMM16((((uint64_t)rt_make_string) >> 32) & 0xffff), LSL_32);
-                MOVK            (REG_X5, IMM16((((uint64_t)rt_make_string) >> 48) & 0xffff), LSL_48);
+                /* Call rt_make_string_with_hash(). */
+                MOVZ            (REG_X5, IMM16(((uint64_t)rt_make_string_with_hash) & 0xffff), LSL_0);
+                MOVK            (REG_X5, IMM16((((uint64_t)rt_make_string_with_hash) >> 16) & 0xffff), LSL_16);
+                MOVK            (REG_X5, IMM16((((uint64_t)rt_make_string_with_hash) >> 32) & 0xffff), LSL_32);
+                MOVK            (REG_X5, IMM16((((uint64_t)rt_make_string_with_hash) >> 48) & 0xffff), LSL_48);
                 BLR             (REG_X5);
 
                 /* If failed: */

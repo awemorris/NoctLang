@@ -414,7 +414,7 @@ jit_visit_sconst_op(
                 /* movl -8(%ebp), %eax */         IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                  IB(0x50);
 
-                /* movl $rt_make_string, %eax */  IB(0xb8); ID((uint32_t)rt_make_string);
+                /* movl $rt_make_string_with_hash, %eax */  IB(0xb8); ID((uint32_t)rt_make_string_with_hash);
                 /* call *%eax */                  IB(0xff); IB(0xd0);
                 /* addl $20, %esp */              IB(0x83); IB(0xc4); IB(20);
 

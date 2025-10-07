@@ -214,8 +214,8 @@ jit_put_movw(
         if (!jit_put_word(ctx,
                           0xe3000000 |                  /* movw */
                           (uint32_t)(rd << 12) |        /* rd */
-                          (imm & 0xfff) |               /* imm[11:0] */
-                          ((imm >> 12) & 0xf) << 16))   /* imm[15:12] */
+                          ((imm & 0xf000) << 4) |       /* imm[15:12] */
+                          (imm & 0xfff)))               /* imm[11:0] */
                 return false;
         return true;
 }
@@ -335,7 +335,7 @@ jit_put_str(
         uint32_t imm)
 {
         if (!jit_put_word(ctx,
-                          0xe5800000 |                  /* ldr */
+                          0xe5800000 |                  /* str */
                           (uint32_t)(rs << 12) |        /* rd */
                           (uint32_t)(rd << 16) |        /* rs */
                           imm))                         /* imm */
@@ -716,11 +716,11 @@ jit_visit_sconst_op(
                 SUB_IMM         (REG_SP, REG_SP, 16);
                 STR             (REG_R4, REG_SP, 0);
 
-                /* Call rt_make_string(). */
-                MOVW            (REG_R4, ((uint32_t)rt_make_string) & 0xffff);
-                MOVT            (REG_R4, (((uint32_t)rt_make_string) >> 16) & 0xffff);
+                /* Call rt_make_string_with_hash(). */
+                MOVW            (REG_R4, ((uint32_t)rt_make_string_with_hash) & 0xffff);
+                MOVT            (REG_R4, (((uint32_t)rt_make_string_with_hash) >> 16) & 0xffff);
                 BLX             (REG_R4);
-                ADD             (REG_SP, REG_SP, IMM16(16));
+                ADD_IMM         (REG_SP, REG_SP, IMM16(16));
         
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1369,7 +1369,7 @@ jit_visit_loadsymbol_op(
                 MOVW            (REG_R4, (uint32_t)rt_loadsymbol_helper & 0xffff);
                 MOVT            (REG_R4, ((uint32_t)rt_loadsymbol_helper >> 16) & 0xffff);
                 BLX             (REG_R4);
-                ADD             (REG_SP, REG_SP, IMM16(16));
+                ADD_IMM         (REG_SP, REG_SP, IMM16(16));
 
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1417,11 +1417,11 @@ jit_visit_storesymbol_op(
                 MOVW            (REG_R2, len & 0xffff);
                 MOVT            (REG_R2, (len >> 16) & 0xffff);
 
-                /* Arg3 r3: hash */
-                MOVW            (REG_R3, len & 0xffff);
-                MOVT            (REG_R3, (len >> 16) & 0xffff);
+                /* Arg4 r3: hash */
+                MOVW            (REG_R3, hash & 0xffff);
+                MOVT            (REG_R3, (hash >> 16) & 0xffff);
 
-                /* Arg3 [sp+0]: src */
+                /* Arg4 [sp+0]: src */
                 MOVW            (REG_R4, (uint32_t)src);
                 SUB_IMM         (REG_SP, REG_SP, 16);
                 STR             (REG_R4, REG_SP, 0);
@@ -1430,7 +1430,7 @@ jit_visit_storesymbol_op(
                 MOVW            (REG_R4, (uint32_t)rt_storesymbol_helper & 0xffff);
                 MOVT            (REG_R4, ((uint32_t)rt_storesymbol_helper >> 16) & 0xffff);
                 BLX             (REG_R4);
-                ADD		(REG_SP, REG_SP, IMM16(16));
+                ADD_IMM		(REG_SP, REG_SP, IMM16(16));
 
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1497,7 +1497,7 @@ jit_visit_loaddot_op(
                 MOVW            (REG_R4, (uint32_t)rt_loaddot_helper & 0xffff);
                 MOVT            (REG_R4, ((uint32_t)rt_loaddot_helper >> 16) & 0xffff);
                 BLX             (REG_R4);
-		ADD		(REG_SP, REG_SP, IMM16(16));
+		ADD_IMM		(REG_SP, REG_SP, IMM16(16));
 
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1564,7 +1564,7 @@ jit_visit_storedot_op(
                 MOVW            (REG_R4, (uint32_t)rt_storedot_helper & 0xffff);
                 MOVT            (REG_R4, ((uint32_t)rt_storedot_helper >> 16) & 0xffff);
                 BLX             (REG_R4);
-		ADD		(REG_SP, REG_SP, IMM16(16));
+		ADD_IMM		(REG_SP, REG_SP, IMM16(16));
 
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1724,7 +1724,7 @@ jit_visit_thiscall_op(
 
                 /* Arg6 [sp+4]: hash */
                 MOVW            (REG_R4, hash & 0xffff);
-                MOVT            (REG_R3, (hash >> 16) & 0xffff);
+                MOVT            (REG_R4, (hash >> 16) & 0xffff);
                 STR             (REG_R4, REG_SP, 4);
 
                 /* Arg7 [sp+8]: arg_count */

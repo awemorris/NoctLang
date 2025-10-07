@@ -450,7 +450,7 @@ jit_visit_sconst_op(
                         /* (3rd) movabs val -> %r8 */                  IB(0x49); IB(0xb8); IQ((uint64_t)val);
                         /* (4th) movq len -> %r9 */                    IB(0x49); IB(0xc7); IB(0xc1); ID(len);
                         /* (5th) movq hash -> [%rsp+32] */             IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID(hash);
-                        /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string);
+                        /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string_with_hash);
                         /* call *%rax */                               IB(0xff); IB(0xd0);
                         /* addq %rsp, 64 */                            IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
@@ -472,7 +472,7 @@ jit_visit_sconst_op(
                         /* (3rd) movabs val, %rdx */                   IB(0x48); IB(0xba); IQ((uint64_t)val);
                         /* (4th) movq len, %rcx */                     IB(0x48); IB(0xc7); IB(0xc1); ID(len);
                         /* (5th) movq hash, %r8 */                     IB(0x49); IB(0xc7); IB(0xc0); ID(hash);
-                        /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string);
+                        /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string_with_hash);
                         /* call *%rax */                               IB(0xff); IB(0xd0);
 
                         /* testl %eax, %eax */                         IB(0x83); IB(0xf8); IB(0x00);
