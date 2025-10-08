@@ -639,13 +639,14 @@ jit_visit_sconst_op(
 {
 	int dst;
 	const char *val;
+	uint32_t len, hash;
 
 	CONSUME_TMPVAR(dst);
-	CONSUME_STRING(val);
+	CONSUME_STRING(val, len, hash);
 
 	dst *= (int)sizeof(struct rt_value);
 
-	/* rt_make_string(env, &env->frame->tmpvar[dst], val); */
+	/* rt_make_string(env, &env->frame->tmpvar[dst], val, len, hash); */
 	ASM {
 		/* s10: env */
 		/* s11: &env->frame->tmpvar[0] */
@@ -660,8 +661,14 @@ jit_visit_sconst_op(
 		/* Arg3: a2: val */
 		LI_32	(REG_A2, IMM32(val));
 
+		/* Arg4: a3: len */
+		LI_32	(REG_A3, IMM32(len));
+
+		/* Arg5: a4: hash */
+		LI_32	(REG_A4, IMM32(hash));
+
 		/* Call rt_make_string(). */
-		LI_32	(REG_T0, IMM32((uint32_t)rt_make_string));
+		LI_32	(REG_T0, IMM32((uint32_t)rt_make_string_with_hash));
 		JALR	(REG_RA, IMM12(0), REG_T0);
 
 		/* If failed: */
@@ -1243,13 +1250,13 @@ jit_visit_loadsymbol_op(
 {
 	int dst;
 	const char *src_s;
-	uint32_t src;
+	uint32_t len, hash, src;
 
 	CONSUME_TMPVAR(dst);
-	CONSUME_STRING(src_s);
+	CONSUME_STRING(src_s, len, hash);
 	src = (uint32_t)(intptr_t)src_s;
 
-	/* if (!jit_loadsymbol_helper(rt, dst, src)) return false; */
+	/* if (!jit_loadsymbol_helper(rt, dst, src, len, hash)) return false; */
 	ASM {
 		/* s10: env */
 		/* s11: &env->frame->tmpvar[0] */
@@ -1262,6 +1269,12 @@ jit_visit_loadsymbol_op(
 
 		/* Arg3 a2: src */
 		LI_32	(REG_A2, IMM32(src));
+
+		/* Arg4 a3: len */
+		LI_32	(REG_A3, IMM32(len));
+
+		/* Arg5 a4: hash */
+		LI_32	(REG_A4, IMM32(hash));
 
 		/* Call rt_loadsymbol_helper(). */
 		LI_32	(REG_T0, IMM32((uint32_t)rt_loadsymbol_helper));
@@ -1280,14 +1293,14 @@ jit_visit_storesymbol_op(
 	struct jit_context *ctx)
 {
 	const char *dst_s;
-	uint32_t dst;
+	uint32_t len, hash, dst;
 	int src;
 
-	CONSUME_STRING(dst_s);
+	CONSUME_STRING(dst_s, len, hash);
 	CONSUME_TMPVAR(src);
 	dst = (uint32_t)(intptr_t)dst_s;
 
-	/* if (!rt_storesymbol_helper(rt, dst, src)) return false; */
+	/* if (!rt_storesymbol_helper(rt, dst, len, hash, src)) return false; */
 	ASM {
 		/* s10: env */
 		/* s11: &env->frame->tmpvar[0] */
@@ -1298,8 +1311,14 @@ jit_visit_storesymbol_op(
 		/* Arg2 a1: dst */
 		LI_32	(REG_A1, IMM32(dst));
 
-		/* Arg3 a2: src */
-		ORI	(REG_A2, REG_ZERO, IMM12(src));
+		/* Arg3 a2: len */
+		LI_32	(REG_A2, IMM32(len));
+
+		/* Arg4 a3: hash */
+		LI_32	(REG_A3, IMM32(hash));
+
+		/* Arg5 a4: src */
+		ORI	(REG_A4, REG_ZERO, IMM12(src));
 
 		/* Call rt_storesymbol_helper(). */
 		LI_32	(REG_T0, IMM32((uint32_t)rt_storesymbol_helper));
@@ -1320,14 +1339,14 @@ jit_visit_loaddot_op(
 	int dst;
 	int dict;
 	const char *field_s;
-	uint32_t field;
+	uint32_t len, hash, field;
 
 	CONSUME_TMPVAR(dst);
 	CONSUME_TMPVAR(dict);
-	CONSUME_STRING(field_s);
+	CONSUME_STRING(field_s, len, hash);
 	field = (uint32_t)(intptr_t)field_s;
 
-	/* if (!rt_loaddot_helper(rt, dst, dict, field)) return false; */
+	/* if (!rt_loaddot_helper(rt, dst, dict, field, len, hash)) return false; */
 	ASM {
 		/* s10: env */
 		/* s11: &env->frame->tmpvar[0] */
@@ -1343,6 +1362,12 @@ jit_visit_loaddot_op(
 
 		/* Arg4 a3: field */
 		LI_32	(REG_A3, IMM32(field));
+
+		/* Arg5 a4: len */
+		LI_32	(REG_A4, IMM32(len));
+
+		/* Arg6 a5: hash */
+		LI_32	(REG_A5, IMM32(hash));
 
 		/* Call rt_loaddot_helper(). */
 		LI_32	(REG_T0, IMM32((uint32_t)rt_loaddot_helper));
@@ -1362,15 +1387,15 @@ jit_visit_storedot_op(
 {
 	int dict;
 	const char *field_s;
-	uint32_t field;
+	uint32_t len, hash, field;
 	int src;
 
 	CONSUME_TMPVAR(dict);
-	CONSUME_STRING(field_s);
+	CONSUME_STRING(field_s, len, hash);
 	CONSUME_TMPVAR(src);
 	field = (uint32_t)(intptr_t)field_s;
 
-	/* if (!jit_storedot_helper(rt, dict, field, src)) return false; */
+	/* if (!jit_storedot_helper(rt, dict, field, len, hash, src)) return false; */
 	ASM {
 		/* s10: env */
 		/* s11: &env->frame->tmpvar[0] */
@@ -1384,8 +1409,14 @@ jit_visit_storedot_op(
 		/* Arg3 a2: field */
 		LI_32	(REG_A2, IMM32(field));
 
-		/* Arg4 a3: src */
-		ORI	(REG_A3, REG_ZERO, IMM12(src));
+		/* Arg4 a3: len */
+		LI_32	(REG_A3, IMM32(len));
+
+		/* Arg5 a4: hash */
+		LI_32	(REG_A4, IMM32(hash));
+
+		/* Arg6 a5: src */
+		ORI	(REG_A5, REG_ZERO, IMM12(src));
 
 		/* Call rt_storedot_helper(). */
 		LI_32	(REG_T0, IMM32((uint32_t)rt_storedot_helper));
@@ -1472,6 +1503,7 @@ jit_visit_thiscall_op(
 	int dst;
 	int obj;
 	const char *symbol;
+	uint32_t len, hash;
 	int arg_count;
 	int arg_tmp;
 	int arg[NOCT_ARG_MAX];
@@ -1480,7 +1512,7 @@ jit_visit_thiscall_op(
 
 	CONSUME_TMPVAR(dst);
 	CONSUME_TMPVAR(obj);
-	CONSUME_STRING(symbol);
+	CONSUME_STRING(symbol, len, hash);
 	CONSUME_IMM8(arg_count);
 	for (i = 0; i < arg_count; i++) {
 		CONSUME_TMPVAR(arg_tmp);
@@ -1514,11 +1546,17 @@ jit_visit_thiscall_op(
 		/* Arg4 a3: symbol */
 		LI_32	(REG_A3, IMM32((uint32_t)symbol));
 
-		/* Arg5 a4: argcount */
-		ORI	(REG_A4, REG_ZERO, IMM12(arg_count));
+		/* Arg5 a4: len */
+		LI_32	(REG_A4, IMM32(len));
 
-		/* Arg6 a5: arg */
-		LI_32	(REG_A5, IMM32(arg_addr));
+		/* Arg6 a5: hash */
+		LI_32	(REG_A5, IMM32(hash));
+
+		/* Arg7 a6: argcount */
+		ORI	(REG_A6, REG_ZERO, IMM12(arg_count));
+
+		/* Arg8 a7: arg */
+		LI_32	(REG_A7, IMM32(arg_addr));
 
 		/* Call rt_thiscall_helper(). */
 		LI_32	(REG_T0, IMM32((uint32_t)rt_thiscall_helper));
