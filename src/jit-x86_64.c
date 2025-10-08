@@ -351,8 +351,8 @@ jit_visit_assign_op(
                 /* r14: env */
                 /* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst -> %rax */            IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
-                /* movq src -> %rbx */            IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src);
+                /* movq $dst -> %rax */           IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* movq $src -> %rbx */           IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src);
                 /* addq %rax -> %r15  */          IB(0x4c); IB(0x01); IB(0xf8);
                 /* addq %rbx -> %r15  */          IB(0x4c); IB(0x01); IB(0xfb);
                 /* movq (%rbx) -> %rcx */         IB(0x48); IB(0x8b); IB(0x0b);
@@ -384,10 +384,10 @@ jit_visit_iconst_op(
                 /* r14: env */
                 /* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst -> %rax */             IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* movq $dst -> %rax */            IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15 -> %rax */            IB(0x4c); IB(0x01); IB(0xf8);
                 /* movl $0 -> (%rax) */            IB(0xc7); IB(0x00); ID(0);
-                /* movl val ->8(%rax) */           IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
+                /* movl $val ->8(%rax) */          IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
         }
 
         return true;
@@ -413,10 +413,10 @@ jit_visit_fconst_op(
                 /* r14: env */
                 /* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst -> %rax */              IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* movq $dst -> %rax */             IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15 -> %rax */             IB(0x4c); IB(0x01); IB(0xf8);
                 /* movl $1 -> (%rax) */             IB(0xc7); IB(0x00); ID(1);
-                /* movl val -> 8(%rax) */           IB(0xc7); IB(0x40); IB(0x08); ID(val);
+                /* movl $val -> 8(%rax) */          IB(0xc7); IB(0x40); IB(0x08); ID(val);
         }
 
         return true;
@@ -443,16 +443,16 @@ jit_visit_sconst_op(
                         /* r14: env */
                         /* r15: &env->frame->tmpvar[0] */
 
-                        /* subq %rsp, 64 */                            IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* subq %rsp, $64 */                           IB(0x48); IB(0x83); IB(0xec); IB(0x40);
                         /* (1st) movq %r14 -> %rcx */                  IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) movq dst -> %rdx */                   IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* (2nd) movq $dst -> %rdx */                  IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
                         /*       addq %r15 -> %rdx */                  IB(0x4c); IB(0x01); IB(0xfa);
-                        /* (3rd) movabs val -> %r8 */                  IB(0x49); IB(0xb8); IQ((uint64_t)val);
-                        /* (4th) movq len -> %r9 */                    IB(0x49); IB(0xc7); IB(0xc1); ID(len);
-                        /* (5th) movq hash -> [%rsp+32] */             IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID(hash);
+                        /* (3rd) movabs $val -> %r8 */                 IB(0x49); IB(0xb8); IQ((uint64_t)val);
+                        /* (4th) movq $len -> %r9 */                   IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)len);
+                        /* (5th) movq $hash -> 32(%rsp) */             IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)hash);
                         /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string_with_hash);
                         /* call *%rax */                               IB(0xff); IB(0xd0);
-                        /* addq %rsp, 64 */                            IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
+                        /* addq %rsp, $64 */                           IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
                         /* testl %eax, %eax */                         IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                             IB(0x75); IB(0x03);
@@ -467,11 +467,11 @@ jit_visit_sconst_op(
                         /* r15 = &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14, %rdi */                    IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dst, %rsi */                     IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (2nd) movq $dst, %rsi */                    IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
                         /*       addq %r15, %rsi */                    IB(0x4c); IB(0x01); IB(0xfe);
-                        /* (3rd) movabs val, %rdx */                   IB(0x48); IB(0xba); IQ((uint64_t)val);
-                        /* (4th) movq len, %rcx */                     IB(0x48); IB(0xc7); IB(0xc1); ID(len);
-                        /* (5th) movq hash, %r8 */                     IB(0x49); IB(0xc7); IB(0xc0); ID(hash);
+                        /* (3rd) movabs $val, %rdx */                  IB(0x48); IB(0xba); IQ((uint64_t)val);
+                        /* (4th) movq $len -> %rcx */                  IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)len);
+                        /* (5th) movq $hash -> %r8 */                  IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)hash);
                         /* movabs rt_make_string_with_hash -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_string_with_hash);
                         /* call *%rax */                               IB(0xff); IB(0xd0);
 
@@ -504,9 +504,9 @@ jit_visit_aconst_op(
                         /* r15: &env->frame->tmpvar[0] */
 
                         /* subq %rsp, 32 */                       IB(0x48); IB(0x83); IB(0xec); IB(0x20);
-                        /* (1st) mov %r14 -> %rcx */              IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) mov dst -> %rdx */               IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
-                        /*       add %r15 -> %rdx */              IB(0x4c); IB(0x01); IB(0xfa);
+                        /* (1st) movq %r14 -> %rcx */             IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) movq $dst -> %rdx */             IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /*       addq %r15 -> %rdx */             IB(0x4c); IB(0x01); IB(0xfa);
                         /* movabs rt_make_empty_array -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_empty_array);
                         /* call *%rax */                          IB(0xff); IB(0xd0);
                         /* add %rsp, 32 */                        IB(0x48); IB(0x83); IB(0xc4); IB(0x20);
@@ -524,7 +524,7 @@ jit_visit_aconst_op(
                         /* r15: &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14 -> %rdi */             IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dst -> %rsi */              IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (2nd) movq $dst -> %rsi */             IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
                         /*       addq %r15 -> %rsi */             IB(0x4c); IB(0x01); IB(0xfe);
                         /* movabs rt_make_empty_array -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_empty_array);
                         /* call *%rax */                          IB(0xff); IB(0xd0);
@@ -558,8 +558,8 @@ jit_visit_dconst_op(
                         /* r15: &env->frame->tmpvar[0] */
 
                         /* subq %rsp, 32 */                     IB(0x48); IB(0x83); IB(0xec); IB(0x20);
-                        /* (1st) mov %r14 -> rb%cx */           IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) mov dst -> %rdx */             IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* (1st) movq %r14 -> rb%cx */          IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) movq $dst -> %rdx */           IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
                         /*       add %r15 -> %rdx */            IB(0x4c); IB(0x01); IB(0xfa);
                         /* movabs rt_make_empty_dict -> %rax */ IB(0x48); IB(0xb8); IQ((uint64_t)rt_make_empty_dict);
                         /* call *%rax */                        IB(0xff); IB(0xd0);
@@ -578,7 +578,7 @@ jit_visit_dconst_op(
                         /* r15: &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14 -> %rdi */           IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dst, %rsi */              IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (2nd) movq $dst, %rsi */             IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
                         /*       addq %r15, %rsi */             IB(0x4c); IB(0x01); IB(0xfe);
                         /* movabs rt_make_empty_dict, %r8 */    IB(0x49); IB(0xb8); IQ((uint64_t)rt_make_empty_dict);
                         /* call *%r8 */                         IB(0x41); IB(0xff); IB(0xd0);
@@ -610,7 +610,7 @@ jit_visit_inc_op(
                 /* r14: env */
                 /* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst -> %rax */       IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* movq $dst -> %rax */      IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15 -> %rax */      IB(0x4c); IB(0x01); IB(0xf8);
                 /* incq [%rax+8] */          IB(0x48); IB(0xff); IB(0x40); IB(0x08);
         }
@@ -960,17 +960,17 @@ jit_visit_eqi_op(
                 /* r14: env */
                 /* r15: &env->frame->tmpvar[0] */
 
-                /* movq dst -> %rax */           IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
+                /* movq $dst -> %rax */          IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15 -> %rax */          IB(0x4c); IB(0x01); IB(0xf8);
 
-                /* movq src1 -> %rbx */          IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src1);
+                /* movq $src1 -> %rbx */         IB(0x48); IB(0xc7); IB(0xc3); ID((uint32_t)src1);
                 /* addq %r15 -> %rbx */          IB(0x4c); IB(0x01); IB(0xfb);
                 
-                /* movq src2 -> %rcx */          IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src2);
+                /* movq $src2 -> %rcx */         IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src2);
                 /* addq %r15 -> %rcx */          IB(0x4c); IB(0x01); IB(0xf9);
 
-                /* movq [%rbx+8] -> %rax */      IB(0x48); IB(0x8b); IB(0x43); IB(0x08);
-                /* movq [%rcx+8] -> %rdx */      IB(0x48); IB(0x8b); IB(0x51); IB(0x08);
+                /* movq 8(%rbx) -> %rax */       IB(0x48); IB(0x8b); IB(0x43); IB(0x08);
+                /* movq 8(%rcx) -> %rdx */       IB(0x48); IB(0x8b); IB(0x51); IB(0x08);
                 /* cmpl %eax, %edx */            IB(0x39); IB(0xc2);
         }
 
@@ -1112,10 +1112,10 @@ jit_visit_loadsymbol_op(
 
                         /* subq %rsp, 64 */                       IB(0x48); IB(0x83); IB(0xec); IB(0x40);
                         /* (1st) movq %r14 -> %rcx */             IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) movq dst -> %rdx */              IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
-                        /* (3rd) movabs src -> %r8 */             IB(0x49); IB(0xb8); IQ((uint64_t)src);
-                        /* (4th) movq src_len -> %r9 *    /       IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)src_len);
-                        /* (5th) movq src_hash -> [%rsp+32] */    IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src_hash);
+                        /* (2nd) movq $dst -> %rdx */             IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* (3rd) movabs $src -> %r8 */            IB(0x49); IB(0xb8); IQ((uint64_t)src);
+                        /* (4th) movq $src_len -> %r9 */          IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)src_len);
+                        /* (5th) movq $src_hash -> 32(%rsp) */    IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src_hash);
                         /* movabs rt_loadsymbol_helper -> %rax */ IB(0x48); IB(0xb8); IQ((uint64_t)rt_loadsymbol_helper);
                         /* call *%rax */                          IB(0xff); IB(0xd0);
                         /* addq %rsp, 64 */                       IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
@@ -1133,10 +1133,10 @@ jit_visit_loadsymbol_op(
                         /* r14: &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14, %rdi */               IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dst, %rsi */                IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* (3rd) movabs src, %rdx */              IB(0x48); IB(0xba); IQ(src);
-                        /* (4th) movq src_len, %rcx */            IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src_len);
-                        /* (5th) mov src_hash, %r8 */             IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)src_hash);
+                        /* (2nd) movq $dst, %rsi */               IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (3rd) movabs %src, %rdx */             IB(0x48); IB(0xba); IQ(src);
+                        /* (4th) movq $src_len, %rcx */           IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)src_len);
+                        /* (5th) movq $src_hash, %r8 */           IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)src_hash);
                         /* movabs rt_loadsymbol_helper -> %rax */ IB(0x48); IB(0xb8); IQ((uint64_t)rt_loadsymbol_helper);
                         /* call *%rax */                          IB(0xff); IB(0xd0);
 
@@ -1171,15 +1171,15 @@ jit_visit_storesymbol_op(
                         /* r14: env */
                         /* r14: &env->frame->tmpvar[0] */
 
-                        /* subq %rsp, 64 */                        IB(0x48); IB(0x83); IB(0xec); IB(0x40);
-                        /* (1st) movq r14 -> rcx */                IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) movabs dst -> rdx */              IB(0x48); IB(0xba); IQ((uint64_t)dst);
-                        /* (3rd) movq dst_len -> r8 */             IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)dst_len);
-                        /* (4th) movq dst_hash -> r9 */            IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)dst_hash);
-                        /* (5th) movq src -> [rsp+32] */           IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src);
+                        /* subq %rsp, $64 */                       IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* (1st) movq %r14 -> %rcx */              IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) movabs $dst -> %rdx */            IB(0x48); IB(0xba); IQ((uint64_t)dst);
+                        /* (3rd) movq $dst_len -> %r8 */           IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)dst_len);
+                        /* (4th) movq $dst_hash -> %r9 */          IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)dst_hash);
+                        /* (5th) movq $src -> 32(%rsp) *           IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src);
                         /* movabs rt_storesymbol_helper -> %rax */ IB(0x48); IB(0xb8); IQ((uint64_t)rt_storesymbol_helper);
                         /* call *%rax */                           IB(0xff); IB(0xd0);
-                        /* addq %rsp, 64 */                        IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
+                        /* addq %rsp, $64 */                       IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
                         /* testl %eax, %eax */                     IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                         IB(0x75); IB(0x03);
@@ -1194,10 +1194,10 @@ jit_visit_storesymbol_op(
                         /* r14: &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14, %rdi */                IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movabs dst, %rsi */               IB(0x48); IB(0xbe); IQ(dst);
-                        /* (3rd) mov dst_len, %rdx */              IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst_len);
-                        /* (4th) mov dst_hash, %rcx */             IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)dst_hash);
-                        /* (5th) mov src, %r8 */                   IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)src);
+                        /* (2nd) movabs $dst, %rsi */              IB(0x48); IB(0xbe); IQ(dst);
+                        /* (3rd) movq $dst_len, %rdx */            IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst_len);
+                        /* (4th) movq $dst_hash, %rcx */           IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)dst_hash);
+                        /* (5th) movq $src, %r8 */                 IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)src);
                         /* movabs rt_storesymbol_helper -> %rax */ IB(0x48); IB(0xb8); IQ((uint64_t)rt_storesymbol_helper);
                         /* call *%rax */                           IB(0xff); IB(0xd0);
 
@@ -1235,16 +1235,16 @@ jit_visit_loaddot_op(
                         /* r14: env */
                         /* r14: &env->frame->tmpvar[0] */
 
-                        /* subq %rsp, 64 */                       IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* subq %rsp, $64 */                      IB(0x48); IB(0x83); IB(0xec); IB(0x40);
                         /* (1st) movq %r14 -> %rcx */             IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) movq dst -> %rdx */              IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
-                        /* (3rd) movq dict -> %r8 */              IB(0x49); IB(0xb8); IQ((uint64_t)dict);
-                        /* (4th) movabs field -> %r9 */           IB(0x49); IB(0xb9); IQ((uint64_t)field);
-                        /* (5th) movq field_len -> [%rsp+32] */   IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)field_len);
-                        /* (6th) movq field_hash -> [%rsp+40] */  IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)field_hash);
+                        /* (2nd) movq $dst -> %rdx */             IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* (3rd) movq $dict -> %r8 */             IB(0x49); IB(0xb8); IQ((uint64_t)dict);
+                        /* (4th) movabs $field -> %r9 */          IB(0x49); IB(0xb9); IQ((uint64_t)field);
+                        /* (5th) movq $field_len -> 32(%rsp) */   IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)field_len);
+                        /* (6th) movq $field_hash -> 40(%rsp) */  IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)field_hash);
                         /* movabs rt_loaddot_helper -> %rax */    IB(0x48); IB(0xb8); IQ((uint64_t)rt_loaddot_helper);
                         /* call *%rax */                          IB(0xff); IB(0xd0);
-                        /* addq %rsp, 64 */                       IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
+                        /* addq %rsp, $64 */                      IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
                         /* testl %eax, %eax */                    IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                        IB(0x75); IB(0x03);
@@ -1259,11 +1259,11 @@ jit_visit_loaddot_op(
                         /* r14: &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14, %rdi */               IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dst, %rsi */                IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* (3rd) movq dict, %rdx */               IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dict);
-                        /* (4th) movabs field, %rcx */            IB(0x48); IB(0xb9); IQ(field);
-                        /* (5th) movq field_len, %r8 */           IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)field_len);
-                        /* (6th) movq field_hash, %r9 */          IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)field_hash);
+                        /* (2nd) movq $dst, %rsi */               IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (3rd) movq $dict, %rdx */              IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dict);
+                        /* (4th) movabs $field, %rcx */           IB(0x48); IB(0xb9); IQ(field);
+                        /* (5th) movq $field_len, %r8 */          IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)field_len);
+                        /* (6th) movq $field_hash, %r9 */         IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)field_hash);
                         /* movabs rt_loaddot_helper -> %rax */    IB(0x48); IB(0xb8); IQ((uint64_t)rt_loaddot_helper);
                         /* call *%rax */                          IB(0xff); IB(0xd0);
 
@@ -1301,16 +1301,16 @@ jit_visit_storedot_op(
                         /* r14: env */
                         /* r14: &env->frame->tmpvar[0] */
 
-                        /* subq %rsp, 64 */                      IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* subq %rsp, $64 */                     IB(0x48); IB(0x83); IB(0xec); IB(0x40);
                         /* (1st) movq %r14 -> %rcx */            IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) mov dict -> %rdx */             IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dict);
-                        /* (3rd) movabs field -> %r8 */          IB(0x49); IB(0xb8); IQ((uint64_t)field);
-                        /* (4th) mov field_len -> %r9 */         IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)field_len);
-                        /* (5th) mov field_hash -> [%rsp+32] */  IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)field_hash);
-                        /* (6th) mov src -> [%rsp+40] */         IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)src);
+                        /* (2nd) movl $dict -> %edx */           IB(0xba); ID((uint32_t)dict);
+                        /* (3rd) movabs $field -> %r8 */         IB(0x49); IB(0xb8); IQ((uint64_t)field);
+                        /* (4th) movq $field_len -> %r9 */       IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)field_len);
+                        /* (5th) movq $field_hash -> 32(%rsp) */ IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)field_hash);
+                        /* (6th) movq $src -> 40(%rsp) */        IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)src);
                         /* movabs rt_storedot_helper -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_storedot_helper);
                         /* call *%rax */                         IB(0xff); IB(0xd0);
-                        /* addq %rsp, 64 */                      IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
+                        /* addq %rsp, $64 */                     IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
                         /* testl %eax, %eax */                   IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                       IB(0x75); IB(0x03);
@@ -1325,11 +1325,11 @@ jit_visit_storedot_op(
                         /* r14: &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14 -> %rdi */            IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dict -> %rsi */            IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dict);
-                        /* (3rd) movabs field -> %rdx */         IB(0x48); IB(0xba); IQ(field);
-                        /* (4th) movq field_len -> %rcx) */      IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)field_len);
-                        /* (5th) movq field_hash -> %r8 */       IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)field_hash);
-                        /* (6th) movq src -> %r9 */              IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)src);
+                        /* (2nd) movq $dict -> %rsi */           IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dict);
+                        /* (3rd) movabs $field -> %rdx */        IB(0x48); IB(0xba); IQ(field);
+                        /* (4th) movq $field_len -> %rcx */      IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)field_len);
+                        /* (5th) movq $field_hash -> %r8 */      IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)field_hash);
+                        /* (6th) movq $src -> %r9 */             IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)src);
                         /* movabs rt_storedot_helper -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)rt_storedot_helper);
                         /* call *%rax */                         IB(0xff); IB(0xd0);
 
@@ -1387,16 +1387,16 @@ jit_visit_call_op(
                         /* r14: env */
                         /* r14: &env->frame->tmpvar[0] */
 
-                        /* sub rsp, 32 */                        IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
-                        /* (1st) mov r14 -> rcx */               IB(0x4C); IB(0x89); IB(0xF1);
-                        /* (2nd) mov dst -> rdx */               IB(0x48); IB(0xC7); IB(0xC2); ID((uint32_t)dst);
-                        /* (3rd) mov func -> r8 */               IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)func);
-                        /* (4th) mov arg_count -> r9 */          IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)arg_count);
-                        /* (5th) movabs arg_addr -> rax */       IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
-                        /*       movq rax -> [rsp+32] */         IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x20);
+                        /* subq %rsp, $64 */                     IB(0x48); IB(0x83); IB(0xEC); IB(0x40);
+                        /* (1st) movq %r14 -> %rcx */            IB(0x4C); IB(0x89); IB(0xF1);
+                        /* (2nd) movq $dst -> %rdx */            IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* (3rd) movq $func -> %r8 */            IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)func);
+                        /* (4th) movq $arg_count -> %r9 */       IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)arg_count);
+                        /* (5th) movabs $arg_addr -> %rax */     IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
+                        /*       movq %rax -> 32(%rsp) */        IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x20);
                         /* movabs rt_call_helper -> rax */       IB(0x48); IB(0xB8); IQ((uint64_t)rt_call_helper);
-                        /* call rax */                           IB(0xFF); IB(0xD0);
-                        /* add rsp, 32 */                        IB(0x48); IB(0x83); IB(0xC4); IB(0x20);
+                        /* call *%rax */                         IB(0xFF); IB(0xD0);
+                        /* addq %rsp, $64 */                     IB(0x48); IB(0x83); IB(0xC4); IB(0x40);
 
                         /* test eax, eax */                      IB(0x83); IB(0xF8); IB(0x00);
                         /* jne 8 <next> */                       IB(0x75); IB(0x03);
@@ -1411,12 +1411,12 @@ jit_visit_call_op(
                         /* r14: &env->frame->tmpvar[0] */
 
                         /* (1st) movq %r14, %rdi */              IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dst, %rsi */               IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* (3rd) movq func, %rdx */              IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)func);
-                        /* (4th) movq arg_count, %rcx */         IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)arg_count);
-                        /* (5th) movabs arg_addr, %r8 */         IB(0x49); IB(0xb8); IQ(arg_addr);
+                        /* (2nd) movq $dst, %rsi */              IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (3rd) movq $func, %rdx */             IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)func);
+                        /* (4th) movq $arg_count, %rcx */        IB(0x48); IB(0xc7); IB(0xc1); ID((uint32_t)arg_count);
+                        /* (5th) movabs $arg_addr, %r8 */        IB(0x49); IB(0xb8); IQ(arg_addr);
                         /* movabs rt_call_helper -> rax */       IB(0x48); IB(0xB8); IQ((uint64_t)rt_call_helper);
-                        /* call rax */                           IB(0xFF); IB(0xD0);
+                        /* call *%rax */                         IB(0xFF); IB(0xD0);
 
                         /* cmpl $0, %eax */                      IB(0x83); IB(0xf8); IB(0x00);
                         /* jne 8 <next> */                       IB(0x75); IB(0x03);
@@ -1472,21 +1472,21 @@ jit_visit_thiscall_op(
                         /* r14: env */
                         /* r14: &env->frame->tmpvar[0] */
 
-                        /* sub rsp, 64 */                              IB(0x48); IB(0x83); IB(0xec); IB(0x40);
-                        /* (1st) movq %r14 -> rcx */                   IB(0x4c); IB(0x89); IB(0xf1);
-                        /* (2nd) movq dst -> rdx */                    IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
-                        /* (3rd) movq obj -> r8 */                     IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)obj);
-                        /* (4th) movabs symbol -> r9 */                IB(0x49); IB(0xb9); IQ((uint64_t)symbol);
-                        /* (5th) mov symbol_len -> [rsp+32] */         IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)symbol_len);
-                        /* (6th) mov symbol_hash -> [rsp+40] */        IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)symbol_hash);
-                        /* (7th) mov arg_count -> [rsp+48] */          IB(0xc7); IB(0x44); IB(0x24); IB(0x30); ID((uint32_t)arg_count);
-                        /* (8th) movabs arg_addr -> rax */             IB(0x48); IB(0xb8); IQ((uint64_t)arg_addr);
-                        /*       mov rax -> [rsp+56] */                IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x38);
-                        /* movabs rt_thiscall_helper -> rax */         IB(0x48); IB(0xb8); IQ((uint64_t)rt_thiscall_helper);
-                        /* call *rax */                                IB(0xff); IB(0xd0);
-                        /* add rsp, 64 */                              IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
+                        /* subq %rsp, $64 */                           IB(0x48); IB(0x83); IB(0xec); IB(0x40);
+                        /* (1st) movq %r14 -> %rcx */                  IB(0x4c); IB(0x89); IB(0xf1);
+                        /* (2nd) movq $dst -> %rdx */                  IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)dst);
+                        /* (3rd) movq $obj -> %r8 */                   IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)obj);
+                        /* (4th) movabs $symbol -> %r9 */              IB(0x49); IB(0xb9); IQ((uint64_t)symbol);
+                        /* (5th) movq $symbol_len -> 32(%rsp) */       IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)symbol_len);
+                        /* (6th) movq $symbol_hash -> 40(%rsp) */      IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x28); ID((uint32_t)symbol_hash);
+                        /* (7th) movq $arg_count -> 48(%rsp) */        IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x30); ID((uint32_t)arg_count);
+                        /* (8th) movabs $arg_addr -> %rax */           IB(0x48); IB(0xb8); IQ((uint64_t)arg_addr);
+                        /*       movq %rax -> 56(%rsp) */              IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x38);
+                        /* movabs rt_thiscall_helper -> %rax */        IB(0x48); IB(0xb8); IQ((uint64_t)rt_thiscall_helper);
+                        /* call *%rax */                               IB(0xff); IB(0xd0);
+                        /* addq %rsp, $64 */                           IB(0x48); IB(0x83); IB(0xc4); IB(0x40);
 
-                        /* test eax, eax */                            IB(0x83); IB(0xF8); IB(0x00);
+                        /* testl %eax, %eax */                         IB(0x83); IB(0xF8); IB(0x00);
                         /* jne 8 <next> */                             IB(0x75); IB(0x03);
                         /* jmp *r13 */                                 IB(0x41); IB(0xFF); IB(0xe5);
                 /* next: */
@@ -1498,21 +1498,21 @@ jit_visit_thiscall_op(
                         /* r14: env */
                         /* r14: &env->frame->tmpvar[0] */
 
-                        /* sub rsp, 32 */                             IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
+                        /* subq %rsp, $32 */                          IB(0x48); IB(0x83); IB(0xEC); IB(0x20);
                         /* (1st) movq %r14 -> %rdi */                 IB(0x4c); IB(0x89); IB(0xf7);
-                        /* (2nd) movq dst -> %rsi */                  IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
-                        /* (3rd) movq obj -> %rdx */                  IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)obj);
-                        /* (4th) movabs symbol -> %rcx */             IB(0x48); IB(0xb9); IQ((uint64_t)symbol);
-                        /* (5th) movq symbol_len -> %r8 */            IB(0x49); IB(0xC7); IB(0xC0); ID((uint32_t)symbol_len);
-                        /* (6th) movq symbol_hash -> %r9 */           IB(0x49); IB(0xC7); IB(0xC1); ID((uint32_t)symbol_hash);
-                        /* (7th) movq arg_count -> [rsp+0] */         IB(0xC7); IB(0x44); IB(0x24); IB(0x00); ID((uint32_t)arg_count);
-                        /* (8th) movabs arg -> rax */                 IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
-                        /*       movq rax -> [rsp+8] */               IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x08);
+                        /* (2nd) movq $dst -> %rsi */                 IB(0x48); IB(0xc7); IB(0xc6); ID((uint32_t)dst);
+                        /* (3rd) movq $obj -> %rdx */                 IB(0x48); IB(0xc7); IB(0xc2); ID((uint32_t)obj);
+                        /* (4th) movabs $symbol -> %rcx */            IB(0x48); IB(0xb9); IQ((uint64_t)symbol);
+                        /* (5th) movq $symbol_len -> %r8 */           IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)symbol_len);
+                        /* (6th) movq $symbol_hash -> %r9 */          IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)symbol_hash);
+                        /* (7th) movq $arg_count -> 0(%rsp) */        IB(0x48); IB(0xc7); IB(0x04); IB(0x24); ID((uint32_t)arg_count);
+                        /* (8th) movabs $arg -> %rax */               IB(0x48); IB(0xB8); IQ((uint64_t)arg_addr);
+                        /*       movq %rax -> 8(%rsp) */              IB(0x48); IB(0x89); IB(0x44); IB(0x24); IB(0x08);
                         /* movabs rt_thiscall_helper -> %r10 */       IB(0x49); IB(0xba); IQ((uint64_t)rt_thiscall_helper);
                         /* call *%r10 */                              IB(0x41); IB(0xff); IB(0xd2);
                         /* add %rsp, 32 */                            IB(0x48); IB(0x83); IB(0xc4); IB(0x20);
 
-                        /* cmpl $0, %eax */                           IB(0x83); IB(0xf8); IB(0x00);
+                        /* testl %eax, %eax */                         IB(0x83); IB(0xF8); IB(0x00);
                         /* jne 8 <next> */                            IB(0x75); IB(0x03);
                         /* jmp *%r13 */                               IB(0x41); IB(0xff); IB(0xe5);
                 /* next:*/
