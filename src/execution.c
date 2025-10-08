@@ -14,6 +14,7 @@
 #include "intrinsics.h"
 #include "hash.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <assert.h>
 

@@ -713,7 +713,7 @@ jit_visit_sconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_string(env, &env->frame->tmpvar[dst], val); */
+        /* rt_make_string(env, &env->frame->tmpvar[dst], val, len, hash); */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -735,7 +735,7 @@ jit_visit_sconst_op(
                 LI_32   (REG_A4, IMM32(hash));
 
                 /* Call rt_make_string(). */
-                LI_64   (REG_T0, IMM64((uint64_t)rt_make_string));
+                LI_64   (REG_T0, IMM64((uint64_t)rt_make_string_with_hash));
                 JALR    (REG_RA, IMM12(0), REG_T0);
 
                 /* If failed: */

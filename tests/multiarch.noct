@@ -10,10 +10,10 @@ func main() {
 //        {name: "arm32",   toolchain: "qemu-arm32-toolchain.cmake",   qemu: "qemu-armhf-static"},
 //        {name: "arm64",   toolchain: "qemu-arm64-toolchain.cmake",   qemu: "qemu-aarch64-static"},
 //        {name: "riscv32", toolchain: "qemu-riscv32-toolchain.cmake", qemu: "qemu-riscv32-static"},
-        {name: "riscv64", toolchain: "qemu-riscv64-toolchain.cmake", qemu: "qemu-riscv64-static"}
+//        {name: "riscv64", toolchain: "qemu-riscv64-toolchain.cmake", qemu: "qemu-riscv64-static"}
 //        {name: "ppc32",   toolchain: "qemu-ppc32-toolchain.cmake",   qemu: "qemu-ppc-static"},
 //        {name: "ppc64",   toolchain: "qemu-ppc64-toolchain.cmake",   qemu: "qemu-ppc64el-static"},
-//        {name: "mips32",  toolchain: "qemu-mips32-toolchain.cmake",  qemu: "qemu-mips-static"},
+          {name: "mips32",  toolchain: "qemu-mips32-toolchain.cmake",  qemu: "qemu-mips-static"}
 //        {name: "mips64",  toolchain: "qemu-mips64-toolchain.cmake",  qemu: "qemu-mips64-static"}
     ];
 
