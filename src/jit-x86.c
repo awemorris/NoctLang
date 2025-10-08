@@ -1,4 +1,4 @@
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: nil; -*- */
 
 /*
  * Copyright (c) 2025, Awe Morris. All rights reserved.
@@ -237,8 +237,8 @@ jit_put_dword(
 #define ASM_UNARY_OP(f)                                                          \
         /* if (!f(env, dst, src)) return false; */                               \
         ASM {                                                                    \
-                /* ebp-4: &rt->frame->tmpvar[0] */                               \
-                /* ebp-8: rt */                                                  \
+                /* ebp-4: &env->frame->tmpvar[0] */                               \
+                /* ebp-8: env */                                                  \
                 /* ebp-12: exception_handler */                                  \
                                                                                  \
                 /* movl $src, %eax */           IB(0xb8); ID((uint32_t)src);     \
@@ -273,10 +273,10 @@ jit_visit_lineinfo_op(
 
         CONSUME_IMM32(line);
 
-        /* rt->line = line; */
+        /* env->line = line; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $line, %eax */          IB(0xb8); ID(line);
@@ -301,10 +301,10 @@ jit_visit_assign_op(
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
 
-        /* rt->frame->tmpvar[dst] = rt->frame->tmpvar[src]; */
+        /* env->frame->tmpvar[dst] = env->frame->tmpvar[src]; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $dst, %eax */            IB(0xb8); ID((uint32_t)dst);
@@ -333,11 +333,11 @@ jit_visit_iconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &rt->frame->tmpvar[dst].type = RT_VALUE_INT; */
-        /* &rt->frame->tmpvar[dst].val.i = val; */
+        /* &env->frame->tmpvar[dst].type = RT_VALUE_INT; */
+        /* &env->frame->tmpvar[dst].val.i = val; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $dst, %eax */          IB(0xb8); ID((uint32_t)dst);
@@ -362,11 +362,11 @@ jit_visit_fconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &rt->frame->tmpvar[dst].type = RT_VALUE_INT; */
-        /* &rt->frame->tmpvar[dst].val.i = val; */
+        /* &env->frame->tmpvar[dst].type = RT_VALUE_INT; */
+        /* &env->frame->tmpvar[dst].val.i = val; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $dst, %eax */          IB(0xb8); ID((uint32_t)dst);
@@ -392,7 +392,7 @@ jit_visit_sconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_string_with_hash(env, &rt->frame->tmpvar[dst], val, len, hash); */
+        /* rt_make_string_with_hash(env, &env->frame->tmpvar[dst], val, len, hash); */
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
@@ -438,10 +438,10 @@ jit_visit_aconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+        /* rt_make_empty_array(env, &env->frame->tmpvar[dst]); */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $dst, %eax */                   IB(0xb8); ID((uint32_t)dst);
@@ -476,10 +476,10 @@ jit_visit_dconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+        /* rt_make_empty_dict(env, &env->frame->tmpvar[dst]); */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $dst, %eax */                   IB(0xb8); ID((uint32_t)dst);
@@ -514,10 +514,10 @@ jit_visit_inc_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &rt->frame->tmpvar[dst].val.i++ */
+        /* &env->frame->tmpvar[dst].val.i++ */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $dst, %eax */                   IB(0xb8); ID((uint32_t)dst);
@@ -541,7 +541,7 @@ jit_visit_add_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_add_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_add_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_add_helper);
 
         return true;
@@ -560,7 +560,7 @@ jit_visit_sub_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_sub_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_sub_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_sub_helper);
 
         return true;
@@ -579,7 +579,7 @@ jit_visit_mul_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mul_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mul_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mul_helper);
 
         return true;
@@ -598,7 +598,7 @@ jit_visit_div_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_div_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_div_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_div_helper);
 
         return true;
@@ -617,7 +617,7 @@ jit_visit_mod_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mod_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mod_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mod_helper);
 
         return true;
@@ -636,7 +636,7 @@ jit_visit_and_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_and_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_and_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_and_helper);
 
         return true;
@@ -655,7 +655,7 @@ jit_visit_or_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_or_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_or_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_or_helper);
 
         return true;
@@ -674,7 +674,7 @@ jit_visit_xor_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_xor_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_xor_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_xor_helper);
 
         return true;
@@ -693,7 +693,7 @@ jit_visit_shl_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_shl_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_shl_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shl_helper);
 
         return true;
@@ -712,7 +712,7 @@ jit_visit_shr_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_shr_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_shr_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shr_helper);
 
         return true;
@@ -729,7 +729,7 @@ jit_visit_neg_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_neg_helper(rt, dst, src)) return false; */
+        /* if (!rt_neg_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_neg_helper);
 
         return true;
@@ -746,7 +746,7 @@ jit_visit_not_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_not_helper(rt, dst, src)) return false; */
+        /* if (!rt_not_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_not_helper);
 
         return true;
@@ -765,7 +765,7 @@ jit_visit_lt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lt_helper);
 
         return true;
@@ -784,7 +784,7 @@ jit_visit_lte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lte_helper);
 
         return true;
@@ -803,7 +803,7 @@ jit_visit_eq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_eq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_eq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_eq_helper);
 
         return true;
@@ -822,7 +822,7 @@ jit_visit_neq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_neq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_neq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_neq_helper);
 
         return true;
@@ -841,7 +841,7 @@ jit_visit_gte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gte_helper);
 
         return true;
@@ -865,8 +865,8 @@ jit_visit_eqi_op(
 
         /* Set EFLAGS by (src1 - src2) */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $src1, %eax */           IB(0xb8); ID((uint32_t)src1);
@@ -896,7 +896,7 @@ jit_visit_gt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gt_helper);
 
         return true;
@@ -915,7 +915,7 @@ jit_visit_loadarray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_loadarray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_loadarray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_loadarray_helper);
 
         return true;
@@ -934,7 +934,7 @@ jit_visit_storearray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_storearray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_storearray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_storearray_helper);
 
         return true;
@@ -951,7 +951,7 @@ jit_visit_len_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_len_helper(rt, dst, src)) return false; */
+        /* if (!rt_len_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_len_helper);
 
         return true;
@@ -970,7 +970,7 @@ jit_visit_getdictkeybyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_getdictkeybyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_getdictkeybyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictkeybyindex_helper);
 
         return true;
@@ -989,7 +989,7 @@ jit_visit_getdictvalbyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_getdictvalbyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_getdictvalbyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictvalbyindex_helper);
 
         return true;
@@ -1002,12 +1002,12 @@ jit_visit_loadsymbol_op(
 {
         int dst;
         const char *src;
-	uint32_t len, hash;
+        uint32_t len, hash;
 
         CONSUME_TMPVAR(dst);
         CONSUME_STRING(src, len, hash);
 
-        /* if (!rt_loadsymbol_helper(rt, dst, src, len, hash)) return false; */
+        /* if (!rt_loadsymbol_helper(env, dst, src, len, hash)) return false; */
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
@@ -1047,7 +1047,7 @@ jit_visit_storesymbol_op(
         struct jit_context *ctx)
 {
         const char *dst;
-	uint32_t len, hash;
+        uint32_t len, hash;
         int src;
 
         CONSUME_STRING(dst, len, hash);
@@ -1055,8 +1055,8 @@ jit_visit_storesymbol_op(
 
         /* if (!rt_storesymbol_helper(env, dst, len, hash, src)) return false; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $src, %eax */                    IB(0xb8); ID((uint32_t)src);
@@ -1095,13 +1095,13 @@ jit_visit_loaddot_op(
         int dst;
         int dict;
         const char *field;
-	uint32_t len, hash;
+        uint32_t len, hash;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(dict);
         CONSUME_STRING(field, len, hash);
 
-        /* if (!rt_loaddot_helper(rt, dst, dict, field, len, hash)) return false; */
+        /* if (!rt_loaddot_helper(env, dst, dict, field, len, hash)) return false; */
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
@@ -1145,16 +1145,16 @@ jit_visit_storedot_op(
 {
         int dict, src;
         const char *field;
-	uint32_t len, hash;
+        uint32_t len, hash;
 
         CONSUME_TMPVAR(dict);
         CONSUME_STRING(field, len, hash);
         CONSUME_TMPVAR(src);
 
-        /* if (!jit_storedot_helper(rt, dict, field, len, hash, src)) return false; */
+        /* if (!jit_storedot_helper(env, dict, field, len, hash, src)) return false; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $src, %eax */                   IB(0xb8); ID((uint32_t)src);
@@ -1225,10 +1225,10 @@ jit_visit_call_op(
                 arg_addr = 0;
         }
 
-        /* if (!rt_call_helper(rt, dst, func, arg_count, arg)) return false; */
+        /* if (!rt_call_helper(env, dst, func, arg_count, arg)) return false; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $arg_addr, %eax */       IB(0xb8); ID(arg_addr);
@@ -1266,7 +1266,7 @@ jit_visit_thiscall_op(
 {
         int dst, obj, arg_count, arg_tmp, i;
         const char *symbol;
-	uint32_t len, hash;
+        uint32_t len, hash;
         int arg[NOCT_ARG_MAX];
         uint32_t arg_addr;
 
@@ -1291,10 +1291,10 @@ jit_visit_thiscall_op(
                 ctx->code = (uint8_t *)ctx->code + 4;
         }
 
-        /* if (!rt_thiscall_helper(rt, dst, obj, symbol, len, hash, arg_count, arg)) return false; */
+        /* if (!rt_thiscall_helper(env, dst, obj, symbol, len, hash, arg_count, arg)) return false; */
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $arg_addr, %eax */              IB(0xb8); ID(arg_addr);
@@ -1377,8 +1377,8 @@ jit_visit_jmpiftrue_op(
         }
 
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $src, %eax */           IB(0xb8); ID((uint32_t)src);
@@ -1386,7 +1386,7 @@ jit_visit_jmpiftrue_op(
                 /* addl -4(%ebp), %eax */       IB(0x03); IB(0x45); IB(0xfc);
                 /* movl 4(%eax), %eax */        IB(0x8b); IB(0x40); IB(0x04);
 
-                /* Compare: rt->frame->tmpvar[dst].val.i == 0 */
+                /* Compare: env->frame->tmpvar[dst].val.i == 0 */
                 /* cmpl $0, %eax */             IB(0x83); IB(0xf8); IB(0x00);
         }
         
@@ -1420,8 +1420,8 @@ jit_visit_jmpiffalse_op(
         }
 
         ASM {
-                /* ebp-4: &rt->frame->tmpvar[0] */
-                /* ebp-8: rt */
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $src, %eax */           IB(0xb8); ID((uint32_t)src);
@@ -1429,7 +1429,7 @@ jit_visit_jmpiffalse_op(
                 /* addl -4(%ebp), %eax */       IB(0x03); IB(0x45); IB(0xfc);
                 /* movl 4(%eax), %eax */        IB(0x8b); IB(0x40); IB(0x04);
 
-                /* Compare: rt->frame->tmpvar[dst].val.i == 0 */
+                /* Compare: env->frame->tmpvar[dst].val.i == 0 */
                 /* cmpl $0, %eax */             IB(0x83); IB(0xf8); IB(0x00);
         }
         
@@ -1501,7 +1501,7 @@ jit_visit_bytecode(
                 /* (ebp-8): rt */
                 /* movl %eax, -8(%ebp) */               IB(0x89); IB(0x45); IB(0xf8);
 
-                /* (ebp-4): &rt->frame->tmpvar[0] */
+                /* (ebp-4): &env->frame->tmpvar[0] */
                 /* movl (%eax), %eax */                 IB(0x8b); IB(0x00);
                 /* movl (%eax), %eax */                 IB(0x8b); IB(0x00);
                 /* movl %eax, -4(%ebp) */               IB(0x89); IB(0x45); IB(0xfc);

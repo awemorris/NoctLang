@@ -1,4 +1,4 @@
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: nil; -*- */
 
 /*
  * Copyright (c) 2025, Awe Morris. All rights reserved.
@@ -151,8 +151,8 @@ jit_commit(
 #define REG_R8          8
 #define REG_R9          9
 #define REG_R10         10      /* exception_handler */
-#define REG_R11         11      /* rt */
-#define REG_R12         12      /* &rt->frame->tmpvar[0] */
+#define REG_R11         11      /* env */
+#define REG_R12         12      /* &env->frame->tmpvar[0] */
 #define REG_SP          13
 #define REG_LR          14
 #define REG_PC          15
@@ -578,16 +578,16 @@ jit_visit_assign_op(
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
 
-        /* rt->frame->tmpvar[dst] = rt->frame->tmpvar[src]; */
+        /* env->frame->tmpvar[dst] = env->frame->tmpvar[src]; */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
-                /* r0 = dst_addr = &rt->frame->tmpvar[dst] */
+                /* r0 = dst_addr = &env->frame->tmpvar[dst] */
                 MOVW    (REG_R0, (uint32_t)dst);
                 ADD     (REG_R0, REG_R0, REG_R12);
 
-                /* r1 = src_addr = &rt->frame->tmpvar[src] */
+                /* r1 = src_addr = &env->frame->tmpvar[src] */
                 MOVW    (REG_R1, (uint32_t)src);
                 ADD     (REG_R1, REG_R1, REG_R12);
 
@@ -619,15 +619,15 @@ jit_visit_iconst_op(
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
-                /* r0 = &rt->frame->tmpvar[dst] */
+                /* r0 = &env->frame->tmpvar[dst] */
                 MOVW    (REG_R0, (uint32_t)dst);
                 ADD     (REG_R0, REG_R0, REG_R12);
 
-                /* rt->frame->tmpvar[dst].type = RT_VALUE_INT */
+                /* env->frame->tmpvar[dst].type = RT_VALUE_INT */
                 MOVW    (REG_R1, 0);
                 STR     (REG_R1, REG_R0, 0);
 
-                /* rt->frame->tmpvar[dst].val.i = val */
+                /* env->frame->tmpvar[dst].val.i = val */
                 MOVW    (REG_R1, val & 0xffff);
                 MOVT    (REG_R1, (val >> 16) & 0xffff);
                 STR     (REG_R1, REG_R0, 4);
@@ -654,15 +654,15 @@ jit_visit_fconst_op(
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
-                /* r0 = &rt->frame->tmpvar[dst] */
+                /* r0 = &env->frame->tmpvar[dst] */
                 MOVW    (REG_R0, (uint32_t)dst);
                 ADD     (REG_R0, REG_R0, REG_R12);
 
-                /* Assign rt->frame->tmpvar[dst].type = RT_VALUE_FLOAT. */
+                /* Assign env->frame->tmpvar[dst].type = RT_VALUE_FLOAT. */
                 MOVW    (REG_R1, 1);
                 STR     (REG_R1, REG_R0, 0);
 
-                /* Assign rt->frame->tmpvar[dst].val.f = val. */
+                /* Assign env->frame->tmpvar[dst].val.f = val. */
                 MOVW    (REG_R1, val & 0xffff);
                 MOVT    (REG_R1, (val >> 16) & 0xffff);
                 STR     (REG_R1, REG_R0, 4);
@@ -678,14 +678,14 @@ jit_visit_sconst_op(
 {
         int dst;
         const char *val;
-	uint32_t len, hash;
+        uint32_t len, hash;
 
         CONSUME_TMPVAR(dst);
         CONSUME_STRING(val, len, hash);
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_string(rt, &rt->frame->tmpvar[dst], val, len, hash); */
+        /* rt_make_string(env, &env->frame->tmpvar[dst], val, len, hash); */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -745,7 +745,7 @@ jit_visit_aconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+        /* rt_make_empty_array(env, &env->frame->tmpvar[dst]); */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -790,7 +790,7 @@ jit_visit_dconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+        /* rt_make_empty_dict(env, &env->frame->tmpvar[dst]); */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -800,10 +800,10 @@ jit_visit_dconst_op(
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
                 
-                /* Arg1 r0: rt */
+                /* Arg1 r0: env */
                 MOV             (REG_R0, REG_R11);
 
-                /* Arg2 r1: &rt->frame->tmpvar[dst] */
+                /* Arg2 r1: &env->frame->tmpvar[dst] */
                 MOVW            (REG_R1, (uint32_t)dst);
                 ADD             (REG_R1, REG_R1, REG_R12);
 
@@ -842,12 +842,12 @@ jit_visit_inc_op(
 
                 /* Get &env->frame->tmpvar[dst] at r0. */
                 MOVW    (REG_R0, (uint32_t)dst);        /* dst */
-                ADD     (REG_R0, REG_R0, REG_R12);      /* r0 = &rt->frame->tmpvar[dst] = &rt->frame->tmpvar[dst].type */
+                ADD     (REG_R0, REG_R0, REG_R12);      /* r0 = &env->frame->tmpvar[dst] = &env->frame->tmpvar[dst].type */
 
-                /* rt->frame->tmpvar[dst].val.i++ */
-                LDR     (REG_R1, REG_R0, 4);            /* tmp = &rt->frame->tmpvar[dst].val.i */
+                /* env->frame->tmpvar[dst].val.i++ */
+                LDR     (REG_R1, REG_R0, 4);            /* tmp = &env->frame->tmpvar[dst].val.i */
                 ADD_IMM (REG_R1, REG_R1, 1);            /* tmp++ */
-                STR     (REG_R1, REG_R0, 4);            /* rt->frame->tmpvar[dst].val.i = tmp */
+                STR     (REG_R1, REG_R0, 4);            /* env->frame->tmpvar[dst].val.i = tmp */
         }
 
         return true;
@@ -866,7 +866,7 @@ jit_visit_add_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_add_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_add_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_add_helper);
 
         return true;
@@ -885,7 +885,7 @@ jit_visit_sub_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_sub_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_sub_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_sub_helper);
 
         return true;
@@ -904,7 +904,7 @@ jit_visit_mul_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mul_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mul_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mul_helper);
 
         return true;
@@ -923,7 +923,7 @@ jit_visit_div_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_div_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_div_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_div_helper);
 
         return true;
@@ -942,7 +942,7 @@ jit_visit_mod_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mod_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mod_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mod_helper);
 
         return true;
@@ -961,7 +961,7 @@ jit_visit_and_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_and_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_and_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_and_helper);
 
         return true;
@@ -980,7 +980,7 @@ jit_visit_or_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_or_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_or_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_or_helper);
 
         return true;
@@ -999,7 +999,7 @@ jit_visit_xor_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_xor_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_xor_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_xor_helper);
 
         return true;
@@ -1018,7 +1018,7 @@ jit_visit_shl_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_shl_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_shl_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shl_helper);
 
         return true;
@@ -1037,7 +1037,7 @@ jit_visit_shr_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_shr_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_shr_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shr_helper);
 
         return true;
@@ -1054,7 +1054,7 @@ jit_visit_neg_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_neg_helper(rt, dst, src)) return false; */
+        /* if (!rt_neg_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_neg_helper);
 
         return true;
@@ -1071,7 +1071,7 @@ jit_visit_not_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_not_helper(rt, dst, src)) return false; */
+        /* if (!rt_not_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_not_helper);
 
         return true;
@@ -1090,7 +1090,7 @@ jit_visit_lt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lt_helper);
 
         return true;
@@ -1109,7 +1109,7 @@ jit_visit_lte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lte_helper);
 
         return true;
@@ -1128,7 +1128,7 @@ jit_visit_eq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_eq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_eq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_eq_helper);
 
         return true;
@@ -1147,7 +1147,7 @@ jit_visit_neq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_neq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_neq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_neq_helper);
 
         return true;
@@ -1166,7 +1166,7 @@ jit_visit_gte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gte_helper);
 
         return true;
@@ -1185,7 +1185,7 @@ jit_visit_gt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gt_helper);
 
         return true;
@@ -1212,12 +1212,12 @@ jit_visit_eqi_op(
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
-                /* r0 = &rt->frame->tmpvar[src1].val.i */
+                /* r0 = &env->frame->tmpvar[src1].val.i */
                 MOVW            (REG_R0, (uint32_t)src1);       /* src1 */
                 ADD             (REG_R0, REG_R0, REG_R12);
                 LDR             (REG_R0, REG_R0, 4);
 
-                /* r1 = &rt->frame->tmpvar[src2].val.i */
+                /* r1 = &env->frame->tmpvar[src2].val.i */
                 MOVW            (REG_R1, (uint32_t)src2);       /* src1 */
                 ADD             (REG_R1, REG_R1, REG_R12);
                 LDR             (REG_R1, REG_R1, 4);
@@ -1242,7 +1242,7 @@ jit_visit_loadarray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_loadarray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_loadarray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_loadarray_helper);
 
         return true;
@@ -1261,7 +1261,7 @@ jit_visit_storearray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_storearray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_storearray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_storearray_helper);
 
         return true;
@@ -1278,7 +1278,7 @@ jit_visit_len_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!jit_len_helper(rt, dst, src)) return false; */
+        /* if (!jit_len_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_len_helper);
 
         return true;
@@ -1297,7 +1297,7 @@ jit_visit_getdictkeybyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_getdictkeybyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_getdictkeybyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictkeybyindex_helper);
 
         return true;
@@ -1316,7 +1316,7 @@ jit_visit_getdictvalbyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_getdictvalbyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_getdictvalbyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictvalbyindex_helper);
 
         return true;
@@ -1329,13 +1329,13 @@ jit_visit_loadsymbol_op(
 {
         int dst;
         const char *src_s;
-	uint32_t len, hash, src;
+        uint32_t len, hash, src;
 
         CONSUME_TMPVAR(dst);
         CONSUME_STRING(src_s, len, hash);
         src = (uint32_t)src_s;
 
-        /* if (!rt_loadsymbol_helper(rt, dst, src, len, hash)) return false; */
+        /* if (!rt_loadsymbol_helper(env, dst, src, len, hash)) return false; */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -1345,17 +1345,17 @@ jit_visit_loadsymbol_op(
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
 
-                /* Arg1 r0: rt */
+                /* Arg1 r0: env */
                 MOV             (REG_R0, REG_R11);
 
                 /* Arg2 r1: dst */
                 MOVW            (REG_R1, (uint32_t)dst);
 
-                /* Arg3 x2: src */
+                /* Arg3 r2: src */
                 MOVW            (REG_R2, src & 0xffff);
                 MOVT            (REG_R2, (src >> 16) & 0xffff);
 
-                /* Arg4 x3: len */
+                /* Arg4 r3: len */
                 MOVW            (REG_R3, len & 0xffff);
                 MOVT            (REG_R3, (len >> 16) & 0xffff);
 
@@ -1389,14 +1389,14 @@ jit_visit_storesymbol_op(
         struct jit_context *ctx)
 {
         const char *dst_s;
-	uint32_t len, hash, dst;
+        uint32_t len, hash, dst;
         int src;
 
         CONSUME_STRING(dst_s, len, hash);
         CONSUME_TMPVAR(src);
         dst = (uint32_t)dst_s;
 
-        /* if (!rt_storesymbol_helper(rt, dst, len, hash, src)) return false; */
+        /* if (!rt_storesymbol_helper(env, dst, len, hash, src)) return false; */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -1406,7 +1406,7 @@ jit_visit_storesymbol_op(
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
 
-                /* Arg1 r0: rt */
+                /* Arg1 r0: env */
                 MOV             (REG_R0, REG_R11);
 
                 /* Arg2 r1: dst */
@@ -1430,7 +1430,7 @@ jit_visit_storesymbol_op(
                 MOVW            (REG_R4, (uint32_t)rt_storesymbol_helper & 0xffff);
                 MOVT            (REG_R4, ((uint32_t)rt_storesymbol_helper >> 16) & 0xffff);
                 BLX             (REG_R4);
-                ADD_IMM		(REG_SP, REG_SP, IMM16(16));
+                ADD_IMM         (REG_SP, REG_SP, IMM16(16));
 
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1452,14 +1452,14 @@ jit_visit_loaddot_op(
         int dst;
         int dict;
         const char *field_s;
-	uint32_t len, hash, field;
+        uint32_t len, hash, field;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(dict);
         CONSUME_STRING(field_s, len, hash);
         field = (uint32_t)field_s;
 
-        /* if (!rt_loaddot_helper(rt, dst, dict, field, len, hash)) return false; */
+        /* if (!rt_loaddot_helper(env, dst, dict, field, len, hash)) return false; */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -1469,7 +1469,7 @@ jit_visit_loaddot_op(
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
 
-                /* Arg1 r0: rt */
+                /* Arg1 r0: env */
                 MOV             (REG_R0, REG_R11);
 
                 /* Arg2 r1: dst */
@@ -1482,22 +1482,22 @@ jit_visit_loaddot_op(
                 MOVW            (REG_R3, field & 0xffff);
                 MOVT            (REG_R3, (field >> 16) & 0xffff);
 
-		/* Arg5 [sp+0]: len */
-		MOVW		(REG_R4, len & 0xffff);
-		MOVT		(REG_R4, (len >> 16) & 0xffff);
+                /* Arg5 [sp+0]: len */
+                MOVW            (REG_R4, len & 0xffff);
+                MOVT            (REG_R4, (len >> 16) & 0xffff);
                 SUB_IMM         (REG_SP, REG_SP, 16);
                 STR             (REG_R4, REG_SP, 0);
 
-		/* Arg6 [sp+4]: hash */
-		MOVW		(REG_R4, hash & 0xffff);
-		MOVT		(REG_R4, (hash >> 16) & 0xffff);
+                /* Arg6 [sp+4]: hash */
+                MOVW            (REG_R4, hash & 0xffff);
+                MOVT            (REG_R4, (hash >> 16) & 0xffff);
                 STR             (REG_R4, REG_SP, 4);
 
                 /* Call rt_loaddot_helper(). */
                 MOVW            (REG_R4, (uint32_t)rt_loaddot_helper & 0xffff);
                 MOVT            (REG_R4, ((uint32_t)rt_loaddot_helper >> 16) & 0xffff);
                 BLX             (REG_R4);
-		ADD_IMM		(REG_SP, REG_SP, IMM16(16));
+                ADD_IMM         (REG_SP, REG_SP, IMM16(16));
 
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1526,7 +1526,7 @@ jit_visit_storedot_op(
         CONSUME_TMPVAR(src);
         field = (uint32_t)field_s;
 
-        /* if (!rt_storedot_helper(rt, dict, field, len, hash, src)) return false; */
+        /* if (!rt_storedot_helper(env, dict, field, len, hash, src)) return false; */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -1536,7 +1536,7 @@ jit_visit_storedot_op(
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
 
-                /* Arg1 r0: rt */
+                /* Arg1 r0: env */
                 MOV             (REG_R0, REG_R11);
 
                 /* Arg2 r1: dict */
@@ -1546,11 +1546,11 @@ jit_visit_storedot_op(
                 MOVW            (REG_R2, field & 0xffff);
                 MOVT            (REG_R2, (field >> 16) & 0xffff);
 
-		/* Arg4 r3: len */
+                /* Arg4 r3: len */
                 MOVW            (REG_R3, len & 0xffff);
                 MOVT            (REG_R3, (len >> 16) & 0xffff);
 
-		/* Arg5 [sp+0]: hash */
+                /* Arg5 [sp+0]: hash */
                 MOVW            (REG_R4, hash & 0xffff);
                 MOVT            (REG_R4, (hash >> 16) & 0xffff);
                 SUB_IMM         (REG_SP, REG_SP, 16);
@@ -1564,7 +1564,7 @@ jit_visit_storedot_op(
                 MOVW            (REG_R4, (uint32_t)rt_storedot_helper & 0xffff);
                 MOVT            (REG_R4, ((uint32_t)rt_storedot_helper >> 16) & 0xffff);
                 BLX             (REG_R4);
-		ADD_IMM		(REG_SP, REG_SP, IMM16(16));
+                ADD_IMM         (REG_SP, REG_SP, IMM16(16));
 
                 /* If failed: */
                 CMP_IMM         (REG_R0, 0);
@@ -1613,7 +1613,7 @@ jit_visit_call_op(
                 arg_addr = 0;
         }
 
-        /* if (!rt_call_helper(rt, dst, func, arg_count, arg)) return false; */
+        /* if (!rt_call_helper(env, dst, func, arg_count, arg)) return false; */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -1623,7 +1623,7 @@ jit_visit_call_op(
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
 
-                /* Arg1 r0: rt */
+                /* Arg1 r0: env */
                 MOV             (REG_R0, REG_R11);
 
                 /* Arg2 r1: dst */
@@ -1667,7 +1667,7 @@ jit_visit_thiscall_op(
         int dst;
         int obj;
         const char *symbol;
-	uint32_t len, hash;
+        uint32_t len, hash;
         int arg_count;
         int arg_tmp;
         int arg[NOCT_ARG_MAX];
@@ -1693,7 +1693,7 @@ jit_visit_thiscall_op(
                 ctx->code = (uint32_t *)ctx->code + 1;
         }
 
-        /* if (!rt_thiscall_helper(rt, dst, obj, symbol, len, hash, arg_count, arg)) return false; */
+        /* if (!rt_thiscall_helper(env, dst, obj, symbol, len, hash, arg_count, arg)) return false; */
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
@@ -1703,7 +1703,7 @@ jit_visit_thiscall_op(
                 PUSH            (REG_R12);
                 PUSH            (REG_LR);
 
-                /* Arg1 r0: rt */
+                /* Arg1 r0: env */
                 MOV             (REG_R0, REG_R11);
 
                 /* Arg2 r1: dst */
@@ -1797,13 +1797,13 @@ jit_visit_jmpiftrue_op(
         }
 
         ASM {
-                /* r0 = &rt->frame->tmpvar[src].val.i */
+                /* r0 = &env->frame->tmpvar[src].val.i */
                 MOVW    (REG_R0, (uint32_t)src);
                 LSL_3   (REG_R0, REG_R0);               /* src * sizeof(struct rt_value) */
                 ADD     (REG_R0, REG_R0, REG_R12);
                 LDR     (REG_R1, REG_R0, 4);
 
-                /* Compare: rt->frame->tmpvar[dst].val.i == 1 */
+                /* Compare: env->frame->tmpvar[dst].val.i == 1 */
                 CMP_IMM (REG_R1, 0);
         }
 
@@ -1840,13 +1840,13 @@ jit_visit_jmpiffalse_op(
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
-                /* r0 = &rt->frame->tmpvar[src].val.i */
+                /* r0 = &env->frame->tmpvar[src].val.i */
                 MOVW    (REG_R0, (uint32_t)src);
                 LSL_3   (REG_R0, REG_R0);               /* src * sizeof(struct rt_value) */
                 ADD     (REG_R0, REG_R0, REG_R12);
                 LDR     (REG_R1, REG_R0, 4);
 
-                /* Compare: rt->frame->tmpvar[dst].val.i == 0 */
+                /* Compare: env->frame->tmpvar[dst].val.i == 0 */
                 CMP_IMM (REG_R1, IMM12(0));
         }
         
@@ -1925,7 +1925,7 @@ jit_visit_bytecode(
                 /* r11 = r0 = rt */
                 MOV             (REG_R11, REG_R0);
 
-                /* r12 = *rt->frame = &rt->frame->tmpvar[0] */
+                /* r12 = *env->frame = &env->frame->tmpvar[0] */
                 LDR             (REG_R12, REG_R11, 0);
                 LDR             (REG_R12, REG_R12, 0);
 
