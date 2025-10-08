@@ -12,6 +12,7 @@
 #include "lir.h"
 #include "hir.h"
 #include "bytecode.h"
+#include "hash.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1919,15 +1920,23 @@ static bool
 lir_put_string(
 	const char *s)
 {
-	size_t i, len;
+	uint32_t len, hash, i;
 
-	len = strlen(s);
+	/* Put the length. (including NUL)*/
+	len = (uint32_t)strlen(s) + 1;
+	if (!lir_put_u32(len))
+		return false;
+
+	/* Put the hash. */
+	hash = string_hash(s);
+	if (!lir_put_u32(hash))
+		return false;
+
+	/* Put the string. (including NUL terminator) */
 	for (i = 0; i < len; i++) {
 		if (!lir_put_u8((uint8_t)*s++))
 			return false;
 	}
-	if (!lir_put_u8('\0'))
-		return false;
 
 	return true;
 }

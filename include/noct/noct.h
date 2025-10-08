@@ -540,6 +540,17 @@ noct_set_return(
 	NoctValue *val);
 
 /*
+ * Checks wheter a global variable exists or not.
+ *
+ * Fails if the global variable with the given name does not exist.
+ */
+NOCT_DLL
+bool
+noct_check_global(
+	NoctEnv *env,
+	const char *name);
+
+/*
  * Retrieves the value of a global variable by name.
  *
  * Fails if the global variable with the given name does not exist.

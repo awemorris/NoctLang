@@ -47,7 +47,8 @@ struct rt_string {
 	struct rt_gc_object head;
 
 	char *data;
-	size_t len;
+	size_t len;	/* Including the tail NUL character*/
+	uint32_t hash;
 };
 
 /*
@@ -134,8 +135,17 @@ struct rt_func {
  * Global variable entry.
  */
 struct rt_bindglobal {
+	/* Symbol name. */
 	char *name;
+
+	/* Hash cache for the symbol name. */
+	uint32_t name_len;
+	uint32_t name_hash;
+
+	/* Value. */
 	struct rt_value val;
+
+	/* Removed flag for linear search. */
 	bool is_removed;
 };
 
@@ -304,6 +314,12 @@ bool rt_call(struct rt_env *env, struct rt_func *func, int arg_count, struct rt_
 /* Make a string value. */
 bool rt_make_string(struct rt_env *env, struct rt_value *val, const char *data);
 
+/* Make a string value. (hash version) */
+bool rt_make_string_with_hash(struct rt_env *env, struct rt_value *val, const char *data, uint32_t len, uint32_t hash);
+
+/* Cache the hash of a string. */
+void rt_cache_string_hash(struct rt_string *rts);
+
 /*
  * Array and Dictionary
  */
@@ -344,13 +360,20 @@ bool rt_get_dict_value_by_index(struct rt_env *env, struct rt_dict *dict, int in
 /* Retrieves the value by a key in a dictionary. */
 bool rt_get_dict_elem(struct rt_env *env, struct rt_dict *dict, const char *key, struct rt_value *val);
 
+/* Retrieves the value by a key in a dictionary. (hash version) */
+bool rt_get_dict_elem_with_hash(struct rt_env *env, struct rt_dict *dict, const char *key, uint32_t len, uint32_t hash, struct rt_value *val);
+
 /* Stores a key-value-pair to a dictionary. */
 bool rt_set_dict_elem(struct rt_env *env, struct rt_dict **dict, const char *key, struct rt_value *val);
 
-#if !defined(USE_MULTITHREAD)
+/* Stores a key-value-pair to a dictionary. (hash version) */
+bool rt_set_dict_elem_with_hash(struct rt_env *env, struct rt_dict **dict, const char *key, uint32_t len, uint32_t hash, struct rt_value *val);
+
 /* Remove a dictionary key. */
 bool rt_remove_dict_elem(struct rt_env *env, struct rt_dict *dict, const char *key);
-#endif
+
+/* Remove a dictionary key. (hash version) */
+bool rt_remove_dict_elem_with_hash(struct rt_env *env, struct rt_dict *dict, const char *key, uint32_t len, uint32_t hash);
 
 /* Make a shallow copy of a dictionary. */
 bool rt_make_dict_copy(struct rt_env *env, struct rt_dict **dst, struct rt_dict *src);
@@ -359,14 +382,20 @@ bool rt_make_dict_copy(struct rt_env *env, struct rt_dict **dst, struct rt_dict 
  * Global Variable
  */
 
+/* Check if a global variable exists. */
+bool rt_check_global(struct rt_env *env, const char *name);
+
 /* Get a global variable. */
 bool rt_get_global(struct rt_env *env, const char *name, struct rt_value *val);
 
-/* Find a global variable. */
-bool rt_find_global(struct rt_env *env, const char *name, struct rt_value *val);
+/* Get a global variable. (hash version) */
+bool rt_get_global_with_hash(struct rt_env *env, const char *name, uint32_t len, uint32_t hash, struct rt_value *val);
 
 /* Set a global variable. */
 bool rt_set_global(struct rt_env *env, const char *name, struct rt_value *val);
+
+/* Set a global variable. (hash version) */
+bool rt_set_global_with_hash(struct rt_env *env, const char *name, uint32_t len, uint32_t hash, struct rt_value *val);
 
 /*
  * FFI Pin

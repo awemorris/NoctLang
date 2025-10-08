@@ -181,12 +181,16 @@ bool
 rt_loadsymbol_helper(
 	struct rt_env *rt,
 	int dst,
-	const char *symbol);
+	const char *symbol,
+	uint32_t symbol_len,
+	uint32_t symbol_hash);
 
 bool
 rt_storesymbol_helper(
 	struct rt_env *rt,
 	const char *symbol,
+	uint32_t symbol_len,
+	uint32_t symbol_hash,
 	int src);
 
 bool
@@ -194,13 +198,17 @@ rt_loaddot_helper(
 	struct rt_env *rt,
 	int dst,
 	int dict,
-	const char *field);
+	const char *field,
+	uint32_t field_len,
+	uint32_t field_hash);
 
 bool
 rt_storedot_helper(
 	struct rt_env *rt,
 	int dict,
 	const char *field,
+	uint32_t field_len,
+	uint32_t field_hash,
 	int src);
 
 bool
@@ -217,6 +225,8 @@ rt_thiscall_helper(
 	int dst,
 	int obj,
 	const char *name,
+	uint32_t name_len,
+	uint32_t name_hash,
 	int arg_count,
 	int *arg);
 

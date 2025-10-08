@@ -31,57 +31,27 @@
 #define BROKEN_BYTECODE		"Broken bytecode."
 
 /* Unary OP macro */
-#define UNARY_OP(helper)									\
-	uint32_t dst;										\
-	uint32_t src;										\
-												\
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {						\
-		rt_error(env, BROKEN_BYTECODE);						\
-		return false;									\
-	}											\
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) | (uint32_t)func->bytecode[*pc + 2]; 	\
-	if (dst >= (uint32_t)func->tmpvar_size) {						\
-		rt_error(env, BROKEN_BYTECODE);						\
-		return false;									\
-	}											\
-	src = ((uint32_t)func->bytecode[*pc + 3] << 8) | func->bytecode[*pc + 4];		\
-	if (src >= (uint32_t)func->tmpvar_size) {						\
-		rt_error(env, BROKEN_BYTECODE);						\
-		return false;									\
-	}											\
-	if (!helper(env, (int)dst, (int)src))							\
-		return false;									\
-	*pc += 1 + 2 + 2;									\
-	return true
+#define UNARY_OP(helper)                                        \
+        uint32_t dst;                                           \
+        uint32_t src;                                           \
+                                                                \
+        GET_TMPVAR(&dst);                                       \
+        GET_TMPVAR(&src);                                       \
+        if (!helper(env, (int)dst, (int)src))                   \
+                return false;                                   \
+        return true
 
 /* Binary OP macro */
-#define BINARY_OP(helper)								\
-	uint32_t dst;									\
-	uint32_t src1;									\
-	uint32_t src2;									\
-											\
-	if (*pc + 1 + 2 + 2 + 2 > func->bytecode_size) {				\
-		rt_error(env, BROKEN_BYTECODE);					\
-		return false;								\
-	}										\
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) | func->bytecode[*pc + 2];	\
-	if (dst >= (uint32_t)func->tmpvar_size) {					\
-		rt_error(env, BROKEN_BYTECODE);					\
-		return false;								\
-	}										\
-	src1 = ((uint32_t)func->bytecode[*pc + 3] << 8) | func->bytecode[*pc + 4]; 	\
-	if (src1 >= (uint32_t)func->tmpvar_size) {					\
-		rt_error(env, BROKEN_BYTECODE);					\
-		return false;								\
-	}										\
-	src2 = ((uint32_t)func->bytecode[*pc + 5] << 8) | func->bytecode[*pc + 6]; 	\
-	if (src2 >= (uint32_t)func->tmpvar_size) {					\
-		rt_error(env, BROKEN_BYTECODE);					\
-		return false;								\
-	}										\
-	if (!helper(env, (int)dst, (int)src1, (int)src2))				\
-		return false;								\
-	*pc += 1 + 2 + 2 + 2;								\
+#define BINARY_OP(helper)                                       \
+        uint32_t dst;                                           \
+        uint32_t src1;                                          \
+        uint32_t src2;                                          \
+                                                                \
+        GET_TMPVAR(&dst);                                       \
+        GET_TMPVAR(&src1);                                      \
+        GET_TMPVAR(&src2);                                      \
+        if (!helper(env, (int)dst, (int)src1, (int)src2))       \
+                return false;                                   \
 	return true
 
 static bool rt_visit_op(struct rt_env *env, struct rt_func *func, int *pc);
@@ -105,8 +75,156 @@ rt_visit_bytecode(
 	return true;
 }
 
+#define GET_U8(v) if (!rt_get_u8(env, func, pc, v)) return false
+static INLINE bool rt_get_u8(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc,
+	int *val)
+{
+	if (*pc + 1 > func->bytecode_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*val = func->bytecode[*pc];	
+
+	*pc = *pc + 1;
+
+	return true;
+}
+
+#define GET_U16(v) if (!rt_get_u16(env, func, pc, v)) return false
+static INLINE bool rt_get_u16(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc,
+	int *val)
+{
+	if (*pc + 2 > func->bytecode_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*val = ((uint32_t)func->bytecode[*pc] << 8) |
+		(uint32_t)func->bytecode[*pc + 1];
+
+	*pc = *pc + 2;
+
+	return true;
+}
+
+#define GET_TMPVAR(v) if (!rt_get_tmpvar(env, func, pc, v)) return false
+static INLINE bool rt_get_tmpvar(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc,
+	int *val)
+{
+	if (*pc + 2 > func->bytecode_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*val = ((uint32_t)func->bytecode[*pc] << 8) |
+		(uint32_t)func->bytecode[*pc + 1];
+	if (*val >= (uint32_t)func->tmpvar_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*pc = *pc + 2;
+
+	return true;
+}
+
+#define GET_U32(v) if (!rt_get_u32(env, func, pc, v)) return false
+static INLINE bool rt_get_u32(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc,
+	uint32_t *val)
+{
+	if (*pc + 4 > func->bytecode_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*val = ((uint32_t)func->bytecode[*pc + 0] << 24) |
+	       ((uint32_t)func->bytecode[*pc + 1] << 16) |
+	       ((uint32_t)func->bytecode[*pc + 2] << 8) |
+		(uint32_t)func->bytecode[*pc + 3];
+
+	*pc = *pc + 4;
+
+	return true;
+}
+
+#define GET_ADDR(v) if (!rt_get_addr(env, func, pc, v)) return false
+static INLINE bool rt_get_addr(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc,
+	uint32_t *val)
+{
+	if (*pc + 4 > func->bytecode_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*val = ((uint32_t)func->bytecode[*pc + 0] << 24) |
+	       ((uint32_t)func->bytecode[*pc + 1] << 16) |
+	       ((uint32_t)func->bytecode[*pc + 2] << 8) |
+		(uint32_t)func->bytecode[*pc + 3];
+
+	if (*val > (uint32_t)func->bytecode_size + 1) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*pc = *pc + 4;
+
+	return true;
+}
+
+#define GET_STRING(s, l, h) if (!rt_get_string(env, func, pc, s, l, h)) return false
+static INLINE bool rt_get_string(
+	struct rt_env *env,
+	struct rt_func *func,
+	int *pc,
+	const char **s,
+	uint32_t *len,
+	uint32_t *hash)
+{
+	if (*pc + 8 > func->bytecode_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*len = ((uint32_t)func->bytecode[*pc + 0] << 24) |
+		((uint32_t)func->bytecode[*pc + 1] << 16) |
+		((uint32_t)func->bytecode[*pc + 2] << 8) |
+		(uint32_t)func->bytecode[*pc + 3];
+
+	*hash = ((uint32_t)func->bytecode[*pc + 4] << 24) |
+		((uint32_t)func->bytecode[*pc + 5] << 16) |
+		((uint32_t)func->bytecode[*pc + 6] << 8) |
+		(uint32_t)func->bytecode[*pc + 7];
+
+	if (*pc + 8 + *len > func->bytecode_size) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	*s = &func->bytecode[*pc + 8];
+
+	*pc = *pc + 8 + *len;
+
+	return true;
+}
+
 /* Visit a OP_LINEINFO instruction. */
-static inline bool
+static INLINE bool
 rt_visit_lineinfo_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -116,25 +234,15 @@ rt_visit_lineinfo_op(
 
 	DEBUG_TRACE(*pc, "LINEINFO");
 
-	if (*pc + 1 + 4 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	line = ((uint32_t)func->bytecode[*pc + 1] << 24) |
-	       ((uint32_t)func->bytecode[*pc + 2] << 16) |
-	       ((uint32_t)func->bytecode[*pc + 3] << 8) |
-		(uint32_t)func->bytecode[*pc + 4];
+	GET_U32(&line);
 
 	env->line = (int)line;
-
-	*pc += 5;
 
 	return true;
 }
 
 /* Visit a OP_ASSIGN instruction. */
-static inline bool
+static INLINE bool
 rt_visit_assign_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -145,32 +253,16 @@ rt_visit_assign_op(
 
 	DEBUG_TRACE(*pc, "ASSIGN");
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) | (uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 3] << 8) | func->bytecode[*pc + 4];
-	if (src >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src);
 
 	env->frame->tmpvar[dst] = env->frame->tmpvar[src];
-
-	*pc += 1 + 2 + 2;
 
 	return true;
 }
 
 /* Visit a OP_ICONST instruction. */
-static inline bool
+static INLINE bool
 rt_visit_iconst_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -181,32 +273,17 @@ rt_visit_iconst_op(
 
 	DEBUG_TRACE(*pc, "ICONST");
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) | func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	val = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-	       ((uint32_t)func->bytecode[*pc + 4] << 16) |
-	       ((uint32_t)func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
+	GET_TMPVAR(&dst);
+	GET_U32(&val);
 
 	env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
 	env->frame->tmpvar[dst].val.i = (int)val;
-
-	*pc += 1 + 2 + 4;
 
 	return true;
 }
 
 /* Visit a OP_FCONST instruction. */
-static inline bool
+static INLINE bool
 rt_visit_fconst_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -218,34 +295,19 @@ rt_visit_fconst_op(
 
 	DEBUG_TRACE(*pc, "FCONST");
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) | (uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	raw = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-	       ((uint32_t)func->bytecode[*pc + 4] << 16) |
-	       ((uint32_t)func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
+	GET_TMPVAR(&dst);
+	GET_U32(&raw);
 
 	val = *(float *)&raw;
 
 	env->frame->tmpvar[dst].type = NOCT_VALUE_FLOAT;
 	env->frame->tmpvar[dst].val.f = val;
 
-	*pc += 1 + 2 + 4;
-
 	return true;
 }
 
 /* Visit a OP_SCONST instruction. */
-static inline bool
+static INLINE bool
 rt_visit_sconst_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -253,39 +315,21 @@ rt_visit_sconst_op(
 {
 	uint32_t dst;
 	const char *s;
-	int len;
+	uint32_t len, hash;
 
 	DEBUG_TRACE(*pc, "SCONST");
 
-	if (*pc + 1 + 2  > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&dst);
+	GET_STRING(&s, &len, &hash);
 
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
+	if (!rt_make_string_with_hash(env, &env->frame->tmpvar[dst], s, len, hash))
 		return false;
-	}
-
-	s = (const char *)&func->bytecode[*pc + 3];
-	len = (int)strlen(s);
-	if (*pc + 1 + 2 + len + 1 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	if (!rt_make_string(env, &env->frame->tmpvar[dst], s))
-		return false;
-
-	*pc += 1 + 2 + len + 1;
 
 	return true;
 }
 
 /* Visit a OP_ACONST instruction. */
-static inline bool
+static INLINE bool
 rt_visit_aconst_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -295,28 +339,16 @@ rt_visit_aconst_op(
 
 	DEBUG_TRACE(*pc, "ACONST");
 
-	if (*pc + 1 + 2  > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&dst);
 
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
+	if (!rt_make_empty_array(env, &env->frame->tmpvar[dst]))
 		return false;
-	}
-
-	if (!noct_make_empty_array(env, &env->frame->tmpvar[dst]))
-		return false;
-
-	*pc += 1 + 2;
 
 	return true;
 }
 
 /* Visit a OP_DCONST instruction. */
-static inline bool
+static INLINE bool
 rt_visit_dconst_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -326,28 +358,16 @@ rt_visit_dconst_op(
 
 	DEBUG_TRACE(*pc, "DCONST");
 
-	if (*pc + 1 + 2  > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&dst);
 
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
+	if (!rt_make_empty_dict(env, &env->frame->tmpvar[dst]))
 		return false;
-	}
-
-	if (!noct_make_empty_dict(env, &env->frame->tmpvar[dst]))
-		return false;
-
-	*pc += 1 + 2;
 
 	return true;
 }
 
 /* Visit a OP_INC instruction. */
-static inline bool
+static INLINE bool
 rt_visit_inc_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -358,32 +378,20 @@ rt_visit_inc_op(
 
 	DEBUG_TRACE(*pc, "INC");
 
-	if (*pc + 1 + 2 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&dst);
 
 	val = &env->frame->tmpvar[dst];
 	if (val->type != NOCT_VALUE_INT) {
-		noct_error(env, BROKEN_BYTECODE);
+		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
 	val->val.i++;
-
-	*pc += 1 + 2;
 
 	return true;
 }
 
 /* Visit a OP_ADD instruction. */
-static inline bool
+static INLINE bool
 rt_visit_add_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -395,7 +403,7 @@ rt_visit_add_op(
 }
 
 /* Visit a OP_SUB instruction. */
-static inline bool
+static INLINE bool
 rt_visit_sub_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -407,7 +415,7 @@ rt_visit_sub_op(
 }
 
 /* Visit a OP_MUL instruction. */
-static inline bool
+static INLINE bool
 rt_visit_mul_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -419,7 +427,7 @@ rt_visit_mul_op(
 }
 
 /* Visit a OP_DIV instruction. */
-static inline bool
+static INLINE bool
 rt_visit_div_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -431,7 +439,7 @@ rt_visit_div_op(
 }
 
 /* Visit a OP_MOD instruction. */
-static inline bool
+static INLINE bool
 rt_visit_mod_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -443,7 +451,7 @@ rt_visit_mod_op(
 }
 
 /* Visit a OP_AND instruction. */
-static inline bool
+static INLINE bool
 rt_visit_and_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -455,7 +463,7 @@ rt_visit_and_op(
 }
 
 /* Visit a OP_OR instruction. */
-static inline bool
+static INLINE bool
 rt_visit_or_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -467,7 +475,7 @@ rt_visit_or_op(
 }
 
 /* Visit a OP_XOR instruction. */
-static inline bool
+static INLINE bool
 rt_visit_xor_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -479,7 +487,7 @@ rt_visit_xor_op(
 }
 
 /* Visit a OP_SHL instruction. */
-static inline bool
+static INLINE bool
 rt_visit_shl_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -491,7 +499,7 @@ rt_visit_shl_op(
 }
 
 /* Visit a OP_SHR instruction. */
-static inline bool
+static INLINE bool
 rt_visit_shr_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -503,7 +511,7 @@ rt_visit_shr_op(
 }
 
 /* Visit a OP_NEG instruction. */
-static inline bool
+static INLINE bool
 rt_visit_neg_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -515,7 +523,7 @@ rt_visit_neg_op(
 }
 
 /* Visit a OP_NOT instruction. */
-static inline bool
+static INLINE bool
 rt_visit_not_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -527,7 +535,7 @@ rt_visit_not_op(
 }
 
 /* Visit a OP_LT instruction. */
-static inline bool
+static INLINE bool
 rt_visit_lt_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -539,7 +547,7 @@ rt_visit_lt_op(
 }
 
 /* Visit a OP_LTE instruction. */
-static inline bool
+static INLINE bool
 rt_visit_lte_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -551,7 +559,7 @@ rt_visit_lte_op(
 }
 
 /* Visit a OP_GT instruction. */
-static inline bool
+static INLINE bool
 rt_visit_gt_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -563,7 +571,7 @@ rt_visit_gt_op(
 }
 
 /* Visit a OP_GTE instruction. */
-static inline bool
+static INLINE bool
 rt_visit_gte_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -575,7 +583,7 @@ rt_visit_gte_op(
 }
 
 /* Visit a OP_EQ instruction. */
-static inline bool
+static INLINE bool
 rt_visit_eq_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -587,7 +595,7 @@ rt_visit_eq_op(
 }
 
 /* Visit a OP_NEQ instruction. */
-static inline bool
+static INLINE bool
 rt_visit_neq_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -599,7 +607,7 @@ rt_visit_neq_op(
 }
 
 /* Visit a OP_STOREARRAY instruction. */
-static inline bool
+static INLINE bool
 rt_visit_storearray_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -611,7 +619,7 @@ rt_visit_storearray_op(
 }
 
 /* Visit a OP_LOADARRAY instruction. */
-static inline bool
+static INLINE bool
 rt_visit_loadarray_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -623,7 +631,7 @@ rt_visit_loadarray_op(
 }
 
 /* Visit a OP_LEN instruction. */
-static inline bool
+static INLINE bool
 rt_visit_len_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -635,7 +643,7 @@ rt_visit_len_op(
 }
 
 /* Visit a OP_GETDICTKEYBYINDEX instruction. */
-static inline bool
+static INLINE bool
 rt_visit_getdictkeybyindex_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -647,7 +655,7 @@ rt_visit_getdictkeybyindex_op(
 }
 
 /* Visit a OP_GETDICTVALBYINDEX instruction. */
-static inline bool
+static INLINE bool
 rt_visit_getdictvalbyindex_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -659,169 +667,97 @@ rt_visit_getdictvalbyindex_op(
 }
 
 /* Visit a OP_LOADYMBOL instruction. */
-static inline bool
+static INLINE bool
 rt_visit_loadsymbol_op(
 	struct rt_env *env,
 	struct rt_func *func,
 	int *pc)
 {
 	int dst;
-	const char *symbol;
-	int len;
+	const char *s;
+	uint32_t len, hash;
 
 	DEBUG_TRACE(*pc, "LOADSYMBOL");
 
-	if (*pc + 1 + 2 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
+	GET_TMPVAR(&dst);
+	GET_STRING(&s, &len, &hash);
+
+	if (!rt_loadsymbol_helper(env, dst, s, len, hash))
 		return false;
-	}
-
-	dst = (func->bytecode[*pc + 1] << 8) | (func->bytecode[*pc + 2]);
-
-	symbol = (const char *)&func->bytecode[*pc + 3];
-	len = (int)strlen(symbol);
-	if (*pc + 2 + len + 1 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	if (!rt_loadsymbol_helper(env, dst, symbol))
-		return false;
-
-	*pc += 1 + 2 + len + 1;
 
 	return true;
 }
 
 /* Visit a OP_STORESYMBOL instruction. */
-static inline bool
+static INLINE bool
 rt_visit_storesymbol_op(
 	struct rt_env *env,
 	struct rt_func *func,
 	int *pc)
 {
-	const char *symbol;
-	uint32_t src;
-	int len;
+	const char *s;
+	uint32_t len, hash;
+	int src;
 
 	DEBUG_TRACE(*pc, "STORESYMBOL");
 
-	symbol = (const char *)&func->bytecode[*pc + 1];
-	len = (int)strlen(symbol);
-	if (*pc + 1 + len + 1 + 2 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
+	GET_STRING(&s, &len, &hash);
+	GET_TMPVAR(&src);
+
+	if (!rt_storesymbol_helper(env, s, len, hash, src))
 		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 1 + len + 1] << 8) |
-	      ((uint32_t)func->bytecode[*pc + 1 + len + 1 + 1]);
-
-	if (!rt_storesymbol_helper(env, symbol, (int)src))
-		return false;
-
-	*pc += 1 + len + 1 + 2;
 
 	return true;
 }
 
 /* Visit a OP_LOADDOT instruction. */
-static inline bool
+static INLINE bool
 rt_visit_loaddot_op(
 	struct rt_env *env,
 	struct rt_func *func,
 	int *pc)
 {
-	uint32_t dst;
-	uint32_t dict;
+	int dst, dict;
 	const char *field;
-	int len;
+	uint32_t len, hash;
 
 	DEBUG_TRACE(*pc, "LOADDOT");
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&dict);
+	GET_STRING(&field, &len, &hash);
 
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)(func->bytecode[*pc + 2]);
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
+	if (!rt_loaddot_helper(env, dst, dict, field, len, hash))
 		return false;
-	}
-
-	dict = ((uint32_t)func->bytecode[*pc + 3] << 8) |
-		(uint32_t)(func->bytecode[*pc + 4]);
-	if (dict >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	field = (const char *)&func->bytecode[*pc + 5];
-	len = (int)strlen(field);
-	if (*pc + 1 + 2  + 2 + len + 1 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	if (!rt_loaddot_helper(env, (int)dst, (int)dict, field))
-		return false;
-
-	*pc += 1 + 2 + 2 + len + 1;
 
 	return true;
 }
 
 /* Visit a OP_STOREDOT instruction. */
-static inline bool
+static INLINE bool
 rt_visit_storedot_op(
 	struct rt_env *env,
 	struct rt_func *func,
 	int *pc)
 {
-	uint32_t src;
-	uint32_t dict;
+	int dict, src;
 	const char *field;
-	int len;
+	uint32_t len, hash;
 
 	DEBUG_TRACE(*pc, "STOREDOT");
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&dict);
+	GET_STRING(&field, &len, &hash);
+	GET_TMPVAR(&src);
 
-	dict = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dict >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
+	if (!rt_storedot_helper(env, dict, field, len, hash, src))
 		return false;
-	}
-
-	field = (const char *)&func->bytecode[*pc + 3];
-	len = (int)strlen(field);
-	if (*pc + 1 + 2  + 2 + len + 1 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 1 + 2 + len + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 1 + 2 + len + 1 + 1];
-	if (src >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	if (!rt_storedot_helper(env, (int)dict, field, (int)src))
-		return false;
-
-	*pc += 1 + 2 + 2 + len + 1;
 
 	return true;
 }
 
 /* Visit a OP_CALL instruction. */
-static inline bool
+static INLINE bool
 rt_visit_call_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -836,35 +772,22 @@ rt_visit_call_op(
 
 	DEBUG_TRACE(*pc, "CALL");
 
-	dst_tmpvar = (func->bytecode[*pc + 1] << 8) | func->bytecode[*pc + 2];
-	if (dst_tmpvar >= func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	func_tmpvar = (func->bytecode[*pc + 3] << 8) | func->bytecode[*pc + 4];
-	if (func_tmpvar >= func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	arg_count = func->bytecode[*pc + 5];
+	GET_TMPVAR(&dst_tmpvar);
+	GET_TMPVAR(&func_tmpvar);
+	GET_U8(&arg_count);
 	for (i = 0; i < arg_count; i++) {
-		arg_tmpvar = (func->bytecode[*pc + 6 + i * 2] << 8 ) | 
-			     func->bytecode[*pc + 6 + i * 2 + 1];
+		GET_TMPVAR(&arg_tmpvar);
 		arg[i] = arg_tmpvar;
 	}
 
 	if (!rt_call_helper(env, dst_tmpvar, func_tmpvar, arg_count, arg))
 		return false;
 
-	*pc += 6 + arg_count * 2;
-
 	return true;
 }
 
 /* Visit a OP_THISCALL instruction. */
-static inline bool
+static INLINE bool
 rt_visit_thiscall_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -873,7 +796,7 @@ rt_visit_thiscall_op(
 	int dst_tmpvar;
 	int obj_tmpvar;
 	const char *name;
-	int len;
+	uint32_t len, hash;
 	int arg_count;
 	int arg_tmpvar;
 	int arg[NOCT_ARG_MAX];
@@ -881,47 +804,23 @@ rt_visit_thiscall_op(
 
 	DEBUG_TRACE(*pc, "THISCALL");
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst_tmpvar = (func->bytecode[*pc + 1] << 8) | func->bytecode[*pc + 2];
-	if (dst_tmpvar >= func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	obj_tmpvar = (func->bytecode[*pc + 3] << 8) | func->bytecode[*pc + 4];
-	if (obj_tmpvar >= func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	name = (const char *)&func->bytecode[*pc + 5];
-	len = (int)strlen(name);
-	if (*pc + 1 + 2 + 2 + len + 1 + 1 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	arg_count = func->bytecode[*pc + 1 + 2 + 2 + len + 1];
+	GET_TMPVAR(&dst_tmpvar);
+	GET_TMPVAR(&obj_tmpvar);
+	GET_STRING(&name, &len, &hash);
+	GET_U8(&arg_count);
 	for (i = 0; i < arg_count; i++) {
-		arg_tmpvar = (func->bytecode[*pc + 1 + 2 + 2 + len + 1 + 1 + i * 2] << 8 ) | 
-			     func->bytecode[*pc + 1 + 2 + 2 + len + 1 + 1 + i * 2 + 1];
+		GET_TMPVAR(&arg_tmpvar);
 		arg[i] = arg_tmpvar;
 	}
 
-	if (!rt_thiscall_helper(env, dst_tmpvar, obj_tmpvar, name, arg_count, arg))
+	if (!rt_thiscall_helper(env, dst_tmpvar, obj_tmpvar, name, len, hash, arg_count, arg))
 		return false;
-
-	*pc += 1 + 2 + 2 + len + 1 + 1 + arg_count * 2;
 
 	return true;
 }
 
 /* Visit a OP_JMP instruction. */
-static inline bool
+static INLINE bool
 rt_visit_jmp_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -931,27 +830,16 @@ rt_visit_jmp_op(
 
 	DEBUG_TRACE(*pc, "JMP");
 
-	if (*pc + 1 + 4 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_ADDR(&target);
 
-	target = ((uint32_t)func->bytecode[*pc + 1] << 24) |
-		(uint32_t)(func->bytecode[*pc + 2] << 16) |
-		(uint32_t)(func->bytecode[*pc + 3] << 8) |
-		(uint32_t)func->bytecode[*pc + 4];
-	if (target > (uint32_t)func->bytecode_size + 1) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
+	/* Jump. */
 	*pc = (int)target;
 
 	return true;
 }
 
 /* Visit a OP_JMPIFTRUE instruction. */
-static inline bool
+static INLINE bool
 rt_visit_jmpiftrue_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -962,42 +850,24 @@ rt_visit_jmpiftrue_op(
 
 	DEBUG_TRACE(*pc, "JMPIFTRUE");
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&src);
+	GET_ADDR(&target);
 
-	src = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (src >= (uint32_t)func->tmpvar_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	target = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-		((uint32_t)func->bytecode[*pc + 4] << 16) |
-		((uint32_t)func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
-	if (target > (uint32_t)func->bytecode_size + 1) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
+	/* Assume src is an int. */
 	if (env->frame->tmpvar[src].type != NOCT_VALUE_INT) {
-		noct_error(env, BROKEN_BYTECODE);
+		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
 
+	/* Jump. */
 	if (env->frame->tmpvar[src].val.i == 1)
 		*pc = (int)target;
-	else
-		*pc += 1 + 2 + 4;
 
 	return true;
 }
 
 /* Visit a OP_JMPIFFALSE instruction. */
-static inline bool
+static INLINE bool
 rt_visit_jmpiffalse_op(
 	struct rt_env *env,
 	struct rt_func *func,
@@ -1008,36 +878,18 @@ rt_visit_jmpiffalse_op(
 
 	DEBUG_TRACE(*pc, "JMPIFFALSE");
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
+	GET_TMPVAR(&src);
+	GET_ADDR(&target);
 
-	src = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (src >= (uint32_t)func->tmpvar_size + 1) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
-	target = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-		((uint32_t)func->bytecode[*pc + 4] << 16) |
-		((uint32_t)func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
-	if (target > (uint32_t)func->bytecode_size) {
-		noct_error(env, BROKEN_BYTECODE);
-		return false;
-	}
-
+	/* Assume src is an int. */
 	if (env->frame->tmpvar[src].type != NOCT_VALUE_INT) {
-		noct_error(env, BROKEN_BYTECODE);
+		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
 
+	/* Jump. */
 	if (env->frame->tmpvar[src].val.i == 0)
 		*pc = (int)target;
-	else
-		*pc += 1 + 2 + 4;
 
 	return true;
 }
@@ -1049,10 +901,13 @@ rt_visit_op(
 	struct rt_func *func,
 	int *pc)
 {
-	switch (func->bytecode[*pc]) {
+	int op;
+
+	GET_U8(&op);
+
+	switch (op) {
 	case OP_NOP:
 		/* NOP */
-		(*pc)++;
 		break;
 	case OP_LINEINFO:
 		if (!rt_visit_lineinfo_op(env, func, pc))
@@ -1225,7 +1080,7 @@ rt_visit_op(
 			return false;
 		break;
 	default:
-		noct_error(env, "Unknown opcode %d at pc=%d.", func->bytecode[*pc], *pc);
+		rt_error(env, "Unknown opcode %d at pc=%d.", func->bytecode[*pc], *pc);
 		return false;
 	}
 
