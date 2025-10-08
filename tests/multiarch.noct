@@ -13,8 +13,8 @@ func main() {
 //        {name: "riscv64", toolchain: "qemu-riscv64-toolchain.cmake", qemu: "qemu-riscv64-static"}
 //        {name: "ppc32",   toolchain: "qemu-ppc32-toolchain.cmake",   qemu: "qemu-ppc-static"},
 //        {name: "ppc64",   toolchain: "qemu-ppc64-toolchain.cmake",   qemu: "qemu-ppc64el-static"},
-          {name: "mips32",  toolchain: "qemu-mips32-toolchain.cmake",  qemu: "qemu-mips-static"}
-//        {name: "mips64",  toolchain: "qemu-mips64-toolchain.cmake",  qemu: "qemu-mips64-static"}
+//        {name: "mips32",  toolchain: "qemu-mips32-toolchain.cmake",  qemu: "qemu-mips-static"},
+        {name: "mips64",  toolchain: "qemu-mips64-toolchain.cmake",  qemu: "qemu-mips64-static"}
     ];
 
     // Run arch tests.
