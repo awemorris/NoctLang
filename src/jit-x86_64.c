@@ -1176,7 +1176,7 @@ jit_visit_storesymbol_op(
                         /* (2nd) movabs $dst -> %rdx */            IB(0x48); IB(0xba); IQ((uint64_t)dst);
                         /* (3rd) movq $dst_len -> %r8 */           IB(0x49); IB(0xc7); IB(0xc0); ID((uint32_t)dst_len);
                         /* (4th) movq $dst_hash -> %r9 */          IB(0x49); IB(0xc7); IB(0xc1); ID((uint32_t)dst_hash);
-                        /* (5th) movq $src -> 32(%rsp) *           IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src);
+                        /* (5th) movq $src -> 32(%rsp) */          IB(0x48); IB(0xc7); IB(0x44); IB(0x24); IB(0x20); ID((uint32_t)src);
                         /* movabs rt_storesymbol_helper -> %rax */ IB(0x48); IB(0xb8); IQ((uint64_t)rt_storesymbol_helper);
                         /* call *%rax */                           IB(0xff); IB(0xd0);
                         /* addq %rsp, $64 */                       IB(0x48); IB(0x83); IB(0xc4); IB(0x40);

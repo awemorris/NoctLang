@@ -830,6 +830,8 @@ rt_make_string_with_hash(
 {
 	struct rt_string *rts;
 
+	printf("val=%s\n", len);
+
 	/* Allocate a string. */
 	rts = rt_gc_alloc_string(env, data, len, hash);
 	if (rts == NULL) {
