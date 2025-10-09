@@ -1257,7 +1257,7 @@ rt_check_dict_key(
 
 	ACQUIRE_OBJ(dict, real_dict);
 
-	len = len;
+	len = strlen(str);
 	hash = string_hash(key);
 	index = hash & (real_dict->alloc_size - 1);
 
@@ -1270,11 +1270,8 @@ rt_check_dict_key(
 			continue;
 
 		/* Make a hash cache. */
-		assert(real_dict->key[i].val.str != NULL);
-		if (real_dict->key[i].val.str->hash == 0) {
-			assert(real_dict->key[i].val.str->data != NULL);
+		if (real_dict->key[i].val.str->hash == 0)
 			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
-		}
 
 		if (real_dict->key[i].val.str->len == len &&
 		    real_dict->key[i].val.str->hash == hash &&
