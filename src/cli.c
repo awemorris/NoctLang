@@ -60,6 +60,8 @@ static bool serialize_printer(NoctEnv *env, char *buf, size_t size, NoctValue *v
  * Main
  */
 
+#include "hash.h"
+
 int main(int argc, char *argv[])
 {
 	char *first_arg;

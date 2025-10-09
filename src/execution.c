@@ -1268,7 +1268,7 @@ rt_loaddot_helper(
 {
 	/* Special field "length". */
 	if (field_len == 7 &&
-	    /* TODO: hash check for "length" */
+	    field_hash == 0x83d03615 &&
 	    strcmp(field, "length") == 0) {
 		if (env->frame->tmpvar[dict].type == NOCT_VALUE_DICT) {
 			int size;
