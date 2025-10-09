@@ -1253,15 +1253,22 @@ rt_check_dict_key(
 {
 	struct rt_dict *real_dict;
 	uint32_t hash, len;
-	int i;
+	int i, index;
 
 	ACQUIRE_OBJ(dict, real_dict);
 
 	len = len;
 	hash = string_hash(key);
+	index = hash & (real_dict->alloc_size - 1);
 
 	/* Search the key. */
-	for (i = 0; i < real_dict->size; i++) {
+	for (i = index;
+	     i != ((index - 1) & (real_dict->alloc_size - 1));
+	     i = (i + 1) & (real_dict->alloc_size - 1)) {
+		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
+		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
+			continue;
+
 		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
 		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
 			continue;
