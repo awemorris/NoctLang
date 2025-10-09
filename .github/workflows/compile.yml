@@ -21,14 +21,14 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
       - name: Strip
-        run: strip build/noct
+        run: strip build/noctcli
       - name: Rename binary
-        run: mv build/noct build/noct-linux
+        run: mv build/noctcli build/noctcli-linux
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: noct-linux
-          path: build/noct-linux
+          name: noctcli-linux
+          path: build/noctcli-linux
 
   build-windows-mingw:
     runs-on: ubuntu-latest
@@ -44,12 +44,12 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
       - name: Strip
-        run: x86_64-w64-mingw32-strip build/noct.exe
+        run: x86_64-w64-mingw32-strip build/noctcli.exe
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: noct.exe
-          path: build/noct.exe
+          name: noctcli.exe
+          path: build/noctcli.exe
 
   build-macos:
     runs-on: macos-latest
@@ -73,12 +73,12 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
       - name: Rename binary
-        run: mv build/noct build/noct-macos
+        run: mv build/noctcli build/noctcli-macos
       - name: Upload macOS binary
         uses: actions/upload-artifact@v4
         with:
-          name: noct-macos
-          path: build/noct-macos
+          name: noctcli-macos
+          path: build/noctcli-macos
 
   release:
     name: Create GitHub Release
