@@ -178,44 +178,44 @@ set(NOCTLANG_LIBRARIES    ${LOCTLANG_LIBRARY})
 
 if(NOCTLANG_ENABLE_CLI)
   add_executable(
-    noct
+    noctcli
 
     src/cli.c
     src/cback.c
     src/elback.c
   )
 
-  target_link_libraries(noct PRIVATE
+  target_link_libraries(noctcli PRIVATE
     noctlang
   )
 
-  target_include_directories(noct PRIVATE
+  target_include_directories(noctcli PRIVATE
      ${NOCTLANG_INCLUDE_DIRS}
      ${CMAKE_CURRENT_SOURCE_DIR}/src
   )
 
   if(NOCTLANG_ENABLE_SHARED)
-    target_compile_definitions(noct PRIVATE USE_DLL)
+    target_compile_definitions(noctcli PRIVATE USE_DLL)
   endif()
 
   if(NOCTLANG_ENABLE_JIT)
-    target_compile_definitions(noct PRIVATE USE_JIT)
+    target_compile_definitions(noctcli PRIVATE USE_JIT)
   endif()
 
   if(NOCTLANG_ENABLE_I18N)
-    target_compile_definitions(noct PRIVATE USE_TRANSLATION)
+    target_compile_definitions(noctcli PRIVATE USE_TRANSLATION)
   endif()  
 
   if(WIN32)
     if(MSVC)
-      target_compile_options(noct PRIVATE /utf-8)
+      target_compile_options(noctcli PRIVATE /utf-8)
     else()
-      target_compile_options(noct PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+      target_compile_options(noctcli PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
     endif()
   endif()
 
   if(UNIX)
-    target_link_libraries(noct PRIVATE m)
+    target_link_libraries(noctcli PRIVATE m)
   endif()
 endif()
 
@@ -234,14 +234,13 @@ if(NOT NOCTLANG_DISABLE_INSTALL)
   install(TARGETS noctlang RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
   if(NOCTLANG_ENABLE_CLI)
-    install(TARGETS noct RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-  endif()
+    install(TARGETS noctcli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-  if (NOCTLANG_ENABLE_MDOC)
-    set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.mdoc")
-  else()
-    set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.man")
+    if(NOCTLANG_ENABLE_MDOC)
+      set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noctcli.1.mdoc")
+    else()
+      set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noctcli.1.man")
+    endif()
+    install(FILES ${NOCTLANG_MANPAGE} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 RENAME noct.1)
   endif()
-
-  install(FILES ${NOCTLANG_MANPAGE} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 RENAME noct.1)
 endif()

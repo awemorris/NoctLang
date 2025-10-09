@@ -40,7 +40,7 @@ func arch_test(name, toolchain, qemu) {
     }
 
     // Copy a binary.
-    if (shell("cp ../build-" + name + "/noct ./noct-arch") != 0) {
+    if (shell("cp ../build-" + name + "/noctcli ./noct-arch") != 0) {
         print("Copy failed.");
         return 0;
     }
@@ -97,7 +97,7 @@ func arch_test(name, toolchain, qemu) {
     // Run tests with JIT.
     print("JIT...");
     for(file in testcase) {
-        if (!run_testcase(qemu, "", file)) {
+        if (!run_testcase(qemu, "--force-jit", file)) {
 	    return 0;
 	}
     }
