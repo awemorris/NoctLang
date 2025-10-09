@@ -123,6 +123,7 @@ struct rt_func {
 
 	/* JIT-generated code. */
 	bool (*jit_code)(struct rt_env *env);
+	int call_count;
 
 	/* Function pointer. (if a cfunc) */
 	bool (*cfunc)(struct rt_env *env);

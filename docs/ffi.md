@@ -1343,8 +1343,19 @@ noct_set_return_make_string(
 
 ### Enable JIT
 
+When this variable is true, JIT compilation will be enabled.
+
 ```
-extern bool noct_conf_use_jit;
+bool noct_conf_jit_enable = true;
+```
+
+### JIT Thresould
+
+When JIT is enabled and the calling count of a function reached this
+value, code generation will be done for the function.
+
+```
+int noct_conf_jit_threshould = 5;
 ```
 
 ### Optimization Level
@@ -1353,7 +1364,7 @@ No optimization if `0`.
 Drop line info if `1`.
 
 ```
-extern int noct_conf_optimize;
+int noct_conf_optimize = 0;
 ```
 
 ### GC Nursery Region Size
@@ -1363,7 +1374,7 @@ Nursery is the first stage region.
 2 MB by default.
 
 ```
-extern size_t noct_conf_gc_nursery_size;
+size_t noct_conf_gc_nursery_size = 2 * 1024 * 1024;
 ```
 
 ### GC Graduate Region Size
@@ -1373,7 +1384,7 @@ Graduate is the second stage region.
 256 KB by default.
 
 ```
-extern size_t noct_conf_gc_graduate_size;
+size_t noct_conf_gc_graduate_size = 256 * 1024;
 ```
 
 ### GC Tenure Region Size
@@ -1383,7 +1394,7 @@ Tenure is the last stage region, i.e., tenure region size is the heap size.
 256 MB by default.
 
 ```
-extern size_t noct_conf_gc_tenure_size;
+extern size_t noct_conf_gc_tenure_size = 256 * 1024 * 1024;
 ```
 
 ### GC Large-Object-Promotion Threshold
@@ -1391,11 +1402,11 @@ extern size_t noct_conf_gc_tenure_size;
 32 KB by default.
 
 ```
-extern size_t noct_conf_gc_lop_threshold;
+extern size_t noct_conf_gc_lop_threshold = 32 * 1024;
 ```
 
 ### GC Tenure-Promotion Threshold
 
 ```
-extern size_t noct_conf_gc_promotion_threshold;
+size_t noct_conf_gc_promotion_threshold = 2;
 ```

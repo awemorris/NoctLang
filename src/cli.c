@@ -28,9 +28,6 @@
 /* Bytecode File Header */
 #define BYTECODE_HEADER		"Noct Bytecode"
 
-/* Runtime's configuration. */
-extern bool noct_conf_use_jit;
-
 /* i18n.c */
 #if defined(USE_TRANSLATION)
 void noct_init_locale(void);
@@ -77,9 +74,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* REPL */
-	if (argc == 1 ||
-	    (argc == 2 && strcmp(argv[1], "--disable-jit") == 0))
+	if (argc == 1)
 		return command_repl();
 
 	/* Command */
@@ -130,7 +125,12 @@ static int command_run(int argc, char *argv[])
 			break;
 
 		if (strcmp(argv[1], "--disable-jit") == 0) {
-			noct_conf_use_jit = false;
+			noct_conf_jit_enable = false;
+			file_arg++;
+			continue;
+		}
+		if (strcmp(argv[1], "--force-jit") == 0) {
+			noct_conf_jit_threshold = 0;
 			file_arg++;
 			continue;
 		}
@@ -141,7 +141,9 @@ static int command_run(int argc, char *argv[])
 
 	/* Check if a file is specified. */
 	if (file_arg == argc) {
-		wide_printf(N_TR("Specify a file.\n"));
+		/* No file specified, enter REPL. */
+		if (argc == 1)
+			return command_repl();
 		return 1;
 	}
 

@@ -43,7 +43,8 @@
 /*
  * Config
  */
-bool noct_conf_use_jit = true;
+bool noct_conf_jit_enable = true;
+int noct_conf_jit_threshold = 5;
 int noct_conf_optimize = 0;
 
 /* Forward declarations. */
@@ -142,7 +143,7 @@ rt_destroy_vm(
 	struct rt_func *func, *next_func;
 
 	/* Free the JIT region. */
-	if (noct_conf_use_jit)
+	if (noct_conf_jit_enable)
 		jit_free(vm->env_list);
 
 	/* Free global variables. */
@@ -359,12 +360,17 @@ rt_register_lir(
 		return false;
 
 	/* Do JIT compilation */
-	if (noct_conf_use_jit) {
-		/* Write code. */
-		jit_build(env, func);
+	if (noct_conf_jit_enable) {
+		if (noct_conf_jit_threshold == 0) {
+			/* Write code. */
+			if (!jit_build(env, func)) {
+				/* -1 means JIT failed. */
+				func->call_count = -1;
+			}
 
-		/* Need to commit before call. */
-		env->vm->is_jit_dirty = true;
+			/* Need to commit before call. */
+			env->vm->is_jit_dirty = true;
+		}
 	}
 
 	/* Link. */
@@ -689,8 +695,22 @@ rt_call(
 	rt_gc_safepoint(env);
 #endif
 
+	/* Do JIT compilation if needed. */
+	if (noct_conf_jit_enable && func->jit_code == NULL && func->call_count != -1) {
+		func->call_count++;
+		if (func->call_count == noct_conf_jit_threshold) {
+			if (!jit_build(env, func)) {
+				/* -1 means JIT failed. */
+				func->call_count = -1;
+			}
+
+			/* Need to commit before call. */
+			env->vm->is_jit_dirty = true;
+		}
+	}
+
 	/* Commit JIT-compiled code for the first time compilation. */
-	if (noct_conf_use_jit && env->vm->is_jit_dirty) {
+	if (noct_conf_jit_enable && env->vm->is_jit_dirty) {
 		jit_commit(env);
 		env->vm->is_jit_dirty = false;
 	}
@@ -742,7 +762,7 @@ rt_call(
 		*ret = env->frame->tmpvar[0];
 
 	/* Commit JIT-compiled code for dynamically imported inside the function. */
-	if (noct_conf_use_jit && env->vm->is_jit_dirty) {
+	if (noct_conf_jit_enable && env->vm->is_jit_dirty) {
 		jit_commit(env);
 		env->vm->is_jit_dirty = false;
 	}

@@ -52,7 +52,7 @@
  * Large Object Promotion Threshold - A new object that has a size
  * beyond this value will be allocated directly in the tenure region.
  */
-#define RT_GC_LOP_THRESHOLD		(32768)
+#define RT_GC_LOP_THRESHOLD		(32 * 1024)
 
 /*
  * Survivor Promotion Threshold - A graduate object that survived the

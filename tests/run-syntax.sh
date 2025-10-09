@@ -15,7 +15,7 @@ done
 echo "(JIT)";
 for tc in syntax/*.noct; do
     echo "$tc";
-    ../build/noct $tc > out || true;
+    ../build/noct --force-jit $tc > out || true;
     diff $tc.out out;
 done
 echo 'All tests passed.'

@@ -1196,7 +1196,10 @@ noct_set_return_make_string(
  */
 
 /* Enable JIT. */
-extern bool noct_conf_use_jit;
+extern bool noct_conf_jit_enable;
+
+/* JIT threshold. */
+extern int noct_conf_jit_threshold;
 
 /* Optimization level. */
 extern int noct_conf_optimize;
