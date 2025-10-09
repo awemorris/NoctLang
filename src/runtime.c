@@ -1725,7 +1725,7 @@ rt_make_dict_copy(
 	ACQUIRE_OBJ(src, src_real);
 
 	/* Make a dictionary */
-	d = rt_gc_alloc_dict(env, src_real->size);
+	d = rt_gc_alloc_dict(env, src_real->alloc_size);
 	if (d == NULL) {
 		RELEASE_OBJ(src_real);
 		return false;
