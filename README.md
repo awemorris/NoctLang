@@ -11,7 +11,7 @@ Noct is a tiny yet mighty programming language for scripting.
 
 ### Small, Fast, and Robust
 
-Only about 160 KB — with a fast JIT compiler, a robust generational GC,
+Only about 180 KB — with a fast JIT compiler, a robust generational GC,
 and a clean C/JS-like syntax featuring a novel Dictionary-based OOP model.
 
 ### Portable
@@ -59,7 +59,7 @@ found together in scripting languages:
 - **Lightweight JIT** — Fast execution in a tiny runtime.
 - **Generational GC** — Young semi-space copying + old mark-sweep-compact.
 - **Portable ANSI C** — No dependencies; runs everywhere.
-- **Tiny Footprint** — Runtime fits in ~160 KB.
+- **Tiny Footprint** — Runtime fits in ~180 KB.
 - **AOT Compilation** — Translate to C for JIT-restricted platforms. (e.g. iOS, Android)
 
 While most languages compromise on at least one of these,  
@@ -209,14 +209,14 @@ This design treats dictionaries as first-class objects, and the author refers to
 
 ```
 func main() {
-    // The base class definition. (A class is just a dictionary.)
+    // Base class definition. (A class is just a dictionary.)
     Animal = class {
         name: "Animal",
         cry: (this) => {
         }
     };
 
-    // The subclass definition. (This is just a dictionary merging.)
+    // Subclass definition. (This is just a dictionary merging.)
     Cat = extend Animal {
         name: "Cat",
         voice: "meow",
@@ -225,7 +225,7 @@ func main() {
         }
     };
 
-    // Make an instance. (Just a dictionary merging.)
+    // Instance generation. (This is just a dictionary merging.)
     var myCat = new Cat {
         voice: "neee"
     };
