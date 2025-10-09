@@ -1264,7 +1264,7 @@ rt_gc_promote_dict(
 
 		index = string_hash(old_dict->key[i].val.str->data) & (new_dict->alloc_size - 1);
 		for (j = index;
-		     j != (index - 1) & (new_dict->alloc_size - 1);
+		     j != ((index - 1) & (new_dict->alloc_size - 1));
 		     j = (j + 1) & (new_dict->alloc_size - 1)) {
 			if (new_dict->key[j].type != NOCT_VALUE_STRING) {
 				/* Copy the item. */

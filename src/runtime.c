@@ -1427,7 +1427,7 @@ rt_get_dict_elem_with_hash(
 
 	index = hash & (real_dict->alloc_size - 1);
 	for (i = index;
-	     i != (index - 1) & (real_dict->alloc_size - 1);
+	     i != ((index - 1) & (real_dict->alloc_size - 1));
 	     i = (i + 1) & (real_dict->alloc_size - 1)) {
 		if (IS_DICT_KEY_REMOVED(real_dict->key[i]))
 			continue;
@@ -1501,7 +1501,7 @@ rt_set_dict_elem_with_hash(
 	/* Search for the key to replace the value. */
 	index = hash & (real_dict->alloc_size - 1);
 	for (i = index;
-	     i != (index - 1) & (real_dict->alloc_size - 1);
+	     i != ((index - 1) & (real_dict->alloc_size - 1));
 	     i = (i + 1) & (real_dict->alloc_size - 1)) {
 		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
 		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
@@ -1541,7 +1541,7 @@ rt_set_dict_elem_with_hash(
 	/* Append. */
 	index = hash & (append_dict->alloc_size - 1);
 	for (i = index;
-	     i != (index - 1) & (append_dict->alloc_size - 1);
+	     i != ((index - 1) & (append_dict->alloc_size - 1));
 	     i = (i + 1) & (append_dict->alloc_size - 1)) {
 		if (IS_DICT_KEY_REMOVED(append_dict->key[i]) ||
 		    IS_DICT_KEY_EMPTY(append_dict->key[i])) {
@@ -1602,7 +1602,7 @@ rt_expand_dict(
 
 		index = string_hash(old_dict->key[i].val.str->data) & (new_dict->alloc_size - 1);
 		for (j = index;
-		     j != (index - 1) & (new_dict->alloc_size - 1);
+		     j != ((index - 1) & (new_dict->alloc_size - 1));
 		     j = (j + 1) & (new_dict->alloc_size - 1)) {
 			if (IS_DICT_KEY_EMPTY(new_dict->key[j])) {
 				/* Copy the key and values. */
@@ -1670,7 +1670,7 @@ rt_remove_dict_elem_with_hash(
 	/* Search for the key. */
 	index = hash & (real_dict->alloc_size - 1);
 	for (i = index;
-	     i != (index - 1) & (real_dict->alloc_size - 1);
+	     i != ((index - 1) & (real_dict->alloc_size - 1));
 	     i = (i + 1) & (real_dict->alloc_size - 1)) {
 		if (IS_DICT_KEY_REMOVED(real_dict->key[i]))
 			continue;
@@ -1828,7 +1828,7 @@ rt_check_global(
 
 	index = hash & (env->vm->global_alloc_size - 1) ;
 	for (i = index;
-	     i != (index - 1) & (env->vm->global_alloc_size - 1);
+	     i != ((index - 1) & (env->vm->global_alloc_size - 1));
 	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
 		if (env->vm->global[i].is_removed)
 			continue;
@@ -1891,7 +1891,7 @@ rt_get_global_with_hash(
 
 	index = hash & (env->vm->global_alloc_size - 1) ;
 	for (i = index;
-	     i != (index - 1) & (env->vm->global_alloc_size - 1);
+	     i != ((index - 1) & (env->vm->global_alloc_size - 1));
 	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
 		if (env->vm->global[i].is_removed)
 			continue;
@@ -1959,7 +1959,7 @@ rt_set_global_with_hash(
 	/* Search a place to insert or overwrite. */
 	index = hash & (env->vm->global_alloc_size - 1) ;
 	for (i = index;
-	     i != (index - 1) & (env->vm->global_alloc_size - 1);
+	     i != ((index - 1) & (env->vm->global_alloc_size - 1));
 	     i = (i + 1) & (env->vm->global_alloc_size - 1)) {
 		/* If found an empty entry. */
 		if (env->vm->global[i].is_removed ||
@@ -2022,7 +2022,7 @@ rt_expand_global(
 			continue;
 		index = string_hash(old_tbl[i].name) & (new_size - 1) ;
 		for (j = index;
-		     j != (index - 1) & (new_size - 1);
+		     j != ((index - 1) & (new_size - 1));
 		     j = (j + 1) & (new_size - 1)) {
 			if (new_tbl[j].name == NULL) {
 				new_tbl[j].name = old_tbl[i].name;
