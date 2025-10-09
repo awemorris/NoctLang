@@ -1269,13 +1269,12 @@ rt_check_dict_key(
 		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
 			continue;
 
-		if (IS_DICT_KEY_REMOVED(real_dict->key[i]) ||
-		    IS_DICT_KEY_EMPTY(real_dict->key[i]))
-			continue;
-
 		/* Make a hash cache. */
-		if (real_dict->key[i].val.str->hash == 0)
+		assert(real_dict->key[i].val.str != NULL);
+		if (real_dict->key[i].val.str->hash == 0) {
+			assert(real_dict->key[i].val.str->data != NULL);
 			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+		}
 
 		if (real_dict->key[i].val.str->len == len &&
 		    real_dict->key[i].val.str->hash == hash &&
