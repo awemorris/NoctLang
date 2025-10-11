@@ -232,7 +232,7 @@ static const char *win32_utf16_to_utf8(const wchar_t *utf16_message)
 /*
  * Recursively add files.
  */
-static bool add_file(const char *fname, bool (*add_file_hook)(const char *))
+bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 {
 	WIN32_FIND_DATAW wfd;
 	HANDLE hFind;
