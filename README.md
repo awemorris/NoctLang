@@ -19,11 +19,13 @@ and a clean C/JS-like syntax featuring a novel Dictionary-based OOP model.
 Written in portable ANSI C with no external dependencies, it runs
 everywhere — from desktop PCs down to Raspberry Pi.
 
-### Easy to Embed
+### Embeddable
 
-Embed Noct into your app and rebrand it as you like!
+Noct can be easily embedded into your applications.
+You are free to rebrand Noct as your own scripting language.
+By adding your own APIs, you can build a customized scripting runtime.
 For example, in [Playfield Engine](https://github.com/awemorris/PlayfieldEngine),
-we combine Noct with the game-specific APIs and call it Playfield Script.
+we integrate Noct with game-specific APIs and refer to it as Playfield Script.
 
 ## Status
 

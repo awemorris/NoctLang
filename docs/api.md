@@ -8,6 +8,28 @@ integrate into their applications. The `noct` command includes all
 APIs except those related to the GUI, while the `gnoct` command
 includes all APIs, including the GUI ones.
 
+---
+
+## System
+
+### System.import()
+
+Imports a script file or a bytecode file.
+
+```
+System.import("script.noct");
+```
+
+### System.shell()
+
+Runs a shell command.
+
+```
+System.shell("ls -lha");
+```
+
+---
+
 ## Math
 
 ### abs()
@@ -40,15 +62,7 @@ var y = cos(x);
 var y = tan(x);
 ```
 
-## System
-
-### System.shell()
-
-Runs a shell command.
-
-```
-System.shell("ls -lha");
-```
+---
 
 ## Console
 
