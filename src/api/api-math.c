@@ -67,7 +67,7 @@ bool noct_register_api_math(NoctEnv *env)
 		if (!noct_register_cfunc(
 			    env,
 			    ffi_items[i].global_name,
-			    1,
+			    ffi_items[i].param_count,
 			    ffi_items[i].param,
 			    ffi_items[i].cfunc,
 			    NULL))
