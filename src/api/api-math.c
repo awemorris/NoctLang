@@ -41,7 +41,7 @@ static struct ffi_item ffi_items[] = {
 	{"__Math_sin",		"sin",		1,	{"x"},	cfunc_Math_sin},
 	{"__Math_cos",		"cos",		1,	{"x"},	cfunc_Math_cos},
 	{"__Math_tan",		"tan",		1,	{"x"},	cfunc_Math_tan},
-	{"__Math_random",	"random",	1,	{"x"},	cfunc_Math_random},
+	{"__Math_random",	"random",	0,	{NULL},	cfunc_Math_random},
 };
 
 	
