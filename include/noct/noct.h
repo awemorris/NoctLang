@@ -33,7 +33,12 @@
 /*
  * Maximum arguments of a call.
  */
-#define NOCT_ARG_MAX	32
+#define NOCT_ARG_MAX		32
+
+/*
+ * Bytecode File Header
+ */
+#define NOCT_BYTECODE_HEADER	"Noct Bytecode"
 
 /*
  * Forward declaration of internal structs.
@@ -675,6 +680,16 @@ noct_error(
 	...);
 
 /*
+ * Writes the out-of-memory error message to the internal buffer.
+ *
+ * The message can be retrieved later using noct_get_error_message().
+ */
+NOCT_DLL
+void
+noct_out_of_memory(
+	NoctEnv *env);
+
+/*
  * Convenience Functions
  */
 
@@ -1218,5 +1233,27 @@ extern size_t noct_conf_gc_lop_threshold;
 
 /* GC tenure-promotion threshold. */
 extern size_t noct_conf_gc_promotion_threshold;
+
+/*
+ * Library Installation
+ */
+
+#define NOCT_REGISTER_ALL_APIS(env)	do { 			\
+		if (!noct_register_api_system(env))		\
+			return false;				\
+		if (!noct_register_api_console(env))		\
+			return false;				\
+		if (!noct_register_api_math(env))		\
+			return false;				\
+	} while (0)
+
+/* Register the "System.*" APIs. */
+bool noct_register_api_system(NoctEnv *env);
+
+/* Register the "Console.*" APIs. */
+bool noct_register_api_console(NoctEnv *env);
+
+/* Register the "Math.*" APIs. */
+bool noct_register_api_math(NoctEnv *env);
 
 #endif

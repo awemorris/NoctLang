@@ -323,42 +323,32 @@ var array = [1, 2, 3];
 array->resize(2);
 ```
 
-### substring()
+### charCount()
+
+Count characters. A wide character sequence will be counted as one character.
 
 ```
-var s1 = "ABCDEFG";
-var s2 = s1.substring(1, -1); // from the char 1, to the end "BCDEFG"
-}
+var s = "ABC文あいう";
+var l = s.charCount();
 ```
 
 ### charAt()
 
 ```
-var s = "ABC";
+var s = "ABC文あいう";
 for (i in 0 .. s.length) {
    var c = s->charAt(i);
    print(c);
 }
 ```
 
-### sin(), cos(), tan()
+### substring()
 
 ```
-var s = sin(x);
-var c = cos(x);
-var t = tan(x);
-```
-
-### abs()
-
-```
-var a = abs(x);
-```
-
-### random()
-
-```
-var r = random(); // 0 .. 1.0
+var s1 = "ABCDEFG";
+var s2 = s1.substring(0, 3); // from the char 0, three characters
+var s3 = s1.substring(2, -1); // from the char 1, to the end
+}
 ```
 
 ### fast_gc(), full_gc(), compact_gc()
@@ -375,6 +365,8 @@ compact_gc();
 ```
 
 ### unset()
+
+Unset a pair of dictionary key and value.
 
 ```
 var dic = {key1: "ABC"};

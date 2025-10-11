@@ -950,6 +950,14 @@ noct_error(
 	rt_error(env, "%s", tmp);
 }
 
+NOCT_DLL
+void
+noct_out_of_memory(
+	NoctEnv *env)
+{
+	noct_error(env, "Out-of-memory.");
+}
+
 /*
  * Convenience Functions
  */

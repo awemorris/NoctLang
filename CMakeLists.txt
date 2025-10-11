@@ -6,7 +6,7 @@ project(NoctLang LANGUAGES C)
 #
 
 option(NOCTLANG_ENABLE_CLI          "Build a CLI binary"          ON)
-option(NOCTLANG_ENABLE_JIT          "Enable JIT feature"          ON)
+option(NOCTLANG_ENABLE_JIT          "Enable JIT compilation"      ON)
 option(NOCTLANG_ENABLE_STATIC       "Build a static library"      OFF)
 option(NOCTLANG_ENABLE_SHARED       "Build a shared library"      OFF)
 option(NOCTLANG_ENABLE_OBJECT       "Build objects only"          OFF)
@@ -16,6 +16,10 @@ option(NOCTLANG_ENABLE_MDOC         "Install mdoc(7) man page"    OFF)
 option(NOCTLANG_DISABLE_INSTALL     "Install mdoc(7) man page"    OFF)
 option(NOCTLANG_TARGET_WASM         "Build for Emscripten"        OFF)
 option(NOCTLANG_TARGET_UNITY        "Build for Unity"             OFF)
+
+option(NOCTLANG_API_SYSTEM	    "Add System.* API"            ON)
+option(NOCTLANG_API_CONSOLE	    "Add Console.* API"           ON)
+option(NOCTLANG_API_MATH	    "Add Math.* API"              ON)
 
 #
 # Debug/Release
@@ -69,54 +73,71 @@ endif()
 # FLEX
 #
 
-find_package(FLEX REQUIRED)
-
-FLEX_TARGET(Lexer
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/lexer.l
-  ${CMAKE_CURRENT_BINARY_DIR}/lexer.yy.c
-  COMPILE_FLAGS "--prefix=ast_yy"
-)
+#find_package(FLEX REQUIRED)
+#
+#FLEX_TARGET(Lexer
+#  ${CMAKE_CURRENT_SOURCE_DIR}/src/core/lexer.l
+#  ${CMAKE_CURRENT_BINARY_DIR}/lexer.yy.c
+#  COMPILE_FLAGS "--prefix=ast_yy"
+#)
 
 #
 # BISON
 #
 
-find_package(BISON REQUIRED)
-
-BISON_TARGET(Parser
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.y
-  ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.c
-  DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.h
-  COMPILE_FLAGS "-p ast_yy -Wcounterexamples"
-)
+#find_package(BISON REQUIRED)
+#
+#BISON_TARGET(Parser
+#  ${CMAKE_CURRENT_SOURCE_DIR}/src/core/parser.y
+#  ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.c
+#  DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.h
+#  COMPILE_FLAGS "-p ast_yy -Wcounterexamples"
+#)
 
 #
 # Library Target
 #
 
+# Base source.
 set(NOCTLANG_BASE_SOURCE
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
-  src/ast.c
-  src/hir.c
-  src/lir.c
-  src/noct.c
-  src/runtime.c
-  src/interpreter.c
-  src/jit.c
-  src/execution.c
-  src/intrinsics.c
-  src/gc.c
-  src/hash.c
+  src/core/ast.c
+  src/core/hir.c
+  src/core/lir.c
+  src/core/noct.c
+  src/core/runtime.c
+  src/core/interpreter.c
+  src/core/jit.c
+  src/core/execution.c
+  src/core/intrinsics.c
+  src/core/gc.c
+  src/core/hash.c
+  src/core/lexer.yy.c
+  src/core/parser.tab.c
 )
 
+# Library sources.
+set(NOCTLANG_API_SOURCES)
+if(NOCTLANG_API_SYSTEM)
+  set(NOCTLANG_API_SOURCES ${NOCTLANG_API_SOURCES} src/api/api-system.c)
+endif()
+if(NOCTLANG_API_CONSOLE)
+  set(NOCTLANG_API_SOURCES ${NOCTLANG_API_SOURCES} src/api/api-console.c)
+endif()
+if(NOCTLANG_API_MATH)
+  set(NOCTLANG_API_SOURCES ${NOCTLANG_API_SOURCES} src/api/api-math.c)
+endif()
+
+# i18n sources.
 if(NOCTLANG_ENABLE_I18N)
   set(NOCTLANG_I18N_SOURCE
-    src/i18n.c
-    src/translation.c
+    src/i18n/i18n.c
+    src/i18n/translation.c
   )
 endif()
 
+# Library type.
 if(NOCTLANG_ENABLE_SHARED)
   set(NOCTLANG_LIB_TYPE SHARED)
 elseif(NOCTLANG_ENABLE_OBJECT)
@@ -125,40 +146,41 @@ else()
   set(NOCTLANG_LIB_TYPE STATIC)
 endif()
 
+# Add the library.
 add_library(
   noctlang
   ${NOCTLANG_LIB_TYPE}
+
   ${NOCTLANG_BASE_SOURCE}
+  ${NOCTLANG_API_SOURCES}
   ${NOCTLANG_I18N_SOURCE}
 )
 
+# Add include directories.
 target_include_directories(noctlang PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(noctlang PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 
+# Add macros.
 if(NOCTLANG_ENABLE_SHARED)
   target_compile_definitions(noctlang PRIVATE USE_DLL DLL_IMPL)
 endif()
-
 if(NOCTLANG_ENABLE_JIT)
   target_compile_definitions(noctlang PRIVATE USE_JIT)
 endif()
-
 if(NOCTLANG_ENABLE_MULTITHREAD)
   target_compile_definitions(noctlang PRIVATE USE_MULTITHREAD)
 endif()
-
 if(NOCTLANG_ENABLE_I18N)
   target_compile_definitions(noctlang PRIVATE USE_TRANSLATION)
 endif()  
-
 if(NOCTLANG_TARGET_WASM)
   target_compile_definitions(noctlang PRIVATE USE_WASM)
 endif()
-
 if(NOCTLANG_TARGET_UNITY)
   target_compile_definitions(noctlang PRIVATE USE_UNITY)
 endif()
 
+# Win32 Unicode settings.
 if(WIN32)
   if(MSVC)
     target_compile_options(noctlang PRIVATE /utf-8)
@@ -167,6 +189,7 @@ if(WIN32)
   endif()
 endif()
 
+# Export variables.
 set(NOCTLANG_INCLUDE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(NOCTLANG_INCLUDE_DIRS ${NOCTLANG_INCLUDE_DIR})
 set(NOCTLANG_LIBRARY      $<TARGET_FILE:noctlang>)
@@ -178,44 +201,53 @@ set(NOCTLANG_LIBRARIES    ${LOCTLANG_LIBRARY})
 
 if(NOCTLANG_ENABLE_CLI)
   add_executable(
-    noctcli
-
-    src/cli.c
-    src/cback.c
-    src/elback.c
+    noct
+    src/core/cback.c
+    src/core/elback.c
+    src/cli/cli-main.c
+    src/cli/cli-run.c
+    src/cli/cli-compile.c
+    src/cli/cli-ctrans.c
+    src/cli/cli-eltrans.c
+    src/cli/cli-repl.c
+    src/cli/cli-ffi.c
   )
 
-  target_link_libraries(noctcli PRIVATE
+  # Define feature macros.
+  if(NOCTLANG_ENABLE_SHARED)
+    target_compile_definitions(noct PRIVATE USE_DLL)
+  endif()
+  if(NOCTLANG_ENABLE_JIT)
+    target_compile_definitions(noct PRIVATE USE_JIT)
+  endif()
+  if(NOCTLANG_ENABLE_I18N)
+    target_compile_definitions(noct PRIVATE USE_TRANSLATION)
+  endif()  
+
+  # Include include/noct/ and src/core/.
+  target_include_directories(noct PRIVATE
+     ${NOCTLANG_INCLUDE_DIRS}
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+  )
+
+  # Link libnoctlang.
+  target_link_libraries(noct
+    PRIVATE
     noctlang
   )
 
-  target_include_directories(noctcli PRIVATE
-     ${NOCTLANG_INCLUDE_DIRS}
-     ${CMAKE_CURRENT_SOURCE_DIR}/src
-  )
-
-  if(NOCTLANG_ENABLE_SHARED)
-    target_compile_definitions(noctcli PRIVATE USE_DLL)
+  # Add -m on UNIX.
+  if(UNIX)
+    target_link_libraries(noct PRIVATE m)
   endif()
 
-  if(NOCTLANG_ENABLE_JIT)
-    target_compile_definitions(noctcli PRIVATE USE_JIT)
-  endif()
-
-  if(NOCTLANG_ENABLE_I18N)
-    target_compile_definitions(noctcli PRIVATE USE_TRANSLATION)
-  endif()  
-
+  # Win32 Unicode settings.
   if(WIN32)
     if(MSVC)
-      target_compile_options(noctcli PRIVATE /utf-8)
+      target_compile_options(noct PRIVATE /utf-8)
     else()
-      target_compile_options(noctcli PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+      target_compile_options(noct PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
     endif()
-  endif()
-
-  if(UNIX)
-    target_link_libraries(noctcli PRIVATE m)
   endif()
 endif()
 
@@ -234,12 +266,12 @@ if(NOT NOCTLANG_DISABLE_INSTALL)
   install(TARGETS noctlang RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
   if(NOCTLANG_ENABLE_CLI)
-    install(TARGETS noctcli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS noct RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
     if(NOCTLANG_ENABLE_MDOC)
-      set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noctcli.1.mdoc")
+      set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.mdoc")
     else()
-      set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noctcli.1.man")
+      set(NOCTLANG_MANPAGE "${CMAKE_SOURCE_DIR}/man/noct.1.man")
     endif()
     install(FILES ${NOCTLANG_MANPAGE} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 RENAME noct.1)
   endif()
