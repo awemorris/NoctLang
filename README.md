@@ -29,7 +29,11 @@ we integrate Noct with game-specific APIs and refer to it as Playfield Script.
 
 ## Status
 
-Actively developed while remaining stable.
+Actively developed while remaining stable!
+
+The core virtual machine of the Noct language has been completed and is already being used through integration with other projects.
+
+Current development efforts focus on building the standard library, the standalone Noct command, and the package management system.
 
 ### JIT Targets:
 
