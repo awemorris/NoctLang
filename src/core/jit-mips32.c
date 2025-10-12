@@ -218,10 +218,10 @@ static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
 
 #define ASM_BINARY_OP(f)                                                                        \
         ASM {                                                                                   \
-                /* $s0: rt */                                                                   \
-                /* $s1: &rt->frame->tmpvar[0] */                                                \
+                /* $s0: env */                                                                  \
+                /* $s1: &env->frame->tmpvar[0] */                                               \
                                                                                                 \
-                /* Arg1 $a0 = rt */                                                             \
+                /* Arg1 $a0 = env */                                                            \
                 /* move $a0, $s0 */             IW(0x02002025);                                 \
                                                                                                 \
                 /* Arg2 $a1 = dst */                                                            \
@@ -248,10 +248,10 @@ static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
 
 #define ASM_UNARY_OP(f)                                                                         \
         ASM {                                                                                   \
-                /* $s0: rt */                                                                   \
-                /* $s1: &rt->frame->tmpvar[0] */                                                \
+                /* $s0: env */                                                                  \
+                /* $s1: &env->frame->tmpvar[0] */                                               \
                                                                                                 \
-                /* Arg1 $a0 = rt */                                                             \
+                /* Arg1 $a0 = env */                                                            \
                 /* move $a0, $s0 */             IW(0x02002025);                                 \
                                                                                                 \
                 /* Arg2 $a1 = dst */                                                            \
@@ -287,10 +287,10 @@ jit_visit_lineinfo_op(
         CONSUME_IMM32(line);
 
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* rt->line = line; */
+                /* env->line = line; */
                 /* li $t0, line */      IW(0x24080000 | lo16(line));
                 /* sw $t0, 4($s0) */    IW(0xae080004);
         }
@@ -312,16 +312,16 @@ jit_visit_assign_op(
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
 
-        /* rt->frame->tmpvar[dst] = rt->frame->tmpvar[src]; */
+        /* env->frame->tmpvar[dst] = env->frame->tmpvar[src]; */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* $t0 = dst_addr = &rt->frame->tmpvar[dst] */
+                /* $t0 = dst_addr = &env->frame->tmpvar[dst] */
                 /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
 
-                /* $t1 = src_addr = &rt->frame->tmpvar[src] */
+                /* $t1 = src_addr = &env->frame->tmpvar[src] */
                 /* li $t1, src */               IW(0x24090000 | lo16((uint32_t)src));
                 /* addu $t1, $t1, $s1 */        IW(0x01314821);
 
@@ -350,18 +350,18 @@ jit_visit_iconst_op(
 
         /* Set an integer constant. */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* $t0 = dst_addr = &rt->frame->tmpvar[dst] */
+                /* $t0 = dst_addr = &env->frame->tmpvar[dst] */
                 /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
 
-                /* rt->frame->tmpvar[dst].type = RT_VALUE_INT */
+                /* env->frame->tmpvar[dst].type = RT_VALUE_INT */
                 /* li $t1, 0 */                 IW(0x24090000);
                 /* sw $t1, 0($t0) */            IW(0xad090000);
 
-                /* rt->frame->tmpvar[dst].val.i = val */
+                /* env->frame->tmpvar[dst].val.i = val */
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16(val));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16(val));
                 /* sw  $t1, 4($t0) */           IW(0xad090004);
@@ -385,18 +385,18 @@ jit_visit_fconst_op(
 
         /* Set a floating-point constant. */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* $t0 = dst_addr = &rt->frame->tmpvar[dst] */
+                /* $t0 = dst_addr = &env->frame->tmpvar[dst] */
                 /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
 
-                /* rt->frame->tmpvar[dst].type = RT_VALUE_FLOAT */
+                /* env->frame->tmpvar[dst].type = RT_VALUE_FLOAT */
                 /* li $t1, 1 */                 IW(0x24090001);
                 /* sw $t1, 0($t0) */            IW(0xad090000);
 
-                /* rt->frame->tmpvar[dst].val.i = val */
+                /* env->frame->tmpvar[dst].val.i = val */
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16(val));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16(val));
                 /* sw  $t1, 4($t0) */           IW(0xad090004);
@@ -421,10 +421,10 @@ jit_visit_sconst_op(
         f = (uint32_t)rt_make_string_with_hash;
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_string_with_hash(rt, &rt->frame->tmpvar[dst], val, len, hash); */
+        /* rt_make_string_with_hash(env, &env->frame->tmpvar[dst], val, len, hash); */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* addiu $sp, $sp, -32 */       IW(0x27bdffe0);
 
@@ -432,7 +432,7 @@ jit_visit_sconst_op(
                 /* move $a0, $s0 */             IW(0x02002025);
                 /* sw $a0, 0($sp) */            IW(0xafa40000);
 
-                /* Arg2 $a1 = [sp+4] = dst_addr = &rt->frame->tmpvar[dst] */
+                /* Arg2 $a1 = [sp+4] = dst_addr = &env->frame->tmpvar[dst] */
                 /* li $a1, dst */               IW(0x24050000 | lo16((uint32_t)dst));
                 /* addu $a1, $a1, $s1 */        IW(0x00b12821);
                 /* sw $a1, 4($sp) */            IW(0xafa50004);
@@ -482,15 +482,15 @@ jit_visit_aconst_op(
         f = (uint32_t)rt_make_empty_array;
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_empty_array(rt, &rt->frame->tmpvar[dst]); */
+        /* rt_make_empty_array(env, &env->frame->tmpvar[dst]); */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* Arg1 $a0 = rt */
                 /* move $a0, $s0 */             IW(0x02002025);
 
-                /* Arg2 $a1 = dst_addr = &rt->frame->tmpvar[dst] */
+                /* Arg2 $a1 = dst_addr = &env->frame->tmpvar[dst] */
                 /* li $a1, dst */               IW(0x24050000 | lo16((uint32_t)dst));
                 /* addu $a1, $a1, $s1 */        IW(0x00b12821);
 
@@ -523,15 +523,15 @@ jit_visit_dconst_op(
         f = (uint32_t)rt_make_empty_dict;
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+        /* rt_make_empty_dict(env, &env->frame->tmpvar[dst]); */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* Arg1 $a0 = rt */
                 /* move $a0, $s0 */             IW(0x02002025);
 
-                /* Arg2 $a1 = dst_addr = &rt->frame->tmpvar[dst] */
+                /* Arg2 $a1 = dst_addr = &env->frame->tmpvar[dst] */
                 /* li $a1, dst */               IW(0x24050000 | lo16((uint32_t)dst));
                 /* addu $a1, $a1, $s1 */        IW(0x00b12821);
 
@@ -564,14 +564,14 @@ jit_visit_inc_op(
 
         /* Increment an integer. */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* $t0 = dst_addr = &rt->frame->tmpvar[dst] */
+                /* $t0 = dst_addr = &env->frame->tmpvar[dst] */
                 /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
 
-                /* rt->frame->tmpvar[dst].val.i++ */
+                /* env->frame->tmpvar[dst].val.i++ */
                 /* lw    $t1, 4($t0) */         IW(0x8d090004);
                 /* addiu $t1, $t1, 1 */         IW(0x25290001);
                 /* sw    $t1, 4($t0) */         IW(0xad090004);
@@ -593,7 +593,7 @@ jit_visit_add_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_add_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_add_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_add_helper);
 
         return true;
@@ -612,7 +612,7 @@ jit_visit_sub_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_sub_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_sub_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_sub_helper);
 
         return true;
@@ -631,7 +631,7 @@ jit_visit_mul_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mul_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mul_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mul_helper);
 
         return true;
@@ -650,7 +650,7 @@ jit_visit_div_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_div_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_div_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_div_helper);
 
         return true;
@@ -669,7 +669,7 @@ jit_visit_mod_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mod_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mod_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mod_helper);
 
         return true;
@@ -688,7 +688,7 @@ jit_visit_and_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_and_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_and_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_and_helper);
 
         return true;
@@ -707,7 +707,7 @@ jit_visit_or_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_or_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_or_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_or_helper);
 
         return true;
@@ -726,7 +726,7 @@ jit_visit_xor_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_xor_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_xor_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_xor_helper);
 
         return true;
@@ -745,7 +745,7 @@ jit_visit_shl_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_shl_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_shl_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shl_helper);
 
         return true;
@@ -764,7 +764,7 @@ jit_visit_shr_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_shr_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_shr_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shr_helper);
 
         return true;
@@ -781,7 +781,7 @@ jit_visit_neg_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_neg_helper(rt, dst, src)) return false; */
+        /* if (!rt_neg_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_neg_helper);
 
         return true;
@@ -798,7 +798,7 @@ jit_visit_not_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_not_helper(rt, dst, src)) return false; */
+        /* if (!rt_not_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_not_helper);
 
         return true;
@@ -817,7 +817,7 @@ jit_visit_lt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lt_helper);
 
         return true;
@@ -836,7 +836,7 @@ jit_visit_lte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lte_helper);
 
         return true;
@@ -855,7 +855,7 @@ jit_visit_eq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_eq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_eq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_eq_helper);
 
         return true;
@@ -874,7 +874,7 @@ jit_visit_neq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_neq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_neq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_neq_helper);
 
         return true;
@@ -893,7 +893,7 @@ jit_visit_gte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gte_helper);
 
         return true;
@@ -912,7 +912,7 @@ jit_visit_gt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gt_helper);
 
         return true;
@@ -937,15 +937,15 @@ jit_visit_eqi_op(
 
         /* src1 == src2 */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* $t0 = rt->frame->tmpvar[src1].val.i */
+                /* $t0 = env->frame->tmpvar[src1].val.i */
                 /* li $t0, src1 */              IW(0x24080000 | lo16((uint32_t)src1));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
                 /* lw $t0, 4($t0) */            IW(0x8d080004);
 
-                /* $t1 = rt->frame->tmpvar[src2].val.i */
+                /* $t1 = env->frame->tmpvar[src2].val.i */
                 /* li $t1, src2 */              IW(0x24090000 | lo16((uint32_t)src2));
                 /* addu $t1, $t1, $s1 */        IW(0x01314821);
                 /* lw $t1, 4($t1) */            IW(0x8d290004);
@@ -970,7 +970,7 @@ jit_visit_loadarray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_loadarray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_loadarray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_loadarray_helper);
 
         return true;
@@ -989,7 +989,7 @@ jit_visit_storearray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_storearray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_storearray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_storearray_helper);
 
         return true;
@@ -1006,7 +1006,7 @@ jit_visit_len_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!jit_len_helper(rt, dst, src)) return false; */
+        /* if (!jit_len_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_len_helper);
 
         return true;
@@ -1025,7 +1025,7 @@ jit_visit_getdictkeybyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_getdictkeybyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_getdictkeybyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictkeybyindex_helper);
 
         return true;
@@ -1044,7 +1044,7 @@ jit_visit_getdictvalbyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_getdictvalbyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_getdictvalbyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictvalbyindex_helper);
 
         return true;
@@ -1067,10 +1067,10 @@ jit_visit_loadsymbol_op(
         src = (uint32_t)(intptr_t)src_s;
         f = (uint32_t)rt_loadsymbol_helper;
 
-        /* if (!jit_loadsymbol_helper(rt, dst, src, len, hash)) return false; */
+        /* if (!jit_loadsymbol_helper(env, dst, src, len, hash)) return false; */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* addiu $sp, $sp, -16 */       IW(0x27bdffe0);
 
@@ -1130,10 +1130,10 @@ jit_visit_storesymbol_op(
         dst = (uint32_t)(intptr_t)dst_s;
         f = (uint32_t)rt_storesymbol_helper;
 
-        /* if (!rt_storesymbol_helper(rt, dst, len, hash, src)) return false; */
+        /* if (!rt_storesymbol_helper(env, dst, len, hash, src)) return false; */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* addiu $sp, $sp, -32 */       IW(0x27bdffe0);
 
@@ -1195,10 +1195,10 @@ jit_visit_loaddot_op(
         field = (uint32_t)(intptr_t)field_s;
         f = (uint32_t)rt_loaddot_helper;
 
-        /* if (!rt_loaddot_helper(rt, dst, dict, field, len, hash)) return false; */
+        /* if (!rt_loaddot_helper(env, dst, dict, field, len, hash)) return false; */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* addiu $sp, $sp, -32 */       IW(0x27bdffe0);
 
@@ -1264,10 +1264,10 @@ jit_visit_storedot_op(
         field = (uint32_t)(intptr_t)field_s;
         f = (uint32_t)rt_storedot_helper;
 
-        /* if (!jit_storedot_helper(rt, dict, field, len, hash, src)) return false; */
+        /* if (!jit_storedot_helper(env, dict, field, len, hash, src)) return false; */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* addiu $sp, $sp, -32 */       IW(0x27bdffe0);
 
@@ -1356,10 +1356,10 @@ jit_visit_call_op(
 
         f = (uint32_t)rt_call_helper;
 
-        /* if (!rt_call_helper(rt, dst, func, arg_count, arg)) return false; */
+        /* if (!rt_call_helper(env, dst, func, arg_count, arg)) return false; */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* Arg1 $a0 = rt */
                 /* move $a0, $s0 */             IW(0x02002025);
@@ -1440,10 +1440,10 @@ jit_visit_thiscall_op(
 
         f = (uint32_t)rt_thiscall_helper;
 
-        /* if (!rt_thiscall_helper(rt, dst, obj, symbol, len, hash, arg_count, arg)) return false; */
+        /* if (!rt_thiscall_helper(env, dst, obj, symbol, len, hash, arg_count, arg)) return false; */
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
                 /* addiu $sp, $sp, -32 */       IW(0x27bdffe0);
 
@@ -1546,10 +1546,10 @@ jit_visit_jmpiftrue_op(
         src *= (int)sizeof(struct rt_value);
 
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* $at = rt->frame->tmpvar[src].val.i */
+                /* $at = env->frame->tmpvar[src].val.i */
                 /* li $t0, src */               IW(0x24080000 | tvar16(src));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
                 /* lw $at, 4($t0) */            IW(0x8d010004);
@@ -1588,10 +1588,10 @@ jit_visit_jmpiffalse_op(
         src *= (int)sizeof(struct rt_value);
 
         ASM {
-                /* $s0: rt */
-                /* $s1: &rt->frame->tmpvar[0] */
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
 
-                /* $at = rt->frame->tmpvar[src].val.i */
+                /* $at = env->frame->tmpvar[src].val.i */
                 /* li $t0, src */               IW(0x24080000 | tvar16(src));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
                 /* lw $at, 4($t0) */            IW(0x8d010004);
@@ -1652,7 +1652,7 @@ jit_visit_bytecode(
         /* Put a prologue. */
         ASM {
                 /* s0: rt */
-                /* s1: &rt->frame->tmpvar[0] */
+                /* s1: &env->frame->tmpvar[0] */
 
                 /* Push the general-purpose registers. */
                 /* addui $sp, $sp, -32 */       IW(0x27bdffe0);
@@ -1665,10 +1665,10 @@ jit_visit_bytecode(
                 /* sw $s6, 4($sp) */            IW(0xafb60004);
                 /* sw $s7, 0($sp) */            IW(0xafb70000);
 
-                /* s0 = rt */
+                /* s0 = env */
                 /* move $s0, $a0 */             IW(0x00808025);
 
-                /* s1 = *rt->frame = &rt->frame->tmpvar[0] */
+                /* s1 = *env->frame = &env->frame->tmpvar[0] */
                 /* lw $s1, 0($a0) */            IW(0x8c910000);
                 /* nop */                       IW(0x00000000);
                 /* lw $s1, 0($s1) */            IW(0x8e310000);

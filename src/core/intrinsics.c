@@ -66,12 +66,12 @@ static int utf8_to_utf32(const char *mbs, uint32_t *wc);
 
 bool
 rt_register_intrinsics(
-	struct rt_env *rt)
+	struct rt_env *env)
 {
 	int i;
 
 	for (i = 0; i < (int)(sizeof(intrin_items) / sizeof(struct intrin_item)); i++) {
-		if (!noct_register_cfunc(rt,
+		if (!noct_register_cfunc(env,
 					 intrin_items[i].reg_name,
 					 intrin_items[i].param_count,
 					 intrin_items[i].param,

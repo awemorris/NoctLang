@@ -608,7 +608,7 @@ jit_visit_assign_op(
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
 
-        /* rt->frame->tmpvar[dst] = rt->frame->tmpvar[src]; */
+        /* env->frame->tmpvar[dst] = env->frame->tmpvar[src]; */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -790,7 +790,7 @@ jit_visit_dconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* rt_make_empty_dict(rt, &rt->frame->tmpvar[dst]); */
+        /* rt_make_empty_dict(env, &env->frame->tmpvar[dst]); */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -833,10 +833,10 @@ jit_visit_inc_op(
                 ORI     (REG_T0, REG_ZERO, IMM12(dst));
                 ADD     (REG_T0, REG_S11, REG_T0);
 
-                /* rt->frame->tmpvar[dst].val.i++ */
+                /* env->frame->tmpvar[dst].val.i++ */
                 LW      (REG_T1, 8, REG_T0);            /* tmp = &env->frame->tmpvar[dst].val.i */
                 ADDI    (REG_T1, REG_T1, IMM12(1));     /* tmp++ */
-                SW      (REG_T1, 8, REG_T0);            /* rt->frame->tmpvar[dst].val.i = tmp */
+                SW      (REG_T1, 8, REG_T0);            /* env->frame->tmpvar[dst].val.i = tmp */
         }
 
         return true;
@@ -855,7 +855,7 @@ jit_visit_add_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_add_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_add_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_add_helper);
 
         return true;
@@ -874,7 +874,7 @@ jit_visit_sub_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_sub_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_sub_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_sub_helper);
 
         return true;
@@ -893,7 +893,7 @@ jit_visit_mul_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mul_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mul_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mul_helper);
 
         return true;
@@ -912,7 +912,7 @@ jit_visit_div_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_div_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_div_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_div_helper);
 
         return true;
@@ -931,7 +931,7 @@ jit_visit_mod_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_mod_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_mod_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_mod_helper);
 
         return true;
@@ -950,7 +950,7 @@ jit_visit_and_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_and_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_and_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_and_helper);
 
         return true;
@@ -969,7 +969,7 @@ jit_visit_or_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_or_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_or_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_or_helper);
 
         return true;
@@ -988,7 +988,7 @@ jit_visit_xor_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_xor_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_xor_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_xor_helper);
 
         return true;
@@ -1007,7 +1007,7 @@ jit_visit_shl_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_shl_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_shl_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shl_helper);
 
         return true;
@@ -1026,7 +1026,7 @@ jit_visit_shr_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_shr_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_shr_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_shr_helper);
 
         return true;
@@ -1043,7 +1043,7 @@ jit_visit_neg_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_neg_helper(rt, dst, src)) return false; */
+        /* if (!rt_neg_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_neg_helper);
 
         return true;
@@ -1060,7 +1060,7 @@ jit_visit_not_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!rt_not_helper(rt, dst, src)) return false; */
+        /* if (!rt_not_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_not_helper);
 
         return true;
@@ -1079,7 +1079,7 @@ jit_visit_lt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lt_helper);
 
         return true;
@@ -1098,7 +1098,7 @@ jit_visit_lte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_lte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_lte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_lte_helper);
 
         return true;
@@ -1117,7 +1117,7 @@ jit_visit_eq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_eq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_eq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_eq_helper);
 
         return true;
@@ -1136,7 +1136,7 @@ jit_visit_neq_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_neq_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_neq_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_neq_helper);
 
         return true;
@@ -1155,7 +1155,7 @@ jit_visit_gte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gte_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gte_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gte_helper);
 
         return true;
@@ -1174,7 +1174,7 @@ jit_visit_gt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_gt_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_gt_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_gt_helper);
 
         return true;
@@ -1201,12 +1201,12 @@ jit_visit_eqi_op(
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
 
-                /* t0 = &rt->frame->tmpvar[src1].val.i */
+                /* t0 = &env->frame->tmpvar[src1].val.i */
                 ORI     (REG_T0, REG_ZERO, IMM12(src1));
                 ADD     (REG_T0, REG_T0, REG_S11);
                 LW      (REG_T0, 8, REG_T0);
 
-                /* t1 = &rt->frame->tmpvar[src2].val.i */
+                /* t1 = &env->frame->tmpvar[src2].val.i */
                 ORI     (REG_T1, REG_ZERO, IMM12(src2));
                 ADD     (REG_T1, REG_T1, REG_S11);
                 LW      (REG_T1, 8, REG_T1);
@@ -1230,7 +1230,7 @@ jit_visit_loadarray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!rt_loadarray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!rt_loadarray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_loadarray_helper);
 
         return true;
@@ -1249,7 +1249,7 @@ jit_visit_storearray_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_storearray_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_storearray_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_storearray_helper);
 
         return true;
@@ -1266,7 +1266,7 @@ jit_visit_len_op(
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!jit_len_helper(rt, dst, src)) return false; */
+        /* if (!jit_len_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(rt_len_helper);
 
         return true;
@@ -1285,7 +1285,7 @@ jit_visit_getdictkeybyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_getdictkeybyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_getdictkeybyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictkeybyindex_helper);
 
         return true;
@@ -1304,7 +1304,7 @@ jit_visit_getdictvalbyindex_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        /* if (!jit_getdictvalbyindex_helper(rt, dst, src1, src2)) return false; */
+        /* if (!jit_getdictvalbyindex_helper(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(rt_getdictvalbyindex_helper);
 
         return true;
@@ -1324,7 +1324,7 @@ jit_visit_loadsymbol_op(
         CONSUME_STRING(src_s, len, hash);
         src = (uint64_t)(intptr_t)src_s;
 
-        /* if (!jit_loadsymbol_helper(rt, dst, src, len, hash)) return false; */
+        /* if (!jit_loadsymbol_helper(env, dst, src, len, hash)) return false; */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -1416,7 +1416,7 @@ jit_visit_loaddot_op(
         CONSUME_STRING(field_s, len, hash);
         field = (uint64_t)(intptr_t)field_s;
 
-        /* if (!rt_loaddot_helper(rt, dst, dict, field, len, hash)) return false; */
+        /* if (!rt_loaddot_helper(env, dst, dict, field, len, hash)) return false; */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -1466,7 +1466,7 @@ jit_visit_storedot_op(
         CONSUME_TMPVAR(src);
         field = (uint64_t)(intptr_t)field_s;
 
-        /* if (!jit_storedot_helper(rt, dict, field, len, hash, src)) return false; */
+        /* if (!jit_storedot_helper(env, dict, field, len, hash, src)) return false; */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -1535,7 +1535,7 @@ jit_visit_call_op(
                 arg_addr = 0;
         }
 
-        /* if (!rt_call_helper(rt, dst, func, arg_count, arg)) return false; */
+        /* if (!rt_call_helper(env, dst, func, arg_count, arg)) return false; */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -1600,7 +1600,7 @@ jit_visit_thiscall_op(
                 ctx->code = (uint32_t *)ctx->code + 1;
         }
 
-        /* if (!rt_thiscall_helper(rt, dst, obj, symbol, arg_count, arg)) return false; */
+        /* if (!rt_thiscall_helper(env, dst, obj, symbol, arg_count, arg)) return false; */
         ASM {
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
@@ -1691,12 +1691,12 @@ jit_visit_jmpiftrue_op(
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
 
-                /* t0 = &rt->frame->tmpvar[src].val.i */
+                /* t0 = &env->frame->tmpvar[src].val.i */
                 ORI     (REG_T0, REG_ZERO, IMM12(src));
                 ADD     (REG_T0, REG_S11, REG_T0);
                 LW      (REG_T0, 8, REG_T0);
 
-                /* Compare: rt->frame->tmpvar[dst].val.i != 0 */
+                /* Compare: env->frame->tmpvar[dst].val.i != 0 */
                 ORI     (REG_T1, REG_ZERO, IMM12(0));
         }
 
@@ -1735,12 +1735,12 @@ jit_visit_jmpiffalse_op(
                 /* s10: env */
                 /* s11: &env->frame->tmpvar[0] */
 
-                /* t0 = &rt->frame->tmpvar[src].val.i */
+                /* t0 = &env->frame->tmpvar[src].val.i */
                 ORI     (REG_T0, REG_ZERO, IMM12(src));
                 ADD     (REG_T0, REG_S11, REG_T0);
                 LW      (REG_T0, 8, REG_T0);
 
-                /* Compare: rt->frame->tmpvar[dst].val.i == 0 */
+                /* Compare: env->frame->tmpvar[dst].val.i == 0 */
                 ORI     (REG_T1, REG_ZERO, IMM12(0));
         }
 
@@ -1805,10 +1805,10 @@ jit_visit_bytecode(
                 SD      (REG_S10,  8, REG_SP);
                 SD      (REG_S11,  0, REG_SP);
 
-                /* s10 = rt */
+                /* s10 = env */
                 MV      (REG_S10, REG_A0);
 
-                /* s11 = &rt->frame->tmpvar[0] */
+                /* s11 = &env->frame->tmpvar[0] */
                 LD      (REG_S11, 0, REG_A0);
                 LD      (REG_S11, 0, REG_S11);
 
