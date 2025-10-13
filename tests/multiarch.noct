@@ -40,7 +40,7 @@ func arch_test(name, toolchain, qemu) {
     }
 
     // Copy a binary.
-    if (shell("cp ../build-" + name + "/noctcli ./noct-arch") != 0) {
+    if (shell("cp ../build-" + name + "/noct ./noct-arch") != 0) {
         print("Copy failed.");
         return 0;
     }
