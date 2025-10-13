@@ -171,7 +171,7 @@ static bool is_multiline_start(const char *text, bool *is_func)
 		if (s[2] == ' ' || s[2] == '\t' || s[2] == '\n' || s[2] == '(')
 			return true;
 	}
-	if (strncmp(s, "for", 2) == 0) {
+	if (strncmp(s, "for", 3) == 0) {
 		if (s[3] == ' ' || s[3] == '\t' || s[3] == '\n' || s[3] == '(')
 			return true;
 	}

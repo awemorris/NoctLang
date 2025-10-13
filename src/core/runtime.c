@@ -1277,7 +1277,7 @@ rt_check_dict_key(
 
 	ACQUIRE_OBJ(dict, real_dict);
 
-	len = strlen(key);
+	len = strlen(key) + 1; /* +1 for NUL */
 	hash = string_hash(key);
 	index = hash & (real_dict->alloc_size - 1);
 

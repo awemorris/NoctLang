@@ -24,6 +24,7 @@ static bool rt_intrin_int(NoctEnv *env);
 static bool rt_intrin_float(NoctEnv *env);
 static bool rt_intrin_push(NoctEnv *env);
 static bool rt_intrin_pop(NoctEnv *env);
+static bool rt_intrin_isset(NoctEnv *env);
 static bool rt_intrin_unset(NoctEnv *env);
 static bool rt_intrin_newArray(NoctEnv *env);
 static bool rt_intrin_resize(NoctEnv *env);
@@ -53,12 +54,11 @@ struct intrin_item {
 	{"charCount",  "__charCount", 1, {"this",               }, rt_intrin_charCount,  true,  NULL},
 	{"charAt",     "__charAt",    2, {"this", "index"       }, rt_intrin_charAt,     true,  NULL},
 	{"substring",  "__substring", 3, {"this", "start", "len"}, rt_intrin_substring,  true,  NULL},
+	{"isset",      "__isset",     2, {"this", "key"         }, rt_intrin_isset,      true,  NULL},
+	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true,  NULL},
 	{"fast_gc",    "fast_gc",     0, {NULL},                   rt_intrin_fast_gc,    false, NULL},
 	{"full_gc",    "full_gc",     0, {NULL},                   rt_intrin_full_gc,    false, NULL},
 	{"compact_gc", "compact_gc",  0, {NULL},                   rt_intrin_compact_gc, true,  NULL},
-#if !defined(USE_MULTITHREAD)
-	{"unset",      "__unset",     2, {"this", "key"         }, rt_intrin_unset,      true,  NULL},
-#endif
 };
 
 size_t get_string_length(const char *text);
@@ -608,6 +608,52 @@ static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 	return (int)octets;
 }
 
+/* isset() */
+static bool
+rt_intrin_isset(
+	struct rt_env *env)
+{
+	NoctValue arr, val, ret;
+	const char *val_s;
+	bool is_key_available;
+
+	noct_pin_local(env, 3, &arr, &val, &ret);
+
+	if (!noct_get_arg_check_dict(env, 0, &arr))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &val, &val_s))
+		return false;
+
+	if (!noct_check_dict_key(env, &arr, val_s, &is_key_available))
+		return false;
+
+	if (!noct_set_return_make_int(env, &ret, is_key_available ? 1 : 0))
+		return false;
+
+	return true;
+}
+
+/* unset() */
+static bool
+rt_intrin_unset(
+	struct rt_env *env)
+{
+	NoctValue arr, val;
+	const char *val_s;
+
+	noct_pin_local(env, 2, &arr, &val);
+
+	if (!noct_get_arg_check_dict(env, 0, &arr))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &val, &val_s))
+		return false;
+
+	if (!noct_remove_dict_elem(env, &arr, val_s))
+		return false;
+
+	return true;
+}
+
 /* fast_gc() */
 static bool
 rt_intrin_fast_gc(
@@ -632,26 +678,5 @@ rt_intrin_compact_gc(
 	NoctEnv *env)
 {
 	noct_compact_gc(env);
-	return true;
-}
-
-/* unset() */
-static bool
-rt_intrin_unset(
-	struct rt_env *env)
-{
-	NoctValue arr, val;
-	const char *val_s;
-
-	noct_pin_local(env, 2, &arr, &val);
-
-	if (!noct_get_arg_check_dict(env, 0, &arr))
-		return false;
-	if (!noct_get_arg_check_string(env, 1, &val, &val_s))
-		return false;
-
-	if (!noct_remove_dict_elem(env, &arr, val_s))
-		return false;
-
 	return true;
 }
