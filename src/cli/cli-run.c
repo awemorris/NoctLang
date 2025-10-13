@@ -58,6 +58,9 @@ int command_run(int argc, char *argv[])
 	if (!noct_create_vm(&vm, &env))
 		return 1;
 
+	/* Register libraries. */
+	NOCT_REGISTER_ALL_APIS(env);
+
 	/* Register FFI functions. */
 	if (!register_cli_ffi(env))
 		return 1;
