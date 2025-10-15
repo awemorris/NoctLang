@@ -106,8 +106,7 @@ cback_translate_func(
 	func_count++;
 
 	/* Put a prologue code. */
-	fprintf(fp, "#include \"runtime.h\"\n");
-	fprintf(fp, "#include \"execution.h\"\n");
+	fprintf(fp, "#include <noct/cback.h>\n");
 	fprintf(fp, "\n");
 	fprintf(fp, "bool L_%s(struct rt_env *env)\n", func->func_name);
 	fprintf(fp, "{\n");
@@ -142,61 +141,172 @@ cback_visit_bytecode(
 	return true;
 }
 
+/* Get a u8 from bytecode. */
+#define GET_U8(v) if (!cback_get_u8(func, pc, v)) return false
+static INLINE bool cback_get_u8(
+        struct lir_func *func,
+        int *pc,
+        int *val)
+{
+        if (*pc + 1 > func->bytecode_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *val = func->bytecode[*pc];     
+
+        *pc = *pc + 1;
+
+        return true;
+}
+
+/* Get a u16 from bytecode. */
+#define GET_U16(v) if (!cback_get_u16(func, pc, v)) return false
+static INLINE bool cback_get_u16(
+        struct lir_func *func,
+        int *pc,
+        int *val)
+{
+        if (*pc + 2 > func->bytecode_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *val = ((uint32_t)func->bytecode[*pc] << 8) |
+                (uint32_t)func->bytecode[*pc + 1];
+
+        *pc = *pc + 2;
+
+        return true;
+}
+
+/* Get a u16 tmpvar index from bytecode. */
+#define GET_TMPVAR(v) if (!cback_get_tmpvar(func, pc, v)) return false
+static INLINE bool cback_get_tmpvar(
+        struct lir_func *func,
+        int *pc,
+        int *val)
+{
+        if (*pc + 2 > func->bytecode_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *val = ((uint32_t)func->bytecode[*pc] << 8) |
+                (uint32_t)func->bytecode[*pc + 1];
+        if (*val >= (uint32_t)func->tmpvar_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *pc = *pc + 2;
+
+        return true;
+}
+
+/* Get a u32 from bytecode. */
+#define GET_U32(v) if (!cback_get_u32(func, pc, v)) return false
+static INLINE bool cback_get_u32(
+        struct lir_func *func,
+        int *pc,
+        uint32_t *val)
+{
+        if (*pc + 4 > func->bytecode_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *val = ((uint32_t)func->bytecode[*pc + 0] << 24) |
+               ((uint32_t)func->bytecode[*pc + 1] << 16) |
+               ((uint32_t)func->bytecode[*pc + 2] << 8) |
+                (uint32_t)func->bytecode[*pc + 3];
+
+        *pc = *pc + 4;
+
+        return true;
+}
+
+/* Get a u32 address from bytecode. */
+#define GET_ADDR(v) if (!cback_get_addr(func, pc, v)) return false
+static INLINE bool cback_get_addr(
+        struct lir_func *func,
+        int *pc,
+        uint32_t *val)
+{
+        if (*pc + 4 > func->bytecode_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *val = ((uint32_t)func->bytecode[*pc + 0] << 24) |
+               ((uint32_t)func->bytecode[*pc + 1] << 16) |
+               ((uint32_t)func->bytecode[*pc + 2] << 8) |
+                (uint32_t)func->bytecode[*pc + 3];
+
+        if (*val > (uint32_t)func->bytecode_size + 1) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *pc = *pc + 4;
+
+        return true;
+}
+
+/* Get a string from bytecode. */
+#define GET_STRING(s, l, h) if (!cback_get_string(func, pc, s, l, h)) return false
+static INLINE bool cback_get_string(
+        struct lir_func *func,
+        int *pc,
+        const char **s,
+        uint32_t *len,
+        uint32_t *hash)
+{
+        if (*pc + 8 > func->bytecode_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *len = ((uint32_t)func->bytecode[*pc + 0] << 24) |
+                ((uint32_t)func->bytecode[*pc + 1] << 16) |
+                ((uint32_t)func->bytecode[*pc + 2] << 8) |
+                (uint32_t)func->bytecode[*pc + 3];
+
+        *hash = ((uint32_t)func->bytecode[*pc + 4] << 24) |
+                ((uint32_t)func->bytecode[*pc + 5] << 16) |
+                ((uint32_t)func->bytecode[*pc + 6] << 8) |
+                (uint32_t)func->bytecode[*pc + 7];
+
+        if (*pc + 8 + *len > func->bytecode_size) {
+                puts(BROKEN_BYTECODE);
+                return false;
+        }
+
+        *s = (const char *)&func->bytecode[*pc + 8];
+
+        *pc = *pc + 8 + *len;
+
+        return true;
+}
+
+/* Put a label. */
 #define LABEL(pc) \
 	fprintf(fp, "L_pc_%d:\n", (pc));
 
+/* Unary OP macro. */
 #define UNARY_OP(helper)							\
-	uint32_t dst;								\
-	uint32_t src;								\
-										\
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {				\
-		printf(BROKEN_BYTECODE);					\
-		return false;							\
-	}									\
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |			\
-		(uint32_t)func->bytecode[*pc + 2];				\
-	if (dst >= (uint32_t)func->tmpvar_size) {				\
-		printf(BROKEN_BYTECODE);					\
-		return false;							\
-	}									\
-	src = ((uint32_t)func->bytecode[*pc + 3] << 8) | 			\
-		(uint32_t)func->bytecode[*pc + 4];				\
-	if (src >= (uint32_t)func->tmpvar_size) {				\
-		printf(BROKEN_BYTECODE);					\
-		return false;							\
-	}									\
-	*pc += 1 + 2 + 2;							\
+	int dst, src;								\
+	GET_TMPVAR(&dst);							\
+	GET_TMPVAR(&src);							\
 	fprintf(fp, "if (!" #helper "(env, (int)dst, (int)src))");		\
 	fprintf(fp, "    return false;\n");
 
+/* Binary OP macro. */
 #define BINARY_OP(helper)							\
-	uint32_t dst;								\
-	uint32_t src1;								\
-	uint32_t src2;								\
-										\
-	if (*pc + 1 + 2 + 2 + 2 > func->bytecode_size) {			\
-		printf(BROKEN_BYTECODE);					\
-		return false;							\
-	}									\
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) | 			\
-		(uint32_t)func->bytecode[*pc + 2];				\
-	if (dst >= (uint32_t)func->tmpvar_size) {				\
-		printf(BROKEN_BYTECODE);					\
-		return false;							\
-	}									\
-	src1 = ((uint32_t)func->bytecode[*pc + 3] << 8) |			\
-		(uint32_t)func->bytecode[*pc + 4];				\
-	if (src1 >= (uint32_t)func->tmpvar_size) {				\
-		printf(BROKEN_BYTECODE);					\
-		return false;							\
-	}									\
-	src2 = ((uint32_t)func->bytecode[*pc + 5] << 8) | 			\
-		(uint32_t)func->bytecode[*pc + 6];				\
-	if (src2 >= (uint32_t)func->tmpvar_size) {				\
-		printf(BROKEN_BYTECODE);					\
-		return false;							\
-	}									\
-	*pc += 1 + 2 + 2 + 2;							\
+	int dst, src1, src2;							\
+	GET_TMPVAR(&dst);							\
+	GET_TMPVAR(&src1);							\
+	GET_TMPVAR(&src2);							\
 	fprintf(fp, "if (!" #helper "(env, (int)dst, (int)src1, (int)src2))");	\
 	fprintf(fp, "    return false;\n");
 
@@ -206,18 +316,9 @@ cback_visit_lineinfo_op(
 	struct lir_func *func,
 	int *pc)
 {
-	int line;
+	uint32_t line;
 
-	if (*pc + 1 + 4 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	line = (func->bytecode[*pc + 1] << 24) |
-	       (func->bytecode[*pc + 2] << 16) |
-	       (func->bytecode[*pc + 3] << 8) |
-		func->bytecode[*pc + 4];
-	*pc += 5;
+	GET_U32(&line);
 
 	fprintf(fp, "/* line: %d */\n", line);
 
@@ -230,31 +331,12 @@ cback_visit_assign_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
-	uint32_t src;
+	int dst, src;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (src >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 5;
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src);
 
 	fprintf(fp, "env->frame->tmpvar[dst] = tmpvar[src];\n");
 
@@ -267,29 +349,13 @@ cback_visit_iconst_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
+	int dst;
 	uint32_t val;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	val = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-		(uint32_t)(func->bytecode[*pc + 4] << 16) |
-		(uint32_t)(func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
-
-	*pc += 1 + 2 + 4;
+	GET_TMPVAR(&dst);
+	GET_U32(&val);
 
 	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
 	fprintf(fp, "    env->frame->tmpvar[%d].val.i = %d;\n", dst, val);
@@ -303,35 +369,19 @@ cback_visit_fconst_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
+	int dst;
 	uint32_t raw;
 	float val;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	raw = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-		((uint32_t)func->bytecode[*pc + 4] << 16) |
-		((uint32_t)func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
+	GET_TMPVAR(&dst);
+	GET_U32(&raw);
 
 	val = *(float *)&raw;
 
-	*pc += 1 + 2 + 4;
-
 	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_FLOAT;\n", dst);
-	fprintf(fp, "    env->frame->tmpvar[%d].val.f = %f;\n", dst, val);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.f = %ff;\n", dst, val);
 
 	return true;
 }
@@ -342,32 +392,14 @@ cback_visit_sconst_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
+	int dst;
 	const char *s;
-	int len;
+	uint32_t len, hash;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2  > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) | (uint32_t)
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	s = (const char *)&func->bytecode[*pc + 3];
-	len = (int)strlen(s);
-	if (*pc + 1 + 2 + len + 1 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2 + len + 1;
+	GET_TMPVAR(&dst);
+	GET_STRING(&s, &len, &hash);
 
 	fprintf(fp, "    if (!rt_make_string(env, &env->frame->tmpvar[%d], \"%s\"))\n", dst, s);
 	fprintf(fp, "        return false;\n");
@@ -381,23 +413,11 @@ cback_visit_aconst_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
+	int dst;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2  > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2;
+	GET_TMPVAR(&dst);
 
 	fprintf(fp, "    if (!rt_make_empty_array(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
@@ -411,23 +431,11 @@ cback_visit_dconst_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
+	int dst;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2  > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2;
+	GET_TMPVAR(&dst);
 
 	fprintf(fp, "    if (!rt_make_empty_dict(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
@@ -441,23 +449,11 @@ cback_visit_inc_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
+	int dst;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2;
+	GET_TMPVAR(&dst);
 
 	fprintf(fp, "    env->frame->tmpvar[%d].val.i++;\n", dst);
 
@@ -714,25 +710,12 @@ cback_visit_loadsymbol_op(
 {
 	int dst;
 	const char *symbol;
-	int len;
+	uint32_t len, hash;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = (func->bytecode[*pc + 1] << 8) | (func->bytecode[*pc + 2]);
-
-	symbol = (const char *)&func->bytecode[*pc + 3];
-	len = (int)strlen(symbol);
-	if (*pc + 2 + len + 1 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2 + len + 1;
+	GET_TMPVAR(&dst);
+	GET_STRING(&symbol, &len, &hash);
 
 	fprintf(fp, "    if (!rt_loadsymbol_helper(env, %d, \"%s\"))\n", dst, symbol);
 	fprintf(fp, "        return false;\n");
@@ -747,22 +730,13 @@ cback_visit_storesymbol_op(
 	int *pc)
 {
 	const char *symbol;
-	uint32_t src;
-	int len;
+	uint32_t len, hash;
+	int src;
 
 	LABEL(*pc);
 
-	symbol = (const char *)&func->bytecode[*pc + 1];
-	len = (int)strlen(symbol);
-	if (*pc + 1 + len + 1 + 2 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 1 + len + 1] << 8) |
-		(uint32_t)(func->bytecode[*pc + 1 + len + 1 + 1]);
-
-	*pc += 1 + len + 1 + 2;
+	GET_STRING(&symbol, &len, &hash);
+	GET_TMPVAR(&src);
 
 	fprintf(fp, "    if (!rt_storesymbol_helper(env, \"%s\", %d))\n", symbol, src);
 	fprintf(fp, "        return false;\n");
@@ -776,40 +750,15 @@ cback_visit_loaddot_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t dst;
-	uint32_t dict;
+	int dst, dict;
 	const char *field;
-	int len;
+	uint32_t len, hash;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)(func->bytecode[*pc + 2]);
-	if (dst >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dict = ((uint32_t)func->bytecode[*pc + 3] << 8) |
-		(uint32_t)(func->bytecode[*pc + 4]);
-	if (dict >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	field = (const char *)&func->bytecode[*pc + 5];
-	len = (int)strlen(field);
-	if (*pc + 1 + 2  + 2 + len + 1 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2 + 2 + len + 1;
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&dict);
+	GET_STRING(&field, &len, &hash);
 
 	fprintf(fp, "    if (!rt_loaddot_helper(env, %d, %d, \"%s\"))\n", dst, dict, field);
 	fprintf(fp, "        return false;\n");
@@ -823,40 +772,15 @@ cback_visit_storedot_op(
 	struct lir_func *func,
 	int *pc)
 {
-	uint32_t src;
-	uint32_t dict;
+	int src, dict;
 	const char *field;
-	int len;
+	uint32_t len, hash;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dict = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)(func->bytecode[*pc + 2]);
-	if (dict >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	field = (const char *)&func->bytecode[*pc + 3];
-	len = (int)strlen(field);
-	if (*pc + 1 + 2  + 2 + len + 1 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 1 + 2 + len + 1] << 8) |
-	       ((uint32_t)func->bytecode[*pc + 1 + 2 + len + 1 + 1]);
-	if (src >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2 + 2 + len + 1;
+	GET_TMPVAR(&dict);
+	GET_STRING(&field, &len, &hash);
+	GET_TMPVAR(&src);
 
 	fprintf(fp, "    if (!rt_storedot_helper(env, %d, \"%s\", %d))\n", dict, field, src);
 	fprintf(fp, "        return false;\n");
@@ -879,26 +803,13 @@ cback_visit_call_op(
 
 	LABEL(*pc);
 
-	dst_tmpvar = (func->bytecode[*pc + 1] << 8) | func->bytecode[*pc + 2];
-	if (dst_tmpvar >= func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	func_tmpvar = (func->bytecode[*pc + 3] << 8) | func->bytecode[*pc + 4];
-	if (func_tmpvar >= func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	arg_count = func->bytecode[*pc + 5];
+	GET_TMPVAR(&dst_tmpvar);
+	GET_TMPVAR(&func_tmpvar);
+	GET_U8(&arg_count);
 	for (i = 0; i < arg_count; i++) {
-		arg_tmpvar = (func->bytecode[*pc + 6 + i * 2] << 8 ) | 
-			     func->bytecode[*pc + 6 + i * 2 + 1];
+		GET_TMPVAR(&arg_tmpvar);
 		arg[i] = arg_tmpvar;
 	}
-
-	*pc += 6 + arg_count * 2;
 
 	fprintf(fp, "    {\n");
 	fprintf(fp, "        int arg[%d] = {", arg_count);
@@ -921,7 +832,7 @@ cback_visit_thiscall_op(
 	int dst_tmpvar;
 	int obj_tmpvar;
 	const char *name;
-	int len;
+	uint32_t len, hash;
 	int arg_count;
 	int arg_tmpvar;
 	int arg[ARG_MAX];
@@ -929,38 +840,14 @@ cback_visit_thiscall_op(
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 2 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	dst_tmpvar = (func->bytecode[*pc + 1] << 8) | func->bytecode[*pc + 2];
-	if (dst_tmpvar >= func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	obj_tmpvar = (func->bytecode[*pc + 3] << 8) | func->bytecode[*pc + 4];
-	if (obj_tmpvar >= func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	name = (const char *)&func->bytecode[*pc + 5];
-	len = (int)strlen(name);
-	if (*pc + 1 + 2 + 2 + len + 1 + 1 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	arg_count = func->bytecode[*pc + 1 + 2 + 2 + len + 1];
+	GET_TMPVAR(&dst_tmpvar);
+	GET_TMPVAR(&obj_tmpvar);
+	GET_STRING(&name, &len, &hash);
+	GET_U8(&arg_count);
 	for (i = 0; i < arg_count; i++) {
-		arg_tmpvar = (func->bytecode[*pc + 1 + 2 + 2 + len + 1 + 1 + i * 2] << 8 ) | 
-			     func->bytecode[*pc + 1 + 2 + 2 + len + 1 + 1 + i * 2 + 1];
+		GET_TMPVAR(&arg_tmpvar);
 		arg[i] = arg_tmpvar;
 	}
-
-	*pc += 1 + 2 + 2 + len + 1 + 1 + arg_count * 2;
 
 	fprintf(fp, "    {\n");
 	fprintf(fp, "        int arg[%d] = {", arg_count);
@@ -984,21 +871,7 @@ cback_visit_jmp_op(
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 4 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	target = ((uint32_t)func->bytecode[*pc + 1] << 24) |
-		((uint32_t)func->bytecode[*pc + 2] << 16) |
-		((uint32_t)func->bytecode[*pc + 3] << 8) |
-		(uint32_t)func->bytecode[*pc + 4];
-	if (target > (uint32_t)func->bytecode_size + 1) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 4;
+	GET_ADDR(&target);
 
 	fprintf(fp, "    goto L_pc_%d;\n", target);
 
@@ -1011,33 +884,13 @@ cback_visit_jmpiftrue_op(
 	struct lir_func *func,
 	int *pc)
 {
+	int src;
 	uint32_t target;
-	uint32_t src;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (src >= (uint32_t)func->tmpvar_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	target = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-		((uint32_t)func->bytecode[*pc + 4] << 16) |
-		((uint32_t)func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
-	if (target > (uint32_t)func->bytecode_size + 1) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2 + 4;
+	GET_TMPVAR(&src);
+	GET_ADDR(&target);
 
 	fprintf(fp, "    if (env->frame->tmpvar[%d].val.i != 0)\n", src);
 	fprintf(fp, "        goto L_pc_%d;\n", target);
@@ -1051,33 +904,13 @@ cback_visit_jmpiffalse_op(
 	struct lir_func *func,
 	int *pc)
 {
+	int src;
 	uint32_t target;
-	uint32_t src;
 
 	LABEL(*pc);
 
-	if (*pc + 1 + 2 + 4 > func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	src = ((uint32_t)func->bytecode[*pc + 1] << 8) |
-		(uint32_t)func->bytecode[*pc + 2];
-	if (src >= (uint32_t)func->tmpvar_size + 1) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	target = ((uint32_t)func->bytecode[*pc + 3] << 24) |
-		((uint32_t)func->bytecode[*pc + 4] << 16) |
-		((uint32_t)func->bytecode[*pc + 5] << 8) |
-		(uint32_t)func->bytecode[*pc + 6];
-	if (target > (uint32_t)func->bytecode_size) {
-		printf(BROKEN_BYTECODE);
-		return false;
-	}
-
-	*pc += 1 + 2 + 4;
+	GET_TMPVAR(&src);
+	GET_ADDR(&target);
 
 	fprintf(fp, "    if (env->frame->tmpvar[%d].val.i == 0)\n", src);
 	fprintf(fp, "        goto L_pc_%d;\n", target);
@@ -1091,7 +924,11 @@ cback_visit_op(
 	struct lir_func *func,
 	int *pc)
 {
-	switch (func->bytecode[*pc]) {
+	int op;
+
+	GET_U8(&op);
+
+	switch (op) {
 	case OP_NOP:
 		/* NOP */
 		(*pc)++;
@@ -1281,7 +1118,7 @@ static bool cback_write_dll_init(void)
 {
 	int i, j;
 
-	fprintf(fp, "bool init_aot_code(NoctEnv *env)\n");
+	fprintf(fp, "bool init_aot_code(struct rt_env *env)\n");
 	fprintf(fp, "{\n");
 	for (i = 0; i < func_count; i++) {
 		fprintf(fp, "    {\n");

@@ -202,8 +202,8 @@ set(NOCTLANG_LIBRARIES    ${LOCTLANG_LIBRARY})
 if(NOCTLANG_ENABLE_CLI)
   add_executable(
     noct
-    src/core/cback.c
-    src/core/elback.c
+    src/backend/cback.c
+    src/backend/elback.c
     src/cli/cli-main.c
     src/cli/cli-run.c
     src/cli/cli-compile.c
@@ -224,10 +224,11 @@ if(NOCTLANG_ENABLE_CLI)
     target_compile_definitions(noct PRIVATE USE_TRANSLATION)
   endif()  
 
-  # Include include/noct/ and src/core/.
+  # Include include/noct/, src/core/, and src/backend/
   target_include_directories(noct PRIVATE
      ${NOCTLANG_INCLUDE_DIRS}
      ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/backend
   )
 
   # Link libnoctlang.
