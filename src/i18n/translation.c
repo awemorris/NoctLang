@@ -475,18 +475,18 @@ const char *noct_gettext(const char *msg)
         if (strcmp(lang_code, "ca") == 0) return "El símbol \"%s\" no s'ha trobat.";
         return "Symbol \"%s\" not found.";
     }
-    if (strcmp(msg, "Function arguments not match.") == 0) {
-        if (strcmp(lang_code, "es") == 0) return "Los argumentos de la función no coinciden.";
-        if (strcmp(lang_code, "fr") == 0) return "Les arguments de la fonction ne correspondent pas.";
-        if (strcmp(lang_code, "de") == 0) return "Die Funktionsargumente stimmen nicht überein.";
-        if (strcmp(lang_code, "it") == 0) return "Gli argomenti della funzione non corrispondono.";
-        if (strcmp(lang_code, "el") == 0) return "Τα ορίσματα της συνάρτησης δεν ταιριάζουν.";
-        if (strcmp(lang_code, "ru") == 0) return "Аргументы функции не совпадают.";
-        if (strcmp(lang_code, "zh") == 0) return "函数参数不匹配。";
-        if (strcmp(lang_code, "tw") == 0) return "函式參數不相符。";
-        if (strcmp(lang_code, "ja") == 0) return "関数の引数が一致しません。";
-        if (strcmp(lang_code, "ca") == 0) return "Els arguments de la funció no coincideixen.";
-        return "Function arguments not match.";
+    if (strcmp(msg, "%s(): Function arguments not match.") == 0) {
+        if (strcmp(lang_code, "es") == 0) return "%s(): Los argumentos de la función no coinciden.";
+        if (strcmp(lang_code, "fr") == 0) return "%s(): Les arguments de la fonction ne correspondent pas.";
+        if (strcmp(lang_code, "de") == 0) return "%s(): Die Funktionsargumente stimmen nicht überein.";
+        if (strcmp(lang_code, "it") == 0) return "%s(): Gli argomenti della funzione non corrispondono.";
+        if (strcmp(lang_code, "el") == 0) return "%s(): Τα ορίσματα της συνάρτησης δεν ταιριάζουν.";
+        if (strcmp(lang_code, "ru") == 0) return "%s(): Аргументы функции не совпадают.";
+        if (strcmp(lang_code, "zh") == 0) return "%s(): 函数参数不匹配。";
+        if (strcmp(lang_code, "tw") == 0) return "%s(): 函式參數不相符。";
+        if (strcmp(lang_code, "ja") == 0) return "%s(): 関数の引数が一致しません。";
+        if (strcmp(lang_code, "ca") == 0) return "%s(): Els arguments de la funció no coincideixen.";
+        return "%s(): Function arguments not match.";
     }
     if (strcmp(msg, "Element %d is not an integer.") == 0) {
         if (strcmp(lang_code, "es") == 0) return "El elemento %d no es un número entero.";

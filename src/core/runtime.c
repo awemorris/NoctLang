@@ -721,7 +721,7 @@ rt_call(
 
 	/* Pass args. */
 	if (arg_count != func->param_count) {
-		noct_error(env, N_TR("Function arguments not match."));
+		noct_error(env, N_TR("%s(): Function arguments not match."), func->name);
 		return false;
 	}
 	for (i = 0; i < arg_count; i++)

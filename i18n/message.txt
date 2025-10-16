@@ -430,17 +430,17 @@ tw:未找到符號 "%s"。
 ja:シンボル "%s" がみつかりません。
 ca:El símbol "%s" no s'ha trobat.
 ---
-ID:Function arguments not match.
-es:Los argumentos de la función no coinciden.
-fr:Les arguments de la fonction ne correspondent pas.
-de:Die Funktionsargumente stimmen nicht überein.
-it:Gli argomenti della funzione non corrispondono.
-el:Τα ορίσματα της συνάρτησης δεν ταιριάζουν.
-ru:Аргументы функции не совпадают.
-zh:函数参数不匹配。
-tw:函式參數不相符。
-ja:関数の引数が一致しません。
-ca:Els arguments de la funció no coincideixen.
+ID:%s(): Function arguments not match.
+es:%s(): Los argumentos de la función no coinciden.
+fr:%s(): Les arguments de la fonction ne correspondent pas.
+de:%s(): Die Funktionsargumente stimmen nicht überein.
+it:%s(): Gli argomenti della funzione non corrispondono.
+el:%s(): Τα ορίσματα της συνάρτησης δεν ταιριάζουν.
+ru:%s(): Аргументы функции не совпадают.
+zh:%s(): 函数参数不匹配。
+tw:%s(): 函式參數不相符。
+ja:%s(): 関数の引数が一致しません。
+ca:%s(): Els arguments de la funció no coincideixen.
 ---
 ID:Element %d is not an integer.
 es:El elemento %d no es un número entero.
