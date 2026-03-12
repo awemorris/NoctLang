@@ -583,6 +583,17 @@ cback_visit_neg_op(
 	return true;
 }
 
+/* Visit a LOP_NOT instruction. */
+static INLINE bool
+cback_visit_not_op(
+	struct lir_func *func,
+	int *pc)
+{
+	LABEL(*pc);
+	UNARY_OP(rt_not_helper);
+	return true;
+}
+
 /* Visit a LOP_LT instruction. */
 static INLINE bool
 cback_visit_lt_op(
@@ -1001,6 +1012,10 @@ cback_visit_op(
 		break;
 	case OP_NEG:
 		if (!cback_visit_neg_op(func, pc))
+			return false;
+		break;
+	case OP_NOT:
+		if (!cback_visit_not_op(func, pc))
 			return false;
 		break;
 	case OP_LT:
