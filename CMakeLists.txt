@@ -369,6 +369,9 @@ if(NOCT_ENABLE_CLI)
   if(NOCT_ENABLE_I18N)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_TRANSLATION)
   endif()  
+  if(NOCT_ENABLE_I18N_LIBINTL)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_LIBINTL)
+  endif()
 
   # Include include/noct/, src/core/, and src/backend/
   target_include_directories(noctcli PRIVATE
