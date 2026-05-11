@@ -94,9 +94,9 @@ jobs:
           wget https://noctvm.io/ci/openwatcom-1.9.tar.gz
           tar xzf openwatcom-1.9.tar.gz
           export WATCOM="`pwd`/openwatcom-1.9"
-          export PATH=$WATCOM/binl64:$WATCOM/binl:$WATCOM/binw:$PATH
-          export INCLUDE=$WATCOM/h
-          export EDPATH=$WATCOM/eddat
+          export PATH=${WATCOM}/binl64:${WATCOM}/binl:${WATCOM}/binw:${PATH}
+          export INCLUDE=${WATCOM}/h
+          export EDPATH=${WATCOM}/eddat
       - name: Build
         run: |
           cmake --preset msdos
