@@ -94,6 +94,7 @@ jobs:
           wget https://noctvm.io/ci/openwatcom-1.9.tar.gz
           tar xzf openwatcom-1.9.tar.gz
 
+          echo "watcom=$PWD/openwatcom-1.9" >> $GITHUB_ENV
           echo "WATCOM=$PWD/openwatcom-1.9" >> $GITHUB_ENV
           echo "INCLUDE=$PWD/openwatcom-1.9/h" >> $GITHUB_ENV
           echo "EDPATH=$PWD/openwatcom-1.9/eddat" >> $GITHUB_ENV
