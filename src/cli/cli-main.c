@@ -157,7 +157,7 @@ int wide_printf(const char *format, ...)
 /*
  * For POSIX
  */
-#if defined(NOCT_TARGET_POSIX)
+#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_MACOS)
 
 /*
  * Recursively add files.
