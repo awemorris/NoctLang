@@ -99,14 +99,14 @@ jobs:
           export EDPATH=$WATCOM/eddat
       - name: Build
         run: |
-          cmake --preset pc98
-          cmake --build --preset pc98
-          mv build-pc98/noct.exe build-pc98/noct98.exe
+          cmake --preset msdos
+          cmake --build --preset msdos
+          mv build-msdoc/noct.exe build-msdoc/noct98.exe
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: noct-pc98
-          path: build-pc98/noct98.exe
+          path: build-msdos/noct98.exe
 
   release:
     name: Create GitHub Release
