@@ -129,11 +129,18 @@ endif()
 
 # Determine the i18n files.
 if(NOCT_ENABLE_I18N)
-  set(
-    NOCT_I18N_SOURCE
-    src/i18n/i18n.c
-    src/i18n/translation.c
-  )
+  if(NOT NOCT_ENABLE_I18N_LIBINTL)
+    set(
+      NOCT_I18N_SOURCE
+      src/i18n/i18n.c
+      src/i18n/translation.c
+    )
+  else()
+    set(
+      NOCT_I18N_SOURCE
+      src/i18n/i18n.c
+    )
+  endif()
 endif()
 
 # Determine the base files.
