@@ -99,9 +99,8 @@ jobs:
           echo "INCLUDE=$PWD/openwatcom-1.9/h" >> $GITHUB_ENV
           echo "EDPATH=$PWD/openwatcom-1.9/eddat" >> $GITHUB_ENV
 
-          echo "$PWD/openwatcom-1.9/binl64" >> $GITHUB_PATH
-          echo "$PWD/openwatcom-1.9/binl" >> $GITHUB_PATH
           echo "$PWD/openwatcom-1.9/binw" >> $GITHUB_PATH
+          echo "$PWD/openwatcom-1.9/binl" >> $GITHUB_PATH
 
       - name: Build
         run: |
