@@ -711,8 +711,6 @@ static bool
 elback_visit_unary_expr(
 	struct hir_expr *expr)
 {
-	int opr_tmpvar;
-
 	assert(expr != NULL);
 	assert(expr->type == HIR_EXPR_NEG);
 

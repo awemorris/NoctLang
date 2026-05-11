@@ -40,9 +40,9 @@
  * Region Size
  */
 #if defined(NOCT_TARGET_DOS4G)
-#define RT_GC_NURSERY_SIZE		(1 * 1024 * 1024)
+#define RT_GC_NURSERY_SIZE		(64 * 1024)
 #define RT_GC_GRADUATE_SIZE		(256 * 1024)
-#define RT_GC_TENURE_SIZE		(8 * 1024 * 1024)
+#define RT_GC_TENURE_SIZE		(1 * 1024 * 1024)
 #elif defined(NOCT_TARGET_WASM)
 #define RT_GC_NURSERY_SIZE		(2 * 1024 * 1024)
 #define RT_GC_GRADUATE_SIZE		(256 * 1024)

@@ -30,15 +30,19 @@ static bool run_repl(void)
 	NoctEnv *env;
 
 	/* Create a runtime. */
-	if (!noct_create_vm(&vm, &env))
+	if (!noct_create_vm(&vm, &env)) {
+		wide_printf(N_TR("Out of memory.\n"));
 		return false;
+	}
 
 	/* Register libraries. */
 	NOCT_REGISTER_ALL_APIS(env);
 
 	/* Register FFI functions. */
-	if (!register_cli_cfunc(env))
+	if (!register_cli_cfunc(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
 		return false;
+	}
 
 	wide_printf(N_TR("Noct Programming Language\n"));
 	wide_printf(N_TR("Entering REPL mode.\n"));
@@ -141,8 +145,10 @@ static bool run_repl(void)
 
 		/* Make the "repl()" function updatable. */
 		noct_make_int(env, &zero, 0);
-		if (!noct_set_global(env, "repl", &zero))
+		if (!noct_set_global(env, "repl", &zero)) {
+			wide_printf(N_TR("Out of memory.\n"));
 			return false;
+		}
 	}
 
 	/* Destroy the runtime. */

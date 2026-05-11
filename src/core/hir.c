@@ -27,7 +27,11 @@
 #undef DEBUG_DUMP
 
 /* Arena allocator size. */
+#if !defined(NOCT_TARGET_DOS4G)
 #define ARENA_SIZE		(4 * 1024 * 1024)
+#else
+#define ARENA_SIZE		(512 * 1024)
+#endif
 
 /* List-add function. */
 #define HIR_ADD_TO_LAST(type, list, p)			\

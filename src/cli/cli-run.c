@@ -56,15 +56,19 @@ int command_run(int argc, char *argv[])
 	}
 
 	/* Create a runtime. */
-	if (!noct_create_vm(&vm, &env))
+	if (!noct_create_vm(&vm, &env)) {
+		wide_printf(N_TR("Out of memory.\n"));
 		return 1;
+	}
 
 	/* Register libraries. */
 	NOCT_REGISTER_ALL_APIS(env);
 
 	/* Register native functions. */
-	if (!register_cli_cfunc(env))
+	if (!register_cli_cfunc(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
 		return 1;
+	}
 
 	/* Load a file content. */
 	if (!load_file_content(argv[i], &data, &len))
@@ -102,8 +106,10 @@ int command_run(int argc, char *argv[])
 		if (arg_value == NULL)
 			return 1;
 		for (i = 0; i < arg_count; i++) {
-			if (!noct_make_string(env, &arg_value[i], argv[file_arg + i + 1]))
+			if (!noct_make_string(env, &arg_value[i], argv[file_arg + i + 1])) {
+				wide_printf(N_TR("Out of memory.\n"));
 				return 1;
+			}
 		}
 	} else {
 		arg_value = NULL;
