@@ -13,7 +13,6 @@
 #include "lir.h"
 #include "hir.h"
 #include "bytecode.h"
-#include "hash.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1947,7 +1946,7 @@ lir_put_string(
 		return false;
 
 	/* Put the hash. */
-	hash = string_hash(s);
+	hash = noct_string_hash(s);
 	if (!lir_put_u32(hash))
 		return false;
 
@@ -2263,12 +2262,10 @@ lir_dump(
 		case OP_NEG:
 		{
 			uint16_t dst;
-			uint16_t src1;
-			uint16_t src2;
+			uint16_t src;
 			IMM2(dst);
-			IMM2(src1);
-			IMM2(src2);
-			printf("%04d: NEG(dst:%d, src1:%d, src2: %d)\n", ofs, dst, src1, src2);
+			IMM2(src);
+			printf("%04d: NEG(dst:%d, src:%d)\n", ofs, dst, src);
 			break;
 		}
 		case OP_ADD:

@@ -82,7 +82,10 @@ static struct ffi_item ffi_items[] = {
 /*
  * Register "System.*" functions.
  */
-bool noct_register_api_system(NoctEnv *env)
+NOCT_DLL
+bool
+noct_register_api_system(
+	NoctEnv *env)
 {
 	NoctValue dict;
 	int i;

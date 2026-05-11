@@ -23,13 +23,13 @@
  * False assertion
  */
 
-#define NEVER_COME_HERE		0
+#define NEVER_COME_HERE	0
 
 /*
  * Constant
  */
 
-#define ARG_MAX			32
+#define ARG_MAX		32
 
 /*
  * Message
@@ -41,7 +41,7 @@ static const char BROKEN_BYTECODE[] = "Broken bytecode.";
  * Translated function names.
  */
 
-#define FUNC_MAX	(4096)
+#define FUNC_MAX	4096
 
 struct c_func {
 	char *name;
@@ -396,7 +396,10 @@ cback_visit_sconst_op(
 	GET_TMPVAR(&dst);
 	GET_STRING(&s, &len, &hash);
 
-	fprintf(fp, "    if (!rt_make_string(env, &env->frame->tmpvar[%d], \"%s\"))\n", dst, s);
+	len = strlen(s);
+	hash = noct_string_hash(s);
+
+	fprintf(fp, "    if (!ex_make_string_with_hash(env, &env->frame->tmpvar[%d], \"%s\", %uU, 0x%08x))\n", dst, s, len, hash);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -412,7 +415,7 @@ cback_visit_aconst_op(
 
 	GET_TMPVAR(&dst);
 
-	fprintf(fp, "    if (!rt_make_empty_array(env, &env->frame->tmpvar[%d]))\n", dst);
+	fprintf(fp, "    if (!ex_make_empty_array(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -428,7 +431,7 @@ cback_visit_dconst_op(
 
 	GET_TMPVAR(&dst);
 
-	fprintf(fp, "    if (!rt_make_empty_dict(env, &env->frame->tmpvar[%d]))\n", dst);
+	fprintf(fp, "    if (!ex_make_empty_dict(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -453,7 +456,7 @@ cback_visit_add_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_add_helper);
+	BINARY_OP(ex_add_helper);
 	return true;
 }
 
@@ -463,7 +466,7 @@ cback_visit_sub_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_sub_helper);
+	BINARY_OP(ex_sub_helper);
 	return true;
 }
 
@@ -473,7 +476,7 @@ cback_visit_mul_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_mul_helper);
+	BINARY_OP(ex_mul_helper);
 	return true;
 }
 
@@ -483,7 +486,7 @@ cback_visit_div_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_div_helper);
+	BINARY_OP(ex_div_helper);
 	return true;
 }
 
@@ -493,7 +496,7 @@ cback_visit_mod_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_mod_helper);
+	BINARY_OP(ex_mod_helper);
 	return true;
 }
 
@@ -503,7 +506,7 @@ cback_visit_and_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_and_helper);
+	BINARY_OP(ex_and_helper);
 	return true;
 }
 
@@ -513,7 +516,7 @@ cback_visit_or_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_or_helper);
+	BINARY_OP(ex_or_helper);
 	return true;
 }
 
@@ -523,7 +526,7 @@ cback_visit_xor_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_xor_helper);
+	BINARY_OP(ex_xor_helper);
 	return true;
 }
 
@@ -533,7 +536,7 @@ cback_visit_shl_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_shl_helper);
+	BINARY_OP(ex_shl_helper);
 	return true;
 }
 
@@ -543,7 +546,7 @@ cback_visit_shr_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_shr_helper);
+	BINARY_OP(ex_shr_helper);
 	return true;
 }
 
@@ -553,7 +556,7 @@ cback_visit_neg_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	UNARY_OP(rt_neg_helper);
+	UNARY_OP(ex_neg_helper);
 	return true;
 }
 
@@ -563,7 +566,7 @@ cback_visit_not_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	UNARY_OP(rt_not_helper);
+	UNARY_OP(ex_not_helper);
 	return true;
 }
 
@@ -573,7 +576,7 @@ cback_visit_lt_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_lt_helper);
+	BINARY_OP(ex_lt_helper);
 	return true;
 }
 
@@ -583,7 +586,7 @@ cback_visit_lte_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_lte_helper);
+	BINARY_OP(ex_lte_helper);
 	return true;
 }
 
@@ -593,7 +596,7 @@ cback_visit_gt_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_gt_helper);
+	BINARY_OP(ex_gt_helper);
 	return true;
 }
 
@@ -603,7 +606,7 @@ cback_visit_gte_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_gte_helper);
+	BINARY_OP(ex_gte_helper);
 	return true;
 }
 
@@ -613,7 +616,7 @@ cback_visit_eq_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_eq_helper);
+	BINARY_OP(ex_eq_helper);
 	return true;
 }
 
@@ -623,7 +626,7 @@ cback_visit_neq_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_neq_helper);
+	BINARY_OP(ex_neq_helper);
 	return true;
 }
 
@@ -633,7 +636,7 @@ cback_visit_storearray_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_storearray_helper);
+	BINARY_OP(ex_storearray_helper);
 	return true;
 }
 
@@ -643,7 +646,7 @@ cback_visit_loadarray_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_loadarray_helper);
+	BINARY_OP(ex_loadarray_helper);
 	return true;
 }
 
@@ -653,7 +656,7 @@ cback_visit_len_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	UNARY_OP(rt_len_helper);
+	UNARY_OP(ex_len_helper);
 	return true;
 }
 
@@ -663,7 +666,7 @@ cback_visit_getdictkeybyindex_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_getdictkeybyindex_helper);
+	BINARY_OP(ex_getdictkeybyindex_helper);
 	return true;
 }
 
@@ -673,7 +676,7 @@ cback_visit_getdictvalbyindex_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(rt_getdictvalbyindex_helper);
+	BINARY_OP(ex_getdictvalbyindex_helper);
 	return true;
 }
 
@@ -691,7 +694,7 @@ cback_visit_loadsymbol_op(
 	GET_TMPVAR(&dst);
 	GET_STRING(&symbol, &len, &hash);
 
-	fprintf(fp, "    if (!rt_loadsymbol_helper(env, %d, \"%s\", %uu, %uu))\n", dst, symbol, len, hash);
+	fprintf(fp, "    if (!ex_loadsymbol_helper(env, %d, \"%s\", %uu, %uu))\n", dst, symbol, len, hash);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -711,7 +714,7 @@ cback_visit_storesymbol_op(
 	GET_STRING(&symbol, &len, &hash);
 	GET_TMPVAR(&src);
 
-	fprintf(fp, "    if (!rt_storesymbol_helper(env, \"%s\", %uu, %uu, %d))\n", symbol, len, hash, src);
+	fprintf(fp, "    if (!ex_storesymbol_helper(env, \"%s\", %uu, %uu, %d))\n", symbol, len, hash, src);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -732,7 +735,7 @@ cback_visit_loaddot_op(
 	GET_TMPVAR(&dict);
 	GET_STRING(&field, &len, &hash);
 
-	fprintf(fp, "    if (!rt_loaddot_helper(env, %d, %d, \"%s\", %uu, %uu))\n", dst, dict, field, len, hash);
+	fprintf(fp, "    if (!ex_loaddot_helper(env, %d, %d, \"%s\", %uu, %uu))\n", dst, dict, field, len, hash);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -753,7 +756,7 @@ cback_visit_storedot_op(
 	GET_STRING(&field, &len, &hash);
 	GET_TMPVAR(&src);
 
-	fprintf(fp, "    if (!rt_storedot_helper(env, %d, \"%s\", %uu, %uu, %d))\n", dict, field, len, hash, src);
+	fprintf(fp, "    if (!ex_storedot_helper(env, %d, \"%s\", %uu, %uu, %d))\n", dict, field, len, hash, src);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -786,7 +789,7 @@ cback_visit_call_op(
 	for (i = 0; i < arg_count; i++)
 		fprintf(fp, "%d,", arg[i]);
 	fprintf(fp, "};\n");
-	fprintf(fp, "        if (!rt_call_helper(env, %d, %d, %d, arg))\n", dst_tmpvar, func_tmpvar, arg_count);
+	fprintf(fp, "        if (!ex_call_helper(env, %d, %d, %d, arg))\n", dst_tmpvar, func_tmpvar, arg_count);
 	fprintf(fp, "            return false;\n");
 	fprintf(fp, "    }\n");
 
@@ -822,7 +825,7 @@ cback_visit_thiscall_op(
 	for (i = 0; i < arg_count; i++)
 		fprintf(fp, "%d,", arg[i]);
 	fprintf(fp, "};\n");
-	fprintf(fp, "        if (!rt_thiscall_helper(env, %d, %d, \"%s\", %uu, %uu, %d, arg))\n", dst_tmpvar, obj_tmpvar, name, len, hash, arg_count);
+	fprintf(fp, "        if (!ex_thiscall_helper(env, %d, %d, \"%s\", %uu, %uu, %d, arg))\n", dst_tmpvar, obj_tmpvar, name, len, hash, arg_count);
 	fprintf(fp, "            return false;\n");
 	fprintf(fp, "    }\n");
 
@@ -1094,7 +1097,7 @@ static bool cback_write_dll_init(void)
 {
 	uint32_t i, j;
 
-	fprintf(fp, "bool init_aot_code(struct rt_env *env)\n");
+	fprintf(fp, "bool init_aot_code(NoctEnv *env)\n");
 	fprintf(fp, "{\n");
 	for (i = 0; i < func_count; i++) {
 		fprintf(fp, "    {\n");

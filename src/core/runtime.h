@@ -319,7 +319,7 @@ rt_register_bytecode(
 	size_t size,
 	uint8_t *data);
 
-/* Register an FFI C function. */
+/* Register a native function. */
 bool
 rt_register_cfunc(
 	struct rt_env *env,
@@ -364,7 +364,6 @@ rt_make_string(
 
 /* Make a string value. (hash version) */
 bool
-CDECL
 rt_make_string_with_hash(
 	struct rt_env *env,
 	struct rt_value *val,
@@ -377,13 +376,24 @@ void
 rt_cache_string_hash(
 	struct rt_string *rts);
 
+/* Get a string hash. */
+uint32_t
+rt_string_hash(
+	const char *s);
+
+/* Get a string hash and length. */
+void
+rt_string_hash_and_len(
+	const char *s,
+	uint32_t *hash,
+	uint32_t *len);
+
 /*
  * Array and Dictionary
  */
 
 /* Make an empty array. */
 bool
-CDECL
 rt_make_empty_array(
 	struct rt_env *env,
 	struct rt_value *val);
@@ -427,7 +437,6 @@ rt_make_array_copy(
 
 /* Make an empty dictionary value. */
 bool
-CDECL
 rt_make_empty_dict(
 	struct rt_env *env,
 	struct rt_value *val);

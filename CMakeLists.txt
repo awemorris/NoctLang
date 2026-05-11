@@ -156,7 +156,6 @@ set(
   src/core/execution.c
   src/core/intrinsics.c
   src/core/gc.c
-  src/core/hash.c
   src/core/lexer.yy.c
   src/core/parser.tab.c
   ${FLEX_Lexer_OUTPUTS}

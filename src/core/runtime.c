@@ -18,7 +18,6 @@
 #include "interpreter.h"
 #include "jit.h"
 #include "gc.h"
-#include "hash.h"
 
 #if defined(NOCT_USE_MULTITHREAD)
 #include "atomic.h"
@@ -587,7 +586,7 @@ rt_read_bytecode_line(
 }
 
 /*
- * Register an FFI C function.
+ * Register a native function.
  */
 bool
 rt_register_cfunc(
@@ -843,7 +842,6 @@ rt_make_string(
  * Make a string value. (hash version)
  */
 bool
-CDECL
 rt_make_string_with_hash(
 	struct rt_env *env,
 	struct rt_value *val,
@@ -876,8 +874,43 @@ rt_cache_string_hash(
 	struct rt_string *rts)
 {
 	if (rts->hash == 0)
-		rts->hash = string_hash(rts->data);
+		rts->hash = noct_string_hash(rts->data);
 }
+
+/*
+ * Get a string hash. (FNV-1a)
+ */
+uint32_t
+rt_string_hash(
+	const char *s)
+{
+	uint32_t hash = 2166136261u;
+	while (*s) {
+		hash ^= (uint8_t)*s++;
+		hash *= 16777619u;
+	}
+	return hash;
+}
+
+/*
+ * Get a string hash and a length. (FNV-1a)
+ */
+void
+rt_string_hash_and_len(
+	const char *s,
+	uint32_t *hash,
+	uint32_t *len)
+{
+	*len = 0;
+	*hash = 2166136261u;
+	while (*s) {
+		*hash ^= (uint8_t)*s++;
+		*hash *= 16777619u;
+		*len = *len + 1;
+	}
+}
+
+
 
 /*
  * Arrays and Dictionaries
@@ -932,7 +965,6 @@ rt_cache_string_hash(
  * Make an empty array.
  */
 bool
-CDECL
 rt_make_empty_array(
 	struct rt_env *env,
 	struct rt_value *val)
@@ -1218,7 +1250,6 @@ rt_make_array_copy(
  * Make an empty dictionary.
  */
 bool
-CDECL
 rt_make_empty_dict(
 	struct rt_env *env,
 	struct rt_value *val)
@@ -1286,7 +1317,7 @@ rt_check_dict_key(
 	ACQUIRE_OBJ(dict, real_dict);
 
 	len = strlen(key) + 1; /* +1 for NUL */
-	hash = string_hash(key);
+	hash = rt_string_hash(key);
 	index = hash & ((uint32_t)real_dict->alloc_size - 1);
 
 	/* Search the key. */
@@ -1299,7 +1330,7 @@ rt_check_dict_key(
 
 		/* Make a hash cache. */
 		if (real_dict->key[i].val.str->hash == 0)
-			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+			real_dict->key[i].val.str->hash = rt_string_hash(real_dict->key[i].val.str->data);
 
 		if (real_dict->key[i].val.str->len == len &&
 		    real_dict->key[i].val.str->hash == hash &&
@@ -1425,7 +1456,7 @@ rt_get_dict_elem(
 	uint32_t hash;
 
 	len = strlen(key) + 1;
-	hash = string_hash(key);
+	hash = rt_string_hash(key);
 	if (!rt_get_dict_elem_with_hash(env, dict, key, len, hash, val))
 		return false;
 
@@ -1466,7 +1497,7 @@ rt_get_dict_elem_with_hash(
 
 		/* Make a hash cache. */
 		if (real_dict->key[i].val.str->hash == 0)
-			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+			real_dict->key[i].val.str->hash = rt_string_hash(real_dict->key[i].val.str->data);
 		
 		if (real_dict->key[i].val.str->len == len &&
 		    real_dict->key[i].val.str->hash == hash &&
@@ -1498,7 +1529,7 @@ rt_set_dict_elem(
 	uint32_t hash;
 
 	len = strlen(key) + 1;	/* Including NUL. */
-	hash = string_hash(key);
+	hash = rt_string_hash(key);
 	if (!rt_set_dict_elem_with_hash(env, dict, key, len, hash, val))
 		return false;
 
@@ -1540,7 +1571,7 @@ rt_set_dict_elem_with_hash(
 
 		/* Make a hash cache. */
 		if (real_dict->key[i].val.str->hash == 0)
-			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+			real_dict->key[i].val.str->hash = rt_string_hash(real_dict->key[i].val.str->data);
 
 		if (real_dict->key[i].val.str->len == len &&
 		    real_dict->key[i].val.str->hash == hash &&
@@ -1631,7 +1662,7 @@ rt_expand_dict(
 		if (IS_DICT_KEY_REMOVED(old_dict->key[i]) || IS_DICT_KEY_EMPTY(old_dict->key[i]))
 			continue;
 
-		index = string_hash(old_dict->key[i].val.str->data) & ((uint32_t)new_dict->alloc_size - 1);
+		index = rt_string_hash(old_dict->key[i].val.str->data) & ((uint32_t)new_dict->alloc_size - 1);
 		for (j = index;
 		     j != ((index - 1 + new_dict->alloc_size) & (new_dict->alloc_size - 1));
 		     j = (j + 1) & ((uint32_t)new_dict->alloc_size - 1)) {
@@ -1671,7 +1702,7 @@ rt_remove_dict_elem(
 	uint32_t hash;
 
 	len = strlen(key) + 1;	/* Including NUL. */
-	hash = string_hash(key);
+	hash = rt_string_hash(key);
 	if (!rt_remove_dict_elem_with_hash(env, dict, key, len, hash))
 		return false;
 
@@ -1711,7 +1742,7 @@ rt_remove_dict_elem_with_hash(
 
 		/* Make a hash cache. */
 		if (real_dict->key[i].val.str->hash == 0)
-			real_dict->key[i].val.str->hash = string_hash(real_dict->key[i].val.str->data);
+			real_dict->key[i].val.str->hash = rt_string_hash(real_dict->key[i].val.str->data);
 		
 		if (real_dict->key[i].val.str->len == len &&
 		    real_dict->key[i].val.str->hash == hash &&
@@ -1856,7 +1887,7 @@ rt_check_global(
 
 	ACQUIRE_GLOBAL();
 
-	string_hash_and_len(name, &hash, &len);
+	rt_string_hash_and_len(name, &hash, &len);
 	len++;	/* Including NUL. */
 
 	index = hash & ((uint32_t)env->vm->global_alloc_size - 1) ;
@@ -1900,7 +1931,7 @@ rt_get_global(
 	uint32_t hash;
 
 	len = strlen(name) + 1;
-	hash = string_hash(name);
+	hash = rt_string_hash(name);
 
 	if (!rt_get_global_with_hash(env, name, len, hash, val))
 		return false;
@@ -1963,7 +1994,7 @@ rt_set_global(
 	uint32_t hash;
 
 	len = strlen(name) + 1;	/* Including NUL. */
-	hash = string_hash(name);
+	hash = rt_string_hash(name);
 	if (!rt_set_global_with_hash(env, name, len, hash, val))
 		return false;
 
@@ -2055,7 +2086,7 @@ rt_expand_global(
 	for (i = 0; i < old_size; i++) {
 		if (old_tbl[i].name == NULL || old_tbl[i].is_removed)
 			continue;
-		index = string_hash(old_tbl[i].name) & (new_size - 1) ;
+		index = rt_string_hash(old_tbl[i].name) & (new_size - 1) ;
 		for (j = index;
 		     j != ((index - 1 + new_size) & (new_size - 1));
 		     j = (j + 1) & (new_size - 1)) {

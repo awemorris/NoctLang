@@ -1239,6 +1239,26 @@ noct_set_return_make_string(
 	NoctValue *val,
 	const char *data);
 
+/* Hash */
+
+/*
+ * Get a string hash.
+ */
+NOCT_DLL
+uint32_t
+noct_string_hash(
+	const char *s);
+
+/*
+ * Get a string hash and length.
+ */
+NOCT_DLL
+void
+noct_string_hash_and_len(
+	const char *s,
+	uint32_t *hash,
+	uint32_t *len);
+
 /*
  * Configuration
  */

@@ -247,6 +247,14 @@ noct_make_string(
 }
 
 NOCT_DLL
+uint32_t
+noct_string_hash(
+	const char *s)
+{
+	return rt_string_hash(s);
+}
+
+NOCT_DLL
 bool
 noct_make_empty_array(
 	NoctEnv *env,

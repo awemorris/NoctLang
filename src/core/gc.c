@@ -11,7 +11,6 @@
 
 #include "runtime.h"
 #include "gc.h"
-#include "hash.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -1276,7 +1275,7 @@ rt_gc_promote_dict(
 		if (old_dict->key[i].type != NOCT_VALUE_STRING)
 			continue; /* Removed or empty. */
 
-		index = string_hash(old_dict->key[i].val.str->data) & ((uint32_t)new_dict->alloc_size - 1);
+		index = rt_string_hash(old_dict->key[i].val.str->data) & ((uint32_t)new_dict->alloc_size - 1);
 		for (j = index;
 		     j != ((index - 1 + (uint32_t)new_dict->alloc_size) & (new_dict->alloc_size - 1));
 		     j = (j + 1) & ((uint32_t)new_dict->alloc_size - 1)) {
