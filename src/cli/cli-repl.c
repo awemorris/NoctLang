@@ -37,7 +37,7 @@ static bool run_repl(void)
 	NOCT_REGISTER_ALL_APIS(env);
 
 	/* Register FFI functions. */
-	if (!register_cli_ffi(env))
+	if (!register_cli_cfunc(env))
 		return false;
 
 	wide_printf(N_TR("Noct Programming Language\n"));
