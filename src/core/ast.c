@@ -6,7 +6,7 @@
  */
 
 /*
- * AST: Abstract syntax tree
+ * AST: Abstract Syntax Tree
  */
 
 #include "ast.h"
@@ -100,6 +100,7 @@ void ast_free(void *p);
 /*
  * Build an AST from a script string.
  */
+NOCT_DLL
 bool
 ast_build(
 	const char *file_name,
@@ -143,6 +144,7 @@ ast_build(
 /*
  * Free an AST.
  */
+NOCT_DLL
 void
 ast_cleanup(void)
 {
@@ -162,6 +164,7 @@ ast_cleanup(void)
 /*
  * Get an AST.
  */
+NOCT_DLL
 struct ast_func_list *
 ast_get_func_list(void)
 {
@@ -173,6 +176,7 @@ ast_get_func_list(void)
 /*
  * Get the file name.
  */
+NOCT_DLL
 const char *
 ast_get_file_name(void)
 {
@@ -180,6 +184,27 @@ ast_get_file_name(void)
 
 	return ast_file_name;
 }
+
+/*
+ * Get the error message.
+ */
+NOCT_DLL
+const char *
+ast_get_error_message(void)
+{
+	return &ast_error_message[0];
+}
+
+/*
+ * Get the error line.
+ */
+NOCT_DLL
+int
+ast_get_error_line(void)
+{
+	return ast_error_line;
+}
+
 
 /* Called from the parser when it accepted a func_list. */
 struct ast_func_list *
@@ -2058,6 +2083,7 @@ ast_copy_expr(
 	return dst;
 }
 
+/* Copy a term. */
 static struct ast_term *
 ast_copy_term(
 	struct ast_term *term)
@@ -2098,6 +2124,7 @@ ast_copy_term(
 	return dst;
 }
 
+/* Copy an arg list. */
 static struct ast_arg_list *
 ast_copy_arg_list(
 	struct ast_arg_list *arg_list)
@@ -2125,6 +2152,7 @@ ast_copy_arg_list(
 	return dst;
 }
 
+/* Copy a kv list. */
 static struct ast_kv_list *
 ast_copy_kv_list(
 	struct ast_kv_list *kv_list)
@@ -2169,7 +2197,11 @@ ast_copy_kv_list(
  * Error Handling
  */
 
-static void ast_printf(const char *format, ...)
+/* Log an error message. */
+static void
+ast_printf(
+	const char *format,
+	...)
 {
 	va_list ap;
 
@@ -2178,22 +2210,21 @@ static void ast_printf(const char *format, ...)
 	va_end(ap);
 }
 
-static void ast_out_of_memory(void)
+/* Log an out-of-memory error. */
+static void
+ast_out_of_memory(void)
 {
 	ast_printf(N_TR("%s: Out of memory while parsing."), ast_file_name);
 }
 
-const char *ast_get_error_message(void)
-{
-	return &ast_error_message[0];
-}
+/*
+ * Memory Allocation
+ */
 
-int ast_get_error_line(void)
-{
-	return ast_error_line;
-}
-
-void *ast_malloc(size_t size)
+/* malloc() alternative. */
+void *
+ast_malloc(
+	size_t size)
 {
 	void *ret;
 
@@ -2206,7 +2237,9 @@ void *ast_malloc(size_t size)
 	return ret;
 }
 
-void *ast_realloc(void *p, size_t size)
+/* realloc() alternative. */
+void *
+ast_realloc(void *p, size_t size)
 {
 	size_t orig_size;
 	void *ret;
@@ -2223,7 +2256,10 @@ void *ast_realloc(void *p, size_t size)
 	return ret;	
 }
 
-char *ast_strdup(const char *s)
+/* strdup() alternative. */
+char *
+ast_strdup(
+	const char *s)
 {
 	char *ret;
 
@@ -2235,9 +2271,15 @@ char *ast_strdup(const char *s)
 	return ret;
 }
 
-void ast_free(void *p)
+/* free() alternative. */
+void
+ast_free(
+	void *p)
 {
 	UNUSED_PARAMETER(p);
 
-	/* We use arena allocator. */
+	/*
+	 * In the current implementation, we don't free individual
+	 * objects because we use an arena allocator.
+	 */
 }

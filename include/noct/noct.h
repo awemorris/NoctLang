@@ -17,7 +17,7 @@
 /*
  * Definition of the import/export keyword.
  */
-#if defined(USE_DLL)
+#if defined(NOCT_USE_DLL)
 #if defined(__GNUC__)
 #define NOCT_DLL		__attribute__((visibility("default")))
 #elif defined(_MSC_VER)
@@ -1244,28 +1244,28 @@ noct_set_return_make_string(
  */
 
 /* Enable JIT. */
-extern bool noct_conf_jit_enable;
+NOCT_DLL extern bool noct_conf_jit_enable;
 
 /* JIT threshold. */
-extern int noct_conf_jit_threshold;
+NOCT_DLL extern int noct_conf_jit_threshold;
 
 /* Optimization level. */
-extern int noct_conf_optimize;
+NOCT_DLL extern int noct_conf_optimize;
 
 /* GC nursery region size. */
-extern size_t noct_conf_gc_nursery_size;
+NOCT_DLL extern size_t noct_conf_gc_nursery_size;
 
 /* GC graduate region size. */
-extern size_t noct_conf_gc_graduate_size;
+NOCT_DLL extern size_t noct_conf_gc_graduate_size;
 
 /* GC tenure region size. */
-extern size_t noct_conf_gc_tenure_size;
+NOCT_DLL extern size_t noct_conf_gc_tenure_size;
 
 /* GC large-object-promotion threshold. */
-extern size_t noct_conf_gc_lop_threshold;
+NOCT_DLL extern size_t noct_conf_gc_lop_threshold;
 
 /* GC tenure-promotion threshold. */
-extern size_t noct_conf_gc_promotion_threshold;
+NOCT_DLL extern size_t noct_conf_gc_promotion_threshold;
 
 /*
  * Library Installation
@@ -1281,12 +1281,21 @@ extern size_t noct_conf_gc_promotion_threshold;
 	} while (0)
 
 /* Register the "System.*" APIs. */
-bool noct_register_api_system(NoctEnv *env);
+NOCT_DLL
+bool
+noct_register_api_system(
+	NoctEnv *env);
 
 /* Register the "Console.*" APIs. */
-bool noct_register_api_console(NoctEnv *env);
+NOCT_DLL
+bool
+noct_register_api_console(
+	NoctEnv *env);
 
 /* Register the "Math.*" APIs. */
-bool noct_register_api_math(NoctEnv *env);
+NOCT_DLL
+bool
+noct_register_api_math(
+	NoctEnv *env);
 
 #endif

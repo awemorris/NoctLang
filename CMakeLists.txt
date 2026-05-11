@@ -183,10 +183,16 @@ add_library(
   # Mandatory libraries here.
   src/api/api-math.c
 )
-set_target_properties(noct PROPERTIES 
-  VERSION 1.0.0 
-  SOVERSION 1
-)
+if(NOCT_ENABLE_SHARED)
+  set_target_properties(noct PROPERTIES 
+    VERSION 1.0.0 
+    SOVERSION 1
+  )
+  set_target_properties(noct PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+  )
+endif()
 
 # Add the target "libnoctapi", the standard library.
 if(NOCT_ENABLE_API)
@@ -198,10 +204,16 @@ if(NOCT_ENABLE_API)
     src/api/api-system.c
     src/api/api-console.c
   )
-  set_target_properties(noctapi PROPERTIES 
-    VERSION 1.0.0 
-    SOVERSION 1
-  )
+  if(NOCT_ENABLE_SHARED)
+    set_target_properties(noctapi PROPERTIES 
+      VERSION 1.0.0 
+      SOVERSION 1
+    )
+    set_target_properties(noct PROPERTIES
+      C_VISIBILITY_PRESET hidden
+      VISIBILITY_INLINES_HIDDEN ON
+    )
+  endif()
 endif()
 
 # ---

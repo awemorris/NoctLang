@@ -6,7 +6,7 @@
  */
 
 /*
- * HIR: High-level intermediate representation
+ * HIR: High-level Intermediate Representation
  */
 
 #include "hir.h"
@@ -123,10 +123,12 @@ static void hir_out_of_memory(void);
 static void *hir_malloc(size_t size);
 static char *hir_strdup(const char *s);
 static void hir_free(void *p);
+static void hir_dump_block_at_level(struct hir_block *block, int level);
 
 /*
  * Construct an HIR from an AST.
  */
+NOCT_DLL
 bool
 hir_build(void)
 {
@@ -198,6 +200,7 @@ hir_build(void)
 /*
  * Free constructed HIR functions.
  */
+NOCT_DLL
 void
 hir_cleanup(void)
 {
@@ -219,6 +222,7 @@ hir_cleanup(void)
 /*
  * Get a number of constructed functions.
  */
+NOCT_DLL
 uint32_t
 hir_get_function_count(void)
 {
@@ -228,6 +232,7 @@ hir_get_function_count(void)
 /*
  * Get a constructed HIR function.
  */
+NOCT_DLL
 struct hir_block *
 hir_get_function(uint32_t index)
 {
@@ -238,6 +243,38 @@ hir_get_function(uint32_t index)
 	func = hir_func_tbl[index];
 
 	return func;
+}
+
+/*
+ * Get a file name.
+ */
+NOCT_DLL
+const char *
+hir_get_file_name(void)
+{
+	assert(hir_file_name);
+
+	return hir_file_name;
+}
+
+/*
+ * Get an error line number.
+ */
+NOCT_DLL
+int
+hir_get_error_line(void)
+{
+	return hir_error_line;
+}
+
+/*
+ * Get an error message.
+ */
+NOCT_DLL
+const char *
+hir_get_error_message(void)
+{
+	return hir_error_message;
 }
 
 /* Visit an AST func. */
@@ -2336,42 +2373,20 @@ static void hir_out_of_memory(void)
 }
 
 /*
- * Get a file name.
- */
-const char *
-hir_get_file_name(void)
-{
-	assert(hir_file_name);
-
-	return hir_file_name;
-}
-
-/*
- * Get an error line number.
- */
-int hir_get_error_line(void)
-{
-	return hir_error_line;
-}
-
-/*
- * Get an error message.
- */
-const char *hir_get_error_message(void)
-{
-	return hir_error_message;
-}
-
-/*
  * Allocator
  */
 
-static void *hir_malloc(size_t size)
+/* malloc() alternative. */
+static void *
+hir_malloc(
+	size_t size)
 {
 	return arena_alloc(&hir_arena, size);
 }
 
-static char *hir_strdup(const char *s)
+/* strdup() alternative. */
+static char *
+hir_strdup(const char *s)
 {
 	char *ret;
 
@@ -2383,19 +2398,24 @@ static char *hir_strdup(const char *s)
 	return ret;
 }
 
-static void hir_free(void *p)
+/* free() alternative. */
+static void
+hir_free(
+	void *p)
 {
 	UNUSED_PARAMETER(p);
+
+	/*
+	 * In the current implementation, we don't free individual
+	 * objects because we use an arena allocator.
+	 */
 }
 
 /*
- * Debug printer
+ * Debug Printer
  */
 
-#ifdef DEBUG_DUMP
-
-static void hir_dump_block_at_level(struct hir_block *block, int level);
-
+NOCT_DLL
 void
 hir_dump_block(
 	struct hir_block *block)
@@ -2490,5 +2510,3 @@ hir_dump_block_at_level(
 		block = block->succ;
 	}
 }
-
-#endif /* DEBUG_DUMP */
