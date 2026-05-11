@@ -418,7 +418,7 @@ jit_visit_sconst_op(
                 /* movl -8(%ebp), %eax */         IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                  IB(0x50);
 
-                /* movl $rt_make_string_with_hash, %eax */  IB(0xb8); ID((uint32_t)rt_make_string_with_hash);
+                /* movl $ex_make_string_with_hash, %eax */  IB(0xb8); ID((uint32_t)ex_make_string_with_hash);
                 /* call *%eax */                  IB(0xff); IB(0xd0);
                 /* addl $20, %esp */              IB(0x83); IB(0xc4); IB(20);
 
@@ -455,7 +455,7 @@ jit_visit_aconst_op(
                 /* movl -8(%ebp), %eax */               IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                        IB(0x50);
 
-                /* movl $rt_make_empty_array, %eax */   IB(0xb8); ID((uint32_t)rt_make_empty_array);
+                /* movl $ex_make_empty_array, %eax */   IB(0xb8); ID((uint32_t)ex_make_empty_array);
                 /* call *%eax */                        IB(0xff); IB(0xd0);
                 /* addl $8, %esp */                     IB(0x83); IB(0xc4); IB(8);
 
@@ -493,7 +493,7 @@ jit_visit_dconst_op(
                 /* movl -8(%ebp), %eax */               IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                        IB(0x50);
 
-                /* movl $rt_make_empty_dict, %eax */    IB(0xb8); ID((uint32_t)rt_make_empty_dict);
+                /* movl $ex_make_empty_dict, %eax */    IB(0xb8); ID((uint32_t)ex_make_empty_dict);
                 /* call *%eax */                        IB(0xff); IB(0xd0);
                 /* addl $8, %esp */                     IB(0x83); IB(0xc4); IB(8);
 
@@ -546,7 +546,7 @@ jit_visit_add_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_add_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_add_helper);
+        ASM_BINARY_OP(ex_add_helper);
 
         return true;
 }
@@ -565,7 +565,7 @@ jit_visit_sub_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_sub_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_sub_helper);
+        ASM_BINARY_OP(ex_sub_helper);
 
         return true;
 }
@@ -584,7 +584,7 @@ jit_visit_mul_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_mul_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_mul_helper);
+        ASM_BINARY_OP(ex_mul_helper);
 
         return true;
 }
@@ -603,7 +603,7 @@ jit_visit_div_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_div_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_div_helper);
+        ASM_BINARY_OP(ex_div_helper);
 
         return true;
 }
@@ -622,7 +622,7 @@ jit_visit_mod_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_mod_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_mod_helper);
+        ASM_BINARY_OP(ex_mod_helper);
 
         return true;
 }
@@ -641,7 +641,7 @@ jit_visit_and_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_and_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_and_helper);
+        ASM_BINARY_OP(ex_and_helper);
 
         return true;
 }
@@ -660,7 +660,7 @@ jit_visit_or_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_or_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_or_helper);
+        ASM_BINARY_OP(ex_or_helper);
 
         return true;
 }
@@ -679,7 +679,7 @@ jit_visit_xor_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_xor_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_xor_helper);
+        ASM_BINARY_OP(ex_xor_helper);
 
         return true;
 }
@@ -698,7 +698,7 @@ jit_visit_shl_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_shl_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_shl_helper);
+        ASM_BINARY_OP(ex_shl_helper);
 
         return true;
 }
@@ -717,7 +717,7 @@ jit_visit_shr_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_shr_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_shr_helper);
+        ASM_BINARY_OP(ex_shr_helper);
 
         return true;
 }
@@ -734,7 +734,7 @@ jit_visit_neg_op(
         CONSUME_TMPVAR(src);
 
         /* if (!rt_neg_helper(env, dst, src)) return false; */
-        ASM_UNARY_OP(rt_neg_helper);
+        ASM_UNARY_OP(ex_neg_helper);
 
         return true;
 }
@@ -751,7 +751,7 @@ jit_visit_not_op(
         CONSUME_TMPVAR(src);
 
         /* if (!rt_not_helper(env, dst, src)) return false; */
-        ASM_UNARY_OP(rt_not_helper);
+        ASM_UNARY_OP(ex_not_helper);
 
         return true;
 }
@@ -770,7 +770,7 @@ jit_visit_lt_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_lt_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_lt_helper);
+        ASM_BINARY_OP(ex_lt_helper);
 
         return true;
 }
@@ -789,7 +789,7 @@ jit_visit_lte_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_lte_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_lte_helper);
+        ASM_BINARY_OP(ex_lte_helper);
 
         return true;
 }
@@ -808,7 +808,7 @@ jit_visit_eq_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_eq_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_eq_helper);
+        ASM_BINARY_OP(ex_eq_helper);
 
         return true;
 }
@@ -827,7 +827,7 @@ jit_visit_neq_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_neq_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_neq_helper);
+        ASM_BINARY_OP(ex_neq_helper);
 
         return true;
 }
@@ -846,7 +846,7 @@ jit_visit_gte_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_gte_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_gte_helper);
+        ASM_BINARY_OP(ex_gte_helper);
 
         return true;
 }
@@ -901,7 +901,7 @@ jit_visit_gt_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_gt_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_gt_helper);
+        ASM_BINARY_OP(ex_gt_helper);
 
         return true;
 }
@@ -920,7 +920,7 @@ jit_visit_loadarray_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_loadarray_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_loadarray_helper);
+        ASM_BINARY_OP(ex_loadarray_helper);
 
         return true;
 }
@@ -939,7 +939,7 @@ jit_visit_storearray_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_storearray_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_storearray_helper);
+        ASM_BINARY_OP(ex_storearray_helper);
 
         return true;
 }
@@ -956,7 +956,7 @@ jit_visit_len_op(
         CONSUME_TMPVAR(src);
 
         /* if (!rt_len_helper(env, dst, src)) return false; */
-        ASM_UNARY_OP(rt_len_helper);
+        ASM_UNARY_OP(ex_len_helper);
 
         return true;
 }
@@ -975,7 +975,7 @@ jit_visit_getdictkeybyindex_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_getdictkeybyindex_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_getdictkeybyindex_helper);
+        ASM_BINARY_OP(ex_getdictkeybyindex_helper);
 
         return true;
 }
@@ -994,7 +994,7 @@ jit_visit_getdictvalbyindex_op(
         CONSUME_TMPVAR(src2);
 
         /* if (!rt_getdictvalbyindex_helper(env, dst, src1, src2)) return false; */
-        ASM_BINARY_OP(rt_getdictvalbyindex_helper);
+        ASM_BINARY_OP(ex_getdictvalbyindex_helper);
 
         return true;
 }
@@ -1032,7 +1032,7 @@ jit_visit_loadsymbol_op(
                 /* movl -8(%ebp), %eax */               IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                        IB(0x50);
 
-                /* movl $rt_loadsymbol_helper, %eax */  IB(0xb8); ID((uint32_t)rt_loadsymbol_helper);
+                /* movl $ex_loadsymbol_helper, %eax */  IB(0xb8); ID((uint32_t)ex_loadsymbol_helper);
                 /* call *%eax */                        IB(0xff); IB(0xd0);
                 /* addl $20, %esp */                    IB(0x83); IB(0xc4); IB(20);
 
@@ -1078,7 +1078,7 @@ jit_visit_storesymbol_op(
                 /* movl -8(%ebp), %eax */                IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                         IB(0x50);
 
-                /* movl $rt_storesymbol_helper, %eax */  IB(0xb8); ID((uint32_t)rt_storesymbol_helper);
+                /* movl $ex_storesymbol_helper, %eax */  IB(0xb8); ID((uint32_t)ex_storesymbol_helper);
                 /* call *%eax */                         IB(0xff); IB(0xd0);
                 /* addl $20, %esp */                     IB(0x83); IB(0xc4); IB(20);
 
@@ -1129,7 +1129,7 @@ jit_visit_loaddot_op(
                 /* movl -8(%ebp), %eax */            IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                     IB(0x50);
 
-                /* movl $rt_loaddot_helper, %eax */  IB(0xb8); ID((uint32_t)rt_loaddot_helper);
+                /* movl $ex_loaddot_helper, %eax */  IB(0xb8); ID((uint32_t)ex_loaddot_helper);
                 /* call *%eax */                     IB(0xff); IB(0xd0);
                 /* addl $24, %esp */                 IB(0x83); IB(0xc4); IB(24);
 
@@ -1179,7 +1179,7 @@ jit_visit_storedot_op(
                 /* movl -8(%ebp), %eax */               IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                        IB(0x50);
 
-                /* movl $rt_storedot_helper, %eax */    IB(0xb8); ID((uint32_t)rt_storedot_helper);
+                /* movl $ex_storedot_helper, %eax */    IB(0xb8); ID((uint32_t)ex_storedot_helper);
                 /* call *%eax */                        IB(0xff); IB(0xd0);
                 /* addl $24, %esp */                    IB(0x83); IB(0xc4); IB(24);
 
@@ -1250,7 +1250,7 @@ jit_visit_call_op(
                 /* movl -8(%ebp), %eax */        IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                 IB(0x50);
 
-                /* movl $rt_call_helper, %eax */ IB(0xb8); ID((uint32_t)rt_call_helper);
+                /* movl $ex_call_helper, %eax */ IB(0xb8); ID((uint32_t)ex_call_helper);
                 /* call *%eax */                 IB(0xff); IB(0xd0);
                 /* addl $20, %esp */             IB(0x83); IB(0xc4); IB(20);
 
@@ -1325,7 +1325,7 @@ jit_visit_thiscall_op(
                 /* movl -8(%ebp), %eax */               IB(0x8b); IB(0x45); IB(0xf8);
                 /* pushl %eax */                        IB(0x50);
 
-                /* movl $rt_thiscall_helper, %eax */    IB(0xb8); ID((uint32_t)rt_thiscall_helper);
+                /* movl $ex_thiscall_helper, %eax */    IB(0xb8); ID((uint32_t)ex_thiscall_helper);
                 /* call *%eax */                        IB(0xff); IB(0xd0);
                 /* addl $32, %esp */                    IB(0x83); IB(0xc4); IB(32);
 

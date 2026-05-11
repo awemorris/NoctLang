@@ -15,12 +15,6 @@
 #include <noct/noct.h>
 #include "gc.h"
 
-#if defined(NOCT_TARGET_DOS4G)
-#define CDECL __cdecl
-#else
-#define CDECL
-#endif
-
 /*
  * Maximum number of the stack depth.
  */

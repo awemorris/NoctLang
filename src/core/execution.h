@@ -20,11 +20,6 @@
  * uses the stack for function arguments. To bridge this gap, we use
  * the CDECL keyword in this module.
  */
-#if defined(NOCT_TARGET_DOS4G)
-#define CDECL __cdecl
-#else
-#define CDECL
-#endif
 
 NOCT_DLL
 bool
