@@ -93,10 +93,15 @@ jobs:
         run: |
           wget https://noctvm.io/ci/openwatcom-1.9.tar.gz
           tar xzf openwatcom-1.9.tar.gz
-          export WATCOM="`pwd`/openwatcom-1.9"
-          export PATH=${WATCOM}/binl64:${WATCOM}/binl:${WATCOM}/binw:${PATH}
-          export INCLUDE=${WATCOM}/h
-          export EDPATH=${WATCOM}/eddat
+
+          echo "WATCOM=$PWD/openwatcom-1.9" >> $GITHUB_ENV
+          echo "INCLUDE=$PWD/openwatcom-1.9/h" >> $GITHUB_ENV
+          echo "EDPATH=$PWD/openwatcom-1.9/eddat" >> $GITHUB_ENV
+
+          echo "$PWD/openwatcom-1.9/binl64" >> $GITHUB_PATH
+          echo "$PWD/openwatcom-1.9/binl" >> $GITHUB_PATH
+          echo "$PWD/openwatcom-1.9/binw" >> $GITHUB_PATH
+
       - name: Build
         run: |
           cmake --preset msdos
