@@ -72,6 +72,7 @@ Our current roadmap is:
 - iOS, Android
 - *BSD
 - Game Consoles
+- MS-DOS (with DOS extender)
 - Any POSIX compliant OS
 
 Note: On major smartphones and consoles, runtime code generation (JIT)
