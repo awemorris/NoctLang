@@ -13,7 +13,7 @@
 
 #if defined(NOCT_TARGET_WINDOWS)
 #include <windows.h>
-#elif defined(NOCT_TARGET_POSIX)
+#elif defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_MACOS)
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
