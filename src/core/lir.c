@@ -29,11 +29,6 @@
 #undef DEBUG_DUMP_LIR
 
 /*
- * Config
- */
-extern int noct_conf_optimize;
-
-/*
  * Target LIR.
  */
 
@@ -89,6 +84,11 @@ static int lir_error_line;
 static char lir_error_message[1024];
 
 /*
+ * Optimize lelve.
+ */
+int lir_optimize_level = 0;
+
+/*
  * Forward declaration.
  */
 static uint32_t lir_count_local(struct hir_block *func);
@@ -137,10 +137,8 @@ static void lir_fatal(const char *msg, ...);
 static void lir_out_of_memory(void);
 
 /*
- * Build
+ * Build a LIR function from a HIR function.
  */
-
-NOCT_DLL
 bool
 lir_build(
 	struct hir_block *hir_func,
@@ -327,15 +325,13 @@ lir_visit_basic_block(
 	/* Store the block address. */
 	block->addr = (uint32_t)bytecode_top;
 
-#if 0
 	/* Put a line number. */
-	if (conf_optimize == 0) {
-		if (!lir_put_opcode(LOP_LINEINFO))
+	if (lir_optimize_level == 0) {
+		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
 			return false;
 	}
-#endif
 
 	/* Visit statements. */
 	stmt = block->val.basic.stmt_list;
@@ -417,7 +413,7 @@ lir_visit_if_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (noct_conf_optimize == 0) {
+	if (lir_optimize_level == 0) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -540,7 +536,7 @@ lir_visit_for_range_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (noct_conf_optimize == 0) {
+	if (lir_optimize_level == 0) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -638,7 +634,7 @@ lir_visit_for_kv_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (noct_conf_optimize == 0) {
+	if (lir_optimize_level == 0) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -756,7 +752,7 @@ lir_visit_for_v_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (noct_conf_optimize == 0) {
+	if (lir_optimize_level == 0) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -888,7 +884,7 @@ lir_visit_while_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (noct_conf_optimize == 0) {
+	if (lir_optimize_level == 0) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -940,7 +936,7 @@ lir_visit_stmt(
 	assert(stmt->rhs != NULL);
 
 	/* Put a line number. */
-	if (noct_conf_optimize == 0) {
+	if (lir_optimize_level == 0) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)stmt->line))
@@ -2039,7 +2035,6 @@ patch_block_address(void)
 /*
  * Free a constructed LIR.
  */
-NOCT_DLL
 void
 lir_cleanup(struct lir_func *func)
 {
@@ -2057,7 +2052,6 @@ lir_cleanup(struct lir_func *func)
 /*
  * Get a file name.
  */
-NOCT_DLL
 const char *
 lir_get_file_name(void)
 {
@@ -2067,7 +2061,6 @@ lir_get_file_name(void)
 /*
  * Get an error line.
  */
-NOCT_DLL
 int
 lir_get_error_line(void)
 {
@@ -2077,7 +2070,6 @@ lir_get_error_line(void)
 /*
  * Get an error message.
  */
-NOCT_DLL
 const char *
 lir_get_error_message(void)
 {
@@ -2164,7 +2156,6 @@ static INLINE void imms(uint8_t **pc, const char **ret)
 	(*pc) += strlen((const char *)*pc) + 1;
 }
 
-NOCT_DLL
 void
 lir_dump(
 	struct lir_func *func)

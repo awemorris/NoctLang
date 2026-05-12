@@ -9,13 +9,12 @@
  * JIT (ppc32): Just-In-Time native code generation
  */
 
-#include <noct/c89compat.h>     /* NOCT_ARCH_PPC32 */
+#include <noct/noct.h>
 
 #if defined(NOCT_ARCH_PPC32) && defined(NOCT_USE_JIT)
 
 #include "runtime.h"
 #include "jit.h"
-#include "execution.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -9,12 +9,6 @@
 #define NOCT_CLI_MAIN_H
 
 #include <noct/noct.h>
-#include "runtime.h"
-#include "ast.h"
-#include "hir.h"
-#include "lir.h"
-#include "cback.h"
-#include "elback.h"
 
 #include <stdio.h>
 #include <string.h>

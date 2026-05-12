@@ -9,6 +9,7 @@
  * HIR: High-level Intermediate Representation
  */
 
+#include <noct/noct.h>
 #include "hir.h"
 #include "ast.h"
 #include "arena.h"
@@ -128,7 +129,6 @@ static void hir_dump_block_at_level(struct hir_block *block, int level);
 /*
  * Construct an HIR from an AST.
  */
-NOCT_DLL
 bool
 hir_build(void)
 {
@@ -200,7 +200,6 @@ hir_build(void)
 /*
  * Free constructed HIR functions.
  */
-NOCT_DLL
 void
 hir_cleanup(void)
 {
@@ -222,7 +221,6 @@ hir_cleanup(void)
 /*
  * Get a number of constructed functions.
  */
-NOCT_DLL
 uint32_t
 hir_get_function_count(void)
 {
@@ -232,7 +230,6 @@ hir_get_function_count(void)
 /*
  * Get a constructed HIR function.
  */
-NOCT_DLL
 struct hir_block *
 hir_get_function(uint32_t index)
 {
@@ -248,7 +245,6 @@ hir_get_function(uint32_t index)
 /*
  * Get a file name.
  */
-NOCT_DLL
 const char *
 hir_get_file_name(void)
 {
@@ -260,7 +256,6 @@ hir_get_file_name(void)
 /*
  * Get an error line number.
  */
-NOCT_DLL
 int
 hir_get_error_line(void)
 {
@@ -270,7 +265,6 @@ hir_get_error_line(void)
 /*
  * Get an error message.
  */
-NOCT_DLL
 const char *
 hir_get_error_message(void)
 {
@@ -2415,7 +2409,6 @@ hir_free(
  * Debug Printer
  */
 
-NOCT_DLL
 void
 hir_dump_block(
 	struct hir_block *block)

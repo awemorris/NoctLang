@@ -29,24 +29,50 @@ static bool run_repl(void)
 	NoctVM *vm;
 	NoctEnv *env;
 
+	wide_printf(N_TR("Noct Programming Language\n"));
+	wide_printf(N_TR("Entering REPL mode.\n"));
+#if defined(NOCT_USE_JIT) &&                    \
+    (                                           \
+        defined(NOCT_ARCH_X86) ||               \
+        defined(NOCT_ARCH_X86_64) ||		\
+        defined(NOCT_ARCH_ARM32) ||             \
+        defined(NOCT_ARCH_ARM64) ||		\
+        defined(NOCT_ARCH_MIPS32) ||		\
+        defined(NOCT_ARCH_MIPS64) ||		\
+        defined(NOCT_ARCH_PPC32) ||		\
+        defined(NOCT_ARCH_PPC64) ||		\
+        defined(NOCT_ARCH_RISCV32) ||		\
+        defined(NOCT_ARCH_RISCV64)              \
+    )
+	wide_printf(N_TR("JIT compilation is enabled. Starting the fast VM...\n"));
+#endif
+	wide_printf("\n");
+
 	/* Create a runtime. */
-	if (!noct_create_vm(&vm, &env)) {
+	if (!noct_create_vm(&vm, &env, NULL)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
 
 	/* Register libraries. */
-	NOCT_REGISTER_ALL_APIS(env);
+	if (!noct_register_api_math(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+	if (!noct_register_api_system(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+	if (!noct_register_api_console(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
 
 	/* Register FFI functions. */
 	if (!register_cli_cfunc(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
-
-	wide_printf(N_TR("Noct Programming Language\n"));
-	wide_printf(N_TR("Entering REPL mode.\n"));
-	wide_printf("\n");
 
 	/* Prompt. */
 	while (1) {

@@ -40,13 +40,6 @@
 #define IS_DICT_KEY_REMOVED(k)	(k.type == NOCT_VALUE_FLOAT)
 #define REMOVE_DICT_KEY(k)	do { k.type = NOCT_VALUE_FLOAT; } while (0)
 
-/*
- * Config
- */
-bool noct_conf_jit_enable = true;
-int noct_conf_jit_threshold = 5;
-int noct_conf_optimize = 0;
-
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
@@ -70,7 +63,8 @@ static bool rt_expand_global(struct rt_env *env);
 bool
 rt_create_vm(
 	struct rt_vm **vm,
-	struct rt_env **default_env)
+	struct rt_env **default_env,
+	struct rt_config *config)
 {
 	/* Allocate a struct rt_vm. */
 	*vm = noct_malloc(sizeof(struct rt_vm));
@@ -79,6 +73,12 @@ rt_create_vm(
 		return false;
 	}
 	memset(*vm, 0, sizeof(struct rt_vm));
+
+	/* Copy the config if specified. */
+	if (config != NULL)
+		memcpy(&(*vm)->config, config, sizeof(struct rt_config));
+	else
+		noct_set_default_config(&(*vm)->config);
 
 	/* Allocate a struct rt_env. */
 	*default_env = noct_malloc(sizeof(struct rt_env));
@@ -141,7 +141,7 @@ rt_destroy_vm(
 	struct rt_func *func, *next_func;
 
 	/* Free the JIT region. */
-	if (noct_conf_jit_enable)
+	if (vm->config.jit_enable)
 		jit_free(vm->env_list);
 
 	/* Free global variables. */
@@ -362,8 +362,8 @@ rt_register_lir(
 		return false;
 
 	/* Do JIT compilation */
-	if (noct_conf_jit_enable) {
-		if (noct_conf_jit_threshold == 0) {
+	if (env->vm->config.jit_enable) {
+		if (env->vm->config.jit_threshold == 0) {
 			/* Write code. */
 			if (!jit_build(env, func)) {
 				/* -1 means JIT failed. */
@@ -698,9 +698,11 @@ rt_call(
 #endif
 
 	/* Do JIT compilation if needed. */
-	if (noct_conf_jit_enable && func->jit_code == NULL && func->call_count != -1) {
+	if (env->vm->config.jit_enable &&
+	    func->jit_code == NULL &&
+	    func->call_count != -1) {
 		func->call_count++;
-		if (func->call_count == noct_conf_jit_threshold) {
+		if (func->call_count == env->vm->config.jit_threshold) {
 			if (!jit_build(env, func)) {
 				/* -1 means JIT failed. */
 				func->call_count = -1;
@@ -712,7 +714,7 @@ rt_call(
 	}
 
 	/* Commit JIT-compiled code for the first time compilation. */
-	if (noct_conf_jit_enable && env->vm->is_jit_dirty) {
+	if (env->vm->config.jit_enable && env->vm->is_jit_dirty) {
 		jit_commit(env);
 		env->vm->is_jit_dirty = false;
 	}
@@ -764,7 +766,7 @@ rt_call(
 		*ret = env->frame->tmpvar[0];
 
 	/* Commit JIT-compiled code for dynamically imported inside the function. */
-	if (noct_conf_jit_enable && env->vm->is_jit_dirty) {
+	if (env->vm->config.jit_enable && env->vm->is_jit_dirty) {
 		jit_commit(env);
 		env->vm->is_jit_dirty = false;
 	}

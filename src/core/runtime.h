@@ -262,6 +262,9 @@ struct rt_vm {
 	/* Is JIT code written and not commited? */
 	bool is_jit_dirty;
 
+	/* Config. */
+	struct rt_config config;
+
 #if defined(NOCT_USE_MULTITHREAD)
 	/* In-flight counter for GC exclusion. */
 	int in_flight_counter;
@@ -282,7 +285,8 @@ struct rt_vm {
 bool
 rt_create_vm(
 	struct rt_vm **vm,
-	struct rt_env **default_env);
+	struct rt_env **default_env,
+	struct rt_config *config);
 
 /* Destroy a runtime environment. */
 bool

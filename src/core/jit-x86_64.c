@@ -9,13 +9,13 @@
  * JIT (x86_64): Just-In-Time native code generation
  */
 
-#include <noct/c89compat.h>        /* NOCT_ARCH_X86_64 */
+#include <noct/noct.h>
 
 #if defined(NOCT_ARCH_X86_64) && defined(NOCT_USE_JIT)
 
+#include <noct/noct.h>
 #include "runtime.h"
 #include "jit.h"
-#include "execution.h"
 
 #include <stdio.h>
 #include <stdlib.h>

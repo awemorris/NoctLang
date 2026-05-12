@@ -39,8 +39,12 @@ int main(int argc, char *argv[])
 	if (argc <= 1)
 		return command_repl();
 
-	if (strcmp(argv[1], "--help") == 0 ||
-	    strcmp(argv[1], "-h") == 0) {
+	if (strcmp(argv[1], "--version") == 0) {
+		wide_printf("Noct " NOCT_VERSION "\n");
+		return 0;
+	}
+
+	if (strcmp(argv[1], "--help") == 0) {
 		show_usage();
 		return 1;
 	}
@@ -82,10 +86,21 @@ void show_usage(void)
 {
 	wide_printf(N_TR("Noct Programming Language\n"));
 	wide_printf(N_TR("Usage\n"));
-	wide_printf(N_TR("  noct <file>                        ... run a program\n"));
-	wide_printf(N_TR("  noct --compile <files>             ... convert to bytecode files\n"));
-	wide_printf(N_TR("  noct --ansic <out file> <in files> ... convert to a C source file\n"));
-	wide_printf(N_TR("  noct --elisp <out file> <in files> ... convert to an Emacs Lisp source file\n"));
+	wide_printf(N_TR("  noct <vm-options> <files>          ... run a program\n"));
+	wide_printf(N_TR("  noct --compile <in-files>          ... convert to bytecode files\n"));
+	wide_printf(N_TR("  noct --ansic <out-file> <in-files> ... convert to a C source file\n"));
+	wide_printf(N_TR("  noct --elisp <out-file> <in-files> ... convert to an Emacs Lisp source file\n"));
+	wide_printf("\n");
+	wide_printf(N_TR("vm-options:\n"));
+	wide_printf(N_TR("  --disable-jit        ... disable JIT\n"));
+	wide_printf(N_TR("  --force-jit          ... equivalent to --jit-threshold=0\n"));
+	wide_printf(N_TR("  --jit-threshold=N    ... call-count threshold for compilation\n"));
+	wide_printf(N_TR("  --optimize-level=N   ... optimize level (0/1)\n"));
+	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
+	wide_printf(N_TR("  --gc-graduate-size=N ... second GC space size in bytes\n"));
+	wide_printf(N_TR("  --gc-tenure-size=N   ... final GC space size in bytes\n"));
+	wide_printf(N_TR("  --gc-lop-threshold=N ... move objects larger than N-bytes to final GC space\n"));
+	wide_printf("\n");
 }
 
 /*

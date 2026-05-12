@@ -9,13 +9,12 @@
  * JIT (riscv64): Just-In-Time native code generation
  */
 
-#include <noct/c89compat.h>     /* NOCT_ARCH_RISCV64 */
+#include <noct/noct.h>
 
 #if defined(NOCT_ARCH_RISCV64) && defined(NOCT_USE_JIT)
 
 #include "runtime.h"
 #include "jit.h"
-#include "execution.h"
 
 #include <stdio.h>
 #include <stdlib.h>

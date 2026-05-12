@@ -9,6 +9,7 @@
  * AST: Abstract Syntax Tree
  */
 
+#include <noct/noct.h>
 #include "ast.h"
 #include "arena.h"
 
@@ -100,7 +101,6 @@ void ast_free(void *p);
 /*
  * Build an AST from a script string.
  */
-NOCT_DLL
 bool
 ast_build(
 	const char *file_name,
@@ -144,7 +144,6 @@ ast_build(
 /*
  * Free an AST.
  */
-NOCT_DLL
 void
 ast_cleanup(void)
 {
@@ -164,7 +163,6 @@ ast_cleanup(void)
 /*
  * Get an AST.
  */
-NOCT_DLL
 struct ast_func_list *
 ast_get_func_list(void)
 {
@@ -176,7 +174,6 @@ ast_get_func_list(void)
 /*
  * Get the file name.
  */
-NOCT_DLL
 const char *
 ast_get_file_name(void)
 {
@@ -188,7 +185,6 @@ ast_get_file_name(void)
 /*
  * Get the error message.
  */
-NOCT_DLL
 const char *
 ast_get_error_message(void)
 {
@@ -198,7 +194,6 @@ ast_get_error_message(void)
 /*
  * Get the error line.
  */
-NOCT_DLL
 int
 ast_get_error_line(void)
 {

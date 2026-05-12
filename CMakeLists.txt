@@ -158,6 +158,9 @@ set(
   src/core/gc.c
   src/core/lexer.yy.c
   src/core/parser.tab.c
+  src/backend/cback.c
+  src/backend/elback.c
+  src/backend/bcback.c
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
 )
@@ -356,8 +359,6 @@ set(NOCT_LIBRARIES    ${NOCT_LIBRARY})
 if(NOCT_ENABLE_CLI)
   add_executable(
     noctcli
-    src/backend/cback.c
-    src/backend/elback.c
     src/cli/cli-main.c
     src/cli/cli-run.c
     src/cli/cli-compile.c
@@ -383,6 +384,7 @@ if(NOCT_ENABLE_CLI)
   if(NOCT_ENABLE_I18N_LIBINTL)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_LIBINTL)
   endif()
+  target_compile_definitions(noctcli PRIVATE NOCT_VERSION="${NOCT_VERSION}")
 
   # Include include/noct/, src/core/, and src/backend/
   target_include_directories(noctcli PRIVATE

@@ -319,28 +319,24 @@ struct hir_local {
 /*
  * Build HIR functions from an AST.
  */
-NOCT_DLL
 bool
 hir_build(void);
 
 /*
  * Free constructed HIR functions.
  */
-NOCT_DLL
 void
 hir_cleanup(void);
 
 /*
  * Get a number of constructed HIR functions.
  */
-NOCT_DLL
 uint32_t
 hir_get_function_count(void);
 
 /*
  * Get a constructed HIR function.
  */
-NOCT_DLL
 struct hir_block *
 hir_get_function(
 	uint32_t index);
@@ -348,27 +344,24 @@ hir_get_function(
 /*
  * Get a file name.
  */
-NOCT_DLL
 const char *
 hir_get_file_name(void);
 
 /*
  * Get an error line number.
  */
-NOCT_DLL
-int hir_get_error_line(void);
+int
+hir_get_error_line(void);
 
 /*
  * Get an error message.
  */
-NOCT_DLL
 const char *
 hir_get_error_message(void);
 
 /*
  * Debug dump.
  */
-NOCT_DLL
 void
 hir_dump_block(
 	struct hir_block *block);

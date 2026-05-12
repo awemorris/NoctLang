@@ -9,9 +9,9 @@
  * Bytecode Interpreter
  */
 
+#include <noct/noct.h>
 #include "runtime.h"
 #include "interpreter.h"
-#include "execution.h"
 #include "bytecode.h"
 
 #include <stdio.h>

@@ -9,7 +9,9 @@
  * cback: C translation backend
  */
 
-#include "cback.h"
+#include <noct/noct.h>
+#include "ast.h"
+#include "hir.h"
 #include "lir.h"
 #include "bytecode.h"
 
@@ -61,18 +63,19 @@ static FILE *fp;
 /*
  * Forward declaration
  */
+static bool cback_translate_func(struct lir_func *func);
 static bool cback_visit_bytecode(struct lir_func *func);
 static bool cback_visit_op(struct lir_func *func, uint32_t *pc);
-static bool cback_write_dll_init(void);
+static bool cback_write_aot_init(void);
 
 /*
- * Clear translator states.
+ * Start the C backend.
  */
 bool
-cback_init(
+noct_cback_start(
 	const char *fname)
 {
-	fp = fopen(fname, "w");
+	fp = fopen(fname, "wb");
 	if (fp == NULL) {
 		printf("Failed to open file \"%s\".\n", fname);
 		return false;
@@ -85,9 +88,83 @@ cback_init(
 }
 
 /*
- * Translate LIR to C.
+ * Add file to the C backend.
  */
 bool
+noct_cback_translate(
+	const char *fname,
+	const char *data)
+{
+	int func_count, i;
+
+	/* Do parse, build AST. */
+	if (!ast_build(fname, data)) {
+		printf(N_TR("Error: %s:%d: %s\n"),
+		       ast_get_file_name(),
+		       ast_get_error_line(),
+		       ast_get_error_message());
+		return false;
+	}
+
+	/* Transform AST to HIR. */
+	if (!hir_build()) {
+		printf(N_TR("Error: %s:%d: %s\n"),
+		       hir_get_file_name(),
+		       hir_get_error_line(),
+		       hir_get_error_message());
+		return false;
+	}
+
+	/* For each HIR function. */
+	func_count = hir_get_function_count();
+	for (i = 0; i < func_count; i++) {
+		struct hir_block *hfunc;
+		struct lir_func *lfunc;
+
+		/* Transform HIR to LIR (bytecode). */
+		hfunc = hir_get_function(i);
+		if (!lir_build(hfunc, &lfunc)) {
+			printf(N_TR("Error: %s:%d: %s\n"),
+			       lir_get_file_name(),
+			       lir_get_error_line(),
+			       lir_get_error_message());
+			return false;;
+		}
+
+		/* Put a C function. */
+		if (!cback_translate_func(lfunc))
+			return false;
+
+		/* Free a single LIR. */
+		lir_cleanup(lfunc);
+	}
+
+	/* Free intermediated. */
+	hir_cleanup();
+	ast_cleanup();
+
+	return true;
+}
+
+/*
+ * Put a finalization code for a plugin.
+ */
+bool
+noct_cback_finalize(void)
+{
+	if (!cback_write_aot_init())
+		return false;
+
+	fclose(fp);
+	fp = NULL;
+	
+	return true;
+}
+
+/*
+ * Translate LIR to C.
+ */
+static bool
 cback_translate_func(
 	struct lir_func *func)
 {
@@ -1078,22 +1155,8 @@ cback_visit_op(
 	return true;
 }
 
-
-/*
- * Put a finalization code for a plugin.
- */
-bool cback_finalize_dll(void)
-{
-	if (!cback_write_dll_init())
-		return false;
-
-	fclose(fp);
-	fp = NULL;
-	
-	return true;
-}
-
-static bool cback_write_dll_init(void)
+static bool
+cback_write_aot_init(void)
 {
 	uint32_t i, j;
 

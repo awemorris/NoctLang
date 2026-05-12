@@ -31,7 +31,6 @@ struct lir_func {
 /*
  * Build a LIR function from a HIR function.
  */
-NOCT_DLL
 bool
 lir_build(
 	struct hir_block *hir_func,
@@ -40,7 +39,6 @@ lir_build(
 /*
  * Free a constructed LIR.
  */
-NOCT_DLL
 void
 lir_cleanup(
 	struct lir_func *func);
@@ -48,28 +46,24 @@ lir_cleanup(
 /*
  * Get a file name.
  */
-NOCT_DLL
 const char *
 lir_get_file_name(void);
 
 /*
  * Get an error line.
  */
-NOCT_DLL
 int
 lir_get_error_line(void);
 
 /*
  * Get an error message.
  */
-NOCT_DLL
 const char *
 lir_get_error_message(void);
 
 /*
  * Dump LIR.
  */
-NOCT_DLL
 void
 lir_dump(
 	struct lir_func *func);

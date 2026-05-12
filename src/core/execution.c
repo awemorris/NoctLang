@@ -11,7 +11,6 @@
 
 #include <noct/noct.h>
 #include "runtime.h"
-#include "execution.h"
 #include "intrinsics.h"
 
 #include <stdio.h>
@@ -31,9 +30,9 @@
 NOCT_DLL
 bool
 CDECL
-ex_make_string_with_hash(
-	struct rt_env *env,
-	struct rt_value *val,
+noct_ex_make_string_with_hash(
+	NoctEnv *env,
+	NoctValue *val,
 	const char *data,
 	size_t len,
 	uint32_t hash)
@@ -48,9 +47,9 @@ ex_make_string_with_hash(
 NOCT_DLL
 bool
 CDECL
-ex_make_empty_array(
-	struct rt_env *env,
-	struct rt_value *val)
+noct_ex_make_empty_array(
+	NoctEnv *env,
+	NoctValue *val)
 {
 	/* Be careful: calling convention may be different. */
 	return rt_make_empty_array(env, val);
@@ -62,9 +61,9 @@ ex_make_empty_array(
 NOCT_DLL
 bool
 CDECL
-ex_make_empty_dict(
-	struct rt_env *env,
-	struct rt_value *val)
+noct_ex_make_empty_dict(
+	NoctEnv *env,
+	NoctValue *val)
 {
 	/* Be careful: calling convention may be different. */
 	return rt_make_empty_dict(env, val);
@@ -76,8 +75,8 @@ ex_make_empty_dict(
 NOCT_DLL
 bool
 CDECL
-ex_add_helper(
-	struct rt_env *env,
+noct_ex_add_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -162,8 +161,8 @@ ex_add_helper(
 NOCT_DLL
 bool
 CDECL
-ex_sub_helper(
-	struct rt_env *env,
+noct_ex_sub_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -221,8 +220,8 @@ ex_sub_helper(
 NOCT_DLL
 bool
 CDECL
-ex_mul_helper(
-	struct rt_env *env,
+noct_ex_mul_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -280,8 +279,8 @@ ex_mul_helper(
 NOCT_DLL
 bool
 CDECL
-ex_div_helper(
-	struct rt_env *env,
+noct_ex_div_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -355,8 +354,8 @@ ex_div_helper(
 NOCT_DLL
 bool
 CDECL
-ex_mod_helper(
-	struct rt_env *env,
+noct_ex_mod_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -395,8 +394,8 @@ ex_mod_helper(
 NOCT_DLL
 bool
 CDECL
-ex_and_helper(
-	struct rt_env *env,
+noct_ex_and_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -435,8 +434,8 @@ ex_and_helper(
 NOCT_DLL
 bool
 CDECL
-ex_or_helper(
-	struct rt_env *env,
+noct_ex_or_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -475,8 +474,8 @@ ex_or_helper(
 NOCT_DLL
 bool
 CDECL
-ex_xor_helper(
-	struct rt_env *env,
+noct_ex_xor_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -515,8 +514,8 @@ ex_xor_helper(
 NOCT_DLL
 bool
 CDECL
-ex_shl_helper(
-	struct rt_env *env,
+noct_ex_shl_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -555,8 +554,8 @@ ex_shl_helper(
 NOCT_DLL
 bool
 CDECL
-ex_shr_helper(
-	struct rt_env *env,
+noct_ex_shr_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -595,8 +594,8 @@ ex_shr_helper(
 NOCT_DLL
 bool
 CDECL
-ex_neg_helper(
-	struct rt_env *env,
+noct_ex_neg_helper(
+	NoctEnv *env,
 	int dst,
 	int src)
 {
@@ -629,8 +628,8 @@ ex_neg_helper(
 NOCT_DLL
 bool
 CDECL
-ex_not_helper(
-	struct rt_env *env,
+noct_ex_not_helper(
+	NoctEnv *env,
 	int dst,
 	int src)
 {
@@ -659,8 +658,8 @@ ex_not_helper(
 NOCT_DLL
 bool
 CDECL
-ex_lt_helper(
-	struct rt_env *env,
+noct_ex_lt_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -729,8 +728,8 @@ ex_lt_helper(
 NOCT_DLL
 bool
 CDECL
-ex_lte_helper(
-	struct rt_env *env,
+noct_ex_lte_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -799,8 +798,8 @@ ex_lte_helper(
 NOCT_DLL
 bool
 CDECL
-ex_gt_helper(
-	struct rt_env *env,
+noct_ex_gt_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -869,8 +868,8 @@ ex_gt_helper(
 NOCT_DLL
 bool
 CDECL
-ex_gte_helper(
-	struct rt_env *env,
+noct_ex_gte_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -939,8 +938,8 @@ ex_gte_helper(
 NOCT_DLL
 bool
 CDECL
-ex_eq_helper(
-	struct rt_env *env,
+noct_ex_eq_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -1018,8 +1017,8 @@ ex_eq_helper(
 NOCT_DLL
 bool
 CDECL
-ex_neq_helper(
-	struct rt_env *env,
+noct_ex_neq_helper(
+	NoctEnv *env,
 	int dst,
 	int src1,
 	int src2)
@@ -1092,8 +1091,8 @@ ex_neq_helper(
 NOCT_DLL
 bool
 CDECL
-ex_storearray_helper(
-	struct rt_env *env,
+noct_ex_storearray_helper(
+	NoctEnv *env,
 	int arr,
 	int subscr,
 	int val)
@@ -1151,8 +1150,8 @@ ex_storearray_helper(
 NOCT_DLL
 bool
 CDECL
-ex_loadarray_helper(
-	struct rt_env *env,
+noct_ex_loadarray_helper(
+	NoctEnv *env,
 	int dst,
 	int arr,
 	int subscr)
@@ -1208,8 +1207,8 @@ ex_loadarray_helper(
 NOCT_DLL
 bool
 CDECL
-ex_len_helper(
-	struct rt_env *env,
+noct_ex_len_helper(
+	NoctEnv *env,
 	int dst,
 	int src)
 {
@@ -1250,8 +1249,8 @@ ex_len_helper(
 NOCT_DLL
 bool
 CDECL
-ex_getdictkeybyindex_helper(
-	struct rt_env *env,
+noct_ex_getdictkeybyindex_helper(
+	NoctEnv *env,
 	int dst,
 	int dict,
 	int subscr)
@@ -1286,8 +1285,8 @@ ex_getdictkeybyindex_helper(
 NOCT_DLL
 bool
 CDECL
-ex_getdictvalbyindex_helper(
-	struct rt_env *env,
+noct_ex_getdictvalbyindex_helper(
+	NoctEnv *env,
 	int dst,
 	int dict,
 	int subscr)
@@ -1322,8 +1321,8 @@ ex_getdictvalbyindex_helper(
 NOCT_DLL
 bool
 CDECL
-ex_loadsymbol_helper(
-	struct rt_env *env,
+noct_ex_loadsymbol_helper(
+	NoctEnv *env,
 	int dst,
 	const char *symbol,
 	uint32_t symbol_len,
@@ -1345,8 +1344,8 @@ ex_loadsymbol_helper(
 NOCT_DLL
 bool
 CDECL
-ex_storesymbol_helper(
-	struct rt_env *env,
+noct_ex_storesymbol_helper(
+	NoctEnv *env,
 	const char *symbol,
 	uint32_t symbol_len,
 	uint32_t symbol_hash,
@@ -1364,8 +1363,8 @@ ex_storesymbol_helper(
 NOCT_DLL
 bool
 CDECL
-ex_loaddot_helper(
-	struct rt_env *env,
+noct_ex_loaddot_helper(
+	NoctEnv *env,
 	int dst,
 	int dict,
 	const char *field,
@@ -1414,8 +1413,8 @@ ex_loaddot_helper(
 NOCT_DLL
 bool
 CDECL
-ex_storedot_helper(
-	struct rt_env *env,
+noct_ex_storedot_helper(
+	NoctEnv *env,
 	int dict,
 	const char *field,
 	uint32_t field_len,
@@ -1447,8 +1446,8 @@ ex_storedot_helper(
 NOCT_DLL
 bool
 CDECL
-ex_call_helper(
-	struct rt_env *env,
+noct_ex_call_helper(
+	NoctEnv *env,
 	int dst,
 	int func,
 	int arg_count,
@@ -1486,8 +1485,8 @@ ex_call_helper(
 NOCT_DLL
 bool
 CDECL
-ex_thiscall_helper(
-	struct rt_env *env,
+noct_ex_thiscall_helper(
+	NoctEnv *env,
 	int dst,
 	int obj,
 	const char *name,
