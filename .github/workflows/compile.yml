@@ -223,11 +223,10 @@ jobs:
           ls -lha
           ls -lha openwatcom-1.9
           ls -lha openwatcom-1.9/
-          echo "WATCOM=$PWD/openwatcom-1.9" >> $GITHUB_ENV
-          echo "INCLUDE=$PWD/openwatcom-1.9/h" >> $GITHUB_ENV
-          echo "EDPATH=$PWD/openwatcom-1.9/eddat" >> $GITHUB_ENV
-          echo "$PWD/openwatcom-1.9/binw" >> $GITHUB_PATH
-          echo "$PWD/openwatcom-1.9/binl" >> $GITHUB_PATH
+          export WATCOM="$PWD/openwatcom-1.9"
+          export INCLUDE="$PWD/openwatcom-1.9/h"
+          export EDPATH="$PWD/openwatcom-1.9/eddat"
+          export PATH="$PWD/openwatcom-1.9/binl:$PWD/openwatcom-1.9/binw:$PATH"
           cmake --preset msdos
           cmake --build --preset msdos
           mv build-msdos/noct.exe build-msdos/noct98.exe
