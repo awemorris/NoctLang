@@ -72,7 +72,7 @@ jobs:
 
       - name: Set up dependencies
         run: |
-          dnf -y install gcc make cmake
+          dnf -y install gcc make cmake ninja-build
 
       - name: Build static
         run: |
