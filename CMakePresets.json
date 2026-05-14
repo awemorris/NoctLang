@@ -230,7 +230,15 @@
             "binaryDir":      "${sourceDir}/build-ios-device",
             "toolchainFile":  "${sourceDir}/cmake/toolchains/ios-device.cmake",
             "cacheVariables": {
-                "NOCT_ENABLE_STATIC": "ON"
+                "NOCT_ENABLE_STATIC":    "ON",
+                "NOCT_ENABLE_CLI":       "OFF",
+                "NOCT_ENABLE_JIT":       "OFF",
+                "NOCT_ENABLE_I18N":      "OFF",
+                "NOCT_ENABLE_API":       "OFF",
+                "NOCT_ENABLE_INSTALL":   "OFF",
+                "NOCT_ENABLE_CBACKEND":  "OFF",
+                "NOCT_ENABLE_BCBACKEND": "OFF",
+                "NOCT_ENABLE_ELBACKEND": "OFF"
             }
         },
         {
@@ -240,7 +248,15 @@
             "binaryDir":      "${sourceDir}/build-ios-simulator",
             "toolchainFile":  "${sourceDir}/cmake/toolchains/ios-simulator.cmake",
             "cacheVariables": {
-                "NOCT_ENABLE_STATIC": "ON"
+                "NOCT_ENABLE_STATIC":    "ON",
+                "NOCT_ENABLE_CLI":       "OFF",
+                "NOCT_ENABLE_JIT":       "OFF",
+                "NOCT_ENABLE_I18N":      "OFF",
+                "NOCT_ENABLE_API":       "OFF",
+                "NOCT_ENABLE_INSTALL":   "OFF",
+                "NOCT_ENABLE_CBACKEND":  "OFF",
+                "NOCT_ENABLE_BCBACKEND": "OFF",
+                "NOCT_ENABLE_ELBACKEND": "OFF"
             }
         },
         {
