@@ -330,6 +330,7 @@ jobs:
 
           body: |
             This is an automated nightly build. Not an official release.
+            
             | OS      | File                           | Type             | Description                                          |
             |---------|--------------------------------|------------------|------------------------------------------------------|
             | Windows | noct-win64.exe                 | Executable       | Windows 7+ x64                                       |
