@@ -349,7 +349,7 @@ jobs:
           body: |
             This is an automated nightly build. Not an official release.
             
-            &#1F319; Noct Programming Language
+            🌙 Noct Programming Language
             
             Noct is a tiny yet mighty programming language for sandboxed scripting.
             Its runtime is a hardened by sandboxing for game and application-embedded scripting.
