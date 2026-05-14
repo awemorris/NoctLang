@@ -349,6 +349,13 @@ jobs:
           body: |
             This is an automated nightly build. Not an official release.
             
+            &#1F319; Noct Programming Language
+            
+            Noct is a tiny yet mighty programming language for sandboxed scripting.
+            Its runtime is a hardened by sandboxing for game and application-embedded scripting.
+            It includes the JIT compiler for many architectures including x86, x86_64, ARMv5-7, Arm64, RISC-V 32/64, MIPS 32/64, and PowerPC 32/64.
+            The AOT compiler translates a Noct program to an ANSI C or an Emacs Lisp source code for JIT-restricted platforms such as iOS.
+            
             | OS      | File                           | Type             | Description                                          |
             |---------|--------------------------------|------------------|------------------------------------------------------|
             | Windows | noct-win64.exe                 | Executable       | Windows 7+ x64                                       |
