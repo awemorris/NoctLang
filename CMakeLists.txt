@@ -368,7 +368,9 @@ endif()
 # LDFLAGS
 #
 
-target_link_libraries(noct PUBLIC m)
+if(NOT MSVC)
+  target_link_libraries(noct PUBLIC m)
+endif()
 
 if(NOCT_ENABLE_I18N_INTL)
   target_link_libraries(noct PUBLIC ${INTL_LIBRARY})
