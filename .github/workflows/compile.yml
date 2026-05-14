@@ -77,30 +77,30 @@ jobs:
       - name: Build static
         run: |
           cmake --preset linux -G "Unix Makefiles"
-          cmake --build --preset linux
+          cmake --build --preset linux --parallel
 
       - name: Build shared
         run: |
-          cmake --preset linux-debian -G "Unix Makefiles"
-          cmake --build --preset linux-debian
+          cmake --preset linux-debian
+          cmake --build --preset linux-debian --parallel
 
       - name: Build tar.gz
         run: |
           mkdir -p out
-          mkdir -p out/usr/local/include/noct
-          mkdir -p out/usr/local/lib
-          mkdir -p out/usr/local/lib/pkgconfig
-          mkdir -p out/usr/local/share/cmake/Modules
-          mkdir -p out/usr/local/share/man/man1
-          cp include/noct/noct.h out/usr/local/include/noct/
-          cp include/noct/c89compat.h out/usr/local/include/noct/
-          cp build-linux/libnoct.a out/usr/local/lib/
-          cp build-linux/libnoctapi.a out/usr/local/lib/
-          cp -d build-linux-debian/libnoct.so* out/usr/local/lib/
-          cp -d build-linux-debian/libnoctapi.so out/usr/local/lib/
-          cp resources/pkg-config/noct*.pc out/usr/local/lib/pkgconfig/
-          cp cmake/modules/FindNoct.cmake out/usr/local/share/cmake/Modules/
-          cp resources/man/noct.1.man out/usr/local/share/man/man1/
+          mkdir -p out/include/noct
+          mkdir -p out/lib/x86_64-linux-gnu/
+          mkdir -p out/lib/x86_64-linux-gnu/pkgconfig
+          mkdir -p out/share/cmake/Modules
+          mkdir -p out/share/man/man1
+          cp include/noct/noct.h out/include/noct/
+          cp include/noct/c89compat.h out/include/noct/
+          cp build-linux/libnoct.a out/lib/x86_64-linux-gnu/
+          cp build-linux/libnoctapi.a out/lib/x86_64-linux-gnu/
+          cp -d build-linux-debian/libnoct.so* out/lib/x86_64-linux-gnu/
+          cp -d build-linux-debian/libnoctapi.so out/lib/x86_64-linux-gnu/
+          cp resources/pkg-config/noct*.pc out/lib/x86_64-linux-gnu/pkgconfig/
+          cp cmake/modules/FindNoct.cmake out/share/cmake/Modules/
+          cp resources/man/noct.1.man out/share/man/man1/
           cd out
           tar czf ../noct-linux-x86_64.tar.gz *
           cd ..
@@ -221,20 +221,20 @@ jobs:
       - name: Build tar.gz
         run: |
           mkdir -p out
-          mkdir -p out/usr/local/bin
-          mkdir -p out/usr/local/include/noct
-          mkdir -p out/usr/local/lib
-          mkdir -p out/usr/local/lib/pkgconfig
-          mkdir -p out/usr/local/share/cmake/Modules
-          mkdir -p out/usr/local/share/man/man1
-          cp noct out/usr/local/bin/
-          cp include/noct/noct.h out/usr/local/include/noct/
-          cp include/noct/c89compat.h out/usr/local/include/noct/
-          cp libnoct.a out/usr/local/lib/
-          cp libnoctapi.a out/usr/local/lib/
-          cp resources/pkg-config/noct*.pc out/usr/local/lib/pkgconfig/
-          cp cmake/modules/FindNoct.cmake out/usr/local/share/cmake/Modules/
-          cp resources/man/noct.1.man out/usr/local/share/man/man1/
+          mkdir -p out/bin
+          mkdir -p out/include/noct
+          mkdir -p out/lib
+          mkdir -p out/lib/pkgconfig
+          mkdir -p out/share/cmake/Modules
+          mkdir -p out/share/man/man1
+          cp noct out/bin/
+          cp include/noct/noct.h out/include/noct/
+          cp include/noct/c89compat.h out/include/noct/
+          cp libnoct.a out/lib/
+          cp libnoctapi.a out/lib/
+          cp resources/pkg-config/noct*.pc out/lib/pkgconfig/
+          cp cmake/modules/FindNoct.cmake out/share/cmake/Modules/
+          cp resources/man/noct.1.man out/share/man/man1/
           cd out
           tar czf ../noct-macos-universal.tar.gz *
           cd ..
@@ -352,10 +352,10 @@ jobs:
             |---------|--------------------------------|------------------|------------------------------------------------------|
             | Windows | noct-win64.exe                 | Executable       | Windows 7+ x64                                       |
             | Windows | Noct.1.0.0.nupkg               | NuGet Package    | Visual Studio 2022+                                  |
-            | Windows | noct-mingw-w64.tar.gz          | Tarball          | MinGW-w64                                            |
+            | Windows | noct-mingw-w64.tar.gz          | Tarball          | MinGW-w64 (extract to /)                             |
             | macOS   | Noct-XCFramework-macOS-iOS.zip | Xcode Framework  | macOS and iOS                                        |
-            | macOS   | noct-macos-universal.tar.gz    | Tarball          | macOS                                                |
-            | Linux   | noct-linux-x86_64.tar.gz       | Tarball          | Linux, glibc 2.28, Debian 12+ and RHEL 8+            |
+            | macOS   | noct-macos-universal.tar.gz    | Tarball          | macOS (extract to /usr/local)                        |
+            | Linux   | noct-linux-x86_64.tar.gz       | Tarball          | Linux (extract to /usr/local)                        |
             | DOS     | noct-dos.exe                   | Executable       | DOS4GW: PC/AT, PC-9801, OS/2, Windows 3.1 - XP       |
 
         env:
