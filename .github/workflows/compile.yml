@@ -295,6 +295,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs:
+      - build-windows
       - build-linux
       - build-windows-mingw
       - build-macos
