@@ -504,7 +504,8 @@ if(NOCT_ENABLE_INSTALL)
     endif()
     install(
       FILES "${NOCT_MANPAGE}"
-      DESTINATION "${CMAKE_INSTALL_MANDIR}/man1 RENAME noct.1"
+      DESTINATION "${CMAKE_INSTALL_MANDIR}/man1"
+      RENAME noct.1
     )
   endif()
 
