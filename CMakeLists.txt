@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(noct LANGUAGES C)
+project(Noct VERSION 1.0 LANGUAGES C)
 
 #
 # Build Configuration
@@ -524,13 +524,23 @@ if(NOCT_ENABLE_INSTALL)
   )
 
   # pkgconfig pc
+  configure_file(
+    "${CMAKE_SOURCE_DIR}/resources/pkg-config/noct.pc.in"
+    noct.pc
+    @ONLY
+  )
   install(
-    FILES "${CMAKE_SOURCE_DIR}/resources/pkg-config/noct.pc"
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/noct.pc"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
   )
   if(NOCT_ENABLE_API)
+    configure_file(
+      "${CMAKE_SOURCE_DIR}/resources/pkg-config/noctapi.pc.in"
+      noctapi.pc
+      @ONLY
+    )
     install(
-      FILES "${CMAKE_SOURCE_DIR}/resources/pkg-config/noctapi.pc"
+      FILES "${CMAKE_CURRENT_BINARY_DIR}/noctapi.pc"
       DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
     )
   endif()
