@@ -335,7 +335,7 @@ jobs:
             |---------|--------------------------------|------------------|------------------------------------------------------|
             | Windows | noct-win64.exe                 | Executable       | Windows 7+ x64                                       |
             | Windows | Noct.1.0.0.nupkg               | NuGet Package    | Visual Studio 2022+                                  |
-	    | Windows | noct-mingw-x86_64.tar.gz       | Tarball          | MinGW-w64 /usr/local                                 |
+            | Windows | noct-mingw-x86_64.tar.gz       | Tarball          | MinGW-w64 /usr/local                                 |
             | macOS   | Noct-XCFramework-macOS-iOS.zip | Xcode Framework  | macOS and iOS                                        |
             | macOS   | noct-macos-universal.tar.gz    | Tarball          | macOS                                                |
             | Linux   | noct-linux-x86_64.tar.gz       | Tarball          | Linux, glibc 2.28, Debian 12+ and RHEL 8+            |
