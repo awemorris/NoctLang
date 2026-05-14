@@ -98,7 +98,8 @@ jobs:
           cp build-linux/libnoctapi.a out/lib/x86_64-linux-gnu/
           cp -d build-linux-debian/libnoct.so* out/lib/x86_64-linux-gnu/
           cp -d build-linux-debian/libnoctapi.so out/lib/x86_64-linux-gnu/
-          cp resources/pkg-config/noct*.pc out/lib/x86_64-linux-gnu/pkgconfig/
+          cp build-linux/noct.pc out/lib/x86_64-linux-gnu/pkgconfig/
+          cp build-linux/noctapi.pc out/lib/x86_64-linux-gnu/pkgconfig/
           cp cmake/modules/FindNoct.cmake out/share/cmake/Modules/
           cp resources/man/noct.1.man out/share/man/man1/
           cd out
@@ -150,7 +151,8 @@ jobs:
           cp include/noct/c89compat.h out/i686-w64-mingw32/include/noct/
           cp build-mingw-x86/libnoct.a out/i686-w64-mingw32/lib/
           cp build-mingw-x86/libnoctapi.a out/i686-w64-mingw32/lib/
-          cp resources/pkg-config/noct*.pc out/i686-w64-mingw32/lib/pkgconfig/
+          cp build-mingw-x86/noct.pc out/i686-w64-mingw32/lib/pkgconfig/
+          cp build-mingw-x86/noctapi.pc out/i686-w64-mingw32/lib/pkgconfig/
           cp cmake/modules/FindNoct.cmake out/i686-w64-mingw32/share/cmake/Modules/
           cp resources/man/noct.1.man out/i686-w64-mingw32/share/man/man1/
 
@@ -165,7 +167,8 @@ jobs:
           cp include/noct/c89compat.h out/x86_64-w64-mingw32/include/noct/
           cp build-mingw-x86_64/libnoct.a out/x86_64-w64-mingw32/lib/
           cp build-mingw-x86_64/libnoctapi.a out/x86_64-w64-mingw32/lib/
-          cp resources/pkg-config/noct*.pc out/x86_64-w64-mingw32/lib/pkgconfig/
+          cp build-mingw-x86_64/noct.pc out/x86_64-w64-mingw32/lib/pkgconfig/
+          cp build-mingw-x86_64/noctapi.pc out/x86_64-w64-mingw32/lib/pkgconfig/
           cp cmake/modules/FindNoct.cmake out/x86_64-w64-mingw32/share/cmake/Modules/
           cp resources/man/noct.1.man out/x86_64-w64-mingw32/share/man/man1/
 
@@ -232,7 +235,8 @@ jobs:
           cp include/noct/c89compat.h out/include/noct/
           cp libnoct.a out/lib/
           cp libnoctapi.a out/lib/
-          cp resources/pkg-config/noct*.pc out/lib/pkgconfig/
+          cp build-macos-arm64/noct.pc out/lib/pkgconfig/
+          cp build-macos-arm64/noctapi.pc out/lib/pkgconfig/
           cp cmake/modules/FindNoct.cmake out/share/cmake/Modules/
           cp resources/man/noct.1.man out/share/man/man1/
           cd out
