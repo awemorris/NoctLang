@@ -36,7 +36,7 @@ jobs:
           mkdir build
           mkdir build/native
           mkdir build/native/include
-          mkdir build/native/include/strato
+          mkdir build/native/include/noct
           mkdir build/native/lib
           mkdir build/native/lib/x86
           mkdir build/native/lib/x64
@@ -182,11 +182,13 @@ jobs:
         run: |
           xcodebuild -create-xcframework \
               -library libnoct.a -headers include \
-              -library libnoctapi.a -headers include \
               -library build-ios-device/libnoct.a -headers include \
               -library build-ios-simulator/libnoct.a -headers include \
               -output Noct.xcframework
-          tar czf Noct.xcframework.tar.gz Noct.xcframework
+          xcodebuild -create-xcframework \
+              -library libnoctapi.a -headers include
+              -output NoctAPI.xcframework
+          tar czf Noct.xcframework.tar.gz Noct.xcframework NoctAPI.xcframework
 
       - name: Upload macOS binary
         uses: actions/upload-artifact@v4
@@ -220,13 +222,14 @@ jobs:
 
       - name: Build
         run: |
-          ls -lha
-          ls -lha openwatcom-1.9
-          ls -lha openwatcom-1.9/
           export WATCOM="$PWD/openwatcom-1.9"
-          export INCLUDE="$PWD/openwatcom-1.9/h"
-          export EDPATH="$PWD/openwatcom-1.9/eddat"
-          export PATH="$PWD/openwatcom-1.9/binl:$PWD/openwatcom-1.9/binw:$PATH"
+          export INCLUDE="$WATCOM/h"
+          export EDPATH="$WATCOM/eddat"
+          export PATH="$WATCOM/binl:$WATCOM/binw:$PATH"
+          echo "$WATCOM"
+          ls -lha "$WATCOM/binl"
+          command -v wcl386 || true
+          command -v wlink || true
           cmake --preset msdos
           cmake --build --preset msdos
           mv build-msdos/noct.exe build-msdos/noct98.exe
