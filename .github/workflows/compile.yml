@@ -72,16 +72,16 @@ jobs:
 
       - name: Set up dependencies
         run: |
-          dnf -y install gcc make cmake ninja
+          dnf -y install gcc make cmake
 
       - name: Build static
         run: |
-          cmake --preset linux
+          cmake --preset linux -G "Unix Makefiles"
           cmake --build --preset linux
 
       - name: Build shared
         run: |
-          cmake --preset linux-debian
+          cmake --preset linux-debian -G "Unix Makefiles"
           cmake --build --preset linux-debian
 
       - name: Build tar.gz
