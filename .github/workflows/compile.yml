@@ -72,7 +72,7 @@ jobs:
 
       - name: Set up dependencies
         run: |
-          dnf -y install gcc make cmake ninja
+          dnf -y install gcc make cmake ninja-build
 
       - name: Build static
         run: |
@@ -145,7 +145,7 @@ jobs:
           mkdir -p out/i686-w64-mingw32/lib/pkgconfig
           mkdir -p out/i686-w64-mingw32/share/cmake/Modules
           mkdir -p out/i686-w64-mingw32/share/man/man1
-          cp build-mingw-x86/noct out/i686-w64-mingw32/bin/
+          cp build-mingw-x86/noct.exe out/i686-w64-mingw32/bin/
           cp include/noct/noct.h out/i686-w64-mingw32/include/noct/
           cp include/noct/c89compat.h out/out/i686-w64-mingw32/include/noct/
           cp build-mingw-x86/libnoct.a out/i686-w64-mingw32/lib/
@@ -160,7 +160,7 @@ jobs:
           mkdir -p out/x86_64-w64-mingw32/lib/pkgconfig
           mkdir -p out/x86_64-w64-mingw32/share/cmake/Modules
           mkdir -p out/x86_64-w64-mingw32/share/man/man1
-          cp build-mingw-x86_64/noct out/x86_64-w64-mingw32/bin/
+          cp build-mingw-x86_64/noct.exe out/x86_64-w64-mingw32/bin/
           cp include/noct/noct.h out/x86_64-w64-mingw32/include/noct/
           cp include/noct/c89compat.h out/out/x86_64-w64-mingw32/include/noct/
           cp build-mingw-x86_64/libnoct.a out/x86_64-w64-mingw32/lib/
