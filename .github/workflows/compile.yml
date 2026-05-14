@@ -186,7 +186,7 @@ jobs:
               -library build-ios-simulator/libnoct.a -headers include \
               -output Noct.xcframework
           xcodebuild -create-xcframework \
-              -library libnoctapi.a -headers include
+              -library libnoctapi.a -headers include \
               -output NoctAPI.xcframework
           tar czf Noct.xcframework.tar.gz Noct.xcframework NoctAPI.xcframework
 
