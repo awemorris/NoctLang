@@ -355,10 +355,10 @@ jobs:
           mkdir -p out/src/main/cpp/third_party/noct/include/strato
           mkdir -p out/src/main/cpp/third_party/noct/lib/arm64-v8a
           mkdir -p out/src/main/cpp/third_party/noct/lib/x86_64
-          cp include/strato/strato.h out/src/main/cpp/third_party/noct/include/strato/
-          cp include/strato/c89compat.h out/src/main/cpp/third_party/noct/include/strato/
-          cp build-openharmony-arm64/libstrato.a out/src/main/cpp/third_party/noct/lib/arm64-v8a/
-          cp build-openharmony-x86_64/libstrato.a out/src/main/cpp/third_party/noct/lib/x86_64/
+          cp include/noct/noct.h out/src/main/cpp/third_party/noct/include/noct/
+          cp include/noct/c89compat.h out/src/main/cpp/third_party/noct/include/noct/
+          cp build-openharmony-arm64/libnoct.a out/src/main/cpp/third_party/noct/lib/arm64-v8a/
+          cp build-openharmony-x86_64/libnoct.a out/src/main/cpp/third_party/noct/lib/x86_64/
           cp resources/openharmony/FindNoct.cmake out/src/main/cpp/
           cd out
           tar czf ../noct-openharmony.tar.gz *
@@ -408,6 +408,72 @@ jobs:
           name: wasm
           path: |
             noct-wasm.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  build-unity:
+    name: Build for Unity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install apt deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build mingw-w64
+
+      - name: Cache LLVM
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: llvm-21
+          key: llvm-21
+
+      - name: Install LLVM
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          curl -L -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz
+          mkdir llvm-21 && tar -xJf llvm.tar.xz -C llvm-21 --strip-components=1
+
+      - name: Setup PATH for LLVM
+        run: |
+          echo "`pwd`/llvm-21/bin" >> $GITHUB_PATH
+          clang --version
+
+      - name: Build for Unity
+        run: |
+          cmake --preset unity-win64
+          cmake --build --preset unity-win64
+          cmake --preset unity-switch
+          cmake --build --preset unity-switch
+          cmake --preset unity-ps5
+          cmake --build --preset unity-ps5
+          cmake --preset unity-xbox
+          cmake --build --preset unity-xbox
+
+      - name: Make a zip
+        run: |
+          mkdir -p out/include/noct/noct
+          mkdir -p out/lib/x86_64
+          mkdir -p out/lib/Switch
+          mkdir -p out/lib/PS5
+          mkdir -p out/lib/GameCoreXboxSeries
+          mkdir -p out/lib/Common
+          cp build-unity-win64/libnoct.a out/lib/x86_64/
+          cp build-unity-switch/libnoct.a out/lib/Switch/
+          cp build-unity-ps5/libnoct.a out/lib/PS5/
+          cp build-unity-xbox/noct.lib out/lib/GameCoreXboxSeries/
+          cd out
+          zip -r ../noct-unity.zip *
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity
+          path: |
+            noct-unity.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -464,8 +530,10 @@ jobs:
       - build-linux
       - build-windows-mingw
       - build-macos
-      - build-wasm
+      - build-android
       - build-openharmony
+      - build-wasm
+      - build-unity
       - build-pc98
     steps:
       - name: Download Windows artifacts
@@ -515,6 +583,7 @@ jobs:
             linux/noct-linux-x86_64.tar.gz
             android/Noct.aar
             wasm/noct-wasm.tar.gz
+            unity/noct-unity.tar.gz
             pc98/noct-dos.exe
           body: |
             This is an automated nightly build. Not an official release.
