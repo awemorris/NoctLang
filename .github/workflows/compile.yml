@@ -264,6 +264,106 @@ jobs:
             Noct-XCFramework-macOS-iOS.zip
             noct-macos-universal.tar.gz
 
+  build-android:
+    name: Build for Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Setup for Android
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28c
+
+      - name: Build for Android
+        run: |
+          cmake --preset android-arm64
+          cmake --build --preset android-arm64
+          cmake --preset android-armv7
+          cmake --build --preset android-armv7
+          cmake --preset android-x86_64
+          cmake --build --preset android-x86_64
+          cmake --preset android-x86
+          cmake --build --preset android-x86
+          cmake --preset android-riscv64
+          cmake --build --preset android-riscv64
+
+      - name: Build AAR
+        run: |
+          mkdir -p aar_out/prefab/modules/noct/include
+          mkdir -p aar_out/prefab/modules/noct/android.arm64-v8a
+          mkdir -p aar_out/prefab/modules/noct/android.armeabi-v7a
+          mkdir -p aar_out/prefab/modules/noct/android.x86_64
+          mkdir -p aar_out/prefab/modules/noct/android.x86
+          mkdir -p aar_out/prefab/modules/noct/android.riscv64
+
+          cp -R include/noct aar_out/prefab/modules/noct/include/
+          cp build-android-arm64/libnoct.a aar_out/prefab/modules/noct/android.arm64-v8a/
+          cp build-android-armv7/libnoct.a aar_out/prefab/modules/noct/android.armeabi-v7a/
+          cp build-android-x86_64/libnoct.a aar_out/prefab/modules/noct/android.x86_64/
+          cp build-android-x86/libnoct.a aar_out/prefab/modules/noct/android.x86/
+          cp build-android-riscv64/libnoct.a aar_out/prefab/modules/noct/android.riscv64/
+
+          echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.noctvm.noct" />' > aar_out/AndroidManifest.xml
+          echo '{"schema_version": 2, "name": "strato", "dependencies": []}' > aar_out/prefab/prefab.json
+          echo '{"export_libraries": [], "library_name": "libnoct"}' > aar_out/prefab/modules/noct/module.json
+
+          cd aar_out
+          zip -r ../Noct.aar *
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: |
+            Noct.aar
+          if-no-files-found: error
+          retention-days: 7
+
+  build-wasm:
+    name: Build for Wasm
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup for Wasm
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Build for Wasm
+        run: |
+          cmake --preset wasm
+          cmake --build --preset wasm
+          cp build-wasm/libnoct.a libnoct-wasm.a
+
+      - name: Build tar.gz
+        run: |
+          mkdir -p out
+          mkdir -p out/include/noct
+          mkdir -p out/lib
+          cp include/noct/noct.h out/include/noct/
+          cp include/noct/c89compat.h out/include/noct/
+          cp build-wasm/libnoct.a out/lib/
+          cd out
+          tar czf ../libnoct-wasm.tar.gz *
+          cd ..
+
+      - name: Upload Wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: |
+            noct-wasm.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
   build-pc98:
     name: Build for NEC PC-9801
     runs-on: ubuntu-latest
@@ -362,6 +462,7 @@ jobs:
             mingw/noct-win32.exe
             macos/Noct-XCFramework-macOS-iOS.zip
             macos/noct-macos-universal.tar.gz
+            android/Noct.aar
             linux/noct-linux-x86_64.tar.gz
             pc98/noct-dos.exe
 
@@ -369,22 +470,28 @@ jobs:
             This is an automated nightly build. Not an official release.
             
             🌙 Noct Programming Language
+            ============================            
             
             Noct is a tiny yet mighty programming language for sandboxed scripting.
-            Its runtime is a hardened by sandboxing for game and application-embedded scripting.
-            It includes the JIT compiler for many architectures including x86, x86_64, ARMv5-7, Arm64, RISC-V 32/64, MIPS 32/64, and PowerPC 32/64.
+            
+            The runtime is a hardened by sandboxing for game and application-embedded scripting,
+            and it includes the JIT compiler for many architectures including
+            x86, x86_64, ARMv5-7, Arm64, RISC-V 32/64, MIPS 32/64, and PowerPC 32/64.
+            
             The AOT compiler translates a Noct program to an ANSI C or an Emacs Lisp source code for JIT-restricted platforms such as iOS.
             
-            | OS      | File                           | Type             | Description                                          |
-            |---------|--------------------------------|------------------|------------------------------------------------------|
-            | Windows | noct-win64.exe                 | Executable       | Windows 7+ x64                                       |
-            | Windows | noct-win32.exe                 | Executable       | Windows XP+ x86                                      |
-            | Windows | Noct.1.0.0.nupkg               | NuGet Package    | Visual Studio 2022+                                  |
-            | Windows | noct-mingw-w64.tar.gz          | Tarball          | MinGW-w64 (extract to /)                             |
-            | macOS   | Noct-XCFramework-macOS-iOS.zip | Xcode Framework  | macOS and iOS                                        |
-            | macOS   | noct-macos-universal.tar.gz    | Tarball          | macOS (extract to /usr/local)                        |
-            | Linux   | noct-linux-x86_64.tar.gz       | Tarball          | Linux (extract to /usr/local)                        |
-            | DOS     | noct-dos.exe                   | Executable       | DOS4GW: PC-9801, PC/AT, OS/2, Windows 3.1-XP         |
+            | OS        | File                           | Type             | Description                                          |
+            |-----------|--------------------------------|------------------|------------------------------------------------------|
+            | Windows   | noct-win64.exe                 | Executable       | Windows 7+ x64                                       |
+            | Windows   | noct-win32.exe                 | Executable       | Windows XP+ x86                                      |
+            | Windows   | Noct.1.0.0.nupkg               | NuGet Package    | Visual Studio 2022+                                  |
+            | Windows   | noct-mingw-w64.tar.gz          | Tarball          | MinGW-w64 (extract to /)                             |
+            | macOS/iOS | Noct-XCFramework-macOS-iOS.zip | Xcode Framework  | macOS and iOS                                        |
+            | macOS     | noct-macos-universal.tar.gz    | Tarball          | macOS (extract to /usr/local)                        |
+            | Linux     | noct-linux-x86_64.tar.gz       | Tarball          | Linux (extract to /usr/local)                        |
+            | Android   | Noct.aar                       | Android AAR      | Android NDK                                          |
+            | Wasm      | noct-wasm.tar.gz               | Emscripten       | Wasm                                                 |
+            | DOS       | noct-dos.exe                   | Executable       | DOS4GW: PC-9801, PC/AT, OS/2, Windows 3.1-XP         |
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
