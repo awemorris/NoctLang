@@ -171,6 +171,21 @@
             }
         },
         {
+            "name":           "macos",
+            "displayName":    "macOS",
+            "generator":      "Ninja",
+            "binaryDir":      "${sourceDir}/build-macos",
+            "toolchainFile":  "${sourceDir}/cmake/toolchains/macos.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE":      "Release",
+                "NOCT_ENABLE_I18N":      "ON",
+                "NOCT_ENABLE_STATIC":    "ON",
+                "NOCT_ENABLE_BCBACKEND": "ON",
+                "NOCT_ENABLE_ELBACKEND": "ON",
+                "NOCT_ENABLE_CBACKEND":  "ON"
+            }
+        },
+        {
             "name":           "macos-arm64",
             "displayName":    "macOS",
             "generator":      "Ninja",
@@ -754,6 +769,10 @@
         {
             "name": "windows-mingw-arm64",
             "configurePreset": "windows-mingw-arm64"
+        },
+        {
+            "name": "macos",
+            "configurePreset": "macos"
         },
         {
             "name": "macos-arm64",
