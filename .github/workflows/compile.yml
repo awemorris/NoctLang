@@ -310,7 +310,7 @@ jobs:
           cp build-android-riscv64/libnoct.a aar_out/prefab/modules/noct/android.riscv64/
 
           echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.noctvm.noct" />' > aar_out/AndroidManifest.xml
-          echo '{"schema_version": 2, "name": "strato", "dependencies": []}' > aar_out/prefab/prefab.json
+          echo '{"schema_version": 2, "name": "noct", "dependencies": []}' > aar_out/prefab/prefab.json
           echo '{"export_libraries": [], "library_name": "libnoct"}' > aar_out/prefab/modules/noct/module.json
 
           cd aar_out
@@ -352,7 +352,7 @@ jobs:
       - name: Build tar.gz
         run: |
           mkdir -p out
-          mkdir -p out/src/main/cpp/third_party/noct/include/strato
+          mkdir -p out/src/main/cpp/third_party/noct/include/noct
           mkdir -p out/src/main/cpp/third_party/noct/lib/arm64-v8a
           mkdir -p out/src/main/cpp/third_party/noct/lib/x86_64
           cp include/noct/noct.h out/src/main/cpp/third_party/noct/include/noct/
