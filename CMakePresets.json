@@ -411,6 +411,7 @@
             "cacheVariables": {
                 "NOCT_TARGET_UNITY":  "ON",
                 "NOCT_ENABLE_STATIC": "ON",
+                "NOCT_ENABLE_JIT":    "OFF",
                 "NOCT_ENABLE_CLI":    "OFF"
             }
         },
@@ -424,6 +425,7 @@
                 "NOCT_TARGET_UNITY":        "ON",
                 "NOCT_TARGET_UNITY_SWITCH": "ON",
                 "NOCT_ENABLE_STATIC":       "ON",
+                "NOCT_ENABLE_JIT":          "OFF",
                 "NOCT_ENABLE_CLI":          "OFF"
             }
         },
@@ -437,6 +439,7 @@
                 "NOCT_TARGET_UNITY":     "ON",
                 "NOCT_TARGET_UNITY_PS5": "ON",
                 "NOCT_ENABLE_STATIC":    "ON",
+                "NOCT_ENABLE_JIT":       "OFF",
                 "NOCT_ENABLE_CLI":       "OFF"
             }
         },
@@ -450,6 +453,7 @@
                 "NOCT_TARGET_UNITY":      "ON",
                 "NOCT_TARGET_UNITY_XBOX": "ON",
                 "NOCT_ENABLE_STATIC":     "ON",
+                "NOCT_ENABLE_JIT":        "OFF",
                 "NOCT_ENABLE_CLI":        "OFF"
             }
         },
