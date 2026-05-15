@@ -399,7 +399,7 @@ jobs:
           cp include/noct/c89compat.h out/include/noct/
           cp build-wasm/libnoct.a out/lib/
           cd out
-          tar czf ../libnoct-wasm.tar.gz *
+          tar czf ../noct-wasm.tar.gz *
           cd ..
 
       - name: Upload Wasm
