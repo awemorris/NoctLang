@@ -1,7 +1,8 @@
-NoctLang - The Noct Programming Language
-========================================
+🌙 Noct Programming Language
+============================
 
 `Noct` is a tiny yet mighty programming language for sandboxed scripting.
+Its syntax is lightweight, but its runtime is built for high-end performance.
 
 **Small enough to learn today, powerful enough to ship tomorrow!**
 
@@ -410,14 +411,17 @@ CFG for "func foo(a) { if (a > 0) { return a; } else { return -a; } }"
     STORESYMBOL  "a", %2             ; Store result into global variable "a"
 ```
 
-### Compilation Stages
+### Compilation Pipeline
 
 ```
  +-----+     +-----+     +-----+     +-----+
- | SRC | --> | AST | --> | HIR | --> | LIR | ----> <<Interpreter>>
+ | SRC | --> | AST | --> | HIR | --> | LIR | ----> <<Interpreter>> Crescente Interpreter Backend
  +-----+     +-----+     +-----+     +-----+
                                         |
-                                        +--------> <<JIT Codegen>>
+                                        +--------> <<JIT Codegen>> Piena JIT Backend
+                                        |
+                                        +--------> <<AOT Codegen>> Nuova C AOT Backend
+
 ```
 
 - The AST captures the syntactic structure.
