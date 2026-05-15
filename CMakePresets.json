@@ -399,7 +399,9 @@
             "cacheVariables": {
                 "NOCT_TARGET_UNITY":  "ON",
                 "NOCT_ENABLE_STATIC": "ON",
-                "NOCT_ENABLE_CLI":    "OFF"
+                "NOCT_ENABLE_CLI":    "OFF",
+                "NOCT_ENABLE_JIT":    "OFF",
+                "NOCT_ENABLE_I18N":   "OFF"
             }
         },
         {
@@ -411,8 +413,9 @@
             "cacheVariables": {
                 "NOCT_TARGET_UNITY":  "ON",
                 "NOCT_ENABLE_STATIC": "ON",
+                "NOCT_ENABLE_CLI":    "OFF",
                 "NOCT_ENABLE_JIT":    "OFF",
-                "NOCT_ENABLE_CLI":    "OFF"
+                "NOCT_ENABLE_I18N":   "OFF"
             }
         },
         {
@@ -425,8 +428,9 @@
                 "NOCT_TARGET_UNITY":        "ON",
                 "NOCT_TARGET_UNITY_SWITCH": "ON",
                 "NOCT_ENABLE_STATIC":       "ON",
+                "NOCT_ENABLE_CLI":          "OFF",
                 "NOCT_ENABLE_JIT":          "OFF",
-                "NOCT_ENABLE_CLI":          "OFF"
+                "NOCT_ENABLE_I18N":         "OFF"
             }
         },
         {
