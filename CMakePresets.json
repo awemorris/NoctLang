@@ -397,11 +397,16 @@
             "binaryDir":      "${sourceDir}/build-unity-win64",
             "toolchainFile":  "${sourceDir}/cmake/toolchains/unity-win64.cmake",
             "cacheVariables": {
-                "NOCT_TARGET_UNITY":  "ON",
-                "NOCT_ENABLE_STATIC": "ON",
-                "NOCT_ENABLE_CLI":    "OFF",
-                "NOCT_ENABLE_JIT":    "OFF",
-                "NOCT_ENABLE_I18N":   "OFF"
+                "NOCT_TARGET_UNITY":     "ON",
+                "NOCT_ENABLE_STATIC":    "ON",
+                "NOCT_ENABLE_CLI":       "OFF",
+                "NOCT_ENABLE_JIT":       "OFF",
+                "NOCT_ENABLE_I18N":      "OFF",
+                "NOCT_ENABLE_API":       "OFF",
+                "NOCT_ENABLE_INSTALL":   "OFF",
+                "NOCT_ENABLE_CBACKEND":  "OFF",
+                "NOCT_ENABLE_BCBACKEND": "OFF",
+                "NOCT_ENABLE_ELBACKEND": "OFF"
             }
         },
         {
@@ -411,11 +416,16 @@
             "binaryDir":      "${sourceDir}/build-unity-winarm64",
             "toolchainFile":  "${sourceDir}/cmake/toolchains/unity-winarm64.cmake",
             "cacheVariables": {
-                "NOCT_TARGET_UNITY":  "ON",
-                "NOCT_ENABLE_STATIC": "ON",
-                "NOCT_ENABLE_CLI":    "OFF",
-                "NOCT_ENABLE_JIT":    "OFF",
-                "NOCT_ENABLE_I18N":   "OFF"
+                "NOCT_TARGET_UNITY":     "ON",
+                "NOCT_ENABLE_STATIC":    "ON",
+                "NOCT_ENABLE_CLI":       "OFF",
+                "NOCT_ENABLE_JIT":       "OFF",
+                "NOCT_ENABLE_I18N":      "OFF",
+                "NOCT_ENABLE_API":       "OFF",
+                "NOCT_ENABLE_INSTALL":   "OFF",
+                "NOCT_ENABLE_CBACKEND":  "OFF",
+                "NOCT_ENABLE_BCBACKEND": "OFF",
+                "NOCT_ENABLE_ELBACKEND": "OFF"
             }
         },
         {
@@ -430,7 +440,12 @@
                 "NOCT_ENABLE_STATIC":       "ON",
                 "NOCT_ENABLE_CLI":          "OFF",
                 "NOCT_ENABLE_JIT":          "OFF",
-                "NOCT_ENABLE_I18N":         "OFF"
+                "NOCT_ENABLE_I18N":         "OFF",
+                "NOCT_ENABLE_API":          "OFF",
+                "NOCT_ENABLE_INSTALL":      "OFF",
+                "NOCT_ENABLE_CBACKEND":     "OFF",
+                "NOCT_ENABLE_BCBACKEND":    "OFF",
+                "NOCT_ENABLE_ELBACKEND":    "OFF"
             }
         },
         {
@@ -443,8 +458,14 @@
                 "NOCT_TARGET_UNITY":     "ON",
                 "NOCT_TARGET_UNITY_PS5": "ON",
                 "NOCT_ENABLE_STATIC":    "ON",
+                "NOCT_ENABLE_CLI":       "OFF",
                 "NOCT_ENABLE_JIT":       "OFF",
-                "NOCT_ENABLE_CLI":       "OFF"
+                "NOCT_ENABLE_I18N":      "OFF",
+                "NOCT_ENABLE_API":       "OFF",
+                "NOCT_ENABLE_INSTALL":   "OFF",
+                "NOCT_ENABLE_CBACKEND":  "OFF",
+                "NOCT_ENABLE_BCBACKEND": "OFF",
+                "NOCT_ENABLE_ELBACKEND": "OFF"
             }
         },
         {
@@ -457,8 +478,14 @@
                 "NOCT_TARGET_UNITY":      "ON",
                 "NOCT_TARGET_UNITY_XBOX": "ON",
                 "NOCT_ENABLE_STATIC":     "ON",
+                "NOCT_ENABLE_CLI":        "OFF",
                 "NOCT_ENABLE_JIT":        "OFF",
-                "NOCT_ENABLE_CLI":        "OFF"
+                "NOCT_ENABLE_I18N":       "OFF",
+                "NOCT_ENABLE_API":        "OFF",
+                "NOCT_ENABLE_INSTALL":    "OFF",
+                "NOCT_ENABLE_CBACKEND":   "OFF",
+                "NOCT_ENABLE_BCBACKEND":  "OFF",
+                "NOCT_ENABLE_ELBACKEND":  "OFF"
             }
         },
         {
