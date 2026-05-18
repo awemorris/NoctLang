@@ -108,10 +108,18 @@ void show_usage(void)
 	wide_printf("\n");
 	wide_printf(N_TR("Usage\n"));
 	wide_printf(N_TR("  noct <vm-options> <files>           ... run a program\n"));
+#if defined(NOCT_USE_BCBACKEND)
 	wide_printf(N_TR("  noct --compile <in-files>           ... convert to bytecode files\n"));
+#endif
+#if defined(NOCT_USE_CBACKEND)
 	wide_printf(N_TR("  noct --ansic <out-file> <in-files>  ... convert to a C source file\n"));
+#endif
+#if defined(NOCT_USE_ELBACKEND)
 	wide_printf(N_TR("  noct --elisp <out-file> <in-files>  ... convert to an Emacs Lisp source file\n"));
+#endif
+#if defined(NOCT_USE_SCMBACKEND)
 	wide_printf(N_TR("  noct --scheme <out-file> <in-files> ... convert to an Scheme source file\n"));
+#endif
 	wide_printf("\n");
 	wide_printf(N_TR("vm-options:\n"));
 	wide_printf(N_TR("  --disable-jit        ... disable JIT\n"));
