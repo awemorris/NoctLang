@@ -20,6 +20,7 @@ option(NOCT_ENABLE_INSTALL      "Enable installation"         ON)
 option(NOCT_ENABLE_CBACKEND     "Enable C backend"            ON)
 option(NOCT_ENABLE_ELBACKEND    "Enable Emacs Lisp backend"   ON)
 option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"     ON)
+option(NOCT_ENABLE_REPL         "Enable REPL"                 ON)
 option(NOCT_ENABLE_MDOC         "Install mdoc(7) man page"    OFF)
 
 # Choose one if needed.
@@ -423,15 +424,31 @@ set(NOCT_LIBRARIES    ${NOCT_LIBRARY})
 #
 
 if(NOCT_ENABLE_CLI)
+  if(NOCT_ENABLE_BCBACKEND)
+    set(CLI_BCBACK_SOURCES src/cli/cli-compile.c)
+  endif()
+  
+  if(NOCT_ENABLE_CBACKEND)
+    set(CLI_CBACK_SOURCES src/cli/cli-ctrans.c)
+  endif()
+  
+  if(NOCT_ENABLE_ELBACKEND)
+    set(CLI_CBACK_SOURCES src/cli/cli-eltrans.c)
+  endif()
+
+  if(NOCT_ENABLE_REPL)
+    set(CLI_REPL_SOURCES src/cli/cli-repl.c)
+  endif()
+
   add_executable(
     noctcli
     src/cli/cli-main.c
     src/cli/cli-run.c
-    src/cli/cli-compile.c
-    src/cli/cli-ctrans.c
-    src/cli/cli-eltrans.c
-    src/cli/cli-repl.c
     src/cli/cli-cfunc.c
+    ${CLI_BCBACK_SOURCES}
+    ${CLI_CBACK_SOURCES}
+    ${CLI_CBACK_SOURCES}
+    ${CLI_REPL_SOURCES}
   )
 
   # Set the executable name.
@@ -449,6 +466,21 @@ if(NOCT_ENABLE_CLI)
   endif()  
   if(NOCT_ENABLE_I18N_LIBINTL)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_LIBINTL)
+  endif()
+  if(NOCT_ENABLE_CBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_CBACKEND)
+  endif()
+  if(NOCT_ENABLE_BCBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_BCBACKEND)
+  endif()
+  if(NOCT_ENABLE_ELBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_ELBACKEND)
+  endif()
+  if(NOCT_ENABLE_REPL)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_REPL)
+  endif()
+  if(NOT NOCT_VERSION)
+    set(NOCT_VERSION "1.0-current")
   endif()
   target_compile_definitions(noctcli PRIVATE NOCT_VERSION="${NOCT_VERSION}")
 
