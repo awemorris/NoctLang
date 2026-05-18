@@ -231,14 +231,17 @@ msgstr "La compilación JIT está activada. Iniciando la máquina virtual rápid
 msgid "Usage\n"
 msgstr "Uso\n"
 
-msgid "noct <vm-options> <files>          ... run a program\n"
-msgstr "noct <vm-options> <files>          ... ejecutar un programa\n"
+msgid "noct <vm-options> <files>           ... run a program\n"
+msgstr "noct <vm-options> <files>           ... ejecutar un programa\n"
 
-msgid "noct --ansic <out-file> <in-files> ... convert to a C source file\n"
-msgstr "noct --ansic <out-file> <in-files> ... convertir en un archivo fuente en C\n"
+msgid "noct --ansic <out-file> <in-files>  ... convert to a C source file\n"
+msgstr "noct --ansic <out-file> <in-files>  ... convertir en un archivo fuente en C\n"
 
-msgid "noct --elisp <out-file> <in-files> ... convert to an Emacs Lisp source file\n"
-msgstr "noct --elisp <out-file> <in-files> ... convertir en un archivo fuente Emacs Lisp\n"
+msgid "noct --elisp <out-file> <in-files>  ... convert to an Emacs Lisp source file\n"
+msgstr "noct --elisp <out-file> <in-files>  ... convertir en un archivo fuente Emacs Lisp\n"
+
+msgid "noct --scheme <out-file> <in-files> ... convert to an Scheme source file\n"
+msgstr "noct --scheme <out-file> <in-files> ... convertir en un archivo fuente Scheme\n"
 
 msgid "--disable-jit        ... disable JIT\n"
 msgstr "--disable-jit        ... desactivar JIT\n"

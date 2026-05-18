@@ -234,14 +234,17 @@ msgstr "触发编译已启用。正在启动快速虚拟机...\n"
 msgid "Usage\n"
 msgstr "用法\n"
 
-msgid "noct <vm-options> <files>          ... run a program\n"
-msgstr "noct <vm-options> <files>          ... 运行程序\n"
+msgid "noct <vm-options> <files>           ... run a program\n"
+msgstr "noct <vm-options> <files>           ... 运行程序\n"
 
-msgid "noct --ansic <out-file> <in-files> ... convert to a C source file\n"
-msgstr "noct --ansic <out-file> <in-files> ... 转换为 C 源代码文件\n"
+msgid "noct --ansic <out-file> <in-files>  ... convert to a C source file\n"
+msgstr "noct --ansic <out-file> <in-files>  ... 转换为 C 源代码文件\n"
 
-msgid "noct --elisp <out-file> <in-files> ... convert to an Emacs Lisp source file\n"
-msgstr "noct --elisp <out-file> <in-files> ... 转换为 Emacs Lisp 源代码文件\n"
+msgid "noct --elisp <out-file> <in-files>  ... convert to an Emacs Lisp source file\n"
+msgstr "noct --elisp <out-file> <in-files>  ... 转换为 Emacs Lisp 源代码文件\n"
+
+msgid "noct --scheme <out-file> <in-files> ... convert to an Scheme source file\n"
+msgstr "noct --scheme <out-file> <in-files> ... 转换为 Scheme 源代码文件\n"
 
 msgid "--disable-jit        ... disable JIT\n"
 msgstr "--disable-jit        ... 禁用 JIT\n"

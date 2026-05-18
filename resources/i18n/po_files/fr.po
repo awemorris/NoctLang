@@ -234,14 +234,17 @@ msgstr "La compilation JIT est activée. Démarrage de la machine virtuelle rapi
 msgid "Usage\n"
 msgstr "Utilisation\n"
 
-msgid "noct <vm-options> <files>          ... run a program\n"
-msgstr "noct <vm-options> <files>          ... exécuter un programme\n"
+msgid "noct <vm-options> <files>           ... run a program\n"
+msgstr "noct <vm-options> <files>           ... exécuter un programme\n"
 
-msgid "noct --ansic <out-file> <in-files> ... convert to a C source file\n"
-msgstr "noct --ansic <out-file> <in-files> ... convertir en un fichier source C\n"
+msgid "noct --ansic <out-file> <in-files>  ... convert to a C source file\n"
+msgstr "noct --ansic <out-file> <in-files>  ... convertir en un fichier source C\n"
 
-msgid "noct --elisp <out-file> <in-files> ... convert to an Emacs Lisp source file\n"
-msgstr "noct --elisp <out-file> <in-files> ... convertir en un fichier source Emacs Lisp\n"
+msgid "noct --elisp <out-file> <in-files>  ... convert to an Emacs Lisp source file\n"
+msgstr "noct --elisp <out-file> <in-files>  ... convertir en un fichier source Emacs Lisp\n"
+
+msgid "noct --scheme <out-file> <in-files> ... convert to an Scheme source file\n"
+msgstr "noct --scheme <out-file> <in-files> ... convertir en un fichier source Scheme\n"
 
 msgid "--disable-jit        ... disable JIT\n"
 msgstr "--disable-jit        ... désactiver le JIT\n"
