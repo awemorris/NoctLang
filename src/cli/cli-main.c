@@ -70,6 +70,11 @@ int main(int argc, char *argv[])
 		return command_transpile_elisp(argc, argv);
 #endif
 
+#if defined(NOCT_USE_SCMBACKEND)
+	if (strcmp(argv[1], "--scheme") == 0)
+		return command_transpile_scheme(argc, argv);
+#endif
+
 	return command_run(argc, argv);
 }
 

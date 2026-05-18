@@ -1663,6 +1663,28 @@ bool
 noct_elback_finalize(void);
 
 /*
+ * Scheme Backend
+ */
+
+/* Start Scheme backend. */
+NOCT_DLL
+bool
+noct_scmback_start(
+	const char *fname);
+
+/* Translate a file using Scheme backend. */
+NOCT_DLL
+bool
+noct_scmback_translate(
+	const char *fname,
+	const char *data);
+
+/* Finalize the Scheme backend. */
+NOCT_DLL
+bool
+noct_scmback_finalize(void);
+
+/*
  * Custom Allocators
  *  - Override the macros and build a custom library.
  */

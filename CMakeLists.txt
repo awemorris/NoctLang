@@ -17,9 +17,10 @@ option(NOCT_ENABLE_I18N         "Enable translation feature"  ON)
 option(NOCT_ENABLE_I18N_LIBINTL "Enable gettext"              OFF)
 option(NOCT_ENABLE_API          "Enable standard API"         ON)
 option(NOCT_ENABLE_INSTALL      "Enable installation"         ON)
+option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"     ON)
 option(NOCT_ENABLE_CBACKEND     "Enable C backend"            ON)
 option(NOCT_ENABLE_ELBACKEND    "Enable Emacs Lisp backend"   ON)
-option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"     ON)
+option(NOCT_ENABLE_SCMBACKEND   "Enable Scheme backend"       ON)
 option(NOCT_ENABLE_REPL         "Enable REPL"                 ON)
 option(NOCT_ENABLE_MDOC         "Install mdoc(7) man page"    OFF)
 
@@ -186,6 +187,14 @@ if(NOCT_ENABLE_ELBACKEND)
   )
 endif()
 
+# Determine the Scheme backend files.
+if(NOCT_ENABLE_SCMBACKEND)
+  set(
+    NOCT_SCMBE_SOURCE
+    src/backend/scmback.c
+  )
+endif()
+
 # Determine the i18n files.
 if(NOCT_ENABLE_I18N)
   if(NOT NOCT_ENABLE_I18N_LIBINTL)
@@ -211,6 +220,7 @@ add_library(
   ${NOCT_CBE_SOURCE}
   ${NOCT_BCBE_SOURCE}
   ${NOCT_ELBE_SOURCE}
+  ${NOCT_SCMBE_SOURCE}
   ${NOCT_I18N_SOURCE}
 
   # Mandatory libraries here.
@@ -433,7 +443,11 @@ if(NOCT_ENABLE_CLI)
   endif()
   
   if(NOCT_ENABLE_ELBACKEND)
-    set(CLI_CBACK_SOURCES src/cli/cli-eltrans.c)
+    set(CLI_ELBACK_SOURCES src/cli/cli-eltrans.c)
+  endif()
+
+  if(NOCT_ENABLE_SCMBACKEND)
+    set(CLI_SCMBACK_SOURCES src/cli/cli-scmtrans.c)
   endif()
 
   if(NOCT_ENABLE_REPL)
@@ -447,7 +461,8 @@ if(NOCT_ENABLE_CLI)
     src/cli/cli-cfunc.c
     ${CLI_BCBACK_SOURCES}
     ${CLI_CBACK_SOURCES}
-    ${CLI_CBACK_SOURCES}
+    ${CLI_ELBACK_SOURCES}
+    ${CLI_SCMBACK_SOURCES}
     ${CLI_REPL_SOURCES}
   )
 
@@ -475,6 +490,9 @@ if(NOCT_ENABLE_CLI)
   endif()
   if(NOCT_ENABLE_ELBACKEND)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_ELBACKEND)
+  endif()
+  if(NOCT_ENABLE_SCMBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_SCMBACKEND)
   endif()
   if(NOCT_ENABLE_REPL)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_REPL)
