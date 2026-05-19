@@ -1760,7 +1760,7 @@ rt_remove_dict_elem_with_hash(
 	}
 
 	/* Not found. */
-	RELEASE_OBJ(d);
+	RELEASE_OBJ(real_dict);
 	rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
 	return false;
 }

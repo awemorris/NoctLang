@@ -713,10 +713,6 @@ noct_set_dict_elem(
 	return true;
 }
 
-/*
- * The following is not thread-safe.
- */
-#if !defined(NOCT_USE_MULTITHREAD)
 NOCT_DLL
 bool
 noct_remove_dict_elem(
@@ -740,7 +736,6 @@ noct_remove_dict_elem(
 
 	return true;
 }
-#endif
 
 NOCT_DLL
 bool
