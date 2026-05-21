@@ -159,13 +159,13 @@ jobs:
 
       - name: Build static
         run: |
-          cmake --preset linux -G "Unix Makefiles"
-          cmake --build --preset linux --parallel
+          cmake --preset static
+          cmake --build --preset static --parallel
 
       - name: Build shared
         run: |
-          cmake --preset linux-debian
-          cmake --build --preset linux-debian --parallel
+          cmake --preset shared
+          cmake --build --preset shared --parallel
 
       - name: Build tar.gz
         run: |
@@ -177,12 +177,12 @@ jobs:
           mkdir -p out/share/man/man1
           cp include/noct/noct.h out/include/noct/
           cp include/noct/c89compat.h out/include/noct/
-          cp build-linux/libnoct.a out/lib/x86_64-linux-gnu/
-          cp build-linux/libnoctapi.a out/lib/x86_64-linux-gnu/
-          cp -d build-linux-debian/libnoct.so* out/lib/x86_64-linux-gnu/
-          cp -d build-linux-debian/libnoctapi.so out/lib/x86_64-linux-gnu/
-          cp build-linux/noct.pc out/lib/x86_64-linux-gnu/pkgconfig/
-          cp build-linux/noctapi.pc out/lib/x86_64-linux-gnu/pkgconfig/
+          cp build-static/libnoct.a out/lib/x86_64-linux-gnu/
+          cp build-static/libnoctapi.a out/lib/x86_64-linux-gnu/
+          cp -d build-shared/libnoct.so* out/lib/x86_64-linux-gnu/
+          cp -d build-sharec/libnoctapi.so out/lib/x86_64-linux-gnu/
+          cp build-static/noct.pc out/lib/x86_64-linux-gnu/pkgconfig/
+          cp build-static/noctapi.pc out/lib/x86_64-linux-gnu/pkgconfig/
           cp cmake/modules/FindNoct.cmake out/share/cmake/Modules/
           cp resources/man/noct.1.man out/share/man/man1/
           cd out

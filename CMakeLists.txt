@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.10)
 project(Noct VERSION 1.0 LANGUAGES C)
 
 #
@@ -11,17 +11,17 @@ option(NOCT_ENABLE_SHARED       "Build a shared library"      OFF)
 option(NOCT_ENABLE_OBJECT       "Build objects only"          OFF)
 
 # Options
-option(NOCT_ENABLE_CLI          "Build a CLI binary"          ON)
-option(NOCT_ENABLE_JIT          "Enable JIT compilation"      ON)
-option(NOCT_ENABLE_I18N         "Enable translation feature"  ON)
+option(NOCT_ENABLE_CLI          "Build a CLI binary"          OFF)
+option(NOCT_ENABLE_JIT          "Enable JIT compilation"      OFF)
+option(NOCT_ENABLE_I18N         "Enable translation feature"  OFF)
 option(NOCT_ENABLE_I18N_LIBINTL "Enable gettext"              OFF)
-option(NOCT_ENABLE_API          "Enable standard API"         ON)
-option(NOCT_ENABLE_INSTALL      "Enable installation"         ON)
-option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"     ON)
-option(NOCT_ENABLE_CBACKEND     "Enable C backend"            ON)
-option(NOCT_ENABLE_ELBACKEND    "Enable Emacs Lisp backend"   ON)
-option(NOCT_ENABLE_SCMBACKEND   "Enable Scheme backend"       ON)
-option(NOCT_ENABLE_REPL         "Enable REPL"                 ON)
+option(NOCT_ENABLE_API          "Enable standard API"         OFF)
+option(NOCT_ENABLE_INSTALL      "Enable installation"         OFF)
+option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"     OFF)
+option(NOCT_ENABLE_CBACKEND     "Enable C backend"            OFF)
+option(NOCT_ENABLE_ELBACKEND    "Enable Emacs Lisp backend"   OFF)
+option(NOCT_ENABLE_SCMBACKEND   "Enable Scheme backend"       OFF)
+option(NOCT_ENABLE_REPL         "Enable REPL"                 OFF)
 option(NOCT_ENABLE_MDOC         "Install mdoc(7) man page"    OFF)
 
 # Choose one if needed.
@@ -536,6 +536,13 @@ endif()
 if(NOCT_ENABLE_INSTALL)
   include(GNUInstallDirs)
 
+  # Check for BSD.
+  if(   CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
+     OR CMAKE_SYSTEM_NAME STREQUAL "NetBSD"
+     OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+    set(NOCT_ENABLE_MDOC ON)
+  endif()
+
   # Headers
   install(
     FILES
@@ -616,4 +623,14 @@ if(NOCT_ENABLE_INSTALL)
       DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
     )
   endif()
+
+  # Uninstall
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+    IMMEDIATE @ONLY
+  )
+  add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+  )
 endif()
