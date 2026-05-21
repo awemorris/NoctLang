@@ -180,7 +180,7 @@ jobs:
           cp build-static/libnoct.a out/lib/x86_64-linux-gnu/
           cp build-static/libnoctapi.a out/lib/x86_64-linux-gnu/
           cp -d build-shared/libnoct.so* out/lib/x86_64-linux-gnu/
-          cp -d build-sharec/libnoctapi.so out/lib/x86_64-linux-gnu/
+          cp -d build-shared/libnoctapi.so out/lib/x86_64-linux-gnu/
           cp build-static/noct.pc out/lib/x86_64-linux-gnu/pkgconfig/
           cp build-static/noctapi.pc out/lib/x86_64-linux-gnu/pkgconfig/
           cp cmake/modules/FindNoct.cmake out/share/cmake/Modules/
