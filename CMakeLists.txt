@@ -27,9 +27,6 @@ option(NOCT_ENABLE_MDOC         "Install mdoc(7) man page"    OFF)
 # Choose one if needed.
 # (These targets cannot be automatically determined.)
 option(NOCT_TARGET_UNITY        "Build for Unity"             OFF)
-option(NOCT_TARGET_UNITY_PS5    "Build for Unity PS5"         OFF)
-option(NOCT_TARGET_UNITY_SWITCH "Build for Unity Switch"      OFF)
-option(NOCT_TARGET_UNITY_XBOX   "Build for Unity Xbox"        OFF)
 option(NOCT_TARGET_OPENHARMONY  "Build for OpenHarmony"       OFF)
 option(NOCT_TARGET_DOS4G        "Build for Unity"             OFF)
 
@@ -287,7 +284,8 @@ if(NOCT_ENABLE_SHARED)
 endif()
 
 # NOCT_USE_JIT
-if(NOCT_ENABLE_JIT)
+if(    NOCT_ENABLE_JIT AND
+   NOT CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
   target_compile_definitions(noct PRIVATE NOCT_USE_JIT)
   if(NOCT_ENABLE_API)
     target_compile_definitions(noctapi PRIVATE NOCT_USE_JIT)
