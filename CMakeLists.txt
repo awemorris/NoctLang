@@ -25,7 +25,7 @@ option(NOCT_ENABLE_REPL         "Enable REPL"                 ON)
 option(NOCT_ENABLE_MDOC         "Install mdoc(7) man page"    OFF)
 
 # Choose one if needed.
-option(NOCT_TARGET_WASM         "Build for Emscripten"        OFF)
+# (These targets cannot be automatically determined.)
 option(NOCT_TARGET_UNITY        "Build for Unity"             OFF)
 option(NOCT_TARGET_UNITY_PS5    "Build for Unity PS5"         OFF)
 option(NOCT_TARGET_UNITY_SWITCH "Build for Unity Switch"      OFF)
@@ -44,13 +44,13 @@ option(NOCT_ENABLE_MULTITHREAD  "Enable multithread support"  OFF)
 
 # Debug Configuration
 if(MSVC)
-    # MSVC
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /Od /Zi /DDEBUG /UNDEBUG")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Od /Zi /DDEBUG /UNDEBUG")
+  # MSVC
+  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /Od /Zi /DDEBUG /UNDEBUG")
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Od /Zi /DDEBUG /UNDEBUG")
 elseif(CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    # GCC/Clang
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -g3 -DDEBUG -Wall -Werror -Wextra -Wundef -Wconversion")
-    set(CMAKE_OBJC_FLAGS_DEBUG "${CMAKE_OBJC_FLAGS_DEBUG} -O0 -g3 -DNDEBUG -Wall -Werror -Wextra -Wundef -Wconversion")
+  # GCC/Clang
+  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -g3 -DDEBUG -Wall -Werror -Wextra -Wundef -Wconversion")
+  set(CMAKE_OBJC_FLAGS_DEBUG "${CMAKE_OBJC_FLAGS_DEBUG} -O0 -g3 -DNDEBUG -Wall -Werror -Wextra -Wundef -Wconversion")
 endif()
 
 # Release Configuration
@@ -541,6 +541,8 @@ if(NOCT_ENABLE_INSTALL)
     FILES
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/noct.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/c89compat.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/aot.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/backend.h"
     DESTINATION
       "${CMAKE_INSTALL_INCLUDEDIR}/noct"
   )
