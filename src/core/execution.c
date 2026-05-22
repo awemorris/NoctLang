@@ -1138,6 +1138,16 @@ noct_ex_storearray_helper(
 						val_val))
 			return false;
 		return true;
+	} else if (arr_val->type == NOCT_VALUE_PACKED) {
+		if (subscr_val->type != NOCT_VALUE_INT) {
+			rt_error(env, N_TR("Subscript not an integer."));
+			return false;
+		}
+
+		/* Store to the packed. */
+		if (!rt_set_packed_elem(env, &arr_val->val.packed, (uint32_t)subscr_val->val.i, val_val))
+			return false;
+		return true;
 	}
 
 	rt_error(env, N_TR("Not an array or a dictionary."));
@@ -1193,6 +1203,17 @@ noct_ex_loadarray_helper(
 						subscr_val->val.str->len,
 						subscr_val->val.str->hash,
 						dst_val))
+			return false;
+		return true;
+	} else if (arr_val->type == NOCT_VALUE_PACKED) {
+		/* Get the subscript value. */
+		if (subscr_val->type != NOCT_VALUE_INT) {
+			rt_error(env, N_TR("Subscript not an integer."));
+			return false;
+		}
+
+		/* Load the packed element. */
+		if (!rt_get_packed_elem(env, arr_val->val.packed, (uint32_t)subscr_val->val.i, dst_val))
 			return false;
 		return true;
 	}

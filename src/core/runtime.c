@@ -48,8 +48,6 @@
 	while (real_obj->newer != NULL)				\
 		real_obj = real_obj->newer;
 
-#define RELEASE_OBJ(real_obj)
-
 #define ACQUIRE_OBJ2(obj1, real_obj1, obj2, real_obj2)		\
 	/* Get the newer reference of obj1. */			\
 	real_obj1 = (obj1);					\
@@ -59,6 +57,11 @@
 	real_obj2 = (obj2);					\
 	while (real_obj2->newer != NULL)			\
 		real_obj2 = real_obj2->newer;
+
+#define ACQUIRE_OBJ_PACKED(obj, real_obj)			\
+	real_obj = (obj);
+
+#define RELEASE_OBJ(real_obj)
 
 #define RELEASE_OBJ2(real_obj1, real_obj2)
 
@@ -139,6 +142,30 @@
 				&env->vm->in_flight_counter, 1);				\
 			if (atomic_load_acquire(						\
 				&env->vm->gc_stw_counter) == 0)					\
+				break;								\
+		}										\
+	}
+
+#define ACQUIRE_OBJ_PACKED(obj, real_obj)							\
+	/* Acquire the array. */								\
+	while (1) {										\
+		real_obj = (p);									\
+												\
+		/* Try acquire. */								\
+		int old = atomic_fetch_add_acquire(&real_obj->counter, 1);			\
+		if (old == 0)									\
+			break;									\
+												\
+		/* Failed, release. */								\
+		atomic_fetch_sub_release(&real_obj->counter, 1);				\
+												\
+		/* Allow GC in other threads because they may cause GC. */			\
+		while (1) {									\
+			atomic_fetch_sub_release(&env->vm->in_flight_counter, 1);		\
+			while (atomic_load_acquire(&env->vm->gc_stw_counter) > 0)		\
+				cpu_relax();							\
+			atomic_fetch_add_acquire(&env->vm->in_flight_counter, 1);		\
+			if (atomic_load_acquire(&env->vm->gc_stw_counter) == 0)			\
 				break;								\
 		}										\
 	}
@@ -976,7 +1003,7 @@ rt_make_string_with_hash(
 	}
 
 	/*
-	 * Here, this thread is "in-fligth" and GC won't be executed
+	 * Here, this thread is "in-flight" and GC won't be executed
 	 * in other threads.
 	 */
 
@@ -1054,7 +1081,7 @@ rt_make_empty_array(
 	}
 
 	/*
-	 * Here, this thread is "in-fligth" and GC won't be executed
+	 * Here, this thread is "in-flight" and GC won't be executed
 	 * in other threads.
 	 */
 
@@ -1353,7 +1380,7 @@ rt_make_empty_dict(
 	}
 
 	/*
-	 * Here, this thread is "in-fligth" and GC won't be executed
+	 * Here, this thread is "in-flight" and GC won't be executed
 	 * in other threads.
 	 */
 
@@ -1910,7 +1937,7 @@ rt_make_dict_copy(
 	}
 
 	/*
-	 * Here, this thread is "in-fligth" and GC won't be executed
+	 * Here, this thread is "in-flight" and GC won't be executed
 	 * in other threads.
 	 */
 
@@ -2092,6 +2119,484 @@ rt_get_dict_native_pointer(
 	*native_finalizer = real_dict->native_finalizer;
 
 	RELEASE_OBJ(real_dict);
+
+	return true;
+}
+
+/*
+ * Make a packed.
+ */
+bool
+rt_make_packed(
+	struct rt_env *env,
+	struct rt_value *val,
+	int type,
+	uint32_t size,
+	uint32_t elem_size,
+	void *preallocated)
+{
+	struct rt_packed *packed;
+
+	assert(env != NULL);
+	assert(val != NULL);
+	assert((size > 0 && preallocated == NULL) ||
+	       (size == 0 && preallocated != NULL));
+	assert(elem_size > 0);
+
+	/* Allocate an array. */
+	packed = rt_gc_alloc_packed(env,
+				    type,
+				    size,
+				    elem_size,
+				    preallocated);
+	if (packed == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	/*
+	 * Here, this thread is "in-flight" and GC won't be executed
+	 * in other threads.
+	 */
+
+	/* Setup a value. */
+	val->type = NOCT_VALUE_PACKED;
+	val->val.packed = packed;
+
+	return true;
+}
+
+/*
+ * Get the element type of a packed.
+ */
+bool
+rt_get_packed_type(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	int *type)
+{
+	struct rt_packed *real_packed;
+
+	UNUSED_PARAMETER(env);
+
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(type != NULL);
+
+	/* Acquire the object with GC cooperation. */
+	ACQUIRE_OBJ_PACKED(packed, real_packed);
+
+	/* Get the type. */
+	*type = (uint32_t)real_packed->type;
+
+	RELEASE_OBJ(real_packed);
+
+	return true;
+}
+
+/*
+ * Get the element count of a packed.
+ */
+bool
+rt_get_packed_size(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	uint32_t *size)
+{
+	struct rt_packed *real_packed;
+
+	UNUSED_PARAMETER(env);
+
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(size != NULL);
+
+	/* Acquire the object with GC cooperation. */
+	ACQUIRE_OBJ_PACKED(packed, real_packed);
+
+	/* Get the type. */
+	*size = (uint32_t)real_packed->size;
+
+	RELEASE_OBJ(real_packed);
+
+	return true;
+}
+
+/*
+ * Retrieves an int8 packed element.
+ */
+bool
+rt_get_packed_elem(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	uint32_t index,
+	struct rt_value *val)
+{
+	struct rt_packed *real_packed;
+
+	UNUSED_PARAMETER(env);
+
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(size != NULL);
+
+	/* Acquire the object with GC cooperation. */
+	ACQUIRE_OBJ_PACKED(packed, real_packed);
+
+	if (index >= real_packed->elem_size) {
+		RELEASE_OBJ(real_packed);
+		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		return false;
+	}
+
+	switch (real_packed->type) {
+	case NOCT_PACKED_INT8:
+		val->type = NOCT_VALUE_INT;
+		val->val.i = *((int8_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_UINT8:
+		val->type = NOCT_VALUE_INT;
+		val->val.i = *((uint8_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_INT16:
+		val->type = NOCT_VALUE_INT;
+		val->val.i = *((int16_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_UINT16:
+		val->type = NOCT_VALUE_INT;
+		val->val.i = *((uint16_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_INT32:
+		val->type = NOCT_VALUE_INT;
+		val->val.i = *((int32_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_UINT32:
+		val->type = NOCT_VALUE_INT;
+		val->val.i = *((uint32_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_INT64:
+		val->type = NOCT_VALUE_LONG;
+		val->val.l = *((int64_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_UINT64:
+		val->type = NOCT_VALUE_LONG;
+		val->val.l = *((uint64_t *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_FLOAT32:
+		val->type = NOCT_VALUE_FLOAT;
+		val->val.f = *((float *)(real_packed->packed_buffer) + index);
+		break;
+	case NOCT_PACKED_FLOAT64:
+		val->type = NOCT_VALUE_DOUBLE;
+		val->val.lf = *((double *)(real_packed->packed_buffer) + index);
+		break;
+	}
+
+	RELEASE_OBJ(real_packed);
+
+	return true;
+}
+
+/*
+ * Stores an value to a packed.
+ */
+bool
+rt_set_packed_elem(
+	struct rt_env *env,
+	struct rt_packed **packed,
+	uint32_t index,
+	struct rt_value *val)
+{
+	struct rt_packed *real_packed;
+
+	UNUSED_PARAMETER(env);
+
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(size != NULL);
+
+	/* Acquire the object with GC cooperation. */
+	ACQUIRE_OBJ_PACKED(*packed, real_packed);
+
+	if (index >= real_packed->elem_size) {
+		RELEASE_OBJ(real_packed);
+		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		return false;
+	}
+
+	switch (real_packed->type) {
+	case NOCT_PACKED_INT8:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_UINT8:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_INT16:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_UINT16:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_INT32:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_UINT32:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_INT64:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_UINT64:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)(int)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)(int)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_FLOAT32:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((float *)real_packed->packed_buffer + index) = (float)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((float *)real_packed->packed_buffer + index) = (float)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((float *)real_packed->packed_buffer + index) = (float)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((float *)real_packed->packed_buffer + index) = (float)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	case NOCT_PACKED_FLOAT64:
+		switch (val->type) {
+		case NOCT_VALUE_INT:
+			*((double *)real_packed->packed_buffer + index) = (double)val->val.i;
+			break;
+		case NOCT_VALUE_LONG:
+			*((double *)real_packed->packed_buffer + index) = (double)val->val.l;
+			break;
+		case NOCT_VALUE_FLOAT:
+			*((double *)real_packed->packed_buffer + index) = (double)val->val.f;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			*((double *)real_packed->packed_buffer + index) = (double)val->val.lf;
+			break;
+		default:
+			RELEASE_OBJ(real_packed);
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
+	default:
+		assert(0);
+		break;
+	}
+
+	RELEASE_OBJ(real_packed);
+
+	return true;
+}
+
+/*
+ * Make a copy of a packed.
+ */
+bool
+rt_make_packed_copy(
+	struct rt_env *env,
+	struct rt_packed **dst,
+	struct rt_packed *src)
+{
+	struct rt_packed *src_real;
+	uint32_t size;
+
+	assert(env != NULL);
+	assert(dst != NULL);
+	assert(src != NULL);
+
+	ACQUIRE_OBJ_PACKED(src, src_real);
+
+	/* If src is preallocated. */
+	if (src_real->size == 0) {
+		switch (src_real->type) {
+		case NOCT_PACKED_INT8:
+		case NOCT_PACKED_UINT8:
+			size = src_real->elem_size;
+			break;
+		case NOCT_PACKED_INT16:
+		case NOCT_PACKED_UINT16:
+			size = src_real->elem_size * 2;
+			break;
+		case NOCT_PACKED_INT32:
+		case NOCT_PACKED_UINT32:
+		case NOCT_PACKED_FLOAT32:
+			size = src_real->elem_size * 4;
+			break;
+		case NOCT_PACKED_INT64:
+		case NOCT_PACKED_UINT64:
+		case NOCT_PACKED_FLOAT64:
+			size = src_real->elem_size * 8;
+			break;
+		}
+	}
+
+	/* Allocate an array. */
+	*dst = rt_gc_alloc_packed(env,
+				  src_real->type,
+				  size,
+				  src_real->elem_size,
+				  NULL);
+	if (*dst == NULL) {
+		RELEASE_OBJ(src_real);
+		return false;
+	}
+
+	/*
+	 * In this section, it is guaranteed that GC is not executed
+	 * in other threads because this thread is "in-flight" and
+	 * a GC execution waits for all threads become not in-flight.
+	 */
+
+	memcpy((*dst)->packed_buffer, src_real->packed_buffer, src_real->size);
+
+	RELEASE_OBJ(src_real);
 
 	return true;
 }

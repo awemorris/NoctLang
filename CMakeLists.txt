@@ -222,6 +222,7 @@ add_library(
 
   # Mandatory libraries here.
   src/api/api-math.c
+  src/api/api-packed.c
 )
 if(NOCT_ENABLE_SHARED)
   set_target_properties(noct PROPERTIES 

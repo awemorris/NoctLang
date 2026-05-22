@@ -75,6 +75,8 @@ static struct rt_array *rt_gc_alloc_array_graduate(struct rt_env *env, size_t si
 static struct rt_array *rt_gc_alloc_array_tenure(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
+static struct rt_packed *rt_gc_alloc_packed_graduate(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
+static struct rt_packed *rt_gc_alloc_packed_tenure(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
 static void rt_gc_young_gc(struct rt_env *env);
 static void rt_gc_young_gc_body(struct rt_env *env);
 static bool rt_gc_copy_young_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
@@ -83,9 +85,11 @@ static struct rt_gc_object *rt_gc_promote_object(struct rt_env *env, struct rt_g
 static struct rt_gc_object *rt_gc_promote_string(struct rt_env *env, struct rt_gc_object *obj);
 static struct rt_gc_object *rt_gc_promote_array(struct rt_env *env, struct rt_gc_object *obj);
 static struct rt_gc_object *rt_gc_promote_dict(struct rt_env *env, struct rt_gc_object *obj);
-struct rt_gc_object *rt_gc_copy_string_to_graduate(struct rt_env *env, struct rt_string *old_obj);
-struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_array *old_obj);
-struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
+static struct rt_gc_object *rt_gc_promote_packed(struct rt_env *env, struct rt_gc_object *obj);
+static struct rt_gc_object *rt_gc_copy_string_to_graduate(struct rt_env *env, struct rt_string *old_obj);
+static struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_array *old_obj);
+static struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
+static struct rt_gc_object *rt_gc_copy_packed_to_graduate(struct rt_env *env, struct rt_packed *old_obj);
 static void rt_gc_old_gc(struct rt_env *env);
 static void rt_gc_old_gc_body(struct rt_env *env);
 static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
@@ -714,6 +718,215 @@ rt_gc_alloc_dict_tenure(
 }
 
 /*
+ * Allocates a packed object in the appropriate region.
+ */
+struct rt_packed *
+rt_gc_alloc_packed(
+	struct rt_env *env,
+	int type,
+	size_t size,
+	size_t elem_size,
+	void *preallocated)
+{
+	struct rt_packed *packed;
+	void *p;
+	int retry;
+
+	assert(env != NULL);
+	assert(size > 0);
+	assert(elem_size > 0);
+
+	/* If use a preallocated buffer. */
+	if (preallocated != NULL)
+		size = 0;
+
+	/*
+	 * [Large Object Promotion]
+	 *  - If the packed is large, allocate in the tenure region.
+	 */
+	if (size >= env->vm->config.gc_lop_threshold)
+		return rt_gc_alloc_packed_tenure(env, type, size, elem_size, preallocated);
+
+	/* Allocate in the nursery region. */
+	for (retry = 0; retry <= 1; retry++) {
+		/* Allocate a rt_packed buffer. */
+		packed = nursery_alloc(env, sizeof(struct rt_packed) + size);
+		if (packed == NULL) {
+			/* Retry. */
+			if (retry == 0) {
+				rt_gc_young_gc(env);
+				continue;
+			} else {
+				rt_out_of_memory(env);
+				return NULL;
+			}
+		}
+
+		/* Get the address of the table. */
+		if (preallocated == NULL)
+			p = (char *)packed + sizeof(struct rt_packed);
+		else
+			p = preallocated;			
+
+		/* Setup the struct. */
+		memset(&packed->head, 0, sizeof(struct rt_gc_object));
+		packed->head.type = RT_GC_TYPE_PACKED;
+		packed->head.region = RT_GC_REGION_NURSERY;
+		packed->head.size = sizeof(struct rt_packed) + size;
+		INSERT_TO_LIST(&packed->head, env->vm->gc.nursery_list, prev, next);
+		packed->type = type;
+		packed->size = size;
+		packed->elem_size = elem_size;
+		packed->packed_buffer = p;
+#if defined(NOCT_USE_MULTITHREAD)
+		packed->counter = 0;
+#endif
+
+		/* Succeeded. */
+		return packed;
+	}
+
+	/* Failed. */
+	rt_out_of_memory(env);
+	return NULL;
+}
+
+/* Allocates ap packed object in the graduate region. */
+static struct rt_packed *
+rt_gc_alloc_packed_graduate(
+	struct rt_env *env,
+	int type,
+	size_t size,
+	size_t elem_size,
+	void *preallocated)
+{
+	struct rt_packed *packed;
+	void *p;
+
+	assert(env != NULL);
+	assert(size > 0);
+	assert(elem_size > 0);
+
+	/* If use a preallocated buffer. */
+	if (preallocated != NULL)
+		size = 0;
+
+	/*
+	 * This function is only called from the young GC,
+	 * and thus, we don't use young GC for a retry here.
+	 */
+
+	/* Try allocating in the graduate region. */
+	do {
+		/* Allocate a rt_packed buffer. */
+		packed = graduate_alloc(env, sizeof(struct rt_packed) + size);
+		if (packed == NULL)
+			break;
+
+		/* Get the address of the table. */
+		if (preallocated == NULL)
+			p = (char *)packed + sizeof(struct rt_packed);
+		else
+			p = preallocated;			
+
+		/* Setup the struct. */
+		memset(&packed->head, 0, sizeof(struct rt_gc_object));
+		packed->head.type = RT_GC_TYPE_PACKED;
+		packed->head.region = RT_GC_REGION_GRADUATE;
+		packed->head.size = sizeof(struct rt_packed) + size;
+		INSERT_TO_LIST(&packed->head, env->vm->gc.graduate_new_list, prev, next);
+		packed->type = type;
+		packed->size = size;
+		packed->elem_size = elem_size;
+		packed->packed_buffer = p;
+#if defined(NOCT_USE_MULTITHREAD)
+		packed->counter = 0;
+#endif
+
+		/* Succeeded. (graduate) */
+		return packed;
+	} while (0);
+
+	/*
+	 * Failed to allocate in the graduate region.
+	 * Try allocating in the tenure region.
+	 */
+	packed = rt_gc_alloc_packed_tenure(env, type, size, elem_size, preallocated);
+	if (packed == NULL)
+		return NULL;
+
+	/* Succeeded. (tenure) */
+	return packed;
+}
+
+/* Allocates a large packed in the tenure region. */
+static struct rt_packed *
+rt_gc_alloc_packed_tenure(
+	struct rt_env *env,
+	int type,
+	size_t size,
+	size_t elem_size,
+	void *preallocated)
+{
+	struct rt_packed *packed;
+	void *p;
+	int retry;
+
+	assert(env != NULL);
+	assert(size > 0);
+
+	/* If use a preallocated buffer. */
+	if (preallocated != NULL)
+		size = 0;
+
+	/* Allocate in the tenure region. */
+	for (retry = 0; retry <= 2; retry++) {
+		/* Allocate a rt_packed buffer. */
+		packed = rt_gc_tenure_alloc(env, sizeof(struct rt_packed) + size);
+		if (packed == NULL) {
+			/* Retry. */
+			if (retry == 0) {
+				rt_gc_old_gc(env);
+				continue;
+			} if (retry == 1) {
+				rt_gc_compact_gc(env);
+				continue;
+			} else {
+				rt_out_of_memory(env);
+				return NULL;
+			}
+		}
+
+		/* Get the address of the table. */
+		if (preallocated == NULL)
+			p = (char *)packed + sizeof(struct rt_packed);
+		else
+			p = preallocated;			
+
+		/* Setup the struct. */
+		memset(&packed->head, 0, sizeof(struct rt_gc_object));
+		packed->head.type = RT_GC_TYPE_PACKED;
+		packed->head.region = RT_GC_REGION_TENURE;
+		packed->head.size = sizeof(struct rt_packed) + size;
+		INSERT_TO_LIST(&packed->head, env->vm->gc.tenure_list, prev, next);
+		packed->type = type;
+		packed->size = size;
+		packed->elem_size = elem_size;
+		packed->packed_buffer = p;
+#if defined(NOCT_USE_MULTITHREAD)
+		packed->counter = 0;
+#endif
+
+		/* Succeeded. */
+		return packed;
+	}
+
+	/* Failed. */
+	rt_out_of_memory(env);
+	return NULL;
+}
+
+/*
  * Write barrier: registers a container in the remember set if it
  * references a young object.
  */
@@ -1060,6 +1273,9 @@ rt_gc_copy_young_object_recursively(
 			case RT_GC_TYPE_DICT:
 				new_obj = rt_gc_copy_dict_to_graduate(env, (struct rt_dict *)*obj);
 				break;
+			case RT_GC_TYPE_PACKED:
+				new_obj = rt_gc_copy_packed_to_graduate(env, (struct rt_packed *)*obj);
+				break;
 			default:
 				assert(NEVER_COME_HERE);
 				break;
@@ -1092,6 +1308,8 @@ rt_gc_copy_young_object_recursively(
 	/* Recursively copy. */
 	switch ((*obj)->type) {
 	case RT_GC_TYPE_STRING:
+	case RT_GC_TYPE_PACKED:
+		/* No inner values. */
 		break;
 	case RT_GC_TYPE_ARRAY:
 		arr = (struct rt_array *)*obj;
@@ -1232,6 +1450,11 @@ rt_gc_promote_object(
 		if (ret == NULL)
 			return NULL;
 		break;
+	case RT_GC_TYPE_PACKED:
+		ret = rt_gc_promote_packed(env, obj);
+		if (ret == NULL)
+			return NULL;
+		break;
 	default:
 		assert(NEVER_COME_HERE);
 		ret = NULL;
@@ -1343,8 +1566,32 @@ rt_gc_promote_dict(
 	return &new_dict->head;
 }
 
+/* Promotes a packed object. */
+static struct rt_gc_object *
+rt_gc_promote_packed(
+	struct rt_env *env,
+	struct rt_gc_object *obj)
+{
+	struct rt_packed *old_packed, *new_packed;
+
+	/* Allocate a string object. */
+	old_packed = (struct rt_packed *)obj;
+	new_packed = rt_gc_alloc_packed_tenure(env,
+					       old_packed->type,
+					       old_packed->size,
+					       old_packed->elem_size,
+					       (old_packed->size == 0) ? old_packed->packed_buffer : NULL);
+	if (new_packed == NULL)
+		return false;
+
+	/* Set the forwarding pointer. */
+	obj->forward = &new_packed->head;
+
+	return &new_packed->head;
+}
+
 /* Copies a string object to the graduate region. */
-struct rt_gc_object *
+static struct rt_gc_object *
 rt_gc_copy_string_to_graduate(
 	struct rt_env *env,
 	struct rt_string *old_obj)
@@ -1367,7 +1614,7 @@ rt_gc_copy_string_to_graduate(
 }
 
 /* Copies an array object to the graduate region. */
-struct rt_gc_object *
+static struct rt_gc_object *
 rt_gc_copy_array_to_graduate(
 	struct rt_env *env,
 	struct rt_array *old_obj)
@@ -1415,7 +1662,7 @@ rt_gc_copy_array_to_graduate(
 }
 
 /* Copies a dictionary object to the graduate region. */
-struct rt_gc_object *
+static struct rt_gc_object *
 rt_gc_copy_dict_to_graduate(
 	struct rt_env *env,
 	struct rt_dict *old_obj)
@@ -1465,6 +1712,37 @@ rt_gc_copy_dict_to_graduate(
 
 	new_obj->native_pointer = old_obj->native_pointer;
 	new_obj->native_finalizer = old_obj->native_finalizer;
+
+	/* Succeeded. */
+	return &new_obj->head;
+}
+
+/* Copies a string object to the graduate region. */
+static struct rt_gc_object *
+rt_gc_copy_packed_to_graduate(
+	struct rt_env *env,
+	struct rt_packed *old_obj)
+{
+	struct rt_packed *new_obj;
+
+	/*
+	 * Strings larger than noct_conf_gc_lop_threshold must not be in the
+	 * nursery or graduate regions.
+	 */
+	assert(old_obj->len < env->vm->config.gc_lop_threshold);
+
+	/* Allocate in the graduate region. */
+	new_obj = rt_gc_alloc_packed_graduate(env,
+					      old_obj->type,
+					      old_obj->size,
+					      old_obj->elem_size,
+					      (old_obj->size == 0) ? old_obj->packed_buffer : NULL);
+	if (new_obj == NULL)
+		return NULL;
+
+	/* If not a preallocated. (that means packed_buffer is not managed by GC)  */
+	if (old_obj->size != 0)
+		memcpy(new_obj->packed_buffer, old_obj->packed_buffer, old_obj->size);
 
 	/* Succeeded. */
 	return &new_obj->head;
@@ -1642,6 +1920,10 @@ rt_gc_free_old_object(
 		struct rt_dict *dict;
 		dict = (struct rt_dict *)obj;
 		rt_gc_tenure_free(env, dict);
+	} else if (obj->type == RT_GC_TYPE_PACKED) {
+		struct rt_packed *packed;
+		packed = (struct rt_packed *)obj;
+		rt_gc_tenure_free(env, packed);
 	}
 }
 
@@ -1751,6 +2033,24 @@ rt_gc_compact_gc(
 	/* For all tenure list references. */
 	objpp = &env->vm->gc.tenure_list;
 	while (*objpp != NULL) {
+		/* Rewrite pointers. */
+		if ((*objpp)->type == RT_GC_TYPE_ARRAY) {
+			struct rt_array *arr;
+			arr = (struct rt_array *)*objpp;
+			arr->table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
+		} else if ((*objpp)->type == RT_GC_TYPE_DICT) {
+			struct rt_dict *dict;
+			dict = (struct rt_dict *)*objpp;
+			dict->key = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
+			dict->value = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + dict->alloc_size * sizeof(struct rt_value));
+		} else if ((*objpp)->type == RT_GC_TYPE_PACKED) {
+			struct rt_packed *packed;
+			packed = (struct rt_packed *)*objpp;
+			/* Move reference if not a preallocated buffer. */
+			if (packed->size != 0)
+				packed->packed_buffer = ((char *)packed + sizeof(struct rt_packed));
+		}
+
 		/* Rewrite ->next. */
 		rt_gc_update_tenure_ref(env, objpp);
 

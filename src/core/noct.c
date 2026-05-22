@@ -232,6 +232,24 @@ noct_make_int(
 
 NOCT_DLL
 bool
+noct_make_long(
+	NoctEnv *env,
+	NoctValue *val,
+	long l)
+{
+	UNUSED_PARAMETER(env);
+
+	assert(env != NULL);
+	assert(val != NULL);
+
+	val->type = NOCT_VALUE_LONG;
+	val->val.l = l;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_make_float(
 	NoctEnv *env,
 	NoctValue *val,
@@ -244,6 +262,24 @@ noct_make_float(
 
 	val->type = NOCT_VALUE_FLOAT;
 	val->val.f = f;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_make_double(
+	NoctEnv *env,
+	NoctValue *val,
+	double lf)
+{
+	UNUSED_PARAMETER(env);
+
+	assert(env != NULL);
+	assert(val != NULL);
+
+	val->type = NOCT_VALUE_DOUBLE;
+	val->val.lf = lf;
 
 	return true;
 }
@@ -305,6 +341,28 @@ noct_make_empty_dict(
 
 NOCT_DLL
 bool
+noct_make_packed(
+	NoctEnv *env,
+	NoctValue *val,
+	int type,
+	uint32_t size,
+	uint32_t elem_size,
+	void *preallocated)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+	assert((size > 0 && preallocated == NULL) ||
+	       (size == 0 && preallocated != NULL));
+	assert(elem_size > 0);
+
+	if (!rt_make_packed(env, val, type, size, elem_size, preallocated))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_get_value_type(
 	NoctEnv *env,
 	NoctValue *val,
@@ -346,6 +404,29 @@ noct_get_int(
 
 NOCT_DLL
 bool
+noct_get_long(
+	NoctEnv *env,
+	NoctValue *val,
+	long *l)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+	assert(i != NULL);
+
+	/* Check the type. */
+	if (val->type != NOCT_VALUE_LONG) {
+		rt_error(env, N_TR("Value is not an integer."));
+		return false;
+	}
+
+	/* Get the value. */
+	*l = val->val.l;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_get_float(
 	NoctEnv *env,
 	NoctValue *val,
@@ -363,6 +444,29 @@ noct_get_float(
 
 	/* Get the value. */
 	*f = val->val.f;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_double(
+	NoctEnv *env,
+	NoctValue *val,
+	double *lf)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+	assert(f != NULL);
+
+	/* Check the type. */
+	if (val->type != NOCT_VALUE_DOUBLE) {
+		rt_error(env, N_TR("Value is not a float."));
+		return false;
+	}
+
+	/* Get the value. */
+	*lf = val->val.lf;
 
 	return true;
 }
@@ -1147,6 +1251,39 @@ noct_get_array_elem_check_int(
 
 NOCT_DLL
 bool
+noct_get_array_elem_check_long(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	long *l)
+{
+	int type;
+
+	assert(env != NULL);
+	assert(array != NULL);
+	assert(i != NULL);
+
+	/* Get the element. */
+	if (!noct_get_array_elem(env, array, index, val))
+		return false;
+
+	/* Check the element value type. */
+	if (!noct_get_value_type(env, val, &type))
+		return false;
+	if (type != NOCT_VALUE_LONG) {
+		rt_error(env, N_TR("Element %d is not an integer."), index);
+		return false;
+	}
+
+	/* Get the value. */
+	*l = val->val.l;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_get_array_elem_check_float(
 	NoctEnv *env,
 	NoctValue *array,
@@ -1174,6 +1311,39 @@ noct_get_array_elem_check_float(
 
 	/* Get the value. */
 	*f = val->val.f;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_array_elem_check_double(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	double *lf)
+{
+	int type;
+
+	assert(env != NULL);
+	assert(array != NULL);
+	assert(f != NULL);
+
+	/* Get the element. */
+	if (!noct_get_array_elem(env, array, index, val))
+		return false;
+
+	/* Check the element value type. */
+	if (!noct_get_value_type(env, val, &type))
+		return false;
+	if (type != NOCT_VALUE_DOUBLE) {
+		rt_error(env, N_TR("Element %d is not a float."), index);
+		return false;
+	}
+
+	/* Get the value. */
+	*lf = val->val.lf;
 
 	return true;
 }
@@ -1321,6 +1491,30 @@ noct_set_array_elem_make_int(
 
 NOCT_DLL
 bool
+noct_set_array_elem_make_long(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	long l)
+{
+	assert(env != NULL);
+	assert(array != NULL);
+	assert(val != NULL);
+
+	/* Make an integer value. */
+	val->type = NOCT_VALUE_LONG;
+	val->val.l = l;
+
+	/* Get the element. */
+	if (!noct_set_array_elem(env, array, index, val))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_set_array_elem_make_float(
 	NoctEnv *env,
 	NoctValue *array,
@@ -1335,6 +1529,30 @@ noct_set_array_elem_make_float(
 	/* Make an integer value. */
 	val->type = NOCT_VALUE_FLOAT;
 	val->val.f = f;
+
+	/* Get the element. */
+	if (!noct_set_array_elem(env, array, index, val))
+		return false;
+	
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_set_array_elem_make_double(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	double lf)
+{
+	assert(env != NULL);
+	assert(array != NULL);
+	assert(val != NULL);
+
+	/* Make an integer value. */
+	val->type = NOCT_VALUE_DOUBLE;
+	val->val.lf = lf;
 
 	/* Get the element. */
 	if (!noct_set_array_elem(env, array, index, val))
@@ -1393,12 +1611,43 @@ noct_get_dict_elem_check_int(
 
 	/* Check the element value type. */
 	if (val->type != NOCT_VALUE_INT) {
-		rt_error(env, N_TR("Element %d is not an integer."), i);
+		rt_error(env, N_TR("Value for key %s is not an integer."), key);
 		return false;
 	}
 
 	/* Get the value. */
 	*i = val->val.i;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_dict_elem_check_long(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	long *l)
+{
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(key != NULL);
+	assert(i != NULL);
+	assert(val != NULL);
+
+	/* Get the element. */
+	if (!noct_get_dict_elem(env, dict, key, val))
+		return false;
+
+	/* Check the element value type. */
+	if (val->type != NOCT_VALUE_LONG) {
+		rt_error(env, N_TR("Value for key %s is not a long."), key);
+		return false;
+	}
+
+	/* Get the value. */
+	*l = val->val.l;
 
 	return true;
 }
@@ -1430,6 +1679,37 @@ noct_get_dict_elem_check_float(
 
 	/* Get the value. */
 	*f = val->val.f;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_dict_elem_check_double(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	double *lf)
+{
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(key != NULL);
+	assert(f != NULL);
+	assert(val != NULL);
+
+	/* Get the element. */
+	if (!noct_get_dict_elem(env, dict, key, val))
+		return false;
+
+	/* Check the element value type. */
+	if (val->type != NOCT_VALUE_DOUBLE) {
+		rt_error(env, N_TR("Value for key %s is not a double."), key);
+		return false;
+	}
+
+	/* Get the value. */
+	*lf = val->val.lf;
 
 	return true;
 }
@@ -1579,6 +1859,31 @@ noct_set_dict_elem_make_int(
 
 NOCT_DLL
 bool
+noct_set_dict_elem_make_long(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	long l)
+{
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(key != NULL);
+	assert(val != NULL);
+
+	/* Make an integer value. */
+	val->type = NOCT_VALUE_LONG;
+	val->val.l = l;
+
+	/* Set the key-value pair. */
+	if (!noct_set_dict_elem(env, dict, key, val))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_set_dict_elem_make_float(
 	NoctEnv *env,
 	NoctValue *dict,
@@ -1594,6 +1899,31 @@ noct_set_dict_elem_make_float(
 	/* Make a float value. */
 	val->type = NOCT_VALUE_FLOAT;
 	val->val.f = f;
+
+	/* Set the key-value pair. */
+	if (!noct_set_dict_elem(env, dict, key, val))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_set_dict_elem_make_double(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	double lf)
+{
+	assert(env != NULL);
+	assert(dict != NULL);
+	assert(key != NULL);
+	assert(val != NULL);
+
+	/* Make a float value. */
+	val->type = NOCT_VALUE_DOUBLE;
+	val->val.lf = lf;
 
 	/* Set the key-value pair. */
 	if (!noct_set_dict_elem(env, dict, key, val))
@@ -1664,6 +1994,36 @@ noct_get_arg_check_int(
 
 NOCT_DLL
 bool
+noct_get_arg_check_long(
+	NoctEnv *env,
+	uint32_t index,
+	NoctValue *val,
+	long *l)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+	assert(i != NULL);
+
+	/* Get the argument. */
+	if (!noct_get_arg(env, index, val))
+		return false;
+
+	/* Check the value type. */
+	if (val->type != NOCT_VALUE_LONG) {
+		rt_error(env, N_TR("Argument (%d: %s) not an integer."),
+			 index,
+			 env->frame->func->param_name[index]);
+		return false;
+	}
+
+	/* Get the integer. */
+	*l = val->val.l;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_get_arg_check_float(
 	NoctEnv *env,
 	uint32_t index,
@@ -1688,6 +2048,36 @@ noct_get_arg_check_float(
 
 	/* Get the float. */
 	*f = val->val.f;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_arg_check_double(
+	NoctEnv *env,
+	uint32_t index,
+	NoctValue *val,
+	double *lf)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+	assert(f != NULL);
+
+	/* Get the argument. */
+	if (!noct_get_arg(env, index, val))
+		return false;
+
+	/* Check the value type. */
+	if (val->type != NOCT_VALUE_DOUBLE) {
+		rt_error(env, N_TR("Argument (%d: %s) not a float."),
+			 index,
+			 env->frame->func->param_name[index]);
+		return false;
+	}
+
+	/* Get the float. */
+	*lf = val->val.lf;
 
 	return true;
 }
@@ -1830,6 +2220,27 @@ noct_set_return_make_int(
 
 NOCT_DLL
 bool
+noct_set_return_make_long(
+	NoctEnv *env,
+	NoctValue *val,
+	long l)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+
+	/* Make an integer value. */
+	val->type = NOCT_VALUE_LONG;
+	val->val.l = l;
+
+	/* Set the return value. */
+	if (!noct_set_return(env, val))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_set_return_make_float(
 	NoctEnv *env,
 	NoctValue *val,
@@ -1841,6 +2252,27 @@ noct_set_return_make_float(
 	/* Make a float value. */
 	val->type = NOCT_VALUE_FLOAT;
 	val->val.f = f;
+
+	/* Set the return value. */
+	if (!noct_set_return(env, val))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_set_return_make_double(
+	NoctEnv *env,
+	NoctValue *val,
+	double lf)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+
+	/* Make a float value. */
+	val->type = NOCT_VALUE_DOUBLE;
+	val->val.lf = lf;
 
 	/* Set the return value. */
 	if (!noct_set_return(env, val))

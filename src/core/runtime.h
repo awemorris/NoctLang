@@ -31,6 +31,9 @@
 #define RT_GLOBAL_PIN_MAX	64
 #define RT_LOCAL_PIN_MAX	32
 
+/*
+ * Forward declaration.
+ */
 struct rt_vm;
 struct rt_env;
 struct rt_frame;
@@ -39,6 +42,7 @@ struct rt_object_header;
 struct rt_string;
 struct rt_array;
 struct rt_dict;
+struct rt_packed;
 struct rt_func;
 struct rt_bindglobal;
 
@@ -48,8 +52,13 @@ struct rt_bindglobal;
 struct rt_string {
 	struct rt_gc_object head;
 
+	/* UTF-8 data. */
 	char *data;
-	size_t len;	/* Including the tail NUL character*/
+
+	/* Length including the tail NUL character. */
+	size_t len;
+
+	/* Hash. */
 	uint32_t hash;
 };
 
@@ -110,7 +119,32 @@ struct rt_dict {
 #endif
 };
 
-#define RT_DICT_KEY_REMOVED ((struct rt_value *)((intptr_t)-1))
+/*
+ * Packed (Buffer) object.
+ */
+struct rt_packed {
+	struct rt_gc_object head;
+
+	/* Primitive type. */
+	int type;
+
+	/* Allocated size in bytes. (0 if using a preallocated buffer.) */
+	size_t size;
+
+	/* Element count. */
+	size_t elem_size;
+
+	/* Packed type. */
+	int packed_typed;
+
+	/* Buffer pointer. */
+	void *packed_buffer;
+
+#if defined(NOCT_USE_MULTITHREAD)
+	/* Atomic counter. */
+	int counter;
+#endif
+};
 
 /*
  * Function object.
@@ -393,7 +427,7 @@ rt_string_hash_and_len(
 	uint32_t *len);
 
 /*
- * Array and Dictionary
+ * Array, Dictionary, and Buffer
  */
 
 /* Make an empty array. */
@@ -535,18 +569,14 @@ rt_make_dict_copy(
 	struct rt_dict **dst,
 	struct rt_dict *src);
 
-/*
- * Merges a dictionary.
- */
+/* Merges a dictionary. */
 bool
 rt_merge_dict(
 	struct rt_env *env,
 	struct rt_dict *dst,
 	struct rt_dict *src);
 
-/*
- * Sets the native pointers to a dictionary.
- */
+/* Sets the native pointers to a dictionary. */
 bool
 rt_set_dict_native_pointer(
 	struct rt_env *env,
@@ -554,15 +584,60 @@ rt_set_dict_native_pointer(
 	void *native_pointer,
 	void (*native_finalizer)(void *native_pointer));
 
-/*
- * Gets the native pointer from a dictionary.
- */
+/* Gets the native pointer from a dictionary. */
 bool
 rt_get_dict_native_pointer(
 	struct rt_env *env,
 	struct rt_dict *dict,
 	void **native_pointer,
 	void (**native_finalizer)(void *native_pointer));
+
+/* Make a packed. */
+bool
+rt_make_packed(
+	struct rt_env *env,
+	struct rt_value *val,
+	int type,
+	uint32_t size,
+	uint32_t elem_size,
+	void *preallocated);
+
+/* Get the element type of a packed. */
+bool
+rt_get_packed_type(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	int *type);
+
+/* Get the element count of a packed. */
+bool
+rt_get_packed_size(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	uint32_t *size);
+
+/* Retrieves an int8 packed element. */
+bool
+rt_get_packed_elem(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	uint32_t index,
+	struct rt_value *val);
+
+/* Stores an value to a packed. */
+bool
+rt_set_packed_elem(
+	struct rt_env *env,
+	struct rt_packed **packed,
+	uint32_t index,
+	struct rt_value *val);
+
+/* Make a copy of a packed. */
+bool
+rt_make_packed_copy(
+	struct rt_env *env,
+	struct rt_packed **dst,
+	struct rt_packed *src);
 
 /*
  * Global Variable

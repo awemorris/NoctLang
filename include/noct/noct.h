@@ -29,12 +29,29 @@
 
 /* Value type. */
 enum NoctValueType {
-	NOCT_VALUE_INT    = 0,
-	NOCT_VALUE_FLOAT  = 1,
-	NOCT_VALUE_STRING = 2,
-	NOCT_VALUE_ARRAY  = 3,
-	NOCT_VALUE_DICT   = 4,
-	NOCT_VALUE_FUNC   = 5,
+	NOCT_VALUE_INT     = 0,
+	NOCT_VALUE_LONG    = 1,
+	NOCT_VALUE_FLOAT   = 2,
+	NOCT_VALUE_DOUBLE  = 3,
+	NOCT_VALUE_STRING  = 4,
+	NOCT_VALUE_ARRAY   = 5,
+	NOCT_VALUE_DICT    = 6,
+	NOCT_VALUE_PACKED  = 7,
+	NOCT_VALUE_FUNC    = 8,
+};
+
+/* Packed element type. */
+enum NoctPackedType {
+	NOCT_PACKED_INT8    = 0,
+	NOCT_PACKED_UINT8   = 1,
+	NOCT_PACKED_INT16   = 2,
+	NOCT_PACKED_UINT16  = 3,
+	NOCT_PACKED_INT32   = 4,
+	NOCT_PACKED_UINT32  = 5,
+	NOCT_PACKED_INT64   = 6,
+	NOCT_PACKED_UINT64  = 7,
+	NOCT_PACKED_FLOAT32 = 8,
+	NOCT_PACKED_FLOAT64 = 9,
 };
 
 /*
@@ -47,6 +64,7 @@ struct rt_env;
 struct rt_value;
 struct rt_string;
 struct rt_array;
+struct rt_packed;
 struct rt_dict;
 struct rt_func;
 struct rt_gc_object;
@@ -84,10 +102,13 @@ struct rt_value {
 	/* Offset 4 in 32-bit, 8 in 64-bit: */
 	union {
 		int i;
+		long l;
 		float f;
+		double lf;
 		struct rt_string *str;
 		struct rt_array *arr;
 		struct rt_dict *dict;
+		struct rt_packed *packed;
 		struct rt_func *func;
 		struct rt_gc_object *obj;
 	} val;
@@ -273,6 +294,16 @@ noct_make_int(
 	int i);
 
 /*
+ * Makes a long value.
+ */
+NOCT_DLL
+bool
+noct_make_long(
+	NoctEnv *env,
+	NoctValue *val,
+	long l);
+
+/*
  * Makes a float value.
  */
 NOCT_DLL
@@ -281,6 +312,16 @@ noct_make_float(
 	NoctEnv *env,
 	NoctValue *val,
 	float f);
+
+/*
+ * Makes a double value.
+ */
+NOCT_DLL
+bool
+noct_make_double(
+	NoctEnv *env,
+	NoctValue *val,
+	double lf);
 
 /*
  * Makes a string value.
@@ -322,6 +363,19 @@ noct_make_empty_dict(
 	NoctValue *val);
 
 /*
+ * Makes a packed value.
+ */
+NOCT_DLL
+bool
+noct_make_packed(
+	NoctEnv *env,
+	NoctValue *val,
+	int type,
+	uint32_t size,
+	uint32_t elem_size,
+	void *preallocated);
+
+/*
  * Retrieves the type tag of a value.
  *
  * The result is one of the NOCT_VALUE_* constants.
@@ -346,6 +400,18 @@ noct_get_int(
 	int *i);
 
 /*
+ * Retrieves an integer from a value with type checking.
+ *
+ * Fails if the given value is not of long type.
+ */
+NOCT_DLL
+bool
+noct_get_long(
+	NoctEnv *env,
+	NoctValue *val,
+	long *l);
+
+/*
  * Retrieves a float from a value with type checking.
  *
  * Fails if the given value is not of float type.
@@ -356,6 +422,18 @@ noct_get_float(
 	NoctEnv *env,
 	NoctValue *val,
 	float *f);
+
+/*
+ * Retrieves a float from a value with type checking.
+ *
+ * Fails if the given value is not of double type.
+ */
+NOCT_DLL
+bool
+noct_get_double(
+	NoctEnv *env,
+	NoctValue *val,
+	double *lf);
 
 /*
  * Retrieves the length of the string in a value with type checking.
@@ -804,6 +882,32 @@ noct_get_array_elem_check_int(
 	int *i);
 
 /*
+ * Convenience function to retrieve a long element from an array
+ * with type checking.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current integer type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+
+ * Fails if the element at the given index is not of integer type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_long(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	long *l);
+
+/*
  * Convenience function to retrieve a float element from an array with
  * type checking.
  *
@@ -828,6 +932,32 @@ noct_get_array_elem_check_float(
 	uint32_t index,
 	NoctValue *val,
 	float *f);
+
+/*
+ * Convenience function to retrieve a double element from an array with
+ * type checking.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current integer type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ *
+ * Fails if the element at the given index is not of float type.
+ */
+NOCT_DLL
+bool
+noct_get_array_elem_check_double(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	double *lf);
 
 /*
  * Convenience function to retrieve a string element from an array
@@ -938,6 +1068,32 @@ noct_set_array_elem_make_int(
 	int i);
 
 /*
+ * Convenience function to set a long element in an array.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current integer type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ *
+ * Semantically equivalent to wrapping the integer in a NoctValue
+ * and calling noct_set_array_elem().
+ */
+NOCT_DLL
+bool
+noct_set_array_elem_make_long(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	long l);
+
+/*
  * Convenience function to set a float element in an array.
  *
  * The `val` parameter must point to a variable previously pinned via
@@ -962,6 +1118,32 @@ noct_set_array_elem_make_float(
 	uint32_t index,
 	NoctValue *val,
 	float f);
+
+/*
+ * Convenience function to set a double element in an array.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current float type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ *
+ * Semantically equivalent to wrapping the float in a NoctValue
+ * and calling noct_set_array_elem().
+ */
+NOCT_DLL
+bool
+noct_set_array_elem_make_double(
+	NoctEnv *env,
+	NoctValue *array,
+	uint32_t index,
+	NoctValue *val,
+	double lf);
 
 /*
  * Convenience function to set a string element in an array.
@@ -1014,6 +1196,33 @@ noct_get_dict_elem_check_int(
 	int *i);
 
 /*
+ * Convenience function to retrieve a long value associated with a
+ * key in a dictionary with type checking.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current integer type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of integer type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_long(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	long *l);
+
+/*
  * Convenience function to retrieve a float value associated with a
  * key in a dictionary with type checking.
  *
@@ -1039,6 +1248,33 @@ noct_get_dict_elem_check_float(
 	const char *key,
 	NoctValue *val,
 	float *f);
+
+/*
+ * Convenience function to retrieve a double value associated with a
+ * key in a dictionary with type checking.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current float type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ *
+ * Fails if the key does not exist.
+ * Fails if the associated value is not of float type.
+ */
+NOCT_DLL
+bool
+noct_get_dict_elem_check_double(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	double *lf);
 
 /*
  * Convenience function to retrieve a string value associated with a
@@ -1150,6 +1386,29 @@ noct_set_dict_elem_make_int(
 	int i);
 
 /*
+ * Convenience function to set a long value for a key in a dictionary.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current integer type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ */
+NOCT_DLL
+bool
+noct_set_dict_elem_make_long(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	long l);
+
+/*
  * Convenience function to set a float value for a key in a dictionary.
  *
  * The `val` parameter must point to a variable previously pinned via
@@ -1171,6 +1430,29 @@ noct_set_dict_elem_make_float(
 	const char *key,
 	NoctValue *val,
 	float f);
+
+/*
+ * Convenience function to set a double value for a key in a dictionary.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current float type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ */
+NOCT_DLL
+bool
+noct_set_dict_elem_make_double(
+	NoctEnv *env,
+	NoctValue *dict,
+	const char *key,
+	NoctValue *val,
+	double lf);
 
 /*
  * Convenience function to set a string value for a key in a dictionary.
@@ -1216,6 +1498,29 @@ noct_get_arg_check_int(
 	int *i);
 
 /*
+ * Convenience function to retrieve a long function argument with
+ * type checking.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current integer type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_long(
+	NoctEnv *env,
+	uint32_t index,
+	NoctValue *val,
+	long *l);
+
+/*
  * Convenience function to retrieve a float function argument with
  * type checking.
  *
@@ -1237,6 +1542,29 @@ noct_get_arg_check_float(
 	uint32_t index,
 	NoctValue *val,
 	float *f);
+
+/*
+ * Convenience function to retrieve a double function argument with
+ * type checking.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current float type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_double(
+	NoctEnv *env,
+	uint32_t index,
+	NoctValue *val,
+	double *lf);
 
 /*
  * Convenience function to retrieve a string function argument with
@@ -1321,6 +1649,28 @@ noct_set_return_make_int(
 	int i);
 
 /*
+ * Convenience function to set a long return value for the current
+ * stack frame.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current integer type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ */
+NOCT_DLL
+bool
+noct_set_return_make_long(
+	NoctEnv *env,
+	NoctValue *val,
+	long l);
+
+/*
  * Convenience function to set a float return value for the current
  * stack frame.
  *
@@ -1341,6 +1691,28 @@ noct_set_return_make_float(
 	NoctEnv *env,
 	NoctValue *val,
 	float f);
+
+/*
+ * Convenience function to set a double return value for the current
+ * stack frame.
+ *
+ * The `val` parameter must point to a variable previously pinned via
+ * `noct_pin_local()`. This variable serves as a pinned storage
+ * location: during the call, it temporarily holds the element's value
+ * so that, even if a parallel GC is triggered midway, the value
+ * remains protected and stable.
+ *
+ * Note: Although the current float type does not require GC
+ * allocation, `val` is required here for API consistency and to
+ * allow future numeric types (e.g. bigdecimal) to be introduced without
+ * breaking the calling convention.
+ */
+NOCT_DLL
+bool
+noct_set_return_make_double(
+	NoctEnv *env,
+	NoctValue *val,
+	double lf);
 
 /*
  * Convenience function to set a string return value for the current
@@ -1381,6 +1753,18 @@ noct_string_hash_and_len(
 
 /* Library Installation */
 
+/* Register the "Packed.*" APIs. */
+NOCT_DLL
+bool
+noct_register_api_packed(
+	NoctEnv *env);
+
+/* Register the "Math.*" APIs. */
+NOCT_DLL
+bool
+noct_register_api_math(
+	NoctEnv *env);
+
 /* Register the "System.*" APIs. */
 NOCT_DLL
 bool
@@ -1391,12 +1775,6 @@ noct_register_api_system(
 NOCT_DLL
 bool
 noct_register_api_console(
-	NoctEnv *env);
-
-/* Register the "Math.*" APIs. */
-NOCT_DLL
-bool
-noct_register_api_math(
 	NoctEnv *env);
 
 /*

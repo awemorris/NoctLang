@@ -38,16 +38,16 @@ struct ffi_item {
 	bool (*cfunc)(NoctEnv *env);
 };
 static struct ffi_item ffi_items[] = {
-	{"__Math_abs",		"abs",		1,	{"x"},	cfunc_Math_abs},
-	{"__Math_sqrt",		"sqrt",		1,	{"x"},	cfunc_Math_sqrt},
-	{"__Math_sin",		"sin",		1,	{"x"},	cfunc_Math_sin},
-	{"__Math_cos",		"cos",		1,	{"x"},	cfunc_Math_cos},
-	{"__Math_tan",		"tan",		1,	{"x"},	cfunc_Math_tan},
-	{"__Math_random",	"random",	0,	{NULL},	cfunc_Math_random},
+	{"Math.abs",		"abs",		1,	{"x"},	cfunc_Math_abs},
+	{"Math.sqrt",		"sqrt",		1,	{"x"},	cfunc_Math_sqrt},
+	{"Math.sin",		"sin",		1,	{"x"},	cfunc_Math_sin},
+	{"Math.cos",		"cos",		1,	{"x"},	cfunc_Math_cos},
+	{"Math.tan",		"tan",		1,	{"x"},	cfunc_Math_tan},
+	{"Math.random",		"random",	0,	{NULL},	cfunc_Math_random},
 };
 
 /*
- * Register "Console.*" functions.
+ * Register "Math.*" functions.
  */
 NOCT_DLL
 bool
@@ -59,7 +59,7 @@ noct_register_api_math(
 
 	srand((unsigned int)time(NULL));
 
-	/* Make a global variable "System". */
+	/* Make a global variable "Math". */
 	if (!noct_make_empty_dict(env, &dict))
 		return false;
 	if (!noct_set_global(env, "Math", &dict))
