@@ -128,17 +128,17 @@ struct rt_packed {
 	/* Primitive type. */
 	int type;
 
-	/* Allocated size in bytes. (0 if using a preallocated buffer.) */
-	size_t size;
+	/* Allocated size in bytes. */
+	size_t byte_size;
 
 	/* Element count. */
 	size_t elem_size;
 
-	/* Packed type. */
-	int packed_typed;
-
 	/* Buffer pointer. */
-	void *packed_buffer;
+	void *buffer;
+
+	/* Is preallocated buffer? */
+	bool is_preallocated;
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/* Atomic counter. */
@@ -182,7 +182,7 @@ struct rt_bindglobal {
 	char *name;
 
 	/* Hash cache for the symbol name. */
-	uint32_t name_len;
+	size_t name_len;
 	uint32_t name_hash;
 
 	/* Value. */
@@ -424,7 +424,7 @@ void
 rt_string_hash_and_len(
 	const char *s,
 	uint32_t *hash,
-	uint32_t *len);
+	size_t *len);
 
 /*
  * Array, Dictionary, and Buffer
@@ -441,14 +441,14 @@ bool
 rt_get_array_size(
 	struct rt_env *env,
 	struct rt_array *arr,
-	uint32_t *size);
+	size_t *size);
 
 /* Retrieves an array element. */
 bool
 rt_get_array_elem(
 	struct rt_env *env,
 	struct rt_array *arr,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val);
 
 /* Stores an value to an array. */
@@ -456,7 +456,7 @@ bool
 rt_set_array_elem(
 	struct rt_env *env,
 	struct rt_array **arr,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val);
 
 /* Resizes an array. */
@@ -464,7 +464,7 @@ bool
 rt_resize_array(
 	struct rt_env *env,
 	struct rt_array **arr,
-	uint32_t size);
+	size_t size);
 
 /* Make a shallow copy of an array. */
 bool
@@ -484,7 +484,7 @@ bool
 rt_get_dict_size(
 	struct rt_env *env,
 	struct rt_dict *dict,
-	uint32_t *size);
+	size_t *size);
 
 /* Checks if a key exists in a dictionary. */
 bool
@@ -499,7 +499,7 @@ bool
 rt_get_dict_key_by_index(
 	struct rt_env *env,
 	struct rt_dict *dict,
-	uint32_t index,
+	size_t index,
 	struct rt_value *key);
 
 /* Get a dictionary value by index. */
@@ -507,7 +507,7 @@ bool
 rt_get_dict_value_by_index(
 	struct rt_env *env,
 	struct rt_dict *dict,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val);
 
 /* Retrieves the value by a key in a dictionary. */
@@ -598,8 +598,7 @@ rt_make_packed(
 	struct rt_env *env,
 	struct rt_value *val,
 	int type,
-	uint32_t size,
-	uint32_t elem_size,
+	size_t elem_size,
 	void *preallocated);
 
 /* Get the element type of a packed. */
@@ -614,14 +613,14 @@ bool
 rt_get_packed_size(
 	struct rt_env *env,
 	struct rt_packed *packed,
-	uint32_t *size);
+	size_t *size);
 
 /* Retrieves an int8 packed element. */
 bool
 rt_get_packed_elem(
 	struct rt_env *env,
 	struct rt_packed *packed,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val);
 
 /* Stores an value to a packed. */
@@ -629,7 +628,7 @@ bool
 rt_set_packed_elem(
 	struct rt_env *env,
 	struct rt_packed **packed,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val);
 
 /* Make a copy of a packed. */

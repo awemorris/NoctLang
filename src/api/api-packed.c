@@ -101,19 +101,19 @@ cfunc_Packed_int8(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
 	if (!noct_get_arg_check_int(env, 0, &v_size, &i_size))
 		return false;
 
-	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+	if (i_size < 0) {
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT8, i_size, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT8, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -129,7 +129,7 @@ cfunc_Packed_uint8(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -137,11 +137,11 @@ cfunc_Packed_uint8(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT8, i_size, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT8, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -157,7 +157,7 @@ cfunc_Packed_int16(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -165,11 +165,11 @@ cfunc_Packed_int16(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT16, i_size * 2, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT16, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -185,7 +185,7 @@ cfunc_Packed_uint16(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -193,11 +193,11 @@ cfunc_Packed_uint16(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT16, i_size * 2, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT16, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -213,7 +213,7 @@ cfunc_Packed_int32(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -221,11 +221,11 @@ cfunc_Packed_int32(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT32, i_size * 4, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT32, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -241,7 +241,7 @@ cfunc_Packed_uint32(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -249,11 +249,11 @@ cfunc_Packed_uint32(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT32, i_size * 4, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT32, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -269,7 +269,7 @@ cfunc_Packed_int64(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -277,11 +277,11 @@ cfunc_Packed_int64(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT64, i_size * 8, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT64, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -297,7 +297,7 @@ cfunc_Packed_uint64(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -305,11 +305,11 @@ cfunc_Packed_uint64(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT64, i_size * 8, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT64, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -325,7 +325,7 @@ cfunc_Packed_float32(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -333,11 +333,11 @@ cfunc_Packed_float32(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT32, i_size * 4, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT32, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -353,7 +353,7 @@ cfunc_Packed_float64(
 	NoctEnv *env)
 {
 	NoctValue v_size, v_ret;
-	uint32_t i_size;
+	int i_size;
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
@@ -361,11 +361,11 @@ cfunc_Packed_float64(
 		return false;
 
 	if (i_size == 0) {
-		noct_error(env, "Packed size is 0.");
+		noct_error(env, "Packed size is not positive (%d).", i_size);
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT32, i_size * 8, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT64, (uint32_t)i_size, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;

@@ -36,13 +36,13 @@ static INLINE void atomic_store_release_ptr(void **pp, void *v)
 
 static INLINE int atomic_fetch_add_acquire(int *v, int add)
 {
-	unsigned old = __atomic_fetch_add(v, add, __ATOMIC_ACQUIRE);
+	int old = __atomic_fetch_add(v, add, __ATOMIC_ACQUIRE);
 	return old;
 }
 
 static INLINE int atomic_fetch_sub_release(int *v, int sub)
 {
-	unsigned old = __atomic_fetch_sub(v, sub, __ATOMIC_RELEASE);
+	int old = __atomic_fetch_sub(v, sub, __ATOMIC_RELEASE);
 	return old;
 }
 

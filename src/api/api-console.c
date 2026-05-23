@@ -123,7 +123,7 @@ static bool serialize_printer(
 	int ival;
 	float fval;
 	const char *sval;
-	uint32_t items;
+	size_t items;
 	uint32_t i;
 	char digits[1024];
 
@@ -168,7 +168,7 @@ static bool serialize_printer(
 		strncat(buf, "]", size);
 		break;
 	case NOCT_VALUE_DICT:
-		if (!noct_get_dict_size(env, value, (uint32_t *)&items))
+		if (!noct_get_dict_size(env, value, &items))
 			return false;
 		strncat(buf, "{", size);
 		for (i = 0; i < items; i++) {

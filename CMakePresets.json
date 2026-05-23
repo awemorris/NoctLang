@@ -51,7 +51,7 @@
             "generator":      "Unix Makefiles",
             "binaryDir":      "${sourceDir}/build-debug",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE":         "Release",
+                "CMAKE_BUILD_TYPE":         "Debug",
                 "NOCT_ENABLE_STATIC":       "ON",
                 "NOCT_ENABLE_CLI":          "ON",
                 "NOCT_ENABLE_JIT":          "ON",
@@ -62,7 +62,8 @@
                 "NOCT_ENABLE_CBACKEND":     "ON",
                 "NOCT_ENABLE_ELBACKEND":    "ON",
                 "NOCT_ENABLE_SCMBACKEND":   "ON",
-                "NOCT_ENABLE_REPL":         "ON"
+                "NOCT_ENABLE_REPL":         "ON",
+                "NOCT_ENABLE_MULTITHREAD":  "ON"
             }
         },
         {
@@ -715,7 +716,7 @@
                 "NOCT_ENABLE_ELBACKEND":  "OFF",
                 "NOCT_ENABLE_SCMBACKEND": "OFF",
                 "NOCT_ENABLE_REPL":       "ON"
-	    }
+            }
         }
     ],
     "buildPresets": [
@@ -734,37 +735,37 @@
         {
             "name":            "windows-vs2022-x86",
             "configurePreset": "windows-vs2022-x86",
-	    "configuration":   "Release"
+            "configuration":   "Release"
         },
         {
             "name":            "windows-vs2022-x64",
             "configurePreset": "windows-vs2022-x64",
-	    "configuration":   "Release"
+            "configuration":   "Release"
         },
         {
             "name": "windows-vs2022-arm64",
             "configurePreset": "windows-vs2022-arm64",
-	    "configuration":   "Release"
+            "configuration":   "Release"
         },
         {
             "name": "windows-vs2026-x86",
             "configurePreset": "windows-vs2026-x86",
-	    "configuration": "Release"
+            "configuration": "Release"
         },
         {
             "name": "windows-vs2026-x64",
             "configurePreset": "windows-vs2026-x64",
-	    "configuration": "Release"
+            "configuration": "Release"
         },
         {
             "name":            "windows-vs2026-x64-debug",
             "configurePreset": "windows-vs2026-x64",
-	    "configuration":   "Debug"
+            "configuration":   "Debug"
         },
         {
             "name": "windows-vs2026-arm64",
             "configurePreset": "windows-vs2026-arm64",
-	    "configuration":   "Release"
+            "configuration":   "Release"
         },
         {
             "name": "windows-mingw-x86",
@@ -809,7 +810,7 @@
         {
             "name": "android-armv7",
             "configurePreset": "android-armv7",
-	    "configuration":   "Release"
+            "configuration":   "Release"
         },
         {
             "name": "android-arm64",

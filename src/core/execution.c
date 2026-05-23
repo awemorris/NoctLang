@@ -1235,7 +1235,7 @@ noct_ex_len_helper(
 {
 	struct rt_value *dst_val;
 	struct rt_value *src_val;
-	uint32_t val;
+	size_t val;
 
 	dst_val = &env->frame->tmpvar[dst];
 	src_val = &env->frame->tmpvar[src];
@@ -1254,6 +1254,11 @@ noct_ex_len_helper(
 	case NOCT_VALUE_DICT:
 		dst_val->type = NOCT_VALUE_INT;
 		rt_get_dict_size(env, src_val->val.dict, &val);
+		dst_val->val.i = (int)val;
+		break;
+	case NOCT_VALUE_PACKED:
+		dst_val->type = NOCT_VALUE_INT;
+		rt_get_packed_size(env, src_val->val.packed, &val);
 		dst_val->val.i = (int)val;
 		break;
 	default:
@@ -1397,14 +1402,14 @@ noct_ex_loaddot_helper(
 	    field_hash == 0x83d03615 &&
 	    strcmp(field, "length") == 0) {
 		if (env->frame->tmpvar[dict].type == NOCT_VALUE_DICT) {
-			uint32_t size;
+			size_t size;
 			if (!rt_get_dict_size(env, env->frame->tmpvar[dict].val.dict, &size))
 				return false;
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
 			env->frame->tmpvar[dst].val.i = (int)size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_ARRAY) {
-			uint32_t size;
+			size_t size;
 			if (!rt_get_array_size(env, env->frame->tmpvar[dict].val.arr, &size))
 				return false;
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;

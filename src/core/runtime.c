@@ -40,6 +40,13 @@
 #define IS_DICT_KEY_REMOVED(k)	(k.type == NOCT_VALUE_FLOAT)
 #define REMOVE_DICT_KEY(k)	do { k.type = NOCT_VALUE_FLOAT; } while (0)
 
+/* Reference type. */
+#define IS_REF_TYPE(t)			\
+    ((t) == NOCT_VALUE_STRING ||	\
+     (t) == NOCT_VALUE_ARRAY  ||	\
+     (t) == NOCT_VALUE_DICT   ||	\
+     (t) == NOCT_VALUE_PACKED)
+
 #if !defined(NOCT_USE_MULTITHREAD)
 
 #define ACQUIRE_OBJ(obj, real_obj)				\
@@ -61,9 +68,11 @@
 #define ACQUIRE_OBJ_PACKED(obj, real_obj)			\
 	real_obj = (obj);
 
-#define RELEASE_OBJ(real_obj)
+#define RELEASE_OBJ(real_obj)					\
+	(void)(real_obj)
 
-#define RELEASE_OBJ2(real_obj1, real_obj2)
+#define RELEASE_OBJ2(real_obj1, real_obj2)			\
+	(void)(real_obj1), (void)(real_obj2)
 
 #else
 
@@ -149,7 +158,7 @@
 #define ACQUIRE_OBJ_PACKED(obj, real_obj)							\
 	/* Acquire the array. */								\
 	while (1) {										\
-		real_obj = (p);									\
+		real_obj = (obj);								\
 												\
 		/* Try acquire. */								\
 		int old = atomic_fetch_add_acquire(&real_obj->counter, 1);			\
@@ -972,7 +981,6 @@ rt_make_string(
 {
 	size_t len;
 	uint32_t hash;
-	struct rt_string *rts;
 
 	len = strlen(data) + 1;
 	hash = 0;
@@ -1047,7 +1055,7 @@ void
 rt_string_hash_and_len(
 	const char *s,
 	uint32_t *hash,
-	uint32_t *len)
+	size_t *len)
 {
 	*len = 0;
 	*hash = 2166136261u;
@@ -1099,7 +1107,7 @@ bool
 rt_get_array_size(
 	struct rt_env *env,
 	struct rt_array *arr,
-	uint32_t *size)
+	size_t *size)
 {
 	struct rt_array *real_arr;
 
@@ -1127,7 +1135,7 @@ bool
 rt_get_array_elem(
 	struct rt_env *env,
 	struct rt_array *arr,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val)
 {
 	struct rt_array *real_arr;
@@ -1161,7 +1169,7 @@ bool
 rt_set_array_elem(
 	struct rt_env *env,
 	struct rt_array **arr,
-	uint32_t index,
+	size_t index,
 	NoctValue *val)
 {
 	struct rt_array *real_arr;
@@ -1193,9 +1201,7 @@ rt_set_array_elem(
 		new_arr->table[index] = *val;
 
 		/* GC: Write barrier for the remember set. */
-		if (val->type == NOCT_VALUE_STRING ||
-		    val->type == NOCT_VALUE_ARRAY ||
-		    val->type == NOCT_VALUE_DICT)
+		if (IS_REF_TYPE(val->type))
 			rt_gc_array_write_barrier(env, new_arr, index, val);
 
 		/* Publication is done by a release to the old array. */
@@ -1209,9 +1215,7 @@ rt_set_array_elem(
 		real_arr->size = index + 1;
 
 	/* GC: Write barrier for the remember set. */
-	if (val->type == NOCT_VALUE_STRING ||
-	    val->type == NOCT_VALUE_ARRAY ||
-	    val->type == NOCT_VALUE_DICT)
+	if (IS_REF_TYPE(val->type))
 		rt_gc_array_write_barrier(env, real_arr, index, val);
 
 	RELEASE_OBJ(real_arr);
@@ -1225,7 +1229,7 @@ bool
 rt_resize_array(
 	struct rt_env *env,
 	struct rt_array **arr,
-	uint32_t size)
+	size_t size)
 {
 	struct rt_array *real_arr;
 
@@ -1398,7 +1402,7 @@ bool
 rt_get_dict_size(
 	struct rt_env *env,
 	struct rt_dict *dict,
-	uint32_t *size)
+	size_t *size)
 {
 	struct rt_dict *real_dict;
 
@@ -1477,7 +1481,7 @@ bool
 rt_get_dict_key_by_index(
 	struct rt_env *env,
 	struct rt_dict *dict,
-	uint32_t index,
+	size_t index,
 	struct rt_value *key)
 {
 	struct rt_dict *real_dict;
@@ -1525,7 +1529,7 @@ bool
 rt_get_dict_value_by_index(
 	struct rt_env *env,
 	struct rt_dict *dict,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val)
 {
 	struct rt_dict *real_dict;
@@ -1576,7 +1580,6 @@ rt_get_dict_elem(
 	const char *key,
 	struct rt_value *val)
 {
-	struct rt_dict *real_dict;
 	size_t len;
 	uint32_t hash;
 
@@ -1919,7 +1922,7 @@ rt_make_dict_copy(
 	struct rt_dict **dst,
 	struct rt_dict *src)
 {
-	struct rt_dict *d, *real_d, *src_real;
+	struct rt_dict *d, *src_real;
 	int i;
 
 	assert(env != NULL);
@@ -1991,7 +1994,7 @@ rt_merge_dict(
 		    IS_DICT_KEY_EMPTY(real_src->key[i]))
 			continue;
 
-		len = real_src->key[i].val.str->len;
+		len = (uint32_t)real_src->key[i].val.str->len;
 		hash = real_src->key[i].val.str->hash;
 		key = real_src->key[i].val.str->data;
 
@@ -2091,6 +2094,8 @@ rt_set_dict_native_pointer(
 {
 	struct rt_dict *real_dict;
 
+	UNUSED_PARAMETER(env);
+
 	ACQUIRE_OBJ(dict, real_dict);
 
 	real_dict->native_pointer = native_pointer;
@@ -2113,6 +2118,8 @@ rt_get_dict_native_pointer(
 {
 	struct rt_dict *real_dict;
 
+	UNUSED_PARAMETER(env);
+
 	ACQUIRE_OBJ(dict, real_dict);
 
 	*native_pointer = real_dict->native_pointer;
@@ -2131,24 +2138,41 @@ rt_make_packed(
 	struct rt_env *env,
 	struct rt_value *val,
 	int type,
-	uint32_t size,
-	uint32_t elem_size,
+	size_t elem_size,
 	void *preallocated)
 {
 	struct rt_packed *packed;
+	size_t byte_size;
 
 	assert(env != NULL);
 	assert(val != NULL);
-	assert((size > 0 && preallocated == NULL) ||
-	       (size == 0 && preallocated != NULL));
 	assert(elem_size > 0);
 
+	switch (type) {
+	case NOCT_PACKED_INT8:
+	case NOCT_PACKED_UINT8:
+		byte_size = elem_size;
+		break;
+	case NOCT_PACKED_INT16:
+	case NOCT_PACKED_UINT16:
+		byte_size = elem_size * 2;
+		break;
+	case NOCT_PACKED_INT32:
+	case NOCT_PACKED_UINT32:
+	case NOCT_PACKED_FLOAT32:
+		byte_size = elem_size * 4;
+		break;
+	case NOCT_PACKED_INT64:
+	case NOCT_PACKED_UINT64:
+	case NOCT_PACKED_FLOAT64:
+		byte_size = elem_size * 8;
+		break;
+	default:
+		assert(0);
+	}
+
 	/* Allocate an array. */
-	packed = rt_gc_alloc_packed(env,
-				    type,
-				    size,
-				    elem_size,
-				    preallocated);
+	packed = rt_gc_alloc_packed(env, type, byte_size, elem_size, preallocated);
 	if (packed == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -2187,7 +2211,7 @@ rt_get_packed_type(
 	ACQUIRE_OBJ_PACKED(packed, real_packed);
 
 	/* Get the type. */
-	*type = (uint32_t)real_packed->type;
+	*type = real_packed->type;
 
 	RELEASE_OBJ(real_packed);
 
@@ -2201,7 +2225,7 @@ bool
 rt_get_packed_size(
 	struct rt_env *env,
 	struct rt_packed *packed,
-	uint32_t *size)
+	size_t *size)
 {
 	struct rt_packed *real_packed;
 
@@ -2214,8 +2238,8 @@ rt_get_packed_size(
 	/* Acquire the object with GC cooperation. */
 	ACQUIRE_OBJ_PACKED(packed, real_packed);
 
-	/* Get the type. */
-	*size = (uint32_t)real_packed->size;
+	/* Get the size. */
+	*size = (uint32_t)real_packed->elem_size;
 
 	RELEASE_OBJ(real_packed);
 
@@ -2229,7 +2253,7 @@ bool
 rt_get_packed_elem(
 	struct rt_env *env,
 	struct rt_packed *packed,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val)
 {
 	struct rt_packed *real_packed;
@@ -2238,7 +2262,7 @@ rt_get_packed_elem(
 
 	assert(env != NULL);
 	assert(packed != NULL);
-	assert(size != NULL);
+	assert(val != NULL);
 
 	/* Acquire the object with GC cooperation. */
 	ACQUIRE_OBJ_PACKED(packed, real_packed);
@@ -2252,43 +2276,43 @@ rt_get_packed_elem(
 	switch (real_packed->type) {
 	case NOCT_PACKED_INT8:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((int8_t *)(real_packed->packed_buffer) + index);
+		val->val.i = *((int8_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT8:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((uint8_t *)(real_packed->packed_buffer) + index);
+		val->val.i = *((uint8_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_INT16:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((int16_t *)(real_packed->packed_buffer) + index);
+		val->val.i = *((int16_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT16:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((uint16_t *)(real_packed->packed_buffer) + index);
+		val->val.i = *((uint16_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_INT32:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((int32_t *)(real_packed->packed_buffer) + index);
+		val->val.i = *((int32_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT32:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((uint32_t *)(real_packed->packed_buffer) + index);
+		val->val.i = (int32_t)*((uint32_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_INT64:
 		val->type = NOCT_VALUE_LONG;
-		val->val.l = *((int64_t *)(real_packed->packed_buffer) + index);
+		val->val.l = *((int64_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT64:
 		val->type = NOCT_VALUE_LONG;
-		val->val.l = *((uint64_t *)(real_packed->packed_buffer) + index);
+		val->val.l = (int64_t)*((uint64_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_FLOAT32:
 		val->type = NOCT_VALUE_FLOAT;
-		val->val.f = *((float *)(real_packed->packed_buffer) + index);
+		val->val.f = *((float *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_FLOAT64:
 		val->type = NOCT_VALUE_DOUBLE;
-		val->val.lf = *((double *)(real_packed->packed_buffer) + index);
+		val->val.lf = *((double *)(real_packed->buffer) + index);
 		break;
 	}
 
@@ -2304,7 +2328,7 @@ bool
 rt_set_packed_elem(
 	struct rt_env *env,
 	struct rt_packed **packed,
-	uint32_t index,
+	size_t index,
 	struct rt_value *val)
 {
 	struct rt_packed *real_packed;
@@ -2313,7 +2337,7 @@ rt_set_packed_elem(
 
 	assert(env != NULL);
 	assert(packed != NULL);
-	assert(size != NULL);
+	assert(val != NULL);
 
 	/* Acquire the object with GC cooperation. */
 	ACQUIRE_OBJ_PACKED(*packed, real_packed);
@@ -2328,16 +2352,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_INT8:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)val->val.i;
+			*((int8_t *)real_packed->buffer + index) = (int8_t)(uint8_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)val->val.l;
+			*((int8_t *)real_packed->buffer + index) = (int8_t)(uint8_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)(int)val->val.f;
+			*((int8_t *)real_packed->buffer + index) = (int8_t)(uint8_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((int8_t *)real_packed->packed_buffer + index) = (int8_t)(uint8_t)(int)val->val.lf;
+			*((int8_t *)real_packed->buffer + index) = (int8_t)(uint8_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2348,16 +2372,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_UINT8:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)val->val.i;
+			*((uint8_t *)real_packed->buffer + index) = (uint8_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)val->val.l;
+			*((uint8_t *)real_packed->buffer + index) = (uint8_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)(int)val->val.f;
+			*((uint8_t *)real_packed->buffer + index) = (uint8_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((uint8_t *)real_packed->packed_buffer + index) = (uint8_t)(int)val->val.lf;
+			*((uint8_t *)real_packed->buffer + index) = (uint8_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2368,16 +2392,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_INT16:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)val->val.i;
+			*((int16_t *)real_packed->buffer + index) = (int16_t)(uint16_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)val->val.l;
+			*((int16_t *)real_packed->buffer + index) = (int16_t)(uint16_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)(int)val->val.f;
+			*((int16_t *)real_packed->buffer + index) = (int16_t)(uint16_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((int16_t *)real_packed->packed_buffer + index) = (int16_t)(uint16_t)(int)val->val.lf;
+			*((int16_t *)real_packed->buffer + index) = (int16_t)(uint16_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2388,16 +2412,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_UINT16:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)val->val.i;
+			*((uint16_t *)real_packed->buffer + index) = (uint16_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)val->val.l;
+			*((uint16_t *)real_packed->buffer + index) = (uint16_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)(int)val->val.f;
+			*((uint16_t *)real_packed->buffer + index) = (uint16_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((uint16_t *)real_packed->packed_buffer + index) = (uint16_t)(int)val->val.lf;
+			*((uint16_t *)real_packed->buffer + index) = (uint16_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2408,16 +2432,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_INT32:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)val->val.i;
+			*((int32_t *)real_packed->buffer + index) = (int32_t)(uint32_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)val->val.l;
+			*((int32_t *)real_packed->buffer + index) = (int32_t)(uint32_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)(int)val->val.f;
+			*((int32_t *)real_packed->buffer + index) = (int32_t)(uint32_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((int32_t *)real_packed->packed_buffer + index) = (int32_t)(uint32_t)(int)val->val.lf;
+			*((int32_t *)real_packed->buffer + index) = (int32_t)(uint32_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2428,16 +2452,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_UINT32:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)val->val.i;
+			*((uint32_t *)real_packed->buffer + index) = (uint32_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)val->val.l;
+			*((uint32_t *)real_packed->buffer + index) = (uint32_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)(int)val->val.f;
+			*((uint32_t *)real_packed->buffer + index) = (uint32_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((uint32_t *)real_packed->packed_buffer + index) = (uint32_t)(int)val->val.lf;
+			*((uint32_t *)real_packed->buffer + index) = (uint32_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2448,16 +2472,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_INT64:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)val->val.i;
+			*((int64_t *)real_packed->buffer + index) = (int64_t)(uint64_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)val->val.l;
+			*((int64_t *)real_packed->buffer + index) = (int64_t)(uint64_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)(int)val->val.f;
+			*((int64_t *)real_packed->buffer + index) = (int64_t)(uint64_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((int64_t *)real_packed->packed_buffer + index) = (int64_t)(uint64_t)(int)val->val.lf;
+			*((int64_t *)real_packed->buffer + index) = (int64_t)(uint64_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2468,16 +2492,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_UINT64:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)val->val.i;
+			*((uint64_t *)real_packed->buffer + index) = (uint64_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)val->val.l;
+			*((uint64_t *)real_packed->buffer + index) = (uint64_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)(int)val->val.f;
+			*((uint64_t *)real_packed->buffer + index) = (uint64_t)(int)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((uint64_t *)real_packed->packed_buffer + index) = (uint64_t)(int)val->val.lf;
+			*((uint64_t *)real_packed->buffer + index) = (uint64_t)(int)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2488,16 +2512,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_FLOAT32:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((float *)real_packed->packed_buffer + index) = (float)val->val.i;
+			*((float *)real_packed->buffer + index) = (float)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((float *)real_packed->packed_buffer + index) = (float)val->val.l;
+			*((float *)real_packed->buffer + index) = (float)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((float *)real_packed->packed_buffer + index) = (float)val->val.f;
+			*((float *)real_packed->buffer + index) = (float)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((float *)real_packed->packed_buffer + index) = (float)val->val.lf;
+			*((float *)real_packed->buffer + index) = (float)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2508,16 +2532,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_FLOAT64:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((double *)real_packed->packed_buffer + index) = (double)val->val.i;
+			*((double *)real_packed->buffer + index) = (double)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((double *)real_packed->packed_buffer + index) = (double)val->val.l;
+			*((double *)real_packed->buffer + index) = (double)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((double *)real_packed->packed_buffer + index) = (double)val->val.f;
+			*((double *)real_packed->buffer + index) = (double)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((double *)real_packed->packed_buffer + index) = (double)val->val.lf;
+			*((double *)real_packed->buffer + index) = (double)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2545,7 +2569,6 @@ rt_make_packed_copy(
 	struct rt_packed *src)
 {
 	struct rt_packed *src_real;
-	uint32_t size;
 
 	assert(env != NULL);
 	assert(dst != NULL);
@@ -2553,36 +2576,8 @@ rt_make_packed_copy(
 
 	ACQUIRE_OBJ_PACKED(src, src_real);
 
-	/* If src is preallocated. */
-	if (src_real->size == 0) {
-		switch (src_real->type) {
-		case NOCT_PACKED_INT8:
-		case NOCT_PACKED_UINT8:
-			size = src_real->elem_size;
-			break;
-		case NOCT_PACKED_INT16:
-		case NOCT_PACKED_UINT16:
-			size = src_real->elem_size * 2;
-			break;
-		case NOCT_PACKED_INT32:
-		case NOCT_PACKED_UINT32:
-		case NOCT_PACKED_FLOAT32:
-			size = src_real->elem_size * 4;
-			break;
-		case NOCT_PACKED_INT64:
-		case NOCT_PACKED_UINT64:
-		case NOCT_PACKED_FLOAT64:
-			size = src_real->elem_size * 8;
-			break;
-		}
-	}
-
 	/* Allocate an array. */
-	*dst = rt_gc_alloc_packed(env,
-				  src_real->type,
-				  size,
-				  src_real->elem_size,
-				  NULL);
+	*dst = rt_gc_alloc_packed(env, src_real->type, src_real->byte_size, src_real->elem_size, NULL);
 	if (*dst == NULL) {
 		RELEASE_OBJ(src_real);
 		return false;
@@ -2594,7 +2589,7 @@ rt_make_packed_copy(
 	 * a GC execution waits for all threads become not in-flight.
 	 */
 
-	memcpy((*dst)->packed_buffer, src_real->packed_buffer, src_real->size);
+	memcpy((*dst)->buffer, src_real->buffer, src_real->byte_size);
 
 	RELEASE_OBJ(src_real);
 
@@ -2674,7 +2669,8 @@ rt_check_global(
 	struct rt_env *env,
 	const char *name)
 {
-	uint32_t index, i, len, hash;
+	uint32_t index, i, hash;
+	size_t len;
 
 	ACQUIRE_GLOBAL();
 

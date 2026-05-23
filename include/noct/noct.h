@@ -30,14 +30,14 @@
 /* Value type. */
 enum NoctValueType {
 	NOCT_VALUE_INT     = 0,
-	NOCT_VALUE_LONG    = 1,
-	NOCT_VALUE_FLOAT   = 2,
-	NOCT_VALUE_DOUBLE  = 3,
-	NOCT_VALUE_STRING  = 4,
-	NOCT_VALUE_ARRAY   = 5,
-	NOCT_VALUE_DICT    = 6,
-	NOCT_VALUE_PACKED  = 7,
-	NOCT_VALUE_FUNC    = 8,
+	NOCT_VALUE_FLOAT   = 1,
+	NOCT_VALUE_STRING  = 2,
+	NOCT_VALUE_ARRAY   = 3,
+	NOCT_VALUE_DICT    = 4,
+	NOCT_VALUE_FUNC    = 5,
+	NOCT_VALUE_LONG    = 6,
+	NOCT_VALUE_DOUBLE  = 7,
+	NOCT_VALUE_PACKED  = 8,
 };
 
 /* Packed element type. */
@@ -371,8 +371,7 @@ noct_make_packed(
 	NoctEnv *env,
 	NoctValue *val,
 	int type,
-	uint32_t size,
-	uint32_t elem_size,
+	size_t elem_size,
 	void *preallocated);
 
 /*
@@ -445,7 +444,7 @@ bool
 noct_get_string_len(
 	NoctEnv *env,
 	NoctValue *val,
-	uint32_t *len);
+	size_t *len);
 
 /*
  * Retrieves the string from a value with type checking.
@@ -485,7 +484,7 @@ bool
 noct_get_array_size(
 	NoctEnv *env,
 	NoctValue *val,
-	uint32_t *size);
+	size_t *size);
 
 /*
  * Retrieves an element from an array without type checking.
@@ -498,7 +497,7 @@ bool
 noct_get_array_elem(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val);
 
 /*
@@ -513,7 +512,7 @@ bool
 noct_set_array_elem(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val);
 
 /*
@@ -527,7 +526,7 @@ bool
 noct_resize_array(
 	NoctEnv *env,
 	NoctValue *arr,
-	uint32_t size);
+	size_t size);
 
 /*
  * Creates a shallow copy of an array.
@@ -547,7 +546,7 @@ bool
 noct_get_dict_size(
 	NoctEnv *env,
 	NoctValue *dict,
-	uint32_t *size);
+	size_t *size);
 
 /*
  * Retrieves a dictionary key by index.
@@ -559,7 +558,7 @@ bool
 noct_get_dict_key_by_index(
 	NoctEnv *env,
 	NoctValue *dict,
-	uint32_t index,
+	size_t index,
 	NoctValue *key);
 
 /*
@@ -572,7 +571,7 @@ bool
 noct_get_dict_value_by_index(
 	NoctEnv *env,
 	NoctValue *dict,
-	uint32_t index,
+	size_t index,
 	NoctValue *val);
 
 /*
@@ -877,7 +876,7 @@ bool
 noct_get_array_elem_check_int(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	int *i);
 
@@ -903,7 +902,7 @@ bool
 noct_get_array_elem_check_long(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	long *l);
 
@@ -929,7 +928,7 @@ bool
 noct_get_array_elem_check_float(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	float *f);
 
@@ -955,7 +954,7 @@ bool
 noct_get_array_elem_check_double(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	double *lf);
 
@@ -976,7 +975,7 @@ bool
 noct_get_array_elem_check_string(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	const char **data);
 
@@ -997,7 +996,7 @@ bool
 noct_get_array_elem_check_array(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val);
 
 /*
@@ -1017,7 +1016,7 @@ bool
 noct_get_array_elem_check_dict(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val);
 
 /*
@@ -1037,7 +1036,7 @@ bool
 noct_get_array_elem_check_func(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	NoctFunc **f);
 
@@ -1063,7 +1062,7 @@ bool
 noct_set_array_elem_make_int(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	int i);
 
@@ -1089,7 +1088,7 @@ bool
 noct_set_array_elem_make_long(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	long l);
 
@@ -1115,7 +1114,7 @@ bool
 noct_set_array_elem_make_float(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	float f);
 
@@ -1141,7 +1140,7 @@ bool
 noct_set_array_elem_make_double(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	double lf);
 
@@ -1162,7 +1161,7 @@ bool
 noct_set_array_elem_make_string(
 	NoctEnv *env,
 	NoctValue *array,
-	uint32_t index,
+	size_t index,
 	NoctValue *val,
 	const char *data);
 
