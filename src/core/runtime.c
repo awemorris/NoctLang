@@ -1150,7 +1150,7 @@ rt_get_array_elem(
 	if (index >= real_arr->size) {
 		RELEASE_OBJ(real_arr);
 
-		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -1497,7 +1497,7 @@ rt_get_dict_key_by_index(
 	if (index >= real_dict->size) {
 		RELEASE_OBJ(real_dict);
 
-		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
+		rt_error(env, N_TR("Dictionary index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -1545,7 +1545,7 @@ rt_get_dict_value_by_index(
 	if (index >= real_dict->size) {
 		RELEASE_OBJ(real_dict);
 
-		rt_error(env, N_TR("Dictionary index %d is out-of-range."), index);
+		rt_error(env, N_TR("Dictionary index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -2155,20 +2155,33 @@ rt_make_packed(
 		break;
 	case NOCT_PACKED_INT16:
 	case NOCT_PACKED_UINT16:
+		if (elem_size >= SIZE_MAX >> 1) {
+			rt_out_of_memory(env);
+			return false;
+		}
 		byte_size = elem_size * 2;
 		break;
 	case NOCT_PACKED_INT32:
 	case NOCT_PACKED_UINT32:
 	case NOCT_PACKED_FLOAT32:
+		if (elem_size >= SIZE_MAX >> 2) {
+			rt_out_of_memory(env);
+			return false;
+		}
 		byte_size = elem_size * 4;
 		break;
 	case NOCT_PACKED_INT64:
 	case NOCT_PACKED_UINT64:
 	case NOCT_PACKED_FLOAT64:
+		if (elem_size >= SIZE_MAX >> 3) {
+			rt_out_of_memory(env);
+			return false;
+		}
 		byte_size = elem_size * 8;
 		break;
 	default:
 		assert(0);
+		return false;
 	}
 
 	/* Allocate an array. */
@@ -2239,7 +2252,7 @@ rt_get_packed_size(
 	ACQUIRE_OBJ_PACKED(packed, real_packed);
 
 	/* Get the size. */
-	*size = (uint32_t)real_packed->elem_size;
+	*size = real_packed->elem_size;
 
 	RELEASE_OBJ(real_packed);
 
@@ -2269,42 +2282,42 @@ rt_get_packed_elem(
 
 	if (index >= real_packed->elem_size) {
 		RELEASE_OBJ(real_packed);
-		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
 		return false;
 	}
 
 	switch (real_packed->type) {
 	case NOCT_PACKED_INT8:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((int8_t *)(real_packed->buffer) + index);
+		val->val.i = (uint32_t)(int32_t)*((int8_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT8:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((uint8_t *)(real_packed->buffer) + index);
+		val->val.i = (uint32_t)*((uint8_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_INT16:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((int16_t *)(real_packed->buffer) + index);
+		val->val.i = (uint32_t)(int32_t)*((int16_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT16:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((uint16_t *)(real_packed->buffer) + index);
+		val->val.i = (uint32_t)*((uint16_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_INT32:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = *((int32_t *)(real_packed->buffer) + index);
+		val->val.i = (uint32_t)*((int32_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT32:
 		val->type = NOCT_VALUE_INT;
-		val->val.i = (int32_t)*((uint32_t *)(real_packed->buffer) + index);
+		val->val.i = *((uint32_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_INT64:
 		val->type = NOCT_VALUE_LONG;
-		val->val.l = *((int64_t *)(real_packed->buffer) + index);
+		val->val.l = (uint64_t)*((int64_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_UINT64:
 		val->type = NOCT_VALUE_LONG;
-		val->val.l = (int64_t)*((uint64_t *)(real_packed->buffer) + index);
+		val->val.l = *((uint64_t *)(real_packed->buffer) + index);
 		break;
 	case NOCT_PACKED_FLOAT32:
 		val->type = NOCT_VALUE_FLOAT;
@@ -2344,7 +2357,7 @@ rt_set_packed_elem(
 
 	if (index >= real_packed->elem_size) {
 		RELEASE_OBJ(real_packed);
-		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
 		return false;
 	}
 

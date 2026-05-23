@@ -707,7 +707,7 @@ noct_ex_lt_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) < 0 ? 1 : 0;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) < 0 ? 1U : 0U;
 			break;
 		default:
 			rt_error(env, N_TR("Value is not a string."));
@@ -1169,6 +1169,7 @@ noct_ex_loadarray_helper(
 	struct rt_value *dst_val;
 	struct rt_value *arr_val;
 	struct rt_value *subscr_val;
+	size_t index;
 
 	dst_val = &env->frame->tmpvar[dst];
 	arr_val = &env->frame->tmpvar[arr];
@@ -1177,13 +1178,17 @@ noct_ex_loadarray_helper(
 	/* Check the array type. */
 	if (arr_val->type == NOCT_VALUE_ARRAY) {
 		/* Get the subscript value. */
-		if (subscr_val->type != NOCT_VALUE_INT) {
+		if (subscr_val->type == NOCT_VALUE_INT) {
+			index = (uint32_t)subscr_val->val.i;
+		} else if (subscr_val->type == NOCT_VALUE_LONG) {
+			index = (size_t)(uint64_t)subscr_val->val.l;
+		} else {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
 		}
 
 		/* Load the array element. */
-		if (!rt_get_array_elem(env, arr_val->val.arr, (uint32_t)subscr_val->val.i, dst_val))
+		if (!rt_get_array_elem(env, arr_val->val.arr, index, dst_val))
 			return false;
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
@@ -1207,13 +1212,17 @@ noct_ex_loadarray_helper(
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_PACKED) {
 		/* Get the subscript value. */
-		if (subscr_val->type != NOCT_VALUE_INT) {
+		if (subscr_val->type == NOCT_VALUE_INT) {
+			index = subscr_val->val.i;
+		} else if (subscr_val->type == NOCT_VALUE_LONG) {
+			index = subscr_val->val.l;
+		} else {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
 		}
 
 		/* Load the packed element. */
-		if (!rt_get_packed_elem(env, arr_val->val.packed, (uint32_t)subscr_val->val.i, dst_val))
+		if (!rt_get_packed_elem(env, arr_val->val.packed, index, dst_val))
 			return false;
 		return true;
 	}
@@ -1243,23 +1252,23 @@ noct_ex_len_helper(
 	switch (src_val->type) {
 	case NOCT_VALUE_STRING:
 		dst_val->type = NOCT_VALUE_INT;
-		dst_val->val.i = (int)(src_val->val.str->len - 1); /* Exclude NUL */
+		dst_val->val.i = (uint32_t)(src_val->val.str->len - 1); /* Exclude NUL */
 		assert(src_val->val.str->len == strlen(src_val->val.str->data));
 		break;
 	case NOCT_VALUE_ARRAY:
 		dst_val->type = NOCT_VALUE_INT;
 		rt_get_array_size(env, src_val->val.arr, &val);
-		dst_val->val.i = (int)val;
+		dst_val->val.i = (uint32_t)val;
 		break;
 	case NOCT_VALUE_DICT:
 		dst_val->type = NOCT_VALUE_INT;
 		rt_get_dict_size(env, src_val->val.dict, &val);
-		dst_val->val.i = (int)val;
+		dst_val->val.i = (uint32_t)val;
 		break;
 	case NOCT_VALUE_PACKED:
 		dst_val->type = NOCT_VALUE_INT;
 		rt_get_packed_size(env, src_val->val.packed, &val);
-		dst_val->val.i = (int)val;
+		dst_val->val.i = (uint32_t)val;
 		break;
 	default:
 		rt_error(env, N_TR("Value is not a string, an array, or a dictionary."));
@@ -1406,18 +1415,18 @@ noct_ex_loaddot_helper(
 			if (!rt_get_dict_size(env, env->frame->tmpvar[dict].val.dict, &size))
 				return false;
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = (int)size;
+			env->frame->tmpvar[dst].val.i = (uint32_t)size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_ARRAY) {
 			size_t size;
 			if (!rt_get_array_size(env, env->frame->tmpvar[dict].val.arr, &size))
 				return false;
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = (int)size;
+			env->frame->tmpvar[dst].val.i = (uint32_t)size;
 			return true;
 		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
 			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = (int)(env->frame->tmpvar[dict].val.str->len - 1); /* Exclude NUL */
+			env->frame->tmpvar[dst].val.i = (uint32_t)(env->frame->tmpvar[dict].val.str->len - 1); /* Exclude NUL */
 			return true;
 		}
 	}

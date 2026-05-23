@@ -101,8 +101,8 @@ struct rt_value {
 
 	/* Offset 4 in 32-bit, 8 in 64-bit: */
 	union {
-		int i;
-		long l;
+		uint32_t i;
+		uint64_t l;
 		float f;
 		double lf;
 		struct rt_string *str;
@@ -396,7 +396,7 @@ bool
 noct_get_int(
 	NoctEnv *env,
 	NoctValue *val,
-	int *i);
+	uint32_t *i);
 
 /*
  * Retrieves an integer from a value with type checking.
@@ -408,7 +408,7 @@ bool
 noct_get_long(
 	NoctEnv *env,
 	NoctValue *val,
-	long *l);
+	uint64_t *l);
 
 /*
  * Retrieves a float from a value with type checking.
@@ -878,7 +878,7 @@ noct_get_array_elem_check_int(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	int *i);
+	uint32_t *i);
 
 /*
  * Convenience function to retrieve a long element from an array
@@ -904,7 +904,7 @@ noct_get_array_elem_check_long(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	long *l);
+	uint64_t *l);
 
 /*
  * Convenience function to retrieve a float element from an array with
@@ -1064,7 +1064,7 @@ noct_set_array_elem_make_int(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	int i);
+	uint32_t i);
 
 /*
  * Convenience function to set a long element in an array.
@@ -1090,7 +1090,7 @@ noct_set_array_elem_make_long(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	long l);
+	uint64_t l);
 
 /*
  * Convenience function to set a float element in an array.
@@ -1192,7 +1192,7 @@ noct_get_dict_elem_check_int(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	int *i);
+	uint32_t *i);
 
 /*
  * Convenience function to retrieve a long value associated with a
@@ -1219,7 +1219,7 @@ noct_get_dict_elem_check_long(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	long *l);
+	uint64_t *l);
 
 /*
  * Convenience function to retrieve a float value associated with a
@@ -1382,7 +1382,7 @@ noct_set_dict_elem_make_int(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	int i);
+	uint32_t i);
 
 /*
  * Convenience function to set a long value for a key in a dictionary.
@@ -1405,7 +1405,7 @@ noct_set_dict_elem_make_long(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	long l);
+	uint64_t l);
 
 /*
  * Convenience function to set a float value for a key in a dictionary.
@@ -1494,7 +1494,7 @@ noct_get_arg_check_int(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val,
-	int *i);
+	uint32_t *i);
 
 /*
  * Convenience function to retrieve a long function argument with
@@ -1517,7 +1517,7 @@ noct_get_arg_check_long(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val,
-	long *l);
+	uint64_t *l);
 
 /*
  * Convenience function to retrieve a float function argument with
@@ -1645,7 +1645,7 @@ bool
 noct_set_return_make_int(
 	NoctEnv *env,
 	NoctValue *val,
-	int i);
+	uint32_t i);
 
 /*
  * Convenience function to set a long return value for the current
@@ -1667,7 +1667,7 @@ bool
 noct_set_return_make_long(
 	NoctEnv *env,
 	NoctValue *val,
-	long l);
+	uint64_t l);
 
 /*
  * Convenience function to set a float return value for the current

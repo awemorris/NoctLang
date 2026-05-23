@@ -253,8 +253,8 @@ zh:不是数组。
 tw:不是陣列。
 ja:配列ではありません。
 ---
-ID:Array index %d is out-of-range.
-en:Array index %d is out-of-range.
+ID:Array index %ld is out-of-range.
+en:Array index %ld is out-of-range.
 es:El índice %d del array se encuentra fuera de rango.
 fr:L'index de tableau %d est hors de portée.
 de:Array-Index %d ist außerhalb des gültigen Bereichs.
@@ -265,8 +265,8 @@ zh:数组索引 %d 超出范围。
 tw:陣列索引 %d 超出範圍。
 ja:配列の添字 %d は範囲外です。
 ---
-ID:Dictionary index %d is out-of-range.
-en:Dictionary index %d is out-of-range.
+ID:Dictionary index %ld is out-of-range.
+en:Dictionary index %ld is out-of-range.
 es:El índice del diccionario %d está fuera de rango.
 fr:L'index du dictionnaire %d est hors de portée.
 de:Wörterbuch-Index %d ist außerhalb des Bereichs.

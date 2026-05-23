@@ -225,7 +225,7 @@ noct_make_int(
 	assert(val != NULL);
 
 	val->type = NOCT_VALUE_INT;
-	val->val.i = i;
+	val->val.i = (uint32_t)(int32_t)i;
 
 	return true;
 }
@@ -243,7 +243,7 @@ noct_make_long(
 	assert(val != NULL);
 
 	val->type = NOCT_VALUE_LONG;
-	val->val.l = l;
+	val->val.l = (uint64_t)(int64_t)l;
 
 	return true;
 }
@@ -384,7 +384,7 @@ bool
 noct_get_int(
 	NoctEnv *env,
 	NoctValue *val,
-	int *i)
+	uint32_t *i)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -407,7 +407,7 @@ bool
 noct_get_long(
 	NoctEnv *env,
 	NoctValue *val,
-	long *l)
+	uint64_t *l)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -1223,7 +1223,7 @@ noct_get_array_elem_check_int(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	int *i)
+	uint32_t *i)
 {
 	int type;
 
@@ -1256,7 +1256,7 @@ noct_get_array_elem_check_long(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	long *l)
+	uint64_t *l)
 {
 	int type;
 
@@ -1472,7 +1472,7 @@ noct_set_array_elem_make_int(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	int i)
+	uint32_t i)
 {
 	assert(env != NULL);
 	assert(array != NULL);
@@ -1496,7 +1496,7 @@ noct_set_array_elem_make_long(
 	NoctValue *array,
 	size_t index,
 	NoctValue *val,
-	long l)
+	uint64_t l)
 {
 	assert(env != NULL);
 	assert(array != NULL);
@@ -1597,7 +1597,7 @@ noct_get_dict_elem_check_int(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	int *i)
+	uint32_t *i)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1628,7 +1628,7 @@ noct_get_dict_elem_check_long(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	long *l)
+	uint64_t *l)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1839,7 +1839,7 @@ noct_set_dict_elem_make_int(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	int i)
+	uint32_t i)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1864,7 +1864,7 @@ noct_set_dict_elem_make_long(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	long l)
+	uint64_t l)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1968,7 +1968,7 @@ noct_get_arg_check_int(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val,
-	int *i)
+	uint32_t *i)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -1998,7 +1998,7 @@ noct_get_arg_check_long(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val,
-	long *l)
+	uint64_t *l)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -2202,7 +2202,7 @@ bool
 noct_set_return_make_int(
 	NoctEnv *env,
 	NoctValue *val,
-	int i)
+	uint32_t i)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -2223,7 +2223,7 @@ bool
 noct_set_return_make_long(
 	NoctEnv *env,
 	NoctValue *val,
-	long l)
+	uint64_t l)
 {
 	assert(env != NULL);
 	assert(val != NULL);

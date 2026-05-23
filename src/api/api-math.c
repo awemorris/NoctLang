@@ -102,8 +102,10 @@ cfunc_Math_abs(
 {
 	NoctValue x, ret;
 	int type;
-	int ival;
+	int32_t ival;
+	int64_t lval;
 	float fval;
+	double lfval;
 
 	noct_pin_local(env, 2, &x, &ret);
 
@@ -114,11 +116,19 @@ cfunc_Math_abs(
 
 	switch (type) {
 	case NOCT_VALUE_INT:
-		if (!noct_get_int(env, &x, &ival))
+		if (!noct_get_int(env, &x, (uint32_t *)&ival))
 			return false;
 		if (ival < 0)
 			ival = -ival;
-		if (!noct_set_return_make_int(env, &ret, ival))
+		if (!noct_set_return_make_int(env, &ret, (uint32_t)ival))
+			return false;
+		break;
+	case NOCT_VALUE_LONG:
+		if (!noct_get_long(env, &x, (uint64_t *)&lval))
+			return false;
+		if (ival < 0)
+			ival = -ival;
+		if (!noct_set_return_make_long(env, &ret, (uint64_t)lval))
 			return false;
 		break;
 	case NOCT_VALUE_FLOAT:
@@ -127,6 +137,14 @@ cfunc_Math_abs(
 		if (fval < 0)
 			fval = -fval;
 		if (!noct_set_return_make_float(env, &ret, fval))
+			return false;
+		break;
+	case NOCT_VALUE_DOUBLE:
+		if (!noct_get_double(env, &x, &lfval))
+			return false;
+		if (fval < 0)
+			fval = -fval;
+		if (!noct_set_return_make_double(env, &ret, lfval))
 			return false;
 		break;
 	default:
@@ -146,7 +164,7 @@ cfunc_Math_sqrt(
 {
 	NoctValue x, ret;
 	int type;
-	int ival;
+	uint32_t ival;
 	float fval;
 
 	noct_pin_local(env, 2, &x, &ret);

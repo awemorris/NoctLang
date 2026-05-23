@@ -743,11 +743,17 @@ rt_gc_alloc_packed(
 {
 	struct rt_packed *packed;
 	void *p;
+	size_t len;
 	int retry;
 
 	assert(env != NULL);
 	assert(byte_size > 0);
 	assert(elem_size > 0);
+
+	if (preallocated != NULL)
+		len = 0;
+	else
+		len = byte_size;
 
 	/*
 	 * [Large Object Promotion]
@@ -759,7 +765,7 @@ rt_gc_alloc_packed(
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_packed buffer. */
-		packed = nursery_alloc(env, sizeof(struct rt_packed) + byte_size);
+		packed = nursery_alloc(env, sizeof(struct rt_packed) + len);
 		if (packed == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -781,7 +787,7 @@ rt_gc_alloc_packed(
 		memset(&packed->head, 0, sizeof(struct rt_gc_object));
 		packed->head.type = RT_GC_TYPE_PACKED;
 		packed->head.region = RT_GC_REGION_NURSERY;
-		packed->head.size = sizeof(struct rt_packed) + byte_size;
+		packed->head.size = sizeof(struct rt_packed) + len;
 		INSERT_TO_LIST(&packed->head, env->vm->gc.nursery_list, prev, next);
 		packed->type = type;
 		packed->byte_size = byte_size;
@@ -2042,6 +2048,9 @@ rt_gc_compact_gc(
 	/* For all tenure list references. */
 	objpp = &env->vm->gc.tenure_list;
 	while (*objpp != NULL) {
+		/* Rewrite ->next. */
+		rt_gc_update_tenure_ref(env, objpp);
+
 		/* Rewrite pointers. */
 		if ((*objpp)->type == RT_GC_TYPE_ARRAY) {
 			struct rt_array *arr;
@@ -2056,12 +2065,9 @@ rt_gc_compact_gc(
 			struct rt_packed *packed;
 			packed = (struct rt_packed *)*objpp;
 			/* Move reference if not a preallocated buffer. */
-			if (packed->is_preallocated)
+			if (!packed->is_preallocated)
 				packed->buffer = ((char *)packed + sizeof(struct rt_packed));
 		}
-
-		/* Rewrite ->next. */
-		rt_gc_update_tenure_ref(env, objpp);
 
 		/* Rewrite ->prev. */
 		if ((*objpp)->prev != NULL)

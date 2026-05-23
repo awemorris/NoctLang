@@ -192,7 +192,7 @@ rt_intrin_int(
 		float val_f;
 		if (!noct_get_float(env, &val, &val_f))
 			return false;
-		if (!noct_set_return_make_int(env, &ret, (int)val_f))
+		if (!noct_set_return_make_int(env, &ret, (uint32_t)(int32_t)val_f))
 			return false;
 		break;
 	}
@@ -201,7 +201,7 @@ rt_intrin_int(
 		const char *val_s;
 		if (!noct_get_string(env, &val, &val_s))
 			return false;
-		if (!noct_set_return_make_int(env, &ret, atoi(val_s)))
+		if (!noct_set_return_make_int(env, &ret, (uint32_t)(int32_t)atoi(val_s)))
 			return false;
 		break;
 	}
@@ -231,8 +231,8 @@ rt_intrin_float(
 	switch (type) {
 	case NOCT_VALUE_INT:
 	{
-		int val_i;
-		if (!noct_get_int(env, &val, &val_i))
+		int32_t val_i;
+		if (!noct_get_int(env, &val, (uint32_t *)&val_i))
 			return false;
 		if (!noct_set_return_make_float(env, &ret, (float)val_i))
 			return false;
@@ -321,7 +321,7 @@ rt_intrin_newArray(
 	NoctEnv *env)
 {
 	struct rt_value arr, size;
-	int size_i;
+	uint32_t size_i;
 
 	noct_pin_local(env, 1, &size);
 
@@ -344,7 +344,7 @@ rt_intrin_resize(
 	NoctEnv *env)
 {
 	struct rt_value arr, size;
-	int size_i;
+	uint32_t size_i;
 
 	noct_pin_local(env, 2, &arr, &size);
 
@@ -392,16 +392,16 @@ rt_intrin_charCount(
 {
 	NoctValue str, ret;
 	const char *str_s;
-	int len;
+	size_t len;
 
 	noct_pin_local(env, 2, &str, &ret);
 
 	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
 		return false;
 
-	len = (int)get_string_length(str_s);
+	len = get_string_length(str_s);
 
-	if (!noct_set_return_make_int(env, &ret, len))
+	if (!noct_set_return_make_int(env, &ret, (uint32_t)len))
 		return false;
 
 	return true;
@@ -414,10 +414,10 @@ rt_intrin_charAt(
 {
 	NoctValue str, index, ret;
 	const char *str_s;
-	int index_i;
+	uint32_t index_i;
 	const char *s;
 	char d[8];
-	int i, ofs;
+	uint32_t i, ofs;
 
 	noct_pin_local(env, 3, &str, &index, &ret);
 
@@ -425,14 +425,6 @@ rt_intrin_charAt(
 		return false;
 	if (!noct_get_arg_check_int(env, 1, &index, &index_i))
 		return false;
-
-	if (index_i < 0) {
-		if (!noct_make_string(env, &ret, ""))
-			return false;
-		if (!noct_set_return(env, &ret))
-			return false;
-		return true;
-	}
 
 	s = str_s;
 	i = 0;
@@ -456,8 +448,8 @@ rt_intrin_charAt(
 			return true;
 		}
 
-		s += mblen;
-		ofs += mblen;
+		s += (uint32_t)mblen;
+		ofs += (uint32_t)mblen;
 		i++;
 	}
 
@@ -479,7 +471,8 @@ rt_intrin_substring(
 {
 	NoctValue str, start, len, ret;
 	const char *str_s;
-	int start_i, len_i, i, ofs, copy_start, copy_mblen;
+	uint32_t start_i, len_i, i, ofs, copy_mblen;
+	int copy_start;
 	const char *s;
 	char *tmp;
 
@@ -489,9 +482,6 @@ rt_intrin_substring(
 		return false;
 	if (!noct_get_arg_check_int(env, 2, &len, &len_i))
 		return false;
-
-	if (start_i < 0)
-		start_i = 0;
 
 	s = str_s;
 	i = 0;
@@ -508,14 +498,14 @@ rt_intrin_substring(
 			break;
 		}
 		if (i == start_i)
-			copy_start = ofs;
+			copy_start = (int)ofs;
 		if (i == start_i + len_i)
 			break;
 		if (copy_start != -1)
-			copy_mblen += mblen;
+			copy_mblen += (uint32_t)mblen;
 
-		s += mblen;
-		ofs += mblen;
+		s += (uint32_t)mblen;
+		ofs += (uint32_t)mblen;
 		i++;
 	}
 
@@ -545,7 +535,7 @@ rt_intrin_indexOf(
 	const char *str_s;
 	const char *substr_s;
 	size_t i, len_str, len_substr, range_max;
-	int result;
+	uint32_t result;
 
 	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
 		return false;
@@ -554,12 +544,12 @@ rt_intrin_indexOf(
 
 	len_str = strlen(str_s);
 	len_substr = strlen(substr_s);
-	result = -1;
+	result = (uint32_t)-1;
 	if (len_str > len_substr) {
 		range_max = len_str - len_substr;
 		for (i = 0; i < range_max; i++) {
 			if (strncmp(str_s + i, substr_s, len_substr) == 0) {
-				result = (int)i;
+				result = (uint32_t)i;
 				break;
 			}
 		}

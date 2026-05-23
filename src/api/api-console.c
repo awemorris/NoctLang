@@ -120,7 +120,7 @@ static bool serialize_printer(
 	bool is_inside_obj)
 {
 	int type;
-	int ival;
+	uint32_t ival;
 	float fval;
 	const char *sval;
 	size_t items;
