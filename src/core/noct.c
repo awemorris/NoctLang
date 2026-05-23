@@ -346,16 +346,19 @@ noct_make_packed(
 	NoctValue *val,
 	int type,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void (*finalizer)(void *))
 {
-	uint32_t byte_size;
-
 	assert(env != NULL);
 	assert(val != NULL);
-	assert(byte_size > 0);
 	assert(elem_size > 0);
 
-	if (!rt_make_packed(env, val, type, elem_size, preallocated))
+	if (!rt_make_packed(env,
+			    val,
+			    type,
+			    elem_size,
+			    preallocated,
+			    finalizer))
 		return false;
 
 	return true;

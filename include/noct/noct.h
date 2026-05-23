@@ -372,7 +372,8 @@ noct_make_packed(
 	NoctValue *val,
 	int type,
 	size_t elem_size,
-	void *preallocated);
+	void *preallocated,
+	void (*finalizer)(void *));
 
 /*
  * Retrieves the type tag of a value.

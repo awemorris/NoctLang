@@ -25,6 +25,12 @@
 #define PINNED_VAR_NOT_FOUND	0
 
 /*
+ * Alignment
+ */
+#define ALIGN			(sizeof(uint64_t))
+#define ALIGN_STRUCT(s)		((sizeof(s) + (ALIGN - 1)) & ~(ALIGN - 1))
+
+/*
  * Link an element to a list.
  */
 #define INSERT_TO_LIST(elem, list, prev, next)	\
@@ -79,8 +85,8 @@ static struct rt_array *rt_gc_alloc_array_graduate(struct rt_env *env, size_t si
 static struct rt_array *rt_gc_alloc_array_tenure(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
-static struct rt_packed *rt_gc_alloc_packed_graduate(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
-static struct rt_packed *rt_gc_alloc_packed_tenure(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
+static struct rt_packed *rt_gc_alloc_packed_graduate(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void (*finalizer)(void *));
+static struct rt_packed *rt_gc_alloc_packed_tenure(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void (*finalizer)(void *));
 static void rt_gc_young_gc(struct rt_env *env);
 static void rt_gc_young_gc_body(struct rt_env *env);
 static bool rt_gc_copy_young_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
@@ -139,25 +145,66 @@ rt_gc_init(
 	return true;
 }
 
+/*
+ * Cleanups the garbage collector and deallocate memory regions.
+ */
 void
 rt_gc_cleanup(
 	struct rt_vm *vm)
 {
-	arena_cleanup(&vm->gc.nursery_arena);
-	arena_cleanup(&vm->gc.graduate_arena[0]);
-	arena_cleanup(&vm->gc.graduate_arena[1]);
+	struct rt_gc_object *obj;
 
-	if (vm->gc.tenure_freelist.top != NULL) {
-		noct_free(vm->gc.tenure_freelist.top);
-		vm->gc.tenure_freelist.top = NULL;
+	/* Call finalizers for nursery objects. */
+	obj = vm->gc.nursery_list;
+	while (obj != NULL) {
+		if (obj->type == RT_GC_TYPE_DICT) {
+			struct rt_dict *dict = (struct rt_dict *)obj;
+			if (dict->native_finalizer != NULL)
+				dict->native_finalizer(dict->native_pointer);
+		} else if (obj->type == RT_GC_TYPE_PACKED) {
+			struct rt_packed *packed = (struct rt_packed *)obj;
+			if (packed->is_preallocated &&
+			    packed->finalizer != NULL &&
+			    packed->buffer != NULL)
+				packed->finalizer(packed->buffer);
+		}
+		obj = obj->next;
 	}
-}
+	
+	/* Call finalizers for graduate objects. */
+	obj = vm->gc.graduate_list;
+	while (obj != NULL) {
+		if (obj->type == RT_GC_TYPE_DICT) {
+			struct rt_dict *dict = (struct rt_dict *)obj;
+			if (dict->native_finalizer != NULL)
+				dict->native_finalizer(dict->native_pointer);
+		} else if (obj->type == RT_GC_TYPE_PACKED) {
+			struct rt_packed *packed = (struct rt_packed *)obj;
+			if (packed->is_preallocated &&
+			    packed->finalizer != NULL &&
+			    packed->buffer != NULL)
+				packed->finalizer(packed->buffer);
+		}
+		obj = obj->next;
+	}
 
-/*
- * Cleanups the garbage collector and deallocate memory regions.
- */
-void env_gc_cleanup(struct rt_vm *vm)
-{
+	/* Call finalizers for tenure objects. */
+	obj = vm->gc.tenure_list;
+	while (obj != NULL) {
+		if (obj->type == RT_GC_TYPE_DICT) {
+			struct rt_dict *dict = (struct rt_dict *)obj;
+			if (dict->native_finalizer != NULL)
+				dict->native_finalizer(dict->native_pointer);
+		} else if (obj->type == RT_GC_TYPE_PACKED) {
+			struct rt_packed *packed = (struct rt_packed *)obj;
+			if (packed->is_preallocated &&
+			    packed->finalizer != NULL &&
+			    packed->buffer != NULL)
+				packed->finalizer(packed->buffer);
+		}
+		obj = obj->next;
+	}
+
 	/* Cleanup the nursery allocator. */
 	arena_cleanup(&vm->gc.nursery_arena);
 
@@ -166,7 +213,10 @@ void env_gc_cleanup(struct rt_vm *vm)
 	arena_cleanup(&vm->gc.graduate_arena[1]);
 
 	/* Cleanup the tenure allocator. */
-	noct_free(vm->gc.tenure_freelist.top);
+	if (vm->gc.tenure_freelist.top != NULL) {
+		noct_free(vm->gc.tenure_freelist.top);
+		vm->gc.tenure_freelist.top = NULL;
+	}
 }
 
 /*
@@ -182,6 +232,10 @@ rt_gc_alloc_string(
 	struct rt_string *rts;
 	char *s;
 	int retry;
+	size_t struct_size;
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_string);
 
 	/*
 	 * [Large Object Promotion]
@@ -193,7 +247,7 @@ rt_gc_alloc_string(
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_string buffer. */
-		rts = nursery_alloc(env, sizeof(struct rt_string) + len);
+		rts = nursery_alloc(env, struct_size + len);
 		if (rts == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -206,7 +260,7 @@ rt_gc_alloc_string(
 		}
 
 		/* Get the string top address. */
-		s = (char *)rts + sizeof(struct rt_string);
+		s = (char *)rts + struct_size;
 
 		/* Copy the string. */
 		memcpy(s, data, len);
@@ -215,7 +269,7 @@ rt_gc_alloc_string(
 		memset(&rts->head, 0, sizeof(struct rt_gc_object));
 		rts->head.type = RT_GC_TYPE_STRING;
 		rts->head.region = RT_GC_REGION_NURSERY;
-		rts->head.size = sizeof(struct rt_string) + len;
+		rts->head.size = struct_size + len;
 		INSERT_TO_LIST(&rts->head, env->vm->gc.nursery_list, prev, next);
 		rts->data = s;
 		rts->len = len;
@@ -240,6 +294,10 @@ rt_gc_alloc_string_graduate(
 {
 	struct rt_string *rts;
 	char *s;
+	size_t struct_size;
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_string);
 
 	/*
 	 * This function is only called from the young GC,
@@ -248,12 +306,12 @@ rt_gc_alloc_string_graduate(
 
 	do {
 		/* Try allocating a rt_string buffer in the graduate region. */
-		rts = graduate_alloc(env, sizeof(struct rt_string) + len);
+		rts = graduate_alloc(env, struct_size + len);
 		if (rts == NULL)
 			break;
 
 		/* Get the string top address. */
-		s = (char *)rts + sizeof(struct rt_string);
+		s = (char *)rts + struct_size;
 
 		/* Copy the string. */
 		memcpy(s, data, len);
@@ -262,7 +320,7 @@ rt_gc_alloc_string_graduate(
 		memset(&rts->head, 0, sizeof(struct rt_gc_object));
 		rts->head.type = RT_GC_TYPE_STRING;
 		rts->head.region = RT_GC_REGION_GRADUATE;
-		rts->head.size = sizeof(struct rt_string) + len;
+		rts->head.size = struct_size + len;
 		INSERT_TO_LIST(&rts->head, env->vm->gc.graduate_new_list, prev, next);
 		rts->data = s;
 		rts->len = len;
@@ -293,7 +351,13 @@ rt_gc_alloc_string_tenure(
 	char *s;
 	int retry;
 
-	if (sizeof(struct rt_string) + len >= env->vm->config.gc_tenure_size) {
+	size_t struct_size;
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_string);
+
+	/* Check for the size. */
+	if (struct_size + len >= env->vm->config.gc_tenure_size) {
 		rt_out_of_memory(env);
 		return NULL;
 	}
@@ -301,7 +365,7 @@ rt_gc_alloc_string_tenure(
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_string buffer. */
-		rts = rt_gc_tenure_alloc(env, sizeof(struct rt_string) + len);
+		rts = rt_gc_tenure_alloc(env, struct_size + len);
 		if (rts == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -317,7 +381,7 @@ rt_gc_alloc_string_tenure(
 		}
 
 		/* Get the string top address. */
-		s = (char *)rts + sizeof(struct rt_string);
+		s = (char *)rts + struct_size;
 
 		/* Copy the string. */
 		memcpy(s, data, len);
@@ -326,7 +390,7 @@ rt_gc_alloc_string_tenure(
 		memset(&rts->head, 0, sizeof(struct rt_gc_object));
 		rts->head.type = RT_GC_TYPE_STRING;
 		rts->head.region = RT_GC_REGION_TENURE;
-		rts->head.size = sizeof(struct rt_string) + len;
+		rts->head.size = struct_size + len;
 		INSERT_TO_LIST(&rts->head, env->vm->gc.tenure_list, prev, next);
 		rts->data = s;
 		rts->len = len;
@@ -353,9 +417,13 @@ rt_gc_alloc_array(
 	size_t len;
 	struct rt_value *table;
 	int retry;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(size > 0);
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_array);
 
 	/*
 	 * [Large Object Promotion]
@@ -367,8 +435,8 @@ rt_gc_alloc_array(
 
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 1; retry++) {
-		/* Allocate a rt_array buffer. */
-		arr = nursery_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
+		/* Allocate a rt_array buffer. (rt_value is strictly aligned) */
+		arr = nursery_alloc(env, struct_size + size * sizeof(struct rt_value));
 		if (arr == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -381,13 +449,13 @@ rt_gc_alloc_array(
 		}
 
 		/* Get the address of the table. */
-		table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
+		table = (struct rt_value *)((char *)arr + struct_size);
 
 		/* Setup the struct. */
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_NURSERY;
-		arr->head.size = sizeof(struct rt_array) + size * sizeof(struct rt_value);
+		arr->head.size = struct_size + size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&arr->head, env->vm->gc.nursery_list, prev, next);
 		arr->alloc_size = size;
 		arr->size = 0;
@@ -414,9 +482,13 @@ rt_gc_alloc_array_graduate(
 {
 	struct rt_array *arr;
 	struct rt_value *table;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(size > 0);
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_array);
 
 	/*
 	 * This function is only called from the young GC,
@@ -425,19 +497,19 @@ rt_gc_alloc_array_graduate(
 
 	/* Try allocating in the graduate region. */
 	do {
-		/* Allocate a rt_arrary buffer. */
-		arr = graduate_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
+		/* Allocate a rt_array buffer. (rt_value is strictly aligned) */
+		arr = graduate_alloc(env, struct_size + size * sizeof(struct rt_value));
 		if (arr == NULL)
 			break;
 
 		/* Get the address of the table. */
-		table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
+		table = (struct rt_value *)((char *)arr + struct_size);
 
 		/* Setup the struct. */
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_GRADUATE;
-		arr->head.size = sizeof(struct rt_array) + size * sizeof(struct rt_value);
+		arr->head.size = struct_size + size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&arr->head, env->vm->gc.graduate_new_list, prev, next);
 		arr->alloc_size = size;
 		arr->size = 0;
@@ -472,14 +544,18 @@ rt_gc_alloc_array_tenure(
 	struct rt_array *arr;
 	struct rt_value *table;
 	int retry;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(size > 0);
 
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_array);
+
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
-		/* Allocate a rt_array buffer. */
-		arr = rt_gc_tenure_alloc(env, sizeof(struct rt_array) + size * sizeof(struct rt_value));
+		/* Allocate a rt_array buffer. (rt_value is strictly aligned) */
+		arr = rt_gc_tenure_alloc(env, struct_size + size * sizeof(struct rt_value));
 		if (arr == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -495,13 +571,13 @@ rt_gc_alloc_array_tenure(
 		}
 
 		/* Get the address of the table. */
-		table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
+		table = (struct rt_value *)((char *)arr + struct_size);
 
 		/* Setup the struct. */
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_TENURE;
-		arr->head.size = sizeof(struct rt_array) + size * sizeof(struct rt_value);
+		arr->head.size = struct_size + size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&arr->head, env->vm->gc.tenure_list, prev, next);
 		arr->alloc_size = size;
 		arr->size = 0;
@@ -532,9 +608,13 @@ rt_gc_alloc_dict(
 	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(size > 0);
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_dict);
 
 	/*
 	 * [Large Object Promotion]
@@ -545,9 +625,9 @@ rt_gc_alloc_dict(
 
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 1; retry++) {
-		/* Allocate a rt_dict buffer. */
+		/* Allocate a rt_dict buffer. (rt_value is strictly aligned) */
 		dict = nursery_alloc(env,
-				     sizeof(struct rt_dict) +
+				     struct_size +
 				     size * sizeof(struct rt_value) +
 				     size * sizeof(struct rt_value));
 		if (dict == NULL) {
@@ -562,16 +642,16 @@ rt_gc_alloc_dict(
 		}
 
 		/* Get the address of the key array block. */
-		key_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
+		key_table = (struct rt_value *)((char *)dict + struct_size);
 
 		/* Get the address of the value array block. */
-		value_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
+		value_table = (struct rt_value *)((char *)dict + struct_size + size * sizeof(struct rt_value));
 
 		/* Setup the struct. */
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_NURSERY;
-		dict->head.size = sizeof(struct rt_dict) + 2 * size * sizeof(struct rt_value);
+		dict->head.size = struct_size + 2 * size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&dict->head, env->vm->gc.nursery_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -603,9 +683,13 @@ rt_gc_alloc_dict_graduate(
 	struct rt_dict *dict;
 	struct rt_value *key_table;
 	struct rt_value *value_table;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(size > 0);
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_dict);
 
 	/*
 	 * This function is only called from the young GC,
@@ -616,23 +700,23 @@ rt_gc_alloc_dict_graduate(
 	do {
 		/* Allocate a rt_dict buffer. */
 		dict = graduate_alloc(env,
-				      sizeof(struct rt_dict) +
+				      struct_size +
 				      size * sizeof(struct rt_value) +
 				      size * sizeof(struct rt_value));
 		if (dict == NULL)
 			break;
 
 		/* Get the address of the key array block. */
-		key_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
+		key_table = (struct rt_value *)((char *)dict + struct_size);
 
 		/* Get the address of the value array block. */
-		value_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
+		value_table = (struct rt_value *)((char *)dict + struct_size + size * sizeof(struct rt_value));
 
 		/* Setup a struct. */
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_GRADUATE;
-		dict->head.size = sizeof(struct rt_dict) + 2 * size * sizeof(struct rt_value);
+		dict->head.size = struct_size + 2 * size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&dict->head, env->vm->gc.graduate_new_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -672,15 +756,19 @@ rt_gc_alloc_dict_tenure(
 	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(size > 0);
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_dict);
 
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate the rt_dict buffer. */
 		dict = rt_gc_tenure_alloc(env,
-					  sizeof(struct rt_dict) +
+					  struct_size  +
 					  size * sizeof(struct rt_value) +
 					  size * sizeof(struct rt_value));
 		if (dict == NULL) {
@@ -698,16 +786,16 @@ rt_gc_alloc_dict_tenure(
 		}
 
 		/* Get the address of the key array block. */
-		key_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
+		key_table = (struct rt_value *)((char *)dict + struct_size);
 
 		/* Get the address of the value array block. */
-		value_table = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + size * sizeof(struct rt_value));
+		value_table = (struct rt_value *)((char *)dict + struct_size + size * sizeof(struct rt_value));
 
 		/* Setup a value. */
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_TENURE;
-		dict->head.size = sizeof(struct rt_dict) + 2 * size * sizeof(struct rt_value);
+		dict->head.size = struct_size + 2 * size * sizeof(struct rt_value);
 		INSERT_TO_LIST(&dict->head, env->vm->gc.tenure_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -739,33 +827,52 @@ rt_gc_alloc_packed(
 	int type,
 	size_t byte_size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void (*finalizer)(void *p))
 {
 	struct rt_packed *packed;
-	void *p;
 	size_t len;
+	void *p;
 	int retry;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(byte_size > 0);
 	assert(elem_size > 0);
+	assert((preallocated == NULL && finalizer == NULL) ||
+	       (preallocated != NULL && finalizer == NULL) ||
+	       (preallocated != NULL && finalizer != NULL));
 
-	if (preallocated != NULL)
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_packed);
+
+	/* Check for size. */
+	if (!preallocated && byte_size >= env->vm->config.gc_tenure_size - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	if (preallocated != NULL) {
+		/* No extra space is required for preallocated buffer. */
 		len = 0;
-	else
-		len = byte_size;
+	} else {
+		/* Align. */
+		len = (byte_size + (sizeof(long) - 1)) & ~(sizeof(long) - 1);
+	}
 
 	/*
 	 * [Large Object Promotion]
 	 *  - If the packed is large, allocate in the tenure region.
 	 */
-	if (byte_size >= env->vm->config.gc_lop_threshold)
-		return rt_gc_alloc_packed_tenure(env, type, byte_size, elem_size, preallocated);
+	if (byte_size >= env->vm->config.gc_lop_threshold) {
+		return rt_gc_alloc_packed_tenure(env, type, byte_size,
+						 elem_size, preallocated,
+						 finalizer);
+	}
 
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 1; retry++) {
-		/* Allocate a rt_packed buffer. */
-		packed = nursery_alloc(env, sizeof(struct rt_packed) + len);
+		/* Allocate a rt_packed buffer. (aligned) */
+		packed = nursery_alloc(env, struct_size + len);
 		if (packed == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -779,7 +886,7 @@ rt_gc_alloc_packed(
 
 		/* Get the address of the table. */
 		if (preallocated == NULL)
-			p = (char *)packed + sizeof(struct rt_packed);
+			p = (char *)packed + struct_size;
 		else
 			p = preallocated;			
 
@@ -787,13 +894,14 @@ rt_gc_alloc_packed(
 		memset(&packed->head, 0, sizeof(struct rt_gc_object));
 		packed->head.type = RT_GC_TYPE_PACKED;
 		packed->head.region = RT_GC_REGION_NURSERY;
-		packed->head.size = sizeof(struct rt_packed) + len;
+		packed->head.size = struct_size + len;
 		INSERT_TO_LIST(&packed->head, env->vm->gc.nursery_list, prev, next);
 		packed->type = type;
 		packed->byte_size = byte_size;
 		packed->elem_size = elem_size;
 		packed->buffer = p;
 		packed->is_preallocated = (preallocated != NULL) ? true : false;
+		packed->finalizer = finalizer;
 #if defined(NOCT_USE_MULTITHREAD)
 		packed->counter = 0;
 #endif
@@ -814,14 +922,36 @@ rt_gc_alloc_packed_graduate(
 	int type,
 	size_t byte_size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void (*finalizer)(void *p))
 {
 	struct rt_packed *packed;
+	size_t len;
 	void *p;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(byte_size > 0);
 	assert(elem_size > 0);
+	assert((preallocated == NULL && finalizer == NULL) ||
+	       (preallocated != NULL && finalizer == NULL) ||
+	       (preallocated != NULL && finalizer != NULL));
+
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_packed);
+
+	/* Check for size. */
+	if (!preallocated && byte_size >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	if (preallocated != NULL) {
+		/* No extra space is required for preallocated buffer. */
+		len = 0;
+	} else {
+		/* Align. */
+		len = (byte_size + (sizeof(long) - 1)) & ~(sizeof(long) - 1);
+	}
 
 	/*
 	 * This function is only called from the young GC,
@@ -830,14 +960,14 @@ rt_gc_alloc_packed_graduate(
 
 	/* Try allocating in the graduate region. */
 	do {
-		/* Allocate a rt_packed buffer. */
-		packed = graduate_alloc(env, sizeof(struct rt_packed) + byte_size);
+		/* Allocate a rt_packed buffer. (aligned) */
+		packed = graduate_alloc(env, struct_size + len);
 		if (packed == NULL)
 			break;
 
 		/* Get the address of the table. */
 		if (preallocated == NULL)
-			p = (char *)packed + sizeof(struct rt_packed);
+			p = (char *)packed + struct_size;
 		else
 			p = preallocated;			
 
@@ -845,13 +975,14 @@ rt_gc_alloc_packed_graduate(
 		memset(&packed->head, 0, sizeof(struct rt_gc_object));
 		packed->head.type = RT_GC_TYPE_PACKED;
 		packed->head.region = RT_GC_REGION_GRADUATE;
-		packed->head.size = sizeof(struct rt_packed) + byte_size;
+		packed->head.size = struct_size + len;
 		INSERT_TO_LIST(&packed->head, env->vm->gc.graduate_new_list, prev, next);
 		packed->type = type;
 		packed->byte_size = byte_size;
 		packed->elem_size = elem_size;
 		packed->buffer = p;
 		packed->is_preallocated = (preallocated != NULL) ? true : false;
+		packed->finalizer = finalizer;
 #if defined(NOCT_USE_MULTITHREAD)
 		packed->counter = 0;
 #endif
@@ -864,7 +995,8 @@ rt_gc_alloc_packed_graduate(
 	 * Failed to allocate in the graduate region.
 	 * Try allocating in the tenure region.
 	 */
-	packed = rt_gc_alloc_packed_tenure(env, type, byte_size, elem_size, preallocated);
+	packed = rt_gc_alloc_packed_tenure(env, type, byte_size, elem_size,
+					   preallocated, finalizer);
 	if (packed == NULL)
 		return NULL;
 
@@ -879,21 +1011,42 @@ rt_gc_alloc_packed_tenure(
 	int type,
 	size_t byte_size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void (*finalizer)(void *p))
 {
 	struct rt_packed *packed;
+	size_t len;
 	void *p;
 	int retry;
+	size_t struct_size;
 
 	assert(env != NULL);
 	assert(byte_size > 0);
 	assert(elem_size > 0);
+	assert((preallocated == NULL && finalizer == NULL) ||
+	       (preallocated != NULL && finalizer == NULL) ||
+	       (preallocated != NULL && finalizer != NULL));
 
+	/* Align the struct size. */
+	struct_size = ALIGN_STRUCT(struct rt_packed);
+
+	/* Check for size. */
+	if (!preallocated && byte_size >= SIZE_MAX - sizeof(struct rt_packed)) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	if (preallocated != NULL) {
+		/* No extra space is required for preallocated buffer. */
+		len = 0;
+	} else {
+		/* Align. */
+		len = (byte_size + (sizeof(long) - 1)) & ~(sizeof(long) - 1);
+	}
 
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_packed buffer. */
-		packed = rt_gc_tenure_alloc(env, sizeof(struct rt_packed) + byte_size);
+		packed = rt_gc_tenure_alloc(env, struct_size + len);
 		if (packed == NULL) {
 			/* Retry. */
 			if (retry == 0) {
@@ -910,7 +1063,7 @@ rt_gc_alloc_packed_tenure(
 
 		/* Get the address of the table. */
 		if (preallocated == NULL)
-			p = (char *)packed + sizeof(struct rt_packed);
+			p = (char *)packed + struct_size;
 		else
 			p = preallocated;			
 
@@ -918,13 +1071,14 @@ rt_gc_alloc_packed_tenure(
 		memset(&packed->head, 0, sizeof(struct rt_gc_object));
 		packed->head.type = RT_GC_TYPE_PACKED;
 		packed->head.region = RT_GC_REGION_TENURE;
-		packed->head.size = sizeof(struct rt_packed) + byte_size;
+		packed->head.size = struct_size + len;
 		INSERT_TO_LIST(&packed->head, env->vm->gc.tenure_list, prev, next);
 		packed->type = type;
 		packed->byte_size = byte_size;
 		packed->elem_size = elem_size;
 		packed->buffer = p;
 		packed->is_preallocated = (preallocated != NULL) ? true : false;
+		packed->finalizer = finalizer;
 #if defined(NOCT_USE_MULTITHREAD)
 		packed->counter = 0;
 #endif
@@ -1014,6 +1168,7 @@ rt_gc_young_gc_body(
 {
 	struct rt_gc_object *obj;
 	struct rt_frame *frame;
+	struct rt_env *envp;
 	uint32_t i;
 	int sp;
 	struct finalize_table {
@@ -1040,6 +1195,9 @@ rt_gc_young_gc_body(
 		if (obj->type == RT_GC_TYPE_DICT) {
 			if (((struct rt_dict *)obj)->native_finalizer != NULL)
 				finalize_size++;
+		} else if (obj->type == RT_GC_TYPE_PACKED) {
+			if (((struct rt_packed *)obj)->finalizer != NULL)
+				finalize_size++;
 		}
 		obj = obj->next;
 	}
@@ -1049,6 +1207,13 @@ rt_gc_young_gc_body(
 	while (obj != NULL) {
 		obj->is_marked = false;
 		obj->forward = NULL;
+		if (obj->type == RT_GC_TYPE_DICT) {
+			if (((struct rt_dict *)obj)->native_finalizer != NULL)
+				finalize_size++;
+		} else if (obj->type == RT_GC_TYPE_PACKED) {
+			if (((struct rt_packed *)obj)->finalizer != NULL)
+				finalize_size++;
+		}
 		obj = obj->next;
 	}
 
@@ -1078,24 +1243,28 @@ rt_gc_young_gc_body(
 	}
 
 	/* For all call frames. */
-	for (sp = (int)env->cur_frame_index; sp >= 0; sp--) {
-		frame = &env->frame_alloc[sp];
+	envp = env->vm->env_list;
+	while (envp != NULL) {
+		for (sp = (int)envp->cur_frame_index; sp >= 0; sp--) {
+			frame = &envp->frame_alloc[sp];
 
-		/* For all temporary variables in the frame. */
-		for (i = 0; i < frame->tmpvar_size; i++) {
-			if (IS_REF_VAL(&frame->tmpvar[i])) {
-				if (!rt_gc_copy_young_object_recursively(env, &frame->tmpvar[i].val.obj))
-					return;
+			/* For all temporary variables in the frame. */
+			for (i = 0; i < frame->tmpvar_size; i++) {
+				if (IS_REF_VAL(&frame->tmpvar[i])) {
+					if (!rt_gc_copy_young_object_recursively(env, &frame->tmpvar[i].val.obj))
+						return;
+				}
+			}
+
+			/* For all pinned C local variables in the frame. */
+			for (i = 0; i < frame->pinned_count; i++) {
+				if (IS_REF_VAL(frame->pinned[i])) {
+					if (!rt_gc_copy_young_object_recursively(env, &frame->pinned[i]->val.obj))
+						return;
+				}
 			}
 		}
-
-		/* For all pinned C local variables in the frame. */
-		for (i = 0; i < frame->pinned_count; i++) {
-			if (IS_REF_VAL(frame->pinned[i])) {
-				if (!rt_gc_copy_young_object_recursively(env, &frame->pinned[i]->val.obj))
-					return;
-			}
-		}
+		envp = envp->next;
 	}
 
 	/* For all pinned C global variables. */
@@ -1109,9 +1278,11 @@ rt_gc_young_gc_body(
 	/* For all remember set objects. */
 	obj = env->vm->gc.remember_set;
 	while (obj != NULL) {
-		if (!rt_gc_copy_young_object_recursively(env, &obj))
+		struct rt_gc_object *next = obj->rem_next;
+		struct rt_gc_object *cur = obj;
+		if (!rt_gc_copy_young_object_recursively(env, &cur))
 			return;
-		obj = obj->rem_next;
+		obj = next;
 	}
 
 	/*
@@ -1152,6 +1323,7 @@ rt_gc_young_gc_body(
 	/* For each remember set object, remove from the remember set if the object doesn't have a cross generation reference. */
 	obj = env->vm->gc.remember_set;
 	while (obj != NULL) {
+		struct rt_gc_object *next_rem = NULL;
 		bool has_cross_gen_ref = false;
 		if (obj->type == RT_GC_TYPE_ARRAY) {
 			struct rt_array *arr = (struct rt_array *)obj;
@@ -1178,12 +1350,13 @@ rt_gc_young_gc_body(
 				}
 			}
 		}
+		next_rem = obj->rem_next;
 		if (!has_cross_gen_ref) {
 			/* Unlink from the remember set list. */
 			obj->rem_flg = false;
 			UNLINK_FROM_LIST(obj, env->vm->gc.remember_set, rem_prev, rem_next);
 		}
-		obj = obj->rem_next;
+		obj = next_rem;
 	}
 
 	/*
@@ -1191,7 +1364,7 @@ rt_gc_young_gc_body(
 	 */
 
 	if (finalize_size > 0) {
-		finalize_table = malloc(sizeof(struct finalize_table) * finalize_size);
+		finalize_table = noct_malloc(sizeof(struct finalize_table) * finalize_size);
 		if (finalize_table == NULL)
 			return;
 
@@ -1203,6 +1376,35 @@ rt_gc_young_gc_body(
 			    ((struct rt_dict *)obj)->native_finalizer != NULL) {
 				finalize_table[finalize_count].native_pointer = ((struct rt_dict *)obj)->native_pointer;
 				finalize_table[finalize_count].native_finalizer = ((struct rt_dict *)obj)->native_finalizer;
+				finalize_count++;
+			} else if (!obj->is_marked &&
+				   obj->type == RT_GC_TYPE_PACKED &&
+				   ((struct rt_packed *)obj)->is_preallocated &&
+				   ((struct rt_packed *)obj)->finalizer != NULL &&
+				   ((struct rt_packed *)obj)->buffer != NULL) {
+				finalize_table[finalize_count].native_pointer = ((struct rt_packed *)obj)->buffer;
+				finalize_table[finalize_count].native_finalizer = ((struct rt_packed *)obj)->finalizer;
+				finalize_count++;
+			}
+			obj = obj->next;
+		}
+
+		/* For all graduate objects. */
+		obj = env->vm->gc.graduate_list;
+		while (obj != NULL) {
+			if (!obj->is_marked &&
+			    obj->type == RT_GC_TYPE_DICT &&
+			    ((struct rt_dict *)obj)->native_finalizer != NULL) {
+				finalize_table[finalize_count].native_pointer = ((struct rt_dict *)obj)->native_pointer;
+				finalize_table[finalize_count].native_finalizer = ((struct rt_dict *)obj)->native_finalizer;
+				finalize_count++;
+			} else if (!obj->is_marked &&
+				   obj->type == RT_GC_TYPE_PACKED &&
+				   ((struct rt_packed *)obj)->is_preallocated &&
+				   ((struct rt_packed *)obj)->finalizer != NULL &&
+				   ((struct rt_packed *)obj)->buffer != NULL) {
+				finalize_table[finalize_count].native_pointer = ((struct rt_packed *)obj)->buffer;
+				finalize_table[finalize_count].native_finalizer = ((struct rt_packed *)obj)->finalizer;
 				finalize_count++;
 			}
 			obj = obj->next;
@@ -1239,6 +1441,8 @@ rt_gc_young_gc_body(
 
 	for (i = 0; i < finalize_count; i++)
 		finalize_table[i].native_finalizer(finalize_table[i].native_pointer);
+	if (finalize_table != NULL)
+		noct_free(finalize_table);
 }
 
 /* Marks-and-copies objects recursively. */
@@ -1292,6 +1496,8 @@ rt_gc_copy_young_object_recursively(
 				assert(NEVER_COME_HERE);
 				break;
 			}
+			if (new_obj == NULL)
+				return false;
 
 			/* Set the forwarding pointer. */
 			(*obj)->forward = new_obj;
@@ -1592,7 +1798,9 @@ rt_gc_promote_packed(
 					       old_packed->type,
 					       old_packed->byte_size,
 					       old_packed->elem_size,
-					       old_packed->is_preallocated ? old_packed->buffer : NULL);
+					       old_packed->is_preallocated ?
+					       old_packed->buffer : NULL,
+					       old_packed->finalizer);
 	if (new_packed == NULL)
 		return NULL;
 
@@ -1751,7 +1959,9 @@ rt_gc_copy_packed_to_graduate(
 					      old_obj->type,
 					      old_obj->byte_size,
 					      old_obj->elem_size,
-					      old_obj->is_preallocated ? old_obj->buffer : NULL);
+					      old_obj->is_preallocated ?
+					      old_obj->buffer : NULL,
+					      old_obj->finalizer);
 	if (new_obj == NULL)
 		return NULL;
 
@@ -1782,6 +1992,7 @@ rt_gc_old_gc_body(
 {
 	struct rt_gc_object *obj, *next_obj;
 	struct rt_frame *frame;
+	struct rt_env *envp;
 	uint32_t i;
 	int sp;
 
@@ -1823,20 +2034,24 @@ rt_gc_old_gc_body(
 	}
 
 	/* For all call frames. */
-	for (sp = env->cur_frame_index; sp >= 0; sp--) {
-		frame = &env->frame_alloc[sp];
+	envp = env->vm->env_list;
+	while (envp != NULL) {
+		for (sp = envp->cur_frame_index; sp >= 0; sp--) {
+			frame = &envp->frame_alloc[sp];
 
-		/* For all temporary variables in the frame. */
-		for (i = 0; i < frame->tmpvar_size; i++) {
-			if (IS_REF_VAL(&frame->tmpvar[i]))
-				rt_gc_mark_old_object_recursively(env, &frame->tmpvar[i].val.obj);
-		}
+			/* For all temporary variables in the frame. */
+			for (i = 0; i < frame->tmpvar_size; i++) {
+				if (IS_REF_VAL(&frame->tmpvar[i]))
+					rt_gc_mark_old_object_recursively(env, &frame->tmpvar[i].val.obj);
+			}
 
-		/* For all pinned C local variables in the frame. */
-		for (i = 0; i < frame->pinned_count; i++) {
-			if (IS_REF_VAL(frame->pinned[i]))
-				rt_gc_mark_old_object_recursively(env, &frame->pinned[i]->val.obj);
+			/* For all pinned C local variables in the frame. */
+			for (i = 0; i < frame->pinned_count; i++) {
+				if (IS_REF_VAL(frame->pinned[i]))
+					rt_gc_mark_old_object_recursively(env, &frame->pinned[i]->val.obj);
+			}
 		}
+		envp = envp->next;
 	}
 
 	/* For all pinned C global variables. */
@@ -1934,10 +2149,16 @@ rt_gc_free_old_object(
 	} else if (obj->type == RT_GC_TYPE_DICT) {
 		struct rt_dict *dict;
 		dict = (struct rt_dict *)obj;
+		if (dict->native_finalizer != NULL)
+			dict->native_finalizer(dict->native_pointer);
 		rt_gc_tenure_free(env, dict);
 	} else if (obj->type == RT_GC_TYPE_PACKED) {
 		struct rt_packed *packed;
 		packed = (struct rt_packed *)obj;
+		if (packed->is_preallocated &&
+		    packed->finalizer != NULL &&
+		    packed->buffer != NULL)
+			packed->finalizer(packed->buffer);
 		rt_gc_tenure_free(env, packed);
 	}
 }
@@ -1948,6 +2169,7 @@ rt_gc_compact_gc(
 	struct rt_env *env)
 {
 	struct rt_gc_object *obj, **objpp;
+	struct rt_env *envp;
 	char *cur_blk, *remap_top;
 	uint32_t index, i;
 	int sp;
@@ -2001,8 +2223,9 @@ rt_gc_compact_gc(
 			break;
 
 		/* Skip if unused. */
+		size_t actual_blk_size = blk_size & RT_GC_FREELIST_SIZE_MASK;
 		if (!blk_used) {
-			cur_blk += sizeof(size_t) + blk_size;
+			cur_blk += sizeof(size_t) + actual_blk_size;
 			continue;
 		}
 
@@ -2012,7 +2235,7 @@ rt_gc_compact_gc(
 		remap_top += sizeof(size_t) + obj->size;
 		index++;
 
-		cur_blk += sizeof(size_t) + blk_size;
+		cur_blk += sizeof(size_t) + actual_blk_size;
 	}
 	assert(cur_blk < env->vm->gc.tenure_freelist.end);
 	assert(index == env->vm->gc.compact_count);
@@ -2031,7 +2254,7 @@ rt_gc_compact_gc(
 			obj_size);
 
 		/* Store the size header. */
-		*(size_t *)((char *)env->vm->gc.compact_after[i] - sizeof(size_t)) = obj_size;
+		*(size_t *)((char *)env->vm->gc.compact_after[i] - sizeof(size_t)) = obj_size | RT_GC_FREELIST_USED_BIT;
 
 		/* Fill the reminder. */
 		if (i == env->vm->gc.compact_count - 1) {
@@ -2052,21 +2275,25 @@ rt_gc_compact_gc(
 		rt_gc_update_tenure_ref(env, objpp);
 
 		/* Rewrite pointers. */
-		if ((*objpp)->type == RT_GC_TYPE_ARRAY) {
+		if ((*objpp)->type == RT_GC_TYPE_STRING) {
+			struct rt_string *rts;
+			rts = (struct rt_string *)*objpp;
+			rts->data = (char *)rts + ALIGN_STRUCT(struct rt_string);
+		} else if ((*objpp)->type == RT_GC_TYPE_ARRAY) {
 			struct rt_array *arr;
 			arr = (struct rt_array *)*objpp;
-			arr->table = (struct rt_value *)((char *)arr + sizeof(struct rt_array));
+			arr->table = (struct rt_value *)((char *)arr + ALIGN_STRUCT(struct rt_array));
 		} else if ((*objpp)->type == RT_GC_TYPE_DICT) {
 			struct rt_dict *dict;
 			dict = (struct rt_dict *)*objpp;
-			dict->key = (struct rt_value *)((char *)dict + sizeof(struct rt_dict));
-			dict->value = (struct rt_value *)((char *)dict + sizeof(struct rt_dict) + dict->alloc_size * sizeof(struct rt_value));
+			dict->key = (struct rt_value *)((char *)dict + ALIGN_STRUCT(struct rt_dict));
+			dict->value = (struct rt_value *)((char *)dict + ALIGN_STRUCT(struct rt_dict) + dict->alloc_size * sizeof(struct rt_value));
 		} else if ((*objpp)->type == RT_GC_TYPE_PACKED) {
 			struct rt_packed *packed;
 			packed = (struct rt_packed *)*objpp;
-			/* Move reference if not a preallocated buffer. */
+			/* Rewrite the reference if it's not a preallocated buffer. */
 			if (!packed->is_preallocated)
-				packed->buffer = ((char *)packed + sizeof(struct rt_packed));
+				packed->buffer = ((char *)packed + ALIGN_STRUCT(struct rt_packed));
 		}
 
 		/* Rewrite ->prev. */
@@ -2096,20 +2323,24 @@ rt_gc_compact_gc(
 	}
 
 	/* For all call frames. */
-	for (sp = env->cur_frame_index; sp >= 0; sp--) {
-		frame = &env->frame_alloc[sp];
+	envp = env->vm->env_list;
+	while (envp != NULL) {
+		for (sp = envp->cur_frame_index; sp >= 0; sp--) {
+			frame = &envp->frame_alloc[sp];
 
-		/* For all temporary variables in the frame. */
-		for (i = 0; i < frame->tmpvar_size; i++) {
-			if (IS_REF_VAL(&frame->tmpvar[i]))
-				rt_gc_update_tenure_ref_recursively(env, &frame->tmpvar[i].val.obj);
-		}
+			/* For all temporary variables in the frame. */
+			for (i = 0; i < frame->tmpvar_size; i++) {
+				if (IS_REF_VAL(&frame->tmpvar[i]))
+					rt_gc_update_tenure_ref_recursively(env, &frame->tmpvar[i].val.obj);
+			}
 
-		/* For all pinned C local variables in the frame. */
-		for (i = 0; i < frame->pinned_count; i++) {
-			if (IS_REF_VAL(frame->pinned[i]))
-				rt_gc_update_tenure_ref_recursively(env, &frame->pinned[i]->val.obj);
+			/* For all pinned C local variables in the frame. */
+			for (i = 0; i < frame->pinned_count; i++) {
+				if (IS_REF_VAL(frame->pinned[i]))
+					rt_gc_update_tenure_ref_recursively(env, &frame->pinned[i]->val.obj);
+			}
 		}
+		envp = envp->next;
 	}
 
 	/* For all pinned C global variables. */
@@ -2372,6 +2603,8 @@ rt_gc_tenure_alloc(
 
 	assert(size > 0);
 	if (size == 0)
+		return NULL;
+	if (size >= env->vm->config.gc_tenure_size)
 		return NULL;
 
 	/* Align. */

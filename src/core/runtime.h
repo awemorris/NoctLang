@@ -140,6 +140,9 @@ struct rt_packed {
 	/* Is preallocated buffer? */
 	bool is_preallocated;
 
+	/* Finalizer for preallocated buffer. */
+	void (*finalizer)(void *native_pointer);
+
 #if defined(NOCT_USE_MULTITHREAD)
 	/* Atomic counter. */
 	int counter;
@@ -599,7 +602,8 @@ rt_make_packed(
 	struct rt_value *val,
 	int type,
 	size_t elem_size,
-	void *preallocated);
+	void *preallocated,
+	void (*finalizer)(void *));
 
 /* Get the element type of a packed. */
 bool

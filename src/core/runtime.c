@@ -1150,7 +1150,7 @@ rt_get_array_elem(
 	if (index >= real_arr->size) {
 		RELEASE_OBJ(real_arr);
 
-		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
+		rt_error(env, N_TR("Index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -1714,9 +1714,7 @@ rt_set_dict_elem_with_hash(
 			real_dict->value[i] = *val;
 
 			/* GC: Write barrier for the remember set. */
-			if (val->type == NOCT_VALUE_STRING ||
-			    val->type == NOCT_VALUE_ARRAY ||
-			    val->type == NOCT_VALUE_DICT)
+			if (IS_REF_TYPE(val->type))
 				rt_gc_dict_write_barrier(env, real_dict, val);
 
 			RELEASE_OBJ(real_dict);
@@ -1758,9 +1756,7 @@ rt_set_dict_elem_with_hash(
 			append_dict->value[i] = *val;
 
 			/* GC: Write barrier for the remember set. */
-			if (val->type == NOCT_VALUE_STRING ||
-			    val->type == NOCT_VALUE_ARRAY ||
-			    val->type == NOCT_VALUE_DICT) {
+			if (IS_REF_TYPE(val->type)) {
 				rt_gc_dict_write_barrier(env, append_dict, &append_dict->key[i]);
 				rt_gc_dict_write_barrier(env, append_dict, val);
 			}
@@ -2019,9 +2015,7 @@ rt_merge_dict(
 				real_dst->value[j] = real_src->value[i];
 
 				/* GC: Write barrier for the remember set. */
-				if (real_src->value[i].type == NOCT_VALUE_STRING ||
-				    real_src->value[i].type == NOCT_VALUE_ARRAY ||
-				    real_src->value[i].type == NOCT_VALUE_DICT) {
+				if (IS_REF_TYPE(real_src->value[i].type)) {
 					rt_gc_dict_write_barrier(env, real_dst, &real_dst->key[j]);
 					rt_gc_dict_write_barrier(env, real_dst, &real_dst->value[j]);
 				}
@@ -2060,9 +2054,7 @@ rt_merge_dict(
 				real_dst->value[j] = real_src->value[i];
 
 				/* GC: Write barrier for the remember set. */
-				if (real_src->value[i].type == NOCT_VALUE_STRING ||
-				    real_src->value[i].type == NOCT_VALUE_ARRAY ||
-				    real_src->value[i].type == NOCT_VALUE_DICT) {
+				if (IS_REF_TYPE(real_src->value[i].type)) {
 					rt_gc_dict_write_barrier(env, real_dst, &real_dst->key[j]);
 					rt_gc_dict_write_barrier(env, real_dst, &real_dst->value[j]);
 				}
@@ -2139,7 +2131,8 @@ rt_make_packed(
 	struct rt_value *val,
 	int type,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void (*finalizer)(void *))
 {
 	struct rt_packed *packed;
 	size_t byte_size;
@@ -2184,8 +2177,13 @@ rt_make_packed(
 		return false;
 	}
 
-	/* Allocate an array. */
-	packed = rt_gc_alloc_packed(env, type, byte_size, elem_size, preallocated);
+	/* Allocate a packed. */
+	packed = rt_gc_alloc_packed(env,
+				    type,
+				    byte_size,
+				    elem_size,
+				    preallocated,
+				    finalizer);
 	if (packed == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -2260,7 +2258,7 @@ rt_get_packed_size(
 }
 
 /*
- * Retrieves an int8 packed element.
+ * Retrieves a packed element.
  */
 bool
 rt_get_packed_elem(
@@ -2282,7 +2280,7 @@ rt_get_packed_elem(
 
 	if (index >= real_packed->elem_size) {
 		RELEASE_OBJ(real_packed);
-		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
+		rt_error(env, N_TR("Index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -2357,7 +2355,7 @@ rt_set_packed_elem(
 
 	if (index >= real_packed->elem_size) {
 		RELEASE_OBJ(real_packed);
-		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
+		rt_error(env, N_TR("Index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -2370,15 +2368,9 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((int8_t *)real_packed->buffer + index) = (int8_t)(uint8_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((int8_t *)real_packed->buffer + index) = (int8_t)(uint8_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((int8_t *)real_packed->buffer + index) = (int8_t)(uint8_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
@@ -2390,15 +2382,9 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((uint8_t *)real_packed->buffer + index) = (uint8_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((uint8_t *)real_packed->buffer + index) = (uint8_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((uint8_t *)real_packed->buffer + index) = (uint8_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
@@ -2410,15 +2396,9 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((int16_t *)real_packed->buffer + index) = (int16_t)(uint16_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((int16_t *)real_packed->buffer + index) = (int16_t)(uint16_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((int16_t *)real_packed->buffer + index) = (int16_t)(uint16_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
@@ -2430,15 +2410,9 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((uint16_t *)real_packed->buffer + index) = (uint16_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((uint16_t *)real_packed->buffer + index) = (uint16_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((uint16_t *)real_packed->buffer + index) = (uint16_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
@@ -2450,15 +2424,9 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((int32_t *)real_packed->buffer + index) = (int32_t)(uint32_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((int32_t *)real_packed->buffer + index) = (int32_t)(uint32_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((int32_t *)real_packed->buffer + index) = (int32_t)(uint32_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
@@ -2470,15 +2438,9 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((uint32_t *)real_packed->buffer + index) = (uint32_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((uint32_t *)real_packed->buffer + index) = (uint32_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((uint32_t *)real_packed->buffer + index) = (uint32_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
@@ -2490,15 +2452,9 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((int64_t *)real_packed->buffer + index) = (int64_t)(uint64_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((int64_t *)real_packed->buffer + index) = (int64_t)(uint64_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((int64_t *)real_packed->buffer + index) = (int64_t)(uint64_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
@@ -2510,31 +2466,25 @@ rt_set_packed_elem(
 		case NOCT_VALUE_LONG:
 			*((uint64_t *)real_packed->buffer + index) = (uint64_t)val->val.l;
 			break;
-		case NOCT_VALUE_FLOAT:
-			*((uint64_t *)real_packed->buffer + index) = (uint64_t)(int)val->val.f;
-			break;
-		case NOCT_VALUE_DOUBLE:
-			*((uint64_t *)real_packed->buffer + index) = (uint64_t)(int)val->val.lf;
-			break;
 		default:
 			RELEASE_OBJ(real_packed);
-			rt_error(env, N_TR("Value is not a number."));
+			rt_error(env, N_TR("Value is not an integer."));
 			return false;
 		}
 		break;
 	case NOCT_PACKED_FLOAT32:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((float *)real_packed->buffer + index) = (float)val->val.i;
+			*((float *)real_packed->buffer + index) = (float)(int32_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((float *)real_packed->buffer + index) = (float)val->val.l;
+			*((float *)real_packed->buffer + index) = (float)(int32_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((float *)real_packed->buffer + index) = (float)val->val.f;
+			*((float *)real_packed->buffer + index) = (float)(int32_t)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((float *)real_packed->buffer + index) = (float)val->val.lf;
+			*((float *)real_packed->buffer + index) = (float)(int32_t)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2545,16 +2495,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_FLOAT64:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((double *)real_packed->buffer + index) = (double)val->val.i;
+			*((double *)real_packed->buffer + index) = (double)(int32_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			*((double *)real_packed->buffer + index) = (double)val->val.l;
+			*((double *)real_packed->buffer + index) = (double)(int32_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((double *)real_packed->buffer + index) = (double)val->val.f;
+			*((double *)real_packed->buffer + index) = (double)(int32_t)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((double *)real_packed->buffer + index) = (double)val->val.lf;
+			*((double *)real_packed->buffer + index) = (double)(int32_t)val->val.lf;
 			break;
 		default:
 			RELEASE_OBJ(real_packed);
@@ -2589,8 +2539,9 @@ rt_make_packed_copy(
 
 	ACQUIRE_OBJ_PACKED(src, src_real);
 
-	/* Allocate an array. */
-	*dst = rt_gc_alloc_packed(env, src_real->type, src_real->byte_size, src_real->elem_size, NULL);
+	/* Allocate a packed. */
+	*dst = rt_gc_alloc_packed(env, src_real->type, src_real->byte_size,
+				  src_real->elem_size, NULL, NULL);
 	if (*dst == NULL) {
 		RELEASE_OBJ(src_real);
 		return false;

@@ -253,17 +253,7 @@ zh:不是数组。
 tw:不是陣列。
 ja:配列ではありません。
 ---
-ID:Array index %ld is out-of-range.
-en:Array index %ld is out-of-range.
-es:El índice %d del array se encuentra fuera de rango.
-fr:L'index de tableau %d est hors de portée.
-de:Array-Index %d ist außerhalb des gültigen Bereichs.
-it:L'indice %d dell'array è fuori dall'intervallo.
-el:Ο δείκτης πίνακα %d είναι εκτός ορίων.
-ru:Индекс массива %d находится вне допустимого диапазона.
-zh:数组索引 %d 超出范围。
-tw:陣列索引 %d 超出範圍。
-ja:配列の添字 %d は範囲外です。
+ID:Index %ld is out-of-range.
 ---
 ID:Dictionary index %ld is out-of-range.
 en:Dictionary index %ld is out-of-range.
@@ -385,17 +375,7 @@ zh:下标不是整数
 tw:下標不是整數。
 ja:添字が整数ではありません。
 ---
-ID:Not an array or a dictionary.
-en:Not an array or a dictionary.
-es:No es un array ni un diccionario.
-fr:Ce n'est ni un tableau ni un dictionnaire.
-de:Weder ein Array noch ein Dictionary.
-it:Non è un array né un dizionario.
-el:Δεν είναι ούτε πίνακας ούτε λεξικό.
-ru:Это не массив и не словарь.
-zh:不是数组或字典。
-tw:不是陣列或字典。
-ja:配列か辞書ではありません。
+ID:Not an array, dictionary, or packed.
 ---
 ID:Subscript not a string.
 en:Subscript not a string.

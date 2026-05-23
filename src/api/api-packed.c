@@ -124,7 +124,7 @@ cfunc_Packed_int8(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT8, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT8, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -163,7 +163,7 @@ cfunc_Packed_uint8(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT8, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT8, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -202,7 +202,7 @@ cfunc_Packed_int16(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT16, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT16, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -241,7 +241,7 @@ cfunc_Packed_uint16(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT16, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT16, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -280,7 +280,7 @@ cfunc_Packed_int32(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT32, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT32, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -319,7 +319,7 @@ cfunc_Packed_uint32(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT32, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT32, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -358,7 +358,7 @@ cfunc_Packed_int64(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT64, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT64, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -397,7 +397,7 @@ cfunc_Packed_uint64(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT64, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT64, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -436,7 +436,7 @@ cfunc_Packed_float32(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT32, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT32, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -475,7 +475,7 @@ cfunc_Packed_float64(
 		noct_error(env, "Packed size is not an integer.");
 		return false;
 	}
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT64, size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT64, size, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
