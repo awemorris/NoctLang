@@ -1277,6 +1277,7 @@ rt_expand_array(
 	size_t size)
 {
 	struct rt_array *new_arr;
+	struct rt_value newer_val;
 	size_t old_size;
 	uint32_t i;
 
@@ -1299,6 +1300,13 @@ rt_expand_array(
 		return false;
 	}
 
+	/*
+	 * rt_gc_alloc_array() may cause
+	 */
+
+	/* alloc が young GC を誘発し old_arr が移動している可能性があるので、ルートのスロットから取り直す */
+	old_arr = *new_arr_pp;
+
 	/* Copy the values with write barrier. */
 	new_arr->size = old_arr->size;
 	for (i = 0; i < old_arr->size; i++) {
@@ -1309,8 +1317,21 @@ rt_expand_array(
 		rt_gc_array_write_barrier(env, new_arr, i, &new_arr->table[i]);
 	}
 	
-	/* Set the forwaring pointer. */
+	/* Set the forwarding pointer. */
 	old_arr->newer = new_arr;
+
+	/*
+	 * GC: "old_arr to new_arr via newer" is also a reference to
+	 * be covered by the remember set. (If old_arr is in the
+	 * tenure region and new_arr is is the nursery region, old_arr
+	 * must be put into the remember set for young GC.)
+	 */
+	newer_val.type = NOCT_VALUE_ARRAY;
+	newer_val.val.arr = new_arr;
+	rt_gc_array_write_barrier(env, old_arr, 0, &newer_val);
+
+	/* Set the result. */
+	*new_arr_pp = new_arr;
 
 	/* Set the result. */
 	*new_arr_pp = new_arr;
@@ -1713,7 +1734,7 @@ rt_set_dict_elem_with_hash(
 			/* Found, replace the value. */
 			real_dict->value[i] = *val;
 
-			/* GC: Write barrier for the remember set. */
+ 			/* GC: Write barrier for the remember set. */
 			if (IS_REF_TYPE(val->type))
 				rt_gc_dict_write_barrier(env, real_dict, val);
 
@@ -1783,6 +1804,7 @@ rt_expand_dict(
 	struct rt_dict **new_dict_pp)
 {
 	struct rt_dict *new_dict;
+	struct rt_value newer_val;
 	size_t old_size, new_size;
 	uint32_t index, i, j;
 
@@ -1826,6 +1848,16 @@ rt_expand_dict(
 
 	/* Set the forwarding pointer. */
 	old_dict->newer = new_dict;
+
+	/*
+	 * GC: "old_dict to new_dict via newer" is also a reference to
+	 * be covered by the remember set. (If old_dict is in the
+	 * tenure region and new_dict is is the nursery region,
+	 * old_dict must be put into the remember set for young GC.)
+	 */
+	newer_val.type = NOCT_VALUE_DICT;
+	newer_val.val.dict = new_dict;
+	rt_gc_dict_write_barrier(env, old_dict, &newer_val);
 
 	/* Set the result */
 	*new_dict_pp = new_dict;
@@ -2015,10 +2047,11 @@ rt_merge_dict(
 				real_dst->value[j] = real_src->value[i];
 
 				/* GC: Write barrier for the remember set. */
-				if (IS_REF_TYPE(real_src->value[i].type)) {
-					rt_gc_dict_write_barrier(env, real_dst, &real_dst->key[j]);
+				rt_gc_dict_write_barrier(env, real_dst, &real_dst->key[j]);
+
+				/* GC: Write barrier for the remember set. */
+				if (IS_REF_TYPE(real_src->value[i].type))
 					rt_gc_dict_write_barrier(env, real_dst, &real_dst->value[j]);
-				}
 
 				is_replaced = true;
 				break;
@@ -2769,8 +2802,10 @@ rt_set_global_with_hash(
 
 	/* Reisze if 75% is used. */
 	if (env->vm->global_size >= env->vm->global_alloc_size / 4 * 3) {
-		if (!rt_expand_global(env))
+		if (!rt_expand_global(env)) {
+			RELEASE_GLOBAL();
 			return false;
+		}
 	}
 
 	/* Search a place to insert or overwrite. */

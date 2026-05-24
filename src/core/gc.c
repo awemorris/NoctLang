@@ -28,6 +28,7 @@
  * Alignment
  */
 #define ALIGN			(sizeof(uint64_t))
+#define ALIGN_BYTES(s)		(((s) + (ALIGN - 1)) & ~(ALIGN - 1))
 #define ALIGN_STRUCT(s)		((sizeof(s) + (ALIGN - 1)) & ~(ALIGN - 1))
 
 /*
@@ -87,8 +88,8 @@ static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size
 static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
 static struct rt_packed *rt_gc_alloc_packed_graduate(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void (*finalizer)(void *));
 static struct rt_packed *rt_gc_alloc_packed_tenure(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void (*finalizer)(void *));
-static void rt_gc_young_gc(struct rt_env *env);
-static void rt_gc_young_gc_body(struct rt_env *env);
+static bool rt_gc_young_gc(struct rt_env *env);
+static bool rt_gc_young_gc_body(struct rt_env *env);
 static bool rt_gc_copy_young_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
 static void rt_gc_array_dict_follow_newer(struct rt_env *env, struct rt_gc_object **obj);
 static struct rt_gc_object *rt_gc_promote_object(struct rt_env *env, struct rt_gc_object *obj);
@@ -100,8 +101,12 @@ static struct rt_gc_object *rt_gc_copy_string_to_graduate(struct rt_env *env, st
 static struct rt_gc_object *rt_gc_copy_array_to_graduate(struct rt_env *env, struct rt_array *old_obj);
 static struct rt_gc_object *rt_gc_copy_dict_to_graduate(struct rt_env *env, struct rt_dict *old_obj);
 static struct rt_gc_object *rt_gc_copy_packed_to_graduate(struct rt_env *env, struct rt_packed *old_obj);
-static void rt_gc_old_gc(struct rt_env *env);
-static void rt_gc_old_gc_body(struct rt_env *env);
+static bool rt_gc_copy_remember_set_children(struct rt_env *env, struct rt_gc_object **obj);
+static bool rt_gc_copy_remember_set_array_children(struct rt_env *env, struct rt_gc_object **obj);
+static bool rt_gc_copy_remember_set_dict_children(struct rt_env *env, struct rt_gc_object **obj);
+static bool rt_gc_copy_remembered_value(struct rt_env *env, struct rt_value *val);
+static bool rt_gc_old_gc(struct rt_env *env);
+static bool rt_gc_old_gc_body(struct rt_env *env);
 static void rt_gc_mark_old_object_recursively(struct rt_env *env, struct rt_gc_object **obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
 static bool rt_gc_compact_gc(struct rt_env *env);
@@ -112,7 +117,7 @@ static void *graduate_alloc(struct rt_env *env, size_t size);
 static void *rt_gc_tenure_alloc(struct rt_env *env, size_t size);
 static void rt_gc_tenure_free(struct rt_env *env, void *p);
 #if defined(NOCT_USE_MULTITHREAD)
-static void rt_gc_multithread_call_wrapper(struct rt_env *env, void (*gc)(struct rt_env *env));
+static bool rt_gc_multithread_call_wrapper(struct rt_env *env, bool (*gc)(struct rt_env *env));
 #endif
 
 /*
@@ -237,6 +242,12 @@ rt_gc_alloc_string(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_string);
 
+	/* Check for overflow. */
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
 	/*
 	 * [Large Object Promotion]
 	 *  - If the string is large, allocate in the tenure region.
@@ -251,7 +262,8 @@ rt_gc_alloc_string(
 		if (rts == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_young_gc(env);
+				if (!rt_gc_young_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -298,6 +310,12 @@ rt_gc_alloc_string_graduate(
 
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_string);
+
+	/* Check for overflow. */
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
 
 	/*
 	 * This function is only called from the young GC,
@@ -356,8 +374,8 @@ rt_gc_alloc_string_tenure(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_string);
 
-	/* Check for the size. */
-	if (struct_size + len >= env->vm->config.gc_tenure_size) {
+	/* Check for overflow. */
+	if (len >= SIZE_MAX - struct_size) {
 		rt_out_of_memory(env);
 		return NULL;
 	}
@@ -369,10 +387,12 @@ rt_gc_alloc_string_tenure(
 		if (rts == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_old_gc(env);
+				if (!rt_gc_old_gc(env))
+					return NULL;
 				continue;
 			} if (retry == 1) {
-				rt_gc_compact_gc(env);
+				if (!rt_gc_compact_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -425,11 +445,21 @@ rt_gc_alloc_array(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_array);
 
+	/* Check for overflow. */
+	if (size >= SIZE_MAX / sizeof(struct rt_value)) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	len = size * sizeof(struct rt_value);
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
 	/*
 	 * [Large Object Promotion]
 	 *  - If the array is large, allocate in the tenure region.
 	 */
-	len = size * sizeof(struct rt_value);
 	if (len >= env->vm->config.gc_lop_threshold)
 		return rt_gc_alloc_array_tenure(env, size);
 
@@ -440,7 +470,8 @@ rt_gc_alloc_array(
 		if (arr == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_young_gc(env);
+				if (!rt_gc_young_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -482,13 +513,24 @@ rt_gc_alloc_array_graduate(
 {
 	struct rt_array *arr;
 	struct rt_value *table;
-	size_t struct_size;
+	size_t struct_size, len;
 
 	assert(env != NULL);
 	assert(size > 0);
 
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_array);
+
+	/* Check for overflow. */
+	if (size >= SIZE_MAX / sizeof(struct rt_value)) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	len = size * sizeof(struct rt_value);
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
 
 	/*
 	 * This function is only called from the young GC,
@@ -498,7 +540,7 @@ rt_gc_alloc_array_graduate(
 	/* Try allocating in the graduate region. */
 	do {
 		/* Allocate a rt_array buffer. (rt_value is strictly aligned) */
-		arr = graduate_alloc(env, struct_size + size * sizeof(struct rt_value));
+		arr = graduate_alloc(env, struct_size + len);
 		if (arr == NULL)
 			break;
 
@@ -509,7 +551,7 @@ rt_gc_alloc_array_graduate(
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_GRADUATE;
-		arr->head.size = struct_size + size * sizeof(struct rt_value);
+		arr->head.size = struct_size + len;
 		INSERT_TO_LIST(&arr->head, env->vm->gc.graduate_new_list, prev, next);
 		arr->alloc_size = size;
 		arr->size = 0;
@@ -544,7 +586,7 @@ rt_gc_alloc_array_tenure(
 	struct rt_array *arr;
 	struct rt_value *table;
 	int retry;
-	size_t struct_size;
+	size_t struct_size, len;
 
 	assert(env != NULL);
 	assert(size > 0);
@@ -552,17 +594,30 @@ rt_gc_alloc_array_tenure(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_array);
 
+	/* Check for overflow. */
+	if (size >= SIZE_MAX / sizeof(struct rt_value)) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	len = size * sizeof(struct rt_value);
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate a rt_array buffer. (rt_value is strictly aligned) */
-		arr = rt_gc_tenure_alloc(env, struct_size + size * sizeof(struct rt_value));
+		arr = rt_gc_tenure_alloc(env, struct_size + len);
 		if (arr == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_old_gc(env);
+				if (!rt_gc_old_gc(env))
+					return NULL;
 				continue;
 			} if (retry == 1) {
-				rt_gc_compact_gc(env);
+				if (!rt_gc_compact_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -577,7 +632,7 @@ rt_gc_alloc_array_tenure(
 		memset(&arr->head, 0, sizeof(struct rt_gc_object));
 		arr->head.type = RT_GC_TYPE_ARRAY;
 		arr->head.region = RT_GC_REGION_TENURE;
-		arr->head.size = struct_size + size * sizeof(struct rt_value);
+		arr->head.size = struct_size + len;
 		INSERT_TO_LIST(&arr->head, env->vm->gc.tenure_list, prev, next);
 		arr->alloc_size = size;
 		arr->size = 0;
@@ -608,7 +663,7 @@ rt_gc_alloc_dict(
 	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
-	size_t struct_size;
+	size_t struct_size, len;
 
 	assert(env != NULL);
 	assert(size > 0);
@@ -616,24 +671,33 @@ rt_gc_alloc_dict(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_dict);
 
+	/* Check for overflow. */
+	if (size >= SIZE_MAX / sizeof(struct rt_value) / 2) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	len = 2 * size * sizeof(struct rt_value);
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
 	/*
 	 * [Large Object Promotion]
 	 *  - If the array is large, allocate in the tenure region.
 	 */
-	if (size * sizeof(char *) + size * sizeof(struct rt_value *) >= env->vm->config.gc_lop_threshold)
+	if (len >= env->vm->config.gc_lop_threshold)
 		return rt_gc_alloc_dict_tenure(env, size);
 
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 1; retry++) {
 		/* Allocate a rt_dict buffer. (rt_value is strictly aligned) */
-		dict = nursery_alloc(env,
-				     struct_size +
-				     size * sizeof(struct rt_value) +
-				     size * sizeof(struct rt_value));
+		dict = nursery_alloc(env, struct_size + len);
 		if (dict == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_young_gc(env);
+				if (!rt_gc_young_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -651,7 +715,7 @@ rt_gc_alloc_dict(
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_NURSERY;
-		dict->head.size = struct_size + 2 * size * sizeof(struct rt_value);
+		dict->head.size = struct_size + len;
 		INSERT_TO_LIST(&dict->head, env->vm->gc.nursery_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -683,13 +747,24 @@ rt_gc_alloc_dict_graduate(
 	struct rt_dict *dict;
 	struct rt_value *key_table;
 	struct rt_value *value_table;
-	size_t struct_size;
+	size_t struct_size, len;
 
 	assert(env != NULL);
 	assert(size > 0);
 
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_dict);
+
+	/* Check for overflow. */
+	if (size >= SIZE_MAX / sizeof(struct rt_value) / 2) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	len = 2 * size * sizeof(struct rt_value);
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
 
 	/*
 	 * This function is only called from the young GC,
@@ -699,10 +774,7 @@ rt_gc_alloc_dict_graduate(
 	/* Try allocating in the graduate region. */
 	do {
 		/* Allocate a rt_dict buffer. */
-		dict = graduate_alloc(env,
-				      struct_size +
-				      size * sizeof(struct rt_value) +
-				      size * sizeof(struct rt_value));
+		dict = graduate_alloc(env, struct_size + len);
 		if (dict == NULL)
 			break;
 
@@ -716,7 +788,7 @@ rt_gc_alloc_dict_graduate(
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_GRADUATE;
-		dict->head.size = struct_size + 2 * size * sizeof(struct rt_value);
+		dict->head.size = struct_size + len;
 		INSERT_TO_LIST(&dict->head, env->vm->gc.graduate_new_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -756,7 +828,7 @@ rt_gc_alloc_dict_tenure(
 	struct rt_value *key_table;
 	struct rt_value *value_table;
 	int retry;
-	size_t struct_size;
+	size_t struct_size, len;
 
 	assert(env != NULL);
 	assert(size > 0);
@@ -764,20 +836,30 @@ rt_gc_alloc_dict_tenure(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_dict);
 
+	/* Check for overflow. */
+	if (size >= SIZE_MAX / sizeof(struct rt_value) / 2) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	len = 2 * size * sizeof(struct rt_value);
+	if (len >= SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
 	/* Allocate in the tenure region. */
 	for (retry = 0; retry <= 2; retry++) {
 		/* Allocate the rt_dict buffer. */
-		dict = rt_gc_tenure_alloc(env,
-					  struct_size  +
-					  size * sizeof(struct rt_value) +
-					  size * sizeof(struct rt_value));
+		dict = rt_gc_tenure_alloc(env, struct_size  + len);
 		if (dict == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_old_gc(env);
+				if (!rt_gc_old_gc(env))
+					return NULL;
 				continue;
 			} if (retry == 1) {
-				rt_gc_compact_gc(env);
+				if (!rt_gc_compact_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -795,7 +877,7 @@ rt_gc_alloc_dict_tenure(
 		memset(&dict->head, 0, sizeof(struct rt_gc_object));
 		dict->head.type = RT_GC_TYPE_DICT;
 		dict->head.region = RT_GC_REGION_TENURE;
-		dict->head.size = struct_size + 2 * size * sizeof(struct rt_value);
+		dict->head.size = struct_size + len;
 		INSERT_TO_LIST(&dict->head, env->vm->gc.tenure_list, prev, next);
 		dict->alloc_size = size;
 		dict->size = 0;
@@ -846,17 +928,23 @@ rt_gc_alloc_packed(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_packed);
 
-	/* Check for size. */
-	if (!preallocated && byte_size >= env->vm->config.gc_tenure_size - struct_size) {
-		rt_out_of_memory(env);
-		return NULL;
-	}
+	/* Determine the size, and check for overflow. */
 	if (preallocated != NULL) {
 		/* No extra space is required for preallocated buffer. */
 		len = 0;
 	} else {
+		/* Check for overflow for the alignment operation. */
+		if (byte_size > SIZE_MAX - (ALIGN - 1)) {
+			rt_out_of_memory(env);
+			return NULL;
+		}
+
 		/* Align. */
-		len = (byte_size + (sizeof(long) - 1)) & ~(sizeof(long) - 1);
+		len = ALIGN_BYTES(byte_size);
+	}
+	if (len > SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
 	}
 
 	/*
@@ -876,7 +964,8 @@ rt_gc_alloc_packed(
 		if (packed == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_young_gc(env);
+				if (!rt_gc_young_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -940,17 +1029,23 @@ rt_gc_alloc_packed_graduate(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_packed);
 
-	/* Check for size. */
-	if (!preallocated && byte_size >= SIZE_MAX - struct_size) {
-		rt_out_of_memory(env);
-		return NULL;
-	}
+	/* Determine the size, and check for overflow. */
 	if (preallocated != NULL) {
 		/* No extra space is required for preallocated buffer. */
 		len = 0;
 	} else {
+		/* Check for overflow for the alignment operation. */
+		if (byte_size > SIZE_MAX - (ALIGN - 1)) {
+			rt_out_of_memory(env);
+			return NULL;
+		}
+
 		/* Align. */
-		len = (byte_size + (sizeof(long) - 1)) & ~(sizeof(long) - 1);
+		len = ALIGN_BYTES(byte_size);
+	}
+	if (len > SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
 	}
 
 	/*
@@ -1030,17 +1125,23 @@ rt_gc_alloc_packed_tenure(
 	/* Align the struct size. */
 	struct_size = ALIGN_STRUCT(struct rt_packed);
 
-	/* Check for size. */
-	if (!preallocated && byte_size >= SIZE_MAX - sizeof(struct rt_packed)) {
-		rt_out_of_memory(env);
-		return NULL;
-	}
+	/* Determine the size, and check for overflow. */
 	if (preallocated != NULL) {
 		/* No extra space is required for preallocated buffer. */
 		len = 0;
 	} else {
+		/* Check for overflow for the alignment operation. */
+		if (byte_size > SIZE_MAX - (ALIGN - 1)) {
+			rt_out_of_memory(env);
+			return NULL;
+		}
+
 		/* Align. */
-		len = (byte_size + (sizeof(long) - 1)) & ~(sizeof(long) - 1);
+		len = ALIGN_BYTES(byte_size);
+	}
+	if (len > SIZE_MAX - struct_size) {
+		rt_out_of_memory(env);
+		return NULL;
 	}
 
 	/* Allocate in the tenure region. */
@@ -1050,10 +1151,12 @@ rt_gc_alloc_packed_tenure(
 		if (packed == NULL) {
 			/* Retry. */
 			if (retry == 0) {
-				rt_gc_old_gc(env);
+				if (!rt_gc_old_gc(env))
+					return NULL;
 				continue;
 			} if (retry == 1) {
-				rt_gc_compact_gc(env);
+				if (!rt_gc_compact_gc(env))
+					return NULL;
 				continue;
 			} else {
 				rt_out_of_memory(env);
@@ -1150,19 +1253,23 @@ rt_gc_dict_write_barrier(
 }
 
 /* Executes a young GC in the multithreaded manner. */
-static void
+static bool
 rt_gc_young_gc(
 	struct rt_env *env)
 {
 #if defined(NOCT_USE_MULTITHREAD)
-	rt_gc_multithread_call_wrapper(env, rt_gc_young_gc_body);
+	if (!rt_gc_multithread_call_wrapper(env, rt_gc_young_gc_body))
+		return false;
+	return true;
 #else
-	rt_gc_young_gc_body(env);
+	if (!rt_gc_young_gc_body(env))
+		return false;
+	return true;
 #endif
 }
 
 /* Executes a young GC. */
-static void
+static bool
 rt_gc_young_gc_body(
 	struct rt_env *env)
 {
@@ -1238,7 +1345,7 @@ rt_gc_young_gc_body(
 			continue;
 		if (IS_REF_VAL(&env->vm->global[i].val)) {
 			if (!rt_gc_copy_young_object_recursively(env, &env->vm->global[i].val.val.obj))
-				return;
+				return false;
 		}
 	}
 
@@ -1252,7 +1359,7 @@ rt_gc_young_gc_body(
 			for (i = 0; i < frame->tmpvar_size; i++) {
 				if (IS_REF_VAL(&frame->tmpvar[i])) {
 					if (!rt_gc_copy_young_object_recursively(env, &frame->tmpvar[i].val.obj))
-						return;
+						return false;
 				}
 			}
 
@@ -1260,7 +1367,7 @@ rt_gc_young_gc_body(
 			for (i = 0; i < frame->pinned_count; i++) {
 				if (IS_REF_VAL(frame->pinned[i])) {
 					if (!rt_gc_copy_young_object_recursively(env, &frame->pinned[i]->val.obj))
-						return;
+						return false;
 				}
 			}
 		}
@@ -1271,7 +1378,7 @@ rt_gc_young_gc_body(
 	for (i = 0; i < env->vm->pinned_count; i++) {
 		if (IS_REF_VAL(env->vm->pinned[i])) {
 			if (!rt_gc_copy_young_object_recursively(env, &env->vm->pinned[i]->val.obj))
-				return;
+				return false;
 		}
 	}
 
@@ -1280,8 +1387,21 @@ rt_gc_young_gc_body(
 	while (obj != NULL) {
 		struct rt_gc_object *next = obj->rem_next;
 		struct rt_gc_object *cur = obj;
-		if (!rt_gc_copy_young_object_recursively(env, &cur))
-			return;
+
+		/* Get a newer object if exists. */
+		rt_gc_array_dict_follow_newer(env, &cur);
+
+		/* If a newer object exists. */
+		if (cur != obj && !cur->rem_flg) {
+			/* Add it to the remember set. */
+			cur->rem_flg = true;
+			INSERT_TO_LIST(cur, env->vm->gc.remember_set, rem_prev, rem_next);
+		}
+
+		/* Copy the child objects to the graduate region. */
+		if (!rt_gc_copy_remember_set_children(env, &cur))
+			return false;
+
 		obj = next;
 	}
 
@@ -1366,7 +1486,7 @@ rt_gc_young_gc_body(
 	if (finalize_size > 0) {
 		finalize_table = noct_malloc(sizeof(struct finalize_table) * finalize_size);
 		if (finalize_table == NULL)
-			return;
+			return false;
 
 		/* For all nursery objects. */
 		obj = env->vm->gc.nursery_list;
@@ -1443,6 +1563,8 @@ rt_gc_young_gc_body(
 		finalize_table[i].native_finalizer(finalize_table[i].native_pointer);
 	if (finalize_table != NULL)
 		noct_free(finalize_table);
+
+	return true;
 }
 
 /* Marks-and-copies objects recursively. */
@@ -1459,6 +1581,8 @@ rt_gc_copy_young_object_recursively(
 
 	/* If this is an array or dictionary, get the forwarder. */
 	rt_gc_array_dict_follow_newer(env, obj);
+	if ((*obj)->region == RT_GC_REGION_TENURE)
+		return true;
 
 	/* If already processed. */
 	if ((*obj)->is_marked) {
@@ -1918,7 +2042,9 @@ rt_gc_copy_dict_to_graduate(
 
 	/* Check for cross-generation references. */
 	if (new_obj->head.region == RT_GC_REGION_TENURE) {
-		for (i = 0; i < (uint32_t)new_obj->size; i++) {
+		for (i = 0; i < (uint32_t)new_obj->alloc_size; i++) {
+			if (old_obj->key[i].type != NOCT_VALUE_STRING)
+				continue; /* Removed or empty. */
 			if (IS_YOUNG_OBJ(new_obj->key[i].val.obj)) {
 				new_obj->head.rem_flg = true;
 				INSERT_TO_LIST(&new_obj->head, env->vm->gc.remember_set,rem_prev, rem_next);
@@ -1973,20 +2099,138 @@ rt_gc_copy_packed_to_graduate(
 	return &new_obj->head;
 }
 
+static bool
+rt_gc_copy_remember_set_children(
+	struct rt_env *env,
+	struct rt_gc_object **obj)
+{
+	assert((*obj)->rem_flg);
+
+	if ((*obj)->type == RT_GC_TYPE_ARRAY) {
+		if (!rt_gc_copy_remember_set_array_children(env, obj))
+			return false;
+	} else if ((*obj)->type == RT_GC_TYPE_DICT) {
+		if (!rt_gc_copy_remember_set_dict_children(env, obj))
+			return false;
+	}
+
+	return true;
+}
+
+static bool
+rt_gc_copy_remember_set_array_children(
+	struct rt_env *env,
+	struct rt_gc_object **obj)
+{
+	struct rt_array *arr;
+	size_t i;
+
+	/* Get the latest array. (for when it was expanded.) */
+	rt_gc_array_dict_follow_newer(env, obj);
+
+	/*
+	 * If newer exists and it is in the nursery region, it was
+	 * already copied because we've root-scanned the nursery
+	 * region.
+	 */
+
+	/* Copy children. */
+	arr = (struct rt_array *)*obj;
+	for (i = 0; i < arr->size; i++) {
+		if (!rt_gc_copy_remembered_value(env, &arr->table[i]))
+			return false;
+	}
+
+	return true;
+}
+
+static bool
+rt_gc_copy_remember_set_dict_children(
+	struct rt_env *env,
+	struct rt_gc_object **obj)
+{
+	struct rt_dict *dict;
+	size_t i;
+
+	/* Get the latest dictionary. (for when it was expanded.) */
+	rt_gc_array_dict_follow_newer(env, obj);
+
+	/*
+	 * If newer exists and it is in the nursery region, it was
+	 * already copied because we've root-scanned the nursery
+	 * region.
+	 */
+
+	/* Copy children. */
+	dict = (struct rt_dict *)*obj;
+	for (i = 0; i < dict->alloc_size; i++) {
+		/* Skip if the entry is empty. */
+		if (dict->key[i].type != NOCT_VALUE_STRING)
+			continue;
+
+		/* Copy the key and the value. */
+		if (!rt_gc_copy_remembered_value(env, &dict->key[i]))
+			return false;
+		if (!rt_gc_copy_remembered_value(env, &dict->value[i]))
+			return false;
+	}
+
+	return true;
+}
+
+static bool
+rt_gc_copy_remembered_value(
+	struct rt_env *env,
+	struct rt_value *val)
+{
+	struct rt_gc_object *child_obj;
+
+	if (!IS_REF_VAL(val))
+		return true;
+
+	/* Get the object pointer from the value. */
+	child_obj = val->val.obj;
+
+	/*
+	 * Follow newer pointers if the object is an array or dictionary
+	 * and it was expanded.
+	 */
+	rt_gc_array_dict_follow_newer(env, &child_obj);
+	val->val.obj = child_obj;
+
+	/* If the object is already tenure, young GC does not copy it. */
+	if (child_obj->region == RT_GC_REGION_TENURE)
+		return true;
+
+	/*
+	 * Copy or promote the young object recursively.
+	 * This also updates val->val.obj by the forwarding pointer,
+	 * even if it was already copied.
+	 */
+	if (!rt_gc_copy_young_object_recursively(env, &val->val.obj))
+		return false;
+
+	return true;
+}
+
 /* Executes an old GC in the multithreaded manner. */
-static void
+static bool
 rt_gc_old_gc(
 	struct rt_env *env)
 {
 #if defined(NOCT_USE_MULTITHREAD)
-	rt_gc_multithread_call_wrapper(env, rt_gc_old_gc_body);
+	if (!rt_gc_multithread_call_wrapper(env, rt_gc_old_gc_body))
+		return false;
+	return true;
 #else
-	rt_gc_old_gc_body(env);
+	if (!rt_gc_old_gc_body(env))
+		return false;
+	return true;
 #endif
 }
 
 /* Executes an old GC. */
-static void
+static bool
 rt_gc_old_gc_body(
 	struct rt_env *env)
 {
@@ -2075,6 +2319,8 @@ rt_gc_old_gc_body(
 
 		obj = next_obj;
 	}
+
+	return true;
 }
 
 /* Mark object recursively for the old GC. */
@@ -2176,6 +2422,31 @@ rt_gc_compact_gc(
 	struct rt_frame *frame;
 
 	/*
+	 * Clear marks.
+	 */
+
+	/* Clear marks of the nursery objects. */
+	obj = env->vm->gc.nursery_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj = obj->next;
+	}
+
+	/* Clear marks of the graduate objects. */
+	obj = env->vm->gc.graduate_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj = obj->next;
+	}
+
+	/* Clear marks of the tenure objects. */
+	obj = env->vm->gc.tenure_list;
+	while (obj != NULL) {
+		obj->is_marked = false;
+		obj = obj->next;
+	}
+
+	/*
 	 * Count all tenure objects.
 	 */
 
@@ -2213,6 +2484,7 @@ rt_gc_compact_gc(
 		size_t blk_size;
 		bool blk_used;
 		struct rt_gc_object *obj;
+		size_t actual_blk_size;
 
 		blk_size = *(size_t *)cur_blk;
 		blk_used = blk_size & RT_GC_FREELIST_USED_BIT ? true : false;
@@ -2223,7 +2495,7 @@ rt_gc_compact_gc(
 			break;
 
 		/* Skip if unused. */
-		size_t actual_blk_size = blk_size & RT_GC_FREELIST_SIZE_MASK;
+		actual_blk_size = blk_size & RT_GC_FREELIST_SIZE_MASK;
 		if (!blk_used) {
 			cur_blk += sizeof(size_t) + actual_blk_size;
 			continue;
@@ -2232,7 +2504,7 @@ rt_gc_compact_gc(
 		/* Record. */
 		env->vm->gc.compact_before[index] = obj;
 		env->vm->gc.compact_after[index] = remap_top + sizeof(size_t);
-		remap_top += sizeof(size_t) + obj->size;
+		remap_top += sizeof(size_t) + actual_blk_size;
 		index++;
 
 		cur_blk += sizeof(size_t) + actual_blk_size;
@@ -2247,6 +2519,7 @@ rt_gc_compact_gc(
 	for (i = 0; i < env->vm->gc.compact_count; i++) {
 		/* Get the real object size. */
 		size_t obj_size = ((struct rt_gc_object *)env->vm->gc.compact_before[i])->size;
+		size_t aligned_obj_size = (obj_size + RT_GC_FREELIST_ALIGN - 1) & ~(RT_GC_FREELIST_ALIGN - 1);
 
 		/* Move. */
 		memmove(env->vm->gc.compact_after[i],
@@ -2254,7 +2527,7 @@ rt_gc_compact_gc(
 			obj_size);
 
 		/* Store the size header. */
-		*(size_t *)((char *)env->vm->gc.compact_after[i] - sizeof(size_t)) = obj_size | RT_GC_FREELIST_USED_BIT;
+		*(size_t *)((char *)env->vm->gc.compact_after[i] - sizeof(size_t)) = aligned_obj_size | RT_GC_FREELIST_USED_BIT;
 
 		/* Fill the reminder. */
 		if (i == env->vm->gc.compact_count - 1) {
@@ -2391,31 +2664,40 @@ rt_gc_update_tenure_ref_recursively(
 	struct rt_env *env,
 	struct rt_gc_object **obj)
 {
+	struct rt_gc_object *new_obj;
 	uint32_t i;
 
-	/* Search in the compaction table. */
+	/* Search in the compaction table by old address. */
 	for (i = 0; i < (uint32_t)env->vm->gc.compact_count; i++) {
 		if (env->vm->gc.compact_before[i] == *obj)
 			break;
 	}
 	if (i == env->vm->gc.compact_count)
-		return;	/* Not found. */
+		return;
 
-	/* Update the reference. */
-	*obj = env->vm->gc.compact_after[i];
+	new_obj = env->vm->gc.compact_after[i];
+
+	/* Always rewrite the reference first. */
+	*obj = new_obj;
+
+	/* Then use mark on the moved object as recursion guard. */
+	if (new_obj->is_marked)
+		return;
+
+	new_obj->is_marked = true;
 
 	/* Recursively update. */
-	if ((*obj)->type == RT_GC_TYPE_ARRAY) {
-		struct rt_array *arr = (struct rt_array *)*obj;
+	if (new_obj->type == RT_GC_TYPE_ARRAY) {
+		struct rt_array *arr = (struct rt_array *)new_obj;
 		for (i = 0; i < arr->size; i++) {
 			if (IS_REF_VAL(&arr->table[i]))
 				rt_gc_update_tenure_ref_recursively(env, &arr->table[i].val.obj);
 		}
-	} else if ((*obj)->type == RT_GC_TYPE_DICT) {
-		struct rt_dict *dict = (struct rt_dict *)*obj;
+	} else if (new_obj->type == RT_GC_TYPE_DICT) {
+		struct rt_dict *dict = (struct rt_dict *)new_obj;
 		for (i = 0; i < dict->alloc_size; i++) {
 			if (dict->key[i].type != NOCT_VALUE_STRING)
-				continue; /* Removed or empty. */
+				continue;
 
 			rt_gc_update_tenure_ref_recursively(env, &dict->key[i].val.obj);
 			if (IS_REF_VAL(&dict->value[i]))
@@ -2544,29 +2826,49 @@ rt_gc_get_heap_usage(
 /*
  * Manually trigger the young GC.
  */
-void
-rt_gc_level1_gc(struct rt_env *env)
+bool
+rt_gc_level1_gc(
+	struct rt_env *env)
 {
-	rt_gc_young_gc(env);
+	if (!rt_gc_young_gc(env))
+		return false;
+
+	return true;
 }
 
 /*
  * Manually trigger the old GC.
  */
-void rt_gc_level2_gc(struct rt_env *env)
+bool
+rt_gc_level2_gc(
+	struct rt_env *env)
 {
-	rt_gc_young_gc(env);
-	rt_gc_old_gc(env);
+	if (!rt_gc_young_gc(env))
+		return false;
+
+	if (!rt_gc_old_gc(env))
+		return false;
+
+	return true;
 }
 
 /*
  * Manually triggers a  GC.
  */
-void rt_gc_level3_gc(struct rt_env *env)
+bool
+rt_gc_level3_gc(
+	struct rt_env *env)
 {
-	rt_gc_young_gc(env);
-	rt_gc_old_gc(env);
-	rt_gc_compact_gc(env);
+	if (!rt_gc_young_gc(env))
+		return false;
+
+	if (!rt_gc_old_gc(env))
+		return false;
+
+	if (!rt_gc_compact_gc(env))
+		return false;
+
+	return true;
 }
 
 static void *
@@ -2600,11 +2902,14 @@ rt_gc_tenure_alloc(
 	size_t size)
 {
 	char *cur;
+	size_t remaining;
 
 	assert(size > 0);
 	if (size == 0)
 		return NULL;
 	if (size >= env->vm->config.gc_tenure_size)
+		return NULL;
+	if (size >= SIZE_MAX - RT_GC_FREELIST_ALIGN)
 		return NULL;
 
 	/* Align. */
@@ -2623,7 +2928,7 @@ rt_gc_tenure_alloc(
 			break;
 
 		is_used = blk_size & RT_GC_FREELIST_USED_BIT;
-		blk_size &= blk_size & RT_GC_FREELIST_SIZE_MASK;
+		blk_size &= RT_GC_FREELIST_SIZE_MASK;
 
 		/* Check if the block is used or the size is small. */
 		if (is_used || size > blk_size) {
@@ -2640,12 +2945,18 @@ rt_gc_tenure_alloc(
 		return cur + sizeof(size_t);
 	}
 
-	/* Check if the remaining size fits. */
-	if (size > (size_t)(env->vm->gc.tenure_freelist.end - (uintptr_t)cur - sizeof(size_t)))
+	/* Calculate the remaining size. */
+	remaining = (size_t)(env->vm->gc.tenure_freelist.end - cur);
+
+	/* Check if the remaining size fits. We need: current header + payload + next zero header. */
+	if (remaining < sizeof(size_t) * 2)
+		return NULL;
+	if (size > remaining - sizeof(size_t) * 2)
 		return NULL;
 
 	/* Allocate at the end of the free list. */
 	*(size_t *)cur = size | RT_GC_FREELIST_USED_BIT;
+
 	return cur + sizeof(size_t);
 }
 
@@ -2657,7 +2968,7 @@ rt_gc_tenure_free(
 {
 	size_t *header;
 	size_t size;
-
+	
 	UNUSED_PARAMETER(env);
 
 	/* Get the header address. */
@@ -2738,12 +3049,13 @@ rt_gc_safepoint(
  * Run a function in a multithreaded manner.
  * The term "inflight" means a thread is executing and not waiting at a GC-safe point.
  */
-static void
+static bool
 rt_gc_multithread_call_wrapper(
 	struct rt_env *env,
-	void (*gc)(struct rt_env *env))
+	bool (*gc)(struct rt_env *env))
 {
 	bool is_executor = false;
+	bool result;
 
 	/* This thread is inflight at this moment. */
 
@@ -2793,7 +3105,7 @@ rt_gc_multithread_call_wrapper(
 	atomic_fetch_add_acquire(&env->gc_in_progress_counter, 1);
 
 	/* Do GC. */
-	gc(env);
+	result = gc(env);
 
 	/* Count-down for recursive GC calls. */
 	atomic_fetch_sub_release(&env->gc_in_progress_counter, 1);
@@ -2832,6 +3144,8 @@ back_to_inflight:
 		 * and in the GC section.
 		 */
 	}
+
+	return result;
 }
 
 #endif /* defined(NOCT_USE_MULTITHREAD) */

@@ -220,13 +220,13 @@ bool rt_gc_unpin_local(struct rt_env *env, struct rt_value *val);
 bool rt_gc_get_heap_usage(struct rt_env *env, size_t *ret);
 
 /* Manually triggers a young GC. (nursery + graduate, copying GC) */
-void rt_gc_level1_gc(struct rt_env *env);
+bool rt_gc_level1_gc(struct rt_env *env);
 
 /* Manually triggers an old GC. (tenure, mark-and-sweep) */
-void rt_gc_level2_gc(struct rt_env *env);
+bool rt_gc_level2_gc(struct rt_env *env);
 
 /* Manually triggers a full GC. (tenure, nursery + graduate) */
-void rt_gc_level3_gc(struct rt_env *env);
+bool rt_gc_level3_gc(struct rt_env *env);
 
 /*
  * Multithread Support
