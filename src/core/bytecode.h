@@ -74,6 +74,9 @@ enum bytecode {
 
 	/* line number */
 	OP_LINEINFO,		/* 0x28: setDebugLine(src) */
+
+	/* safepoint */
+	OP_SAFEPOINT,		/* 0x29: safepoint() */
 };
 
 #endif

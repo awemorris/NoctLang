@@ -37,7 +37,7 @@
 #include "arena.h"
 
 /*
- * Region Size
+ * Region Size Defaults
  */
 #if defined(NOCT_TARGET_DOS4G)
 #define RT_GC_DEFAULT_NURSERY_SIZE		(256 * 1024)
@@ -83,6 +83,14 @@ enum rt_gc_object_type {
 	RT_GC_TYPE_DICT,
 	RT_GC_TYPE_PACKED,
 	RT_GC_TYPE_FUNC,
+};
+
+/*
+ * GC Levels.
+ */
+enum gt_gc_level {
+	RT_GC_LEVEL_0,
+	RT_GC_LEVEL_1,
 };
 
 /*
@@ -196,7 +204,7 @@ struct rt_array *rt_gc_alloc_array(struct rt_env *env, size_t size);
 struct rt_dict *rt_gc_alloc_dict(struct rt_env *env, size_t size);
 
 /* Allocates a packed object in the appropriate region. */
-struct rt_packed *rt_gc_alloc_packed(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void (*finalizer)(void *p));
+struct rt_packed *rt_gc_alloc_packed(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
 
 /* Write barrier: registers a container in the remember set if it references a young object. */
 void rt_gc_array_write_barrier(struct rt_env *env, struct rt_array *arr, size_t index, struct rt_value *val);
@@ -220,13 +228,13 @@ bool rt_gc_unpin_local(struct rt_env *env, struct rt_value *val);
 bool rt_gc_get_heap_usage(struct rt_env *env, size_t *ret);
 
 /* Manually triggers a young GC. (nursery + graduate, copying GC) */
-bool rt_gc_level1_gc(struct rt_env *env);
+void rt_gc_level1_gc(struct rt_env *env);
 
 /* Manually triggers an old GC. (tenure, mark-and-sweep) */
-bool rt_gc_level2_gc(struct rt_env *env);
+void rt_gc_level2_gc(struct rt_env *env);
 
 /* Manually triggers a full GC. (tenure, nursery + graduate) */
-bool rt_gc_level3_gc(struct rt_env *env);
+void rt_gc_level3_gc(struct rt_env *env);
 
 /*
  * Multithread Support

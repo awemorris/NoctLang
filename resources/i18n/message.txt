@@ -327,6 +327,8 @@ zh:值不是整数。
 tw:值不是整數。
 ja:値が整数ではありません。
 ---
+ID:Value is not a long.
+---
 ID:Value is not a string.
 en:Value is not a string.
 es:El valor no es un string.

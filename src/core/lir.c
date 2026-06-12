@@ -354,6 +354,10 @@ lir_visit_basic_block(
 
 		/* Check if succ is a loop head. */
 		if (lir_check_succ_loop_head(block, &loop)) {
+			/* Put a safepoint. */
+			if (!lir_put_opcode(OP_SAFEPOINT))
+				return false;
+
 			/* Continue edge. */
 			if (!lir_put_opcode(OP_JMP))
 				return false;
@@ -914,6 +918,10 @@ lir_visit_while_block(
 			break;
 		b = b->succ;
 	}
+
+	/* Put a safepoint. */
+	if (!lir_put_opcode(OP_SAFEPOINT))
+		return false;
 
 	/* Put a back-edge jump. */
 	if (!lir_put_opcode(OP_JMP))
@@ -1579,7 +1587,7 @@ lir_visit_new_expr(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)new_tmpvar))
 		return false;
-	if (!lir_put_string("new"))
+	if (!lir_put_string("Dict.merge"))
 		return false;
 
 	/* Load the class name. */
@@ -2177,6 +2185,11 @@ lir_dump(
 			uint32_t line;
 			IMM4(line);
 			printf("%04d: LINEINFO(line:%d)\n", ofs, line);
+			break;
+		}
+		case OP_SAFEPOINT:
+		{
+			printf("%04d: SAFEPOINT()\n", ofs);
 			break;
 		}
 		case OP_NOP:

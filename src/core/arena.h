@@ -48,10 +48,7 @@ static INLINE void
 arena_cleanup(
 	struct arena_info *arena)
 {
-	if (arena->top != NULL) {
-		free(arena->top);
-		arena->top = NULL;
-	}
+	free(arena->top);
 }
 
 /*

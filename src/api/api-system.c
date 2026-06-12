@@ -115,7 +115,7 @@ noct_register_api_system(
 			return false;
 
 		/* Make a dictionary element. */
-		if (!noct_set_dict_elem(
+		if (!noct_set_dict_elem_cstr(
 			    env,
 			    &dict,
 			    ffi_items[i].field_name,
@@ -165,8 +165,8 @@ cfunc_System_runCommand(
 	NoctValue tmp;
 	const char *command;
 	const char *work_dir;
-	uint32_t wait_for_finish;
-	uint32_t ret;
+	int wait_for_finish;
+	int ret;
 
 	if (!noct_get_arg_check_string(env, 0, &tmp, &command))
 		return false;
@@ -257,7 +257,7 @@ cfunc_System_runCommand(
 			return EXIT_FAILURE;
 		} else {
 			if (wait_for_finish)
-				waitpid(pid, (int *)&ret, 0);
+				waitpid(pid, &ret, 0);
 		}
 	}
 #endif
@@ -276,14 +276,14 @@ cfunc_System_shell(
 {
 	NoctValue tmp;
 	const char *s;
-	uint32_t cmd_ret;
+	int cmd_ret;
 
 	/* Get the "command" parameer. */
 	if (!noct_get_arg_check_string(env, 0, &tmp, &s))
 		return false;
 
 	/* Run a command. */
-	cmd_ret = (uint32_t)system(s);
+	cmd_ret = system(s);
 
 	/* Make a return value. */
 	if (!noct_set_return_make_int(env, &tmp, cmd_ret))
@@ -344,7 +344,7 @@ cfunc_System_checkFileExists(
 {
 	NoctValue tmp;
 	const char *s;
-	uint32_t ret;
+	int ret;
 
 	/* Get the "file" parameer. */
 	if (!noct_get_arg_check_string(env, 0, &tmp, &s))

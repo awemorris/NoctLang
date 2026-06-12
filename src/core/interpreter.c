@@ -256,7 +256,7 @@ rt_visit_iconst_op(
         GET_U32(&val);
 
         env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-        env->frame->tmpvar[dst].val.i = val;
+        env->frame->tmpvar[dst].val.i = (int)val;
 
         return true;
 }

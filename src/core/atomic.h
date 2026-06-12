@@ -12,14 +12,21 @@
 #ifndef NOCT_ATOMIC_H
 #define NOCT_ATOMIC_H
 
+#define CPU_RELAX_BASE_INITIALIZER	((uint64_t)(int64_t)-1)
+
 #if defined(__GNUC__)
+
+static INLINE int atomic_load_relaxed_int(int *v)
+{
+	return __atomic_load_n(v, __ATOMIC_RELAXED);
+}
 
 static INLINE void *atomic_load_relaxed_ptr(void **p)
 {
 	return __atomic_load_n(p, __ATOMIC_RELAXED);
 }
 
-static INLINE int atomic_load_acquire(int *v)
+static INLINE int atomic_load_acquire_int(int *v)
 {
 	return __atomic_load_n(v, __ATOMIC_ACQUIRE);
 }
@@ -29,25 +36,54 @@ static INLINE void *atomic_load_acquire_ptr(void **pp)
 	return __atomic_load_n(pp, __ATOMIC_ACQUIRE);
 }
 
+static INLINE int atomic_load_release_int(int *v)
+{
+	return __atomic_load_n(v, __ATOMIC_RELEASE);
+}
+
+static INLINE void *atomic_load_release_ptr(void **pp)
+{
+	return __atomic_load_n(pp, __ATOMIC_RELEASE);
+}
+
+static INLINE void atomic_store_release_int(int *p, int v)
+{
+	__atomic_store_n(p, v, __ATOMIC_RELEASE);
+}
+
 static INLINE void atomic_store_release_ptr(void **pp, void *v)
 {
 	__atomic_store_n(pp, v, __ATOMIC_RELEASE);
 }
 
-static INLINE int atomic_fetch_add_acquire(int *v, int add)
+static INLINE int atomic_fetch_add_acquire_int(int *v, int add)
 {
 	int old = __atomic_fetch_add(v, add, __ATOMIC_ACQUIRE);
 	return old;
 }
 
-static INLINE int atomic_fetch_sub_release(int *v, int sub)
+static INLINE int atomic_fetch_add_release_int(int *v, int add)
+{
+	int old = __atomic_fetch_add(v, add, __ATOMIC_RELEASE);
+	return old;
+}
+
+static INLINE int atomic_fetch_sub_acquire_int(int *v, int sub)
+{
+	int old = __atomic_fetch_sub(v, sub, __ATOMIC_ACQUIRE);
+	return old;
+}
+
+static INLINE int atomic_fetch_sub_release_int(int *v, int sub)
 {
 	int old = __atomic_fetch_sub(v, sub, __ATOMIC_RELEASE);
 	return old;
 }
 
-static INLINE void cpu_relax(void)
+static INLINE void cpu_relax(uint64_t *t)
 {
+	UNUSED_PARAMETER(t);
+
 #if defined(__i386__) || defined(__x86_64__)
 	// PAUSE
 	__asm__ __volatile__("pause");
@@ -79,6 +115,17 @@ static INLINE void *atomic_load_acquire_ptr(void **pp)
 {
 	return (void *)_InterlockedExchangeAdd((volatile long *)pp, 0);
 }
+
+static INLINE int atomic_load_acquire(int *v)
+{
+	return _InterlockedExchangeAdd((volatile long *)v, 0);
+}
+
+static INLINE void *atomic_load_acquire_ptr(void **pp)
+{
+	return (void *)_InterlockedExchangeAdd((volatile long *)pp, 0);
+}
+
 
 static INLINE void atomic_store_release_ptr(void **p, void *v)
 {

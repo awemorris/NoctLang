@@ -708,7 +708,7 @@ noct_ex_lt_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) < 0 ? 1U : 0U;
+			dst_val->val.i = strcmp(src1_val->val.str->data, src2_val->val.str->data) < 0 ? 1 : 0;
 			break;
 		default:
 			rt_error(env, N_TR("Value is not a string."));
@@ -1113,22 +1113,20 @@ noct_ex_storearray_helper(
 	val_val = &env->frame->tmpvar[val];
 
 	if (arr_val->type == NOCT_VALUE_ARRAY) {
-		/* Get the subscript value. */
 		if (subscr_val->type == NOCT_VALUE_INT) {
 			index = (uint32_t)subscr_val->val.i;
 		} else if (subscr_val->type == NOCT_VALUE_LONG) {
-			index = (size_t)(uint64_t)subscr_val->val.l;
+			index = (uint64_t)subscr_val->val.l;
 		} else {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
 		}
 
 		/* Store to the array. */
-		if (!rt_set_array_elem(env, &arr_val->val.arr, index, val_val))
+		if (!rt_set_array_elem(env, arr_val, index, val_val))
 			return false;
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
-		/* Get the key. */
 		if (subscr_val->type != NOCT_VALUE_STRING) {
 			rt_error(env, N_TR("Subscript not a string."));
 			return false;
@@ -1138,32 +1136,29 @@ noct_ex_storearray_helper(
 		rt_cache_string_hash(subscr_val->val.str);
 
 		/* Store to the dictionary. */
-		if (!rt_set_dict_elem_with_hash(env,
-						&arr_val->val.dict,
-						subscr_val->val.str->data,
-						subscr_val->val.str->len,
-						subscr_val->val.str->hash,
-						val_val))
+		if (!rt_set_dict_elem(env,
+				      arr_val,
+				      subscr_val,
+				      val_val))
 			return false;
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_PACKED) {
-		/* Get the subscript value. */
 		if (subscr_val->type == NOCT_VALUE_INT) {
 			index = (uint32_t)subscr_val->val.i;
 		} else if (subscr_val->type == NOCT_VALUE_LONG) {
-			index = (size_t)(uint64_t)subscr_val->val.l;
+			index = (uint64_t)subscr_val->val.l;
 		} else {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
 		}
 
 		/* Store to the packed. */
-		if (!rt_set_packed_elem(env, &arr_val->val.packed, index, val_val))
+		if (!rt_set_packed_elem(env, arr_val, index, val_val))
 			return false;
 		return true;
 	}
 
-	rt_error(env, N_TR("Not an array, dictionary, or packed."));
+	rt_error(env, N_TR("Not an array or a dictionary."));
 	return false;
 }
 
@@ -1190,9 +1185,8 @@ noct_ex_loadarray_helper(
 
 	/* Check the array type. */
 	if (arr_val->type == NOCT_VALUE_ARRAY) {
-		/* Get the subscript value. */
 		if (subscr_val->type == NOCT_VALUE_INT) {
-			index = (uint32_t)subscr_val->val.i;
+			index = (size_t)(uint32_t)subscr_val->val.i;
 		} else if (subscr_val->type == NOCT_VALUE_LONG) {
 			index = (size_t)(uint64_t)subscr_val->val.l;
 		} else {
@@ -1201,7 +1195,7 @@ noct_ex_loadarray_helper(
 		}
 
 		/* Load the array element. */
-		if (!rt_get_array_elem(env, arr_val->val.arr, index, dst_val))
+		if (!rt_get_array_elem(env, arr_val, index, dst_val))
 			return false;
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_DICT) {
@@ -1215,32 +1209,26 @@ noct_ex_loadarray_helper(
 		rt_cache_string_hash(subscr_val->val.str);
 
 		/* Get the dictionary element. */
-		if (!rt_get_dict_elem_with_hash(env,
-						arr_val->val.dict,
-						subscr_val->val.str->data,
-						subscr_val->val.str->len,
-						subscr_val->val.str->hash,
-						dst_val))
+		if (!rt_get_dict_elem(env, arr_val, subscr_val, dst_val))
 			return false;
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_PACKED) {
-		/* Get the subscript value. */
 		if (subscr_val->type == NOCT_VALUE_INT) {
-			index = subscr_val->val.i;
+			index = (size_t)(uint32_t)subscr_val->val.i;
 		} else if (subscr_val->type == NOCT_VALUE_LONG) {
-			index = subscr_val->val.l;
+			index = (size_t)(uint64_t)subscr_val->val.l;
 		} else {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
 		}
 
 		/* Load the packed element. */
-		if (!rt_get_packed_elem(env, arr_val->val.packed, index, dst_val))
+		if (!rt_get_packed_elem(env, arr_val, index, dst_val))
 			return false;
 		return true;
 	}
 
-	rt_error(env, N_TR("Not an array, dictionary, or packed."));
+	rt_error(env, N_TR("Not an array or a dictionary."));
 	return false;
 }
 
@@ -1264,48 +1252,28 @@ noct_ex_len_helper(
 
 	switch (src_val->type) {
 	case NOCT_VALUE_STRING:
-		if (src_val->val.str->len - 1 <= UINT_MAX) {
-			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (uint32_t)(src_val->val.str->len - 1);
-		} else {
-			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)(src_val->val.str->len - 1);
-		}
-		assert(src_val->val.str->len == strlen(src_val->val.str->data));
+		val = (src_val->val.str->len - 1); /* Exclude NUL */
 		break;
 	case NOCT_VALUE_ARRAY:
-		rt_get_array_size(env, src_val->val.arr, &val);
-		if (val <= UINT_MAX) {
-			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (uint32_t)val;
-		} else {
-			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)val;
-		}
+		rt_get_array_size(env, src_val, &val);
 		break;
 	case NOCT_VALUE_DICT:
-		rt_get_dict_size(env, src_val->val.dict, &val);
-		if (val <= UINT_MAX) {
-			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (uint32_t)val;
-		} else {
-			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)val;
-		}
+		rt_get_dict_size(env, src_val, &val);
 		break;
 	case NOCT_VALUE_PACKED:
-		rt_get_packed_size(env, src_val->val.packed, &val);
-		if (val <= UINT_MAX) {
-			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (uint32_t)val;
-		} else {
-			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)val;
-		}
+		rt_get_dict_size(env, src_val, &val);
 		break;
 	default:
 		rt_error(env, N_TR("Value is not a string, an array, or a dictionary."));
 		return false;
+	}
+
+	if (val <= INT_MAX) {
+		dst_val->type = NOCT_VALUE_INT;
+		dst_val->val.i = (int32_t)val;
+	} else {
+		dst_val->type = NOCT_VALUE_LONG;
+		dst_val->val.l = (int64_t)val;
 	}
 
 	return true;
@@ -1326,6 +1294,7 @@ noct_ex_getdictkeybyindex_helper(
 	struct rt_value *dst_val;
 	struct rt_value *dict_val;
 	struct rt_value *subscr_val;
+	size_t index;
 
 	dst_val = &env->frame->tmpvar[dst];
 	dict_val = &env->frame->tmpvar[dict];
@@ -1335,13 +1304,17 @@ noct_ex_getdictkeybyindex_helper(
 		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
-	if (subscr_val->type != NOCT_VALUE_INT) {
+	if (subscr_val->type == NOCT_VALUE_INT) {
+		index = (size_t)(uint32_t)subscr_val->val.i;
+	} else if (subscr_val->type == NOCT_VALUE_LONG) {
+		index = (size_t)(uint64_t)subscr_val->val.l;
+	} else {
 		rt_error(env, N_TR("Subscript not an integer."));
 		return false;
 	}
 
 	/* Load the element. */
-	if (!rt_get_dict_key_by_index(env, dict_val->val.dict, (uint32_t)subscr_val->val.i, dst_val))
+	if (!rt_get_dict_key_by_index(env, dict_val, index, dst_val))
 		return false;
 
 	return true;
@@ -1362,6 +1335,7 @@ noct_ex_getdictvalbyindex_helper(
 	struct rt_value *dst_val;
 	struct rt_value *dict_val;
 	struct rt_value *subscr_val;
+	size_t index;
 
 	dst_val = &env->frame->tmpvar[dst];
 	dict_val = &env->frame->tmpvar[dict];
@@ -1371,13 +1345,17 @@ noct_ex_getdictvalbyindex_helper(
 		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
-	if (subscr_val->type != NOCT_VALUE_INT) {
+	if (subscr_val->type == NOCT_VALUE_INT) {
+		index = (size_t)(uint32_t)subscr_val->val.i;
+	} else if (subscr_val->type == NOCT_VALUE_LONG) {
+		index = (size_t)(uint64_t)subscr_val->val.l;
+	} else {
 		rt_error(env, N_TR("Subscript not an integer."));
 		return false;
 	}
 
 	/* Load the element. */
-	if (!rt_get_dict_value_by_index(env, dict_val->val.dict, (uint32_t)subscr_val->val.i, dst_val))
+	if (!rt_get_dict_value_by_index(env, dict_val, index, dst_val))
 		return false;
 
 	return true;
@@ -1439,37 +1417,17 @@ noct_ex_loaddot_helper(
 	uint32_t field_len,
 	uint32_t field_hash)
 {
-	/* Special field "length". */
-	if (field_len == 7 &&
-	    field_hash == 0x83d03615 &&
-	    strcmp(field, "length") == 0) {
-		if (env->frame->tmpvar[dict].type == NOCT_VALUE_DICT) {
-			size_t size;
-			if (!rt_get_dict_size(env, env->frame->tmpvar[dict].val.dict, &size))
-				return false;
-			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = (uint32_t)size;
-			return true;
-		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_ARRAY) {
-			size_t size;
-			if (!rt_get_array_size(env, env->frame->tmpvar[dict].val.arr, &size))
-				return false;
-			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = (uint32_t)size;
-			return true;
-		} else if (env->frame->tmpvar[dict].type == NOCT_VALUE_STRING) {
-			env->frame->tmpvar[dst].type = NOCT_VALUE_INT;
-			env->frame->tmpvar[dst].val.i = (uint32_t)(env->frame->tmpvar[dict].val.str->len - 1); /* Exclude NUL */
-			return true;
-		}
-	}
-
 	if (env->frame->tmpvar[dict].type != NOCT_VALUE_DICT) {
 		rt_error(env, N_TR("Not a dictionary."));
 		return false;
 	}
 
-	if (!rt_get_dict_elem_with_hash(env, env->frame->tmpvar[dict].val.dict, field, field_len, field_hash, &env->frame->tmpvar[dst]))
+	if (!rt_get_dict_elem_with_hash(env,
+					&env->frame->tmpvar[dict],
+					field,
+					field_len,
+					field_hash,
+					&env->frame->tmpvar[dst]))
 		return false;
 
 	return true;
@@ -1502,7 +1460,12 @@ noct_ex_storedot_helper(
 	val = &env->frame->tmpvar[src];
 
 	/* Store the source value to the dictionary with the key. */
-	if (!rt_set_dict_elem_with_hash(env, &dict_val->val.dict, field, field_len, field_hash, val))
+	if (!rt_set_dict_elem_with_hash(env,
+					dict_val,
+					field,
+					field_len,
+					field_hash,
+					val))
 		return false;
 
 	return true;
@@ -1573,25 +1536,25 @@ noct_ex_thiscall_helper(
 	/* Get a receiver object. */
 	obj_val = &env->frame->tmpvar[obj];
 
-	/* Check for an intrinsic. (callee == NULL is not found.)*/
-	if (!rt_get_intrin_thiscall_func(env, name, &callee))
+	/* If not an intrinsic call, object must be a dictionary. */
+	if (env->frame->tmpvar[obj].type != NOCT_VALUE_DICT) {
+		rt_error(env, N_TR("Not a dictionary."));
 		return false;
-	if (callee == NULL) {
-		/* If not an intrinsic call, object must be a dictionary. */
-		if (env->frame->tmpvar[obj].type != NOCT_VALUE_DICT) {
-			rt_error(env, N_TR("Not a dictionary."));
-			return false;
-		}
-
-		/* Get a function from a receiver object. */
-		if (!rt_get_dict_elem_with_hash(env, env->frame->tmpvar[obj].val.dict, name, name_len, name_hash, &callee_value))
-			return false;
-		if (callee_value.type != NOCT_VALUE_FUNC) {
-			rt_error(env, N_TR("Not a function."));
-			return false;
-		}
-		callee = callee_value.val.func;
 	}
+
+	/* Get a function from a receiver object. */
+	if (!rt_get_dict_elem_with_hash(env,
+					&env->frame->tmpvar[obj],
+					name,
+					name_len,
+					name_hash,
+					&callee_value))
+		return false;
+	if (callee_value.type != NOCT_VALUE_FUNC) {
+		rt_error(env, N_TR("Not a function."));
+		return false;
+	}
+	callee = callee_value.val.func;
 
 	/* Get values of arguments. */
 	arg_count++;

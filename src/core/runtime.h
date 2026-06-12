@@ -81,8 +81,17 @@ struct rt_array {
 	struct rt_array *newer;
 
 #if defined(NOCT_USE_MULTITHREAD)
-	/* Atomic counter. */
-	int counter;
+	/* Creator thread. */
+	struct rt_env *creator;
+
+	/* Shared flag. */
+	int shared;
+
+	/* Write lock. */
+	int write_lock;
+
+	/* SeqLock */
+	int seqlock;
 #endif
 };
 
@@ -114,8 +123,17 @@ struct rt_dict {
 	void (*native_finalizer)(void *native_pointer);
 
 #if defined(NOCT_USE_MULTITHREAD)
-	/* Atomic counter. */
-	int counter;
+	/* Creator thread. */
+	struct rt_env *creator;
+
+	/* Shared flag. */
+	int shared;
+
+	/* Write lock. */
+	int write_lock;
+
+	/* SeqLock */
+	int seqlock;
 #endif
 };
 
@@ -128,25 +146,17 @@ struct rt_packed {
 	/* Primitive type. */
 	int type;
 
-	/* Allocated size in bytes. */
-	size_t byte_size;
+	/* Allocated size in bytes. (0 if using a preallocated buffer.) */
+	size_t size;
 
 	/* Element count. */
 	size_t elem_size;
 
+	/* Packed type. */
+	int packed_typed;
+
 	/* Buffer pointer. */
-	void *buffer;
-
-	/* Is preallocated buffer? */
-	bool is_preallocated;
-
-	/* Finalizer for preallocated buffer. */
-	void (*finalizer)(void *native_pointer);
-
-#if defined(NOCT_USE_MULTITHREAD)
-	/* Atomic counter. */
-	int counter;
-#endif
+	void *packed_buffer;
 };
 
 /*
@@ -185,7 +195,7 @@ struct rt_bindglobal {
 	char *name;
 
 	/* Hash cache for the symbol name. */
-	size_t name_len;
+	uint32_t name_len;
 	uint32_t name_hash;
 
 	/* Value. */
@@ -275,8 +285,20 @@ struct rt_env {
 	struct rt_env *next;
 
 #if defined(NOCT_USE_MULTITHREAD)
-	/* Atomic counter for GC. */
-	int gc_in_progress_counter;
+	/*
+	 * Is this thread in-flight?
+	 */
+	bool is_in_flight;
+
+	/*
+	 * Is this thread raising STW request?
+	 */
+	bool is_stw_raised;
+
+	/*
+	 * Is this thread the STW executor?
+	 */
+	bool is_stw_executor;
 #endif
 };
 
@@ -308,14 +330,36 @@ struct rt_vm {
 	/* Config. */
 	struct rt_config config;
 
+	/* GC nest counter. */
+	int gc_in_progress_counter;
+
+	/* GC level. */
+	int gc_level;
+
 #if defined(NOCT_USE_MULTITHREAD)
-	/* In-flight counter for GC exclusion. */
+	/*
+	 * Number of in-flight threads.
+	 *  - See objectmodel.c
+	 */
 	int in_flight_counter;
 
-	/* GC stop-the-world counter. */
-	int gc_stw_counter;
+	/*
+	 * STW requests.
+	 *  - Indicates the number of the threads that are raising requests.
+	 *  - See objectmodel.c
+	 */
+	int stw_request_counter;
 
-	/* Atomic counter for global variables. */
+	/*
+	 * STW executor lock.
+	 *  - Reading 0 by RMW means the thread is promoted to STW executor.
+	 *  - See objectmodel.c
+	 */
+	int stw_executor_lock;
+
+	/*
+	 * Lock for global variables.
+	 */
 	int global_var_counter;
 #endif
 };
@@ -427,10 +471,10 @@ void
 rt_string_hash_and_len(
 	const char *s,
 	uint32_t *hash,
-	size_t *len);
+	uint32_t *len);
 
 /*
- * Array, Dictionary, and Buffer
+ * Array, Dictionary, and Packed
  */
 
 /* Make an empty array. */
@@ -443,14 +487,14 @@ rt_make_empty_array(
 bool
 rt_get_array_size(
 	struct rt_env *env,
-	struct rt_array *arr,
+	struct rt_value *arr,
 	size_t *size);
 
 /* Retrieves an array element. */
 bool
 rt_get_array_elem(
 	struct rt_env *env,
-	struct rt_array *arr,
+	struct rt_value *arr,
 	size_t index,
 	struct rt_value *val);
 
@@ -458,7 +502,7 @@ rt_get_array_elem(
 bool
 rt_set_array_elem(
 	struct rt_env *env,
-	struct rt_array **arr,
+	struct rt_value *arr,
 	size_t index,
 	struct rt_value *val);
 
@@ -466,15 +510,15 @@ rt_set_array_elem(
 bool
 rt_resize_array(
 	struct rt_env *env,
-	struct rt_array **arr,
+	struct rt_value *arr,
 	size_t size);
 
 /* Make a shallow copy of an array. */
 bool
 rt_make_array_copy(
 	struct rt_env *env,
-	struct rt_array **dst,
-	struct rt_array *src);
+	struct rt_value *dst,
+	struct rt_value *src);
 
 /* Make an empty dictionary value. */
 bool
@@ -486,14 +530,22 @@ rt_make_empty_dict(
 bool
 rt_get_dict_size(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
 	size_t *size);
 
 /* Checks if a key exists in a dictionary. */
 bool
 rt_check_dict_key(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
+	struct rt_value *key,
+	bool *ret);
+
+/* Checks if a key exists in a dictionary. */
+bool
+rt_check_dict_key_cstr(
+	struct rt_env *env,
+	struct rt_value *dict,
 	const char *key,
 	bool *ret);
 
@@ -501,7 +553,7 @@ rt_check_dict_key(
 bool
 rt_get_dict_key_by_index(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
 	size_t index,
 	struct rt_value *key);
 
@@ -509,7 +561,7 @@ rt_get_dict_key_by_index(
 bool
 rt_get_dict_value_by_index(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
 	size_t index,
 	struct rt_value *val);
 
@@ -517,15 +569,23 @@ rt_get_dict_value_by_index(
 bool
 rt_get_dict_elem(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
+	struct rt_value *key,
+	struct rt_value *val);
+
+/* Retrieves the value by a key in a dictionary. */
+bool
+rt_get_dict_elem_cstr(
+	struct rt_env *env,
+	struct rt_value *dict,
 	const char *key,
 	struct rt_value *val);
 
-/* Retrieves the value by a key in a dictionary. (hash version) */
+/* Retrieves the value by a key in a dictionary. */
 bool
 rt_get_dict_elem_with_hash(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
 	const char *key,
 	size_t len,
 	uint32_t hash,
@@ -535,15 +595,23 @@ rt_get_dict_elem_with_hash(
 bool
 rt_set_dict_elem(
 	struct rt_env *env,
-	struct rt_dict **dict,
+	struct rt_value *dict,
+	struct rt_value *key,
+	struct rt_value *val);
+
+/* Stores a key-value-pair to a dictionary. */
+bool
+rt_set_dict_elem_cstr(
+	struct rt_env *env,
+	struct rt_value *dict,
 	const char *key,
 	struct rt_value *val);
 
-/* Stores a key-value-pair to a dictionary. (hash version) */
+/* Stores a key-value-pair to a dictionary. */
 bool
 rt_set_dict_elem_with_hash(
 	struct rt_env *env,
-	struct rt_dict **dict,
+	struct rt_value *dict,
 	const char *key,
 	size_t len,
 	uint32_t hash,
@@ -553,37 +621,36 @@ rt_set_dict_elem_with_hash(
 bool
 rt_remove_dict_elem(
 	struct rt_env *env,
-	struct rt_dict *dict,
-	const char *key);
+	struct rt_value *dict,
+	struct rt_value *key);
 
 /* Remove a dictionary key. (hash version) */
 bool
-rt_remove_dict_elem_with_hash(
+rt_remove_dict_elem_cstr(
 	struct rt_env *env,
-	struct rt_dict *dict,
-	const char *key,
-	size_t len,
-	uint32_t hash);
+	struct rt_value *dict,
+	const char *key);
 
 /* Make a shallow copy of a dictionary. */
 bool
 rt_make_dict_copy(
 	struct rt_env *env,
-	struct rt_dict **dst,
-	struct rt_dict *src);
+	struct rt_value *dst,
+	struct rt_value *src);
 
 /* Merges a dictionary. */
 bool
 rt_merge_dict(
 	struct rt_env *env,
-	struct rt_dict *dst,
-	struct rt_dict *src);
+	struct rt_value *dst,
+	struct rt_value *src1,
+	struct rt_value *src2);
 
 /* Sets the native pointers to a dictionary. */
 bool
 rt_set_dict_native_pointer(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
 	void *native_pointer,
 	void (*native_finalizer)(void *native_pointer));
 
@@ -591,7 +658,7 @@ rt_set_dict_native_pointer(
 bool
 rt_get_dict_native_pointer(
 	struct rt_env *env,
-	struct rt_dict *dict,
+	struct rt_value *dict,
 	void **native_pointer,
 	void (**native_finalizer)(void *native_pointer));
 
@@ -601,29 +668,29 @@ rt_make_packed(
 	struct rt_env *env,
 	struct rt_value *val,
 	int type,
+	size_t size,
 	size_t elem_size,
-	void *preallocated,
-	void (*finalizer)(void *));
+	void *preallocated);
 
 /* Get the element type of a packed. */
 bool
 rt_get_packed_type(
 	struct rt_env *env,
-	struct rt_packed *packed,
+	struct rt_value *packed,
 	int *type);
 
 /* Get the element count of a packed. */
 bool
 rt_get_packed_size(
 	struct rt_env *env,
-	struct rt_packed *packed,
+	struct rt_value *packed,
 	size_t *size);
 
 /* Retrieves an int8 packed element. */
 bool
 rt_get_packed_elem(
 	struct rt_env *env,
-	struct rt_packed *packed,
+	struct rt_value *packed,
 	size_t index,
 	struct rt_value *val);
 
@@ -631,7 +698,7 @@ rt_get_packed_elem(
 bool
 rt_set_packed_elem(
 	struct rt_env *env,
-	struct rt_packed **packed,
+	struct rt_value *packed,
 	size_t index,
 	struct rt_value *val);
 
@@ -639,8 +706,8 @@ rt_set_packed_elem(
 bool
 rt_make_packed_copy(
 	struct rt_env *env,
-	struct rt_packed **dst,
-	struct rt_packed *src);
+	struct rt_value *dst,
+	struct rt_value *src);
 
 /*
  * Global Variable

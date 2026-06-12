@@ -75,7 +75,7 @@ noct_register_api_console(
 			return false;
 
 		/* Make a dictionary element. */
-		if (!noct_set_dict_elem(
+		if (!noct_set_dict_elem_cstr(
 			    env,
 			    &dict,
 			    ffi_items[i].field_name,
@@ -120,7 +120,7 @@ static bool serialize_printer(
 	bool is_inside_obj)
 {
 	int type;
-	uint32_t ival;
+	int ival;
 	float fval;
 	const char *sval;
 	size_t items;
