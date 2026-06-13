@@ -120,6 +120,8 @@ void
 jit_commit(
         struct rt_env *env)
 {
+        UNUSED_PARAMETER(env);
+
         /* Make code executable and non-writable. */
         jit_map_executable(jit_code_region, JIT_CODE_MAX);
 
@@ -1685,7 +1687,7 @@ jit_visit_jmpiftrue_op(
                 return false;
         }
 
-        src *= sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
 
         ASM {
                 /* s10: env */
@@ -1729,7 +1731,7 @@ jit_visit_jmpiffalse_op(
                 return false;
         }
 
-        src *= sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
 
         ASM {
                 /* s10: env */
@@ -2072,7 +2074,7 @@ jit_patch_branch(
 {
         uint32_t *target_code;
         int offset;
-        int i;
+        uint32_t i;
 
         if (ctx->pc_entry_count == 0)
                 return true;
