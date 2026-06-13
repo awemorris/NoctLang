@@ -16,6 +16,7 @@
 #include "atomic.h"
 
 #include <assert.h>
+#include <stdio.h>
 
 /* False Assertion */
 #define NO_SPACE_FOR_DICTIONARY		(0)
@@ -98,8 +99,9 @@ om_read_array(
 		arr = arr->newer;
 
 	/* Check for the array size. */
-	if (index >= arr->alloc_size) {
+	if (index >= arr->size) {
 		/* Index is out-of-range. */
+		rt_error(env, N_TR("Array index %d is out-of-range."), index);
 		return false;
 	}
 

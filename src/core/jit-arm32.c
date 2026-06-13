@@ -558,7 +558,7 @@ jit_visit_lineinfo_op(
 
                 /* rt->line = line; */
                 MOVW            (REG_R0, line);
-                STR             (REG_R0, REG_R11, 4);
+                STR             (REG_R0, REG_R11, 8);
         }
 
         return true;
@@ -596,6 +596,10 @@ jit_visit_assign_op(
                 LDR     (REG_R3, REG_R1, 4);
                 STR     (REG_R2, REG_R0, 0);
                 STR     (REG_R3, REG_R0, 4);
+                LDR     (REG_R2, REG_R1, 8);
+                LDR     (REG_R3, REG_R1, 12);
+                STR     (REG_R2, REG_R0, 8);
+                STR     (REG_R3, REG_R0, 12);
         }
 
         return true;
@@ -630,7 +634,7 @@ jit_visit_iconst_op(
                 /* env->frame->tmpvar[dst].val.i = val */
                 MOVW    (REG_R1, val & 0xffff);
                 MOVT    (REG_R1, (val >> 16) & 0xffff);
-                STR     (REG_R1, REG_R0, 4);
+                STR     (REG_R1, REG_R0, 8);
         }
 
         return true;
@@ -665,7 +669,7 @@ jit_visit_fconst_op(
                 /* Assign env->frame->tmpvar[dst].val.f = val. */
                 MOVW    (REG_R1, val & 0xffff);
                 MOVT    (REG_R1, (val >> 16) & 0xffff);
-                STR     (REG_R1, REG_R0, 4);
+                STR     (REG_R1, REG_R0, 8);
         }
 
         return true;
@@ -845,9 +849,9 @@ jit_visit_inc_op(
                 ADD     (REG_R0, REG_R0, REG_R12);      /* r0 = &env->frame->tmpvar[dst] = &env->frame->tmpvar[dst].type */
 
                 /* env->frame->tmpvar[dst].val.i++ */
-                LDR     (REG_R1, REG_R0, 4);            /* tmp = &env->frame->tmpvar[dst].val.i */
+                LDR     (REG_R1, REG_R0, 8);            /* tmp = &env->frame->tmpvar[dst].val.i */
                 ADD_IMM (REG_R1, REG_R1, 1);            /* tmp++ */
-                STR     (REG_R1, REG_R0, 4);            /* env->frame->tmpvar[dst].val.i = tmp */
+                STR     (REG_R1, REG_R0, 8);            /* env->frame->tmpvar[dst].val.i = tmp */
         }
 
         return true;
@@ -1215,12 +1219,12 @@ jit_visit_eqi_op(
                 /* r0 = &env->frame->tmpvar[src1].val.i */
                 MOVW            (REG_R0, (uint32_t)src1);       /* src1 */
                 ADD             (REG_R0, REG_R0, REG_R12);
-                LDR             (REG_R0, REG_R0, 4);
+                LDR             (REG_R0, REG_R0, 8);
 
                 /* r1 = &env->frame->tmpvar[src2].val.i */
-                MOVW            (REG_R1, (uint32_t)src2);       /* src1 */
+                MOVW            (REG_R1, (uint32_t)src2);       /* src2 */
                 ADD             (REG_R1, REG_R1, REG_R12);
-                LDR             (REG_R1, REG_R1, 4);
+                LDR             (REG_R1, REG_R1, 8);
 
                 /* src1 == src2 */
                 CMP_R0_R1       ();
@@ -1796,12 +1800,16 @@ jit_visit_jmpiftrue_op(
                 return false;
         }
 
+        src *= (int)sizeof(struct rt_value);
+
         ASM {
+                /* r11 = env */
+                /* r12 = &env->frame->tmpvar[0] */
+
                 /* r0 = &env->frame->tmpvar[src].val.i */
                 MOVW    (REG_R0, (uint32_t)src);
-                LSL_3   (REG_R0, REG_R0);               /* src * sizeof(struct rt_value) */
                 ADD     (REG_R0, REG_R0, REG_R12);
-                LDR     (REG_R1, REG_R0, 4);
+                LDR     (REG_R1, REG_R0, 8);
 
                 /* Compare: env->frame->tmpvar[dst].val.i == 1 */
                 CMP_IMM (REG_R1, 0);
@@ -1836,15 +1844,16 @@ jit_visit_jmpiffalse_op(
                 return false;
         }
 
+        src *= (int)sizeof(struct rt_value);
+
         ASM {
                 /* r11 = env */
                 /* r12 = &env->frame->tmpvar[0] */
 
                 /* r0 = &env->frame->tmpvar[src].val.i */
                 MOVW    (REG_R0, (uint32_t)src);
-                LSL_3   (REG_R0, REG_R0);               /* src * sizeof(struct rt_value) */
                 ADD     (REG_R0, REG_R0, REG_R12);
-                LDR     (REG_R1, REG_R0, 4);
+                LDR     (REG_R1, REG_R0, 8);
 
                 /* Compare: env->frame->tmpvar[dst].val.i == 0 */
                 CMP_IMM (REG_R1, IMM12(0));

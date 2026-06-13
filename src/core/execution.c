@@ -960,9 +960,41 @@ noct_ex_eq_helper(
 			dst_val->type = NOCT_VALUE_INT;
 			dst_val->val.i = (src1_val->val.i == src2_val->val.i) ? 1 : 0;
 			break;
+		case NOCT_VALUE_LONG:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((uint64_t)(uint32_t)src1_val->val.i == (uint64_t)src2_val->val.l) ? 1 : 0;
+			break;
 		case NOCT_VALUE_FLOAT:
 			dst_val->type = NOCT_VALUE_INT;
 			dst_val->val.i = ((float)src1_val->val.i == src2_val->val.f) ? 1 : 0;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((double)src1_val->val.i == src2_val->val.lf) ? 1 : 0;
+			break;
+		default:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = 0;
+			break;
+		}
+		break;
+	case NOCT_VALUE_LONG:
+		switch (src2_val->type) {
+		case NOCT_VALUE_INT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((uint64_t)src1_val->val.l == (uint64_t)(uint32_t)src2_val->val.i) ? 1 : 0;
+			break;
+		case NOCT_VALUE_LONG:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.l == src2_val->val.l) ? 1 : 0;
+			break;
+		case NOCT_VALUE_FLOAT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((float)src1_val->val.l == src2_val->val.f) ? 1 : 0;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((double)src1_val->val.l == src2_val->val.lf) ? 1 : 0;
 			break;
 		default:
 			dst_val->type = NOCT_VALUE_INT;
@@ -976,9 +1008,41 @@ noct_ex_eq_helper(
 			dst_val->type = NOCT_VALUE_INT;
 			dst_val->val.i = (src1_val->val.f == (float)src2_val->val.i) ? 1 : 0;
 			break;
+		case NOCT_VALUE_LONG:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.f == (float)src2_val->val.l) ? 1 : 0;
+			break;
 		case NOCT_VALUE_FLOAT:
 			dst_val->type = NOCT_VALUE_INT;
 			dst_val->val.i = (src1_val->val.f == src2_val->val.f) ? 1 : 0;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.f == src2_val->val.lf) ? 1 : 0;
+			break;
+		default:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = 0;
+			break;
+		}
+		break;
+	case NOCT_VALUE_DOUBLE:
+		switch (src2_val->type) {
+		case NOCT_VALUE_INT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf == (double)src2_val->val.i) ? 1 : 0;
+			break;
+		case NOCT_VALUE_LONG:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf == (double)src2_val->val.l) ? 1 : 0;
+			break;
+		case NOCT_VALUE_FLOAT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf == (double)src2_val->val.f) ? 1 : 0;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf == src2_val->val.lf) ? 1 : 0;
 			break;
 		default:
 			dst_val->type = NOCT_VALUE_INT;
@@ -1261,7 +1325,7 @@ noct_ex_len_helper(
 		rt_get_dict_size(env, src_val, &val);
 		break;
 	case NOCT_VALUE_PACKED:
-		rt_get_dict_size(env, src_val, &val);
+		rt_get_packed_size(env, src_val, &val);
 		break;
 	default:
 		rt_error(env, N_TR("Value is not a string, an array, or a dictionary."));

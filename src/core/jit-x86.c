@@ -88,6 +88,15 @@ jit_build(
         if (!jit_visit_bytecode(&ctx))
                 return false;
 
+#if 0
+        {
+                uint8_t *dis = jit_code_region_cur;
+                printf("Dump\n");
+                while (dis != ctx.code)
+                        printf("%04u: %02x\n", dis, *dis++);
+        }
+#endif
+
         jit_code_region_cur = ctx.code;
 
         /* Patch branches. */
@@ -284,7 +293,7 @@ jit_visit_lineinfo_op(
 
                 /* movl $line, %eax */          IB(0xb8); ID(line);
                 /* movl -8(%ebp), %ebx */       IB(0x8b); IB(0x5d); IB(0xf8);
-                /* movl %eax, 4(%ebx) */        IB(0x89); IB(0x43); IB(0x04);
+                /* movl %eax, 8(%ebx) */        IB(0x89); IB(0x43); IB(0x08);
         }
 
         return true;
@@ -315,9 +324,9 @@ jit_visit_assign_op(
                 /* addl -4(%ebp), %eax */        IB(0x03); IB(0x45); IB(0xfc);
                 /* addl -4(%ebp), %ebx */        IB(0x03); IB(0x5d); IB(0xfc);
                 /* movl (%ebx), %ecx */          IB(0x8b); IB(0x0b);
-                /* movl 4(%ebx), %edx */         IB(0x8b); IB(0x53); IB(0x04);
+                /* movl 8(%ebx), %edx */         IB(0x8b); IB(0x53); IB(0x08);
                 /* movl %ecx, (%eax) */          IB(0x89); IB(0x08);
-                /* movl %edx, 4(%eax) */         IB(0x89); IB(0x50); IB(0x04);
+                /* movl %edx, 8(%eax) */         IB(0x89); IB(0x50); IB(0x08);
         }
 
         return true;
@@ -346,7 +355,7 @@ jit_visit_iconst_op(
                 /* movl $dst, %eax */          IB(0xb8); ID((uint32_t)dst);
                 /* addl -4(%ebp), %eax */      IB(0x03); IB(0x45); IB(0xfc);
                 /* movl $0, (%eax) */          IB(0xc7); IB(0x00); ID(0);
-                /* movl $val, 4(%eax) */       IB(0xc7); IB(0x40); IB(0x04); ID(val);
+                /* movl $val, 8(%eax) */       IB(0xc7); IB(0x40); IB(0x08); ID(val);
         }
 
         return true;
@@ -375,7 +384,7 @@ jit_visit_fconst_op(
                 /* movl $dst, %eax */          IB(0xb8); ID((uint32_t)dst);
                 /* addl -4(%ebp), %eax */      IB(0x03); IB(0x45); IB(0xfc);
                 /* movl $1, (%eax) */          IB(0xc7); IB(0x00); ID(1);
-                /* movl $val, 4(%eax) */       IB(0xc7); IB(0x40); IB(0x04); ID(val);
+                /* movl $val, 8(%eax) */       IB(0xc7); IB(0x40); IB(0x08); ID(val);
         }
 
         return true;
@@ -517,7 +526,7 @@ jit_visit_inc_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &env->frame->tmpvar[dst].val.i++ */
+        /* env->frame->tmpvar[dst].val.i++ */
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
@@ -525,7 +534,7 @@ jit_visit_inc_op(
 
                 /* movl $dst, %eax */                   IB(0xb8); ID((uint32_t)dst);
                 /* addl -4(%ebp), %eax */               IB(0x03); IB(0x45); IB(0xfc);
-                /* incl 4(%eax) */                      IB(0xff); IB(0x40); IB(0x04);
+                /* incl 8(%eax) */                      IB(0xff); IB(0x40); IB(0x08);
         }
 
         return true;
@@ -866,7 +875,7 @@ jit_visit_eqi_op(
         src1 *= (int)sizeof(struct rt_value);
         src2 *= (int)sizeof(struct rt_value);
 
-        /* Set EFLAGS by (src1 - src2) */
+        /* Set EFLAGS by (src2 - src1) */
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
@@ -878,8 +887,8 @@ jit_visit_eqi_op(
                 /* movl $src2, %ebx */           IB(0xbb); ID((uint32_t)src2);
                 /* addl -4(%ebp), %ebx */        IB(0x03); IB(0x5d); IB(0xfc);
 
-                /* movl 4(%eax), %ecx */         IB(0x8b); IB(0x48); IB(0x04);
-                /* movl 4(%ebx), %edx */         IB(0x8b); IB(0x53); IB(0x04);
+                /* movl 8(%eax), %ecx */         IB(0x8b); IB(0x48); IB(0x08);
+                /* movl 8(%ebx), %edx */         IB(0x8b); IB(0x53); IB(0x08);
                 /* cmpl %ecx, %edx */            IB(0x39); IB(0xca);
         }
 
@@ -1379,15 +1388,16 @@ jit_visit_jmpiftrue_op(
                 return false;
         }
 
+        src *= (int)sizeof(struct rt_value);
+
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $src, %eax */           IB(0xb8); ID((uint32_t)src);
-                /* shll $3, %eax */             IB(0xc1); IB(0xe0); IB(0x03);
                 /* addl -4(%ebp), %eax */       IB(0x03); IB(0x45); IB(0xfc);
-                /* movl 4(%eax), %eax */        IB(0x8b); IB(0x40); IB(0x04);
+                /* movl 8(%eax), %eax */        IB(0x8b); IB(0x40); IB(0x08);
 
                 /* Compare: env->frame->tmpvar[dst].val.i == 0 */
                 /* cmpl $0, %eax */             IB(0x83); IB(0xf8); IB(0x00);
@@ -1422,15 +1432,16 @@ jit_visit_jmpiffalse_op(
                 return false;
         }
 
+        src *= (int)sizeof(struct rt_value);
+
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
                 /* movl $src, %eax */           IB(0xb8); ID((uint32_t)src);
-                /* shll $3, %eax */             IB(0xc1); IB(0xe0); IB(0x03);
                 /* addl -4(%ebp), %eax */       IB(0x03); IB(0x45); IB(0xfc);
-                /* movl 4(%eax), %eax */        IB(0x8b); IB(0x40); IB(0x04);
+                /* movl 8(%eax), %eax */        IB(0x8b); IB(0x40); IB(0x08);
 
                 /* Compare: env->frame->tmpvar[dst].val.i == 0 */
                 /* cmpl $0, %eax */             IB(0x83); IB(0xf8); IB(0x00);
@@ -1525,7 +1536,7 @@ jit_visit_bytecode(
         /* Put a prologue. */
         ASM {
         /* prologue: */
-                /* mov 4(%esp), %eax; rt */             IB(0x8b); IB(0x44); IB(0x24); IB(0x04);
+                /* mov 4(%esp), %eax; env */            IB(0x8b); IB(0x44); IB(0x24); IB(0x04);
 
                 /* pushl %ebx */                        IB(0x53);
                 /* pushl %ecx */                        IB(0x51);
@@ -1687,8 +1698,12 @@ jit_visit_bytecode(
                                 return false;
                         break;
                 case OP_EQI:
+                        if (!jit_visit_eqi_op(ctx))
+                                return false;
+#if 0
                         if (!jit_visit_eq_op(ctx))
                                 return false;
+#endif
                         break;
                 case OP_LOADARRAY:
                         if (!jit_visit_loadarray_op(ctx))
@@ -1747,8 +1762,12 @@ jit_visit_bytecode(
                                 return false;
                         break;
                 case OP_JMPIFEQ:
+                        if (!jit_visit_jmpifeq_op(ctx))
+                                return false;
+#if 0
                         if (!jit_visit_jmpiftrue_op(ctx))
                                 return false;
+#endif
                         break;
                 case OP_SAFEPOINT:
 #if defined(NOCT_USE_MULTITHREAD)

@@ -85,21 +85,16 @@ typedef struct rt_func NoctFunc;
  * A value.
  *  - Members are private.
  *  - If a value is zero-cleared, it shows an integer zero.
- *  - This struct has 8 bytes on 32-bit architecture and 16 bytes on 64-bit architecture.
+ *  - This struct has 16 bytes.
  */
 struct rt_value {
 	/* Offset 0: */
 	int type;
 
-#if defined(NOCT_ARCH_ARM64)  || \
-    defined(NOCT_ARCH_X86_64) || \
-    defined(NOCT_ARCH_PPC64)  || \
-    defined(NOCT_ARCH_RISCV64)
-	/* 32-bit padding for 64-bit architectures excluding MIPS64. */
+	/* Offset 4: */
 	int padding;
-#endif
 
-	/* Offset 4 in 32-bit, 8 in 64-bit: */
+	/* Offset 8; */
 	union {
 		int i;
 		long l;

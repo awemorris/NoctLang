@@ -311,7 +311,7 @@ jit_visit_lineinfo_op(
 
                 /* rt->line = line; */
                 /* li r0, line */       IW(0x00000038 | lo16(line));
-                /* stw r0, 4(r14) */    IW(0x04000e90);
+                /* stw r0, 8(r14) */    IW(0x08000e90);
         }
 
         return true;
@@ -350,6 +350,10 @@ jit_visit_assign_op(
                 /* lwz r6, 4(r4) */     IW(0x0400c480);
                 /* stw r5, 0(r3) */     IW(0x0000a390);
                 /* stw r6, 4(r3) */     IW(0x0400c390);
+                /* lwz r5, 8(r4) */     IW(0x0800a480);
+                /* lwz r6, 12(r4) */    IW(0x0c00c480);
+                /* stw r5, 8(r3) */     IW(0x0800a390);
+                /* stw r6, 12(r3) */    IW(0x0c00c390);
         }
 
         return true;
@@ -385,7 +389,7 @@ jit_visit_iconst_op(
                 /* env->frame->tmpvar[dst].val.i = val */
                 /* lis r4, val@h */     IW(0x0000803c | hi16(val));
                 /* ori r4, r4, val@l */ IW(0x00008460 | lo16(val));
-                /* stw r4, 4(r3) */     IW(0x04008390);
+                /* stw r4, 8(r3) */     IW(0x08008390);
         }
 
         return true;
@@ -421,7 +425,7 @@ jit_visit_fconst_op(
                 /* env->frame->tmpvar[dst].val.i = val */
                 /* lis r4, val@h */             IW(0x0000803c | hi16(val));
                 /* ori r4, r4, val@l */         IW(0x00008460 | lo16(val));
-                /* stw r4, 4(r3) */             IW(0x04008390);
+                /* stw r4, 8(r3) */             IW(0x08008390);
         }
 
         return true;
@@ -589,9 +593,9 @@ jit_visit_inc_op(
                 /* add r3, r3, r15 */   IW(0x147a637c);
 
                 /* env->frame->tmpvar[dst].val.i++ */
-                /* lwz r4, 4(r3) */     IW(0x04008380);
+                /* lwz r4, 8(r3) */     IW(0x08008380);
                 /* addi r4, r4, 1 */    IW(0x01008438);
-                /* stw r4, 4(r3) */     IW(0x04008390);
+                /* stw r4, 8(r3) */     IW(0x08008390);
         }
 
         return true;
@@ -961,12 +965,12 @@ jit_visit_eqi_op(
                 /* R3 = src1_addr = &env->frame->tmpvar[src1] */
                 /* li r3, src */        IW(0x00006038 | lo16((uint32_t)src1));
                 /* add r3, r3, r15 */   IW(0x147a637c);
-                /* lwz r3, 4(r3) */     IW(0x04006380);
+                /* lwz r3, 8(r3) */     IW(0x08006380);
 
                 /* R4 = src2_addr = &env->frame->tmpvar[src2] */
                 /* li r4, src2 */       IW(0x00008038 | lo16((uint32_t)src2));
                 /* add r4, r4, r15 */   IW(0x147a847c);
-                /* lwz r4, 4(r4) */     IW(0x04008480);
+                /* lwz r4, 8(r4) */     IW(0x08008480);
 
                 /* src1 == src2 */
                 /* cmpw r3, r4 */       IW(0x0020037c);
@@ -1527,7 +1531,7 @@ jit_visit_jmpiftrue_op(
                 /* R3 = env->frame->tmpvar[src].val.i */
                 /* li r3, src */                IW(0x00006038 | lo16((uint32_t)src));
                 /* add r3, r3, r15 */           IW(0x147a637c);
-                /* lwz r3, 4(r3) */             IW(0x04006380);
+                /* lwz r3, 8(r3) */             IW(0x08006380);
 
                 /* Compare: env->frame->tmpvar[dst].val.i == 1 */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -1572,7 +1576,7 @@ jit_visit_jmpiffalse_op(
                 /* R3 = env->frame->tmpvar[src].val.i */
                 /* li r3, src */                IW(0x00006038 | lo16((uint32_t)src));
                 /* add r3, r3, r15 */           IW(0x147a637c);
-                /* lwz r3, 4(r3) */             IW(0x04006380);
+                /* lwz r3, 8(r3) */             IW(0x08006380);
 
                 /* Compare: env->frame->tmpvar[dst].val.i == 1 */
                 /* cmpwi r3, 0 */               IW(0x0000032c);

@@ -559,6 +559,10 @@ jit_visit_assign_op(
 		LW	(REG_T3, 4, REG_T1);
 		SW	(REG_T2, 0, REG_T0);
 		SW	(REG_T3, 4, REG_T0);
+		LW	(REG_T2, 8, REG_T1);
+		LW	(REG_T3, 12, REG_T1);
+		SW	(REG_T2, 8, REG_T0);
+		SW	(REG_T3, 12, REG_T0);
 	}
 
 	return true;
@@ -592,7 +596,7 @@ jit_visit_iconst_op(
 
 		/* env->frame->tmpvar[dst].val.i = val */
 		LI_32	(REG_T2, IMM32(val));
-		SW	(REG_T2, 4, REG_T0);
+		SW	(REG_T2, 8, REG_T0);
 	}
 
 	return true;
@@ -626,7 +630,7 @@ jit_visit_fconst_op(
 
 		/* Assign env->frame->tmpvar[dst].val.f = val. */
 		LI_32	(REG_T2, IMM32(val));
-		SW	(REG_T2, 4, REG_T0);
+		SW	(REG_T2, 8, REG_T0);
 	}
 
 	return true;
@@ -767,9 +771,9 @@ jit_visit_inc_op(
 		ADD	(REG_T0, REG_S11, REG_T0);
 
 		/* env->frame->tmpvar[dst].val.i++ */
-		LW	(REG_T1, 4, REG_T0);		/* tmp = &env->frame->tmpvar[dst].val.i */
+		LW	(REG_T1, 8, REG_T0);		/* tmp = &env->frame->tmpvar[dst].val.i */
 		ADDI	(REG_T1, REG_T1, IMM12(1));	/* tmp++ */
-		SW	(REG_T1, 4, REG_T0);		/* env->frame->tmpvar[dst].val.i = tmp */
+		SW	(REG_T1, 8, REG_T0);		/* env->frame->tmpvar[dst].val.i = tmp */
 	}
 
 	return true;
@@ -1137,12 +1141,12 @@ jit_visit_eqi_op(
 		/* t0 = &env->frame->tmpvar[src1].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src1));
 		ADD	(REG_T0, REG_T0, REG_S11);
-		LW	(REG_T0, 4, REG_T0);
+		LW	(REG_T0, 8, REG_T0);
 
 		/* t1 = &env->frame->tmpvar[src2].val.i */
 		ORI	(REG_T1, REG_ZERO, IMM12(src2));
 		ADD	(REG_T1, REG_T1, REG_S11);
-		LW	(REG_T1, 4, REG_T1);
+		LW	(REG_T1, 8, REG_T1);
 
 		/* Here, t0 = src1, t1 = src2 */
 	}
@@ -1623,7 +1627,7 @@ jit_visit_jmpiftrue_op(
 		/* t0 = &env->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		ADD	(REG_T0, REG_S11, REG_T0);
-		LW	(REG_T0, 4, REG_T0);
+		LW	(REG_T0, 8, REG_T0);
 
 		/* Compare: env->frame->tmpvar[dst].val.i != 0 */
 		ORI	(REG_T1, REG_ZERO, IMM12(0));
@@ -1667,7 +1671,7 @@ jit_visit_jmpiffalse_op(
 		/* t0 = &env->frame->tmpvar[src].val.i */
 		ORI	(REG_T0, REG_ZERO, IMM12(src));
 		ADD	(REG_T0, REG_S11, REG_T0);
-		LW	(REG_T0, 4, REG_T0);
+		LW	(REG_T0, 8, REG_T0);
 
 		/* Compare: env->frame->tmpvar[dst].val.i == 0 */
 		ORI	(REG_T1, REG_ZERO, IMM12(0));

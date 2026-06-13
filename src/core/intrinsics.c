@@ -629,6 +629,7 @@ rt_intrin_String_charAt(
 	s = str_s;
 	i = 0;
 	ofs = 0;
+	d[0] = '\0';
 	while (*s != '\0' && i <= index_i) {
 		uint32_t codepoint;
 

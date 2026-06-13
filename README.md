@@ -72,7 +72,7 @@ Our current roadmap is:
 ### JIT Backends:
 
 - x86, x86_64
-- ARMv5-7, Arm64
+- ARMv7, Arm64
 - RISC-V 32/64
 - PowerPC 32/64
 - MIPS 32/64

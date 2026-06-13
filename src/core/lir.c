@@ -919,10 +919,6 @@ lir_visit_while_block(
 		b = b->succ;
 	}
 
-	/* Put a safepoint. */
-	if (!lir_put_opcode(OP_SAFEPOINT))
-		return false;
-
 	/* Put a back-edge jump. */
 	if (!lir_put_opcode(OP_JMP))
 		return false;
@@ -2151,7 +2147,7 @@ static INLINE void imm4(uint8_t **pc, uint32_t *ret)
 	b2 = *((*pc) + 2);
 	b3 = *((*pc) + 3);
 
-	*ret = (uint32_t)((b0 << 24) | (b1 << 16) | (b2 << 8) | (b3 + 3));
+	*ret = (uint32_t)((b0 << 24) | (b1 << 16) | (b2 << 8) | b3);
 
 	(*pc) += 4;
 }
@@ -2160,6 +2156,7 @@ static INLINE void imm4(uint8_t **pc, uint32_t *ret)
 #define IMMS(d) imms(&pc, &d)
 static INLINE void imms(uint8_t **pc, const char **ret)
 {
+	(*pc) += 8;
 	*ret = (const char *)*pc;
 	(*pc) += strlen((const char *)*pc) + 1;
 }
@@ -2185,11 +2182,6 @@ lir_dump(
 			uint32_t line;
 			IMM4(line);
 			printf("%04d: LINEINFO(line:%d)\n", ofs, line);
-			break;
-		}
-		case OP_SAFEPOINT:
-		{
-			printf("%04d: SAFEPOINT()\n", ofs);
 			break;
 		}
 		case OP_NOP:
@@ -2600,9 +2592,17 @@ lir_dump(
 			printf("%04d: JMPIFEQ(src:%d, target:%d)\n", ofs, src, target);
 			break;
 		}
+		case OP_SAFEPOINT:
+		{
+			printf("%04d: SAFEPOINT()\n", ofs);
+			break;
+		}
 		default:
+		{
+			printf("Unknown Opcode: 0x%x\n", opcode);
 			assert(INVALID_OPCODE);
 			break;
+		}
 		}
 	}
 }
