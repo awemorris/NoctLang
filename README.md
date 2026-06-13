@@ -183,14 +183,15 @@ to obtain the latest prebuilt binaries.
 
 ### Manually Build from Source
 
-Clone the repository, build it with CMake, and you’re ready to go:
+Clone the repository, build it with CMake, and you're ready to go:
 
 ```
-git clone https://github.com/awemorris/NoctLang.git noct
-cd noct
-cmake -B build .
-cmake --build build
-./build/noct
+git clone https://github.com/awemorris/NoctLang.git
+cd NoctLang
+cmake --preset static
+cd build-static
+make
+make install
 ```
 
 ### Run

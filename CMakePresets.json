@@ -62,8 +62,7 @@
                 "NOCT_ENABLE_CBACKEND":     "ON",
                 "NOCT_ENABLE_ELBACKEND":    "ON",
                 "NOCT_ENABLE_SCMBACKEND":   "ON",
-                "NOCT_ENABLE_REPL":         "ON",
-                "NOCT_ENABLE_MULTITHREAD":  "ON"
+                "NOCT_ENABLE_REPL":         "ON"
             }
         },
         {
