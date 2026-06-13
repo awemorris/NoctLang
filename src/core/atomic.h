@@ -100,61 +100,99 @@ static INLINE void cpu_relax(uint64_t *t)
 
 #include <intrin.h>
 
-static INLINE void *atomic_load_relaxed_ptr(void **p)
+static INLINE int atomic_load_relaxed_int(int* v)
 {
-	MemoryBarrier();
-	return __atomic_load_n(p, __ATOMIC_RELAXED);
+	return *(volatile int*)v;
 }
 
-static INLINE int atomic_load_acquire(int *v)
+static INLINE void* atomic_load_relaxed_ptr(void** p)
 {
-	return _InterlockedExchangeAdd((volatile long *)v, 0);
+	return *(void* volatile*)p;
 }
 
-static INLINE void *atomic_load_acquire_ptr(void **pp)
+static INLINE int atomic_load_acquire_int(int* v)
 {
-	return (void *)_InterlockedExchangeAdd((volatile long *)pp, 0);
-}
-
-static INLINE int atomic_load_acquire(int *v)
-{
-	return _InterlockedExchangeAdd((volatile long *)v, 0);
-}
-
-static INLINE void *atomic_load_acquire_ptr(void **pp)
-{
-	return (void *)_InterlockedExchangeAdd((volatile long *)pp, 0);
-}
-
-
-static INLINE void atomic_store_release_ptr(void **p, void *v)
-{
-	_InterlockedExchangePointer((void* volatile *)p, v);
-}
-
-static INLINE int atomic_fetch_add_acquire(int *v, int add)
-{
-	return _InterlockedExchangeAdd((volatile long *)v, 1);
-}
-
-static INLINE int atomic_fetch_sub_release(int *v, int sub)
-{
-	return _InterlockedExchangeAdd((volatile long *)v, -1);
-}
-
-#if defined(_M_IX86) || defined(_M_X64)
-#include <immintrin.h>
-static INLINE void cpu_relax(void)
-{
-	_mm_pause();
-}
-#elif defined(_M_ARM64)
-static INLINE void cpu_relax(void)
-{
-	// yield
-	__emit(0xD503207F);
-}
+#if defined(_M_ARM64)
+	return __iso_volatile_load32((const volatile __int32*)v);
+#else
+	int value = *(volatile int*)v;
+	_ReadWriteBarrier();
+	return value;
 #endif
+}
+
+static INLINE void* atomic_load_acquire_ptr(void** pp)
+{
+#if defined(_M_ARM64)
+	return (void*)__iso_volatile_load64((const volatile __int64*)pp);
+#else
+	void* value = *(void* volatile*)pp;
+	_ReadWriteBarrier();
+	return value;
+#endif
+}
+
+static INLINE int atomic_load_release_int(int* v)
+{
+	_ReadWriteBarrier();
+	return *(volatile int*)v;
+}
+
+static INLINE void* atomic_load_release_ptr(void** pp)
+{
+	_ReadWriteBarrier();
+	return *(void* volatile*)pp;
+}
+
+static INLINE void atomic_store_release_int(int* p, int v)
+{
+#if defined(_M_ARM64)
+	__iso_volatile_store32((volatile __int32*)p, v);
+#else
+	_ReadWriteBarrier();
+	*(volatile int*)p = v;
+#endif
+}
+
+static INLINE void atomic_store_release_ptr(void** pp, void* v)
+{
+#if defined(_M_ARM64)
+	__iso_volatile_store64((volatile __int64*)pp, (__int64)v);
+#else
+	_ReadWriteBarrier();
+	*(void* volatile*)pp = v;
+#endif
+}
+
+static INLINE int atomic_fetch_add_acquire_int(int* v, int add)
+{
+	return _InterlockedExchangeAdd((volatile long*)v, add);
+}
+
+static INLINE int atomic_fetch_add_release_int(int* v, int add)
+{
+	return _InterlockedExchangeAdd((volatile long*)v, add);
+}
+
+static INLINE int atomic_fetch_sub_acquire_int(int* v, int sub)
+{
+	return _InterlockedExchangeAdd((volatile long*)v, -sub);
+}
+
+static INLINE int atomic_fetch_sub_release_int(int* v, int sub)
+{
+	return _InterlockedExchangeAdd((volatile long*)v, -sub);
+}
+
+static INLINE void cpu_relax(uint64_t* t)
+{
+	UNUSED_PARAMETER(t);
+#if defined(_M_IX86) || defined(_M_X64)
+	_mm_pause();
+#elif defined(_M_ARM64)
+	__yield();
+#endif
+}
 
 #endif
 
