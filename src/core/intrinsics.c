@@ -199,7 +199,7 @@ rt_intrin_Int_from(
 	case NOCT_VALUE_LONG:
 	{
 		/* If it is a long, trancate it. */
-		long val_l;
+		int64_t val_l;
 		if (!noct_get_long(env, &val, &val_l))
 			return false;
 		if (!noct_set_return_make_int(env, &ret, (int32_t)(uint32_t)val_l))
@@ -362,7 +362,7 @@ rt_intrin_Float_from(
 	case NOCT_VALUE_LONG:
 	{
 		/* If it is a long, convert to float. */
-		long val_l;
+		int64_t val_l;
 		if (!noct_get_long(env, &val, &val_l))
 			return false;
 		if (!noct_set_return_make_float(env, &ret, (float)val_l))
@@ -441,7 +441,7 @@ rt_intrin_Double_from(
 	case NOCT_VALUE_LONG:
 	{
 		/* If it is a long, convert to float. */
-		long val_l;
+		int64_t val_l;
 		if (!noct_get_long(env, &val, &val_l))
 			return false;
 		if (!noct_set_return_make_double(env, &ret, (double)val_l))
@@ -522,7 +522,7 @@ rt_intrin_String_from(
 	case NOCT_VALUE_LONG:
 	{
 		/* If it is a long, convert to float. */
-		long val_l;
+		int64_t val_l;
 		if (!noct_get_long(env, &val, &val_l))
 			return false;
 		if (!noct_set_return_make_double(env, &ret, (double)val_l))

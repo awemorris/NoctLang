@@ -126,6 +126,8 @@ void
 jit_commit(
         struct rt_env *env)
 {
+        UNUSED_PARAMETER(env);
+
         /* Make code executable and non-writable. */
         jit_map_executable(jit_code_region, JIT_CODE_MAX);
 
@@ -1299,7 +1301,7 @@ jit_visit_storedot_op(
                 /* sw $t0, 16($sp) */           IW(0xafa80010);
 
                 /* Arg6 [sp+20] = src */
-                /* ori $t0, $zero, src */       IW(0x24080000 | lo16(src));
+                /* ori $t0, $zero, src */       IW(0x24080000 | lo16((uint32_t)src));
                 /* sw $t0, 20($sp) */           IW(0xafa80014);
 
                 /* Call ex_storedot_helper(). */
@@ -1479,7 +1481,7 @@ jit_visit_thiscall_op(
                 /* sw $t0, 20($sp) */           IW(0xafa80014);
 
                 /* Arg7 [sp+24] = argc_count */
-                /* ori $t0, $zero, arg_count */ IW(0x24080000 | lo16(arg_count));
+                /* ori $t0, $zero, arg_count */ IW(0x24080000 | lo16((uint32_t)arg_count));
                 /* sw $t0, 24($sp) */           IW(0xafa80018);
 
                 /* Arg8 [sp+28] = arg */
@@ -1967,7 +1969,7 @@ jit_patch_branch(
 
         /* Search a code addr at lpc. */
         target_code = NULL;
-        for (i = 0; i < ctx->pc_entry_count; i++) {
+        for (i = 0; i < (int)ctx->pc_entry_count; i++) {
                 if (ctx->pc_entry[i].lpc == ctx->branch_patch[patch_index].lpc) {
                         target_code = ctx->pc_entry[i].code;
                         break;

@@ -1178,9 +1178,9 @@ noct_ex_storearray_helper(
 
 	if (arr_val->type == NOCT_VALUE_ARRAY) {
 		if (subscr_val->type == NOCT_VALUE_INT) {
-			index = (uint32_t)subscr_val->val.i;
+			index = (size_t)(uint32_t)subscr_val->val.i;
 		} else if (subscr_val->type == NOCT_VALUE_LONG) {
-			index = (uint64_t)subscr_val->val.l;
+			index = (size_t)(uint64_t)subscr_val->val.l;
 		} else {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;
@@ -1208,9 +1208,9 @@ noct_ex_storearray_helper(
 		return true;
 	} else if (arr_val->type == NOCT_VALUE_PACKED) {
 		if (subscr_val->type == NOCT_VALUE_INT) {
-			index = (uint32_t)subscr_val->val.i;
+			index = (size_t)(uint32_t)subscr_val->val.i;
 		} else if (subscr_val->type == NOCT_VALUE_LONG) {
-			index = (uint64_t)subscr_val->val.l;
+			index = (size_t)(uint64_t)subscr_val->val.l;
 		} else {
 			rt_error(env, N_TR("Subscript not an integer."));
 			return false;

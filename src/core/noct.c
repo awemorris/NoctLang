@@ -236,7 +236,7 @@ bool
 noct_make_long(
 	NoctEnv *env,
 	NoctValue *val,
-	long l)
+	int64_t l)
 {
 	UNUSED_PARAMETER(env);
 
@@ -408,7 +408,7 @@ bool
 noct_get_int(
 	NoctEnv *env,
 	NoctValue *val,
-	int *i)
+	int32_t *i)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -431,7 +431,7 @@ bool
 noct_get_long(
 	NoctEnv *env,
 	NoctValue *val,
-	long *l)
+	int64_t *l)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -457,9 +457,9 @@ noct_get_size_t(
 	size_t *s)
 {
 	if (val->type == NOCT_VALUE_INT) {
-		*s = (uint32_t)val->val.i;
+		*s = (size_t)(uint32_t)val->val.i;
 	} else if (val->type == NOCT_VALUE_LONG) {
-		*s = (uint64_t)val->val.l;
+		*s = (size_t)(uint64_t)val->val.l;
 	} else {
 		rt_error(env, N_TR("Value is not an integer."));
 	}
@@ -518,7 +518,7 @@ bool
 noct_get_string_len(
 	NoctEnv *env,
 	NoctValue *val,
-	uint32_t *len)
+	size_t *len)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -531,7 +531,7 @@ noct_get_string_len(
 	}
 
 	/* Get the size. */
-	*len = (uint32_t)val->val.str->len;
+	*len = val->val.str->len;
 
 	return true;
 }
@@ -1393,7 +1393,7 @@ noct_get_array_elem_check_int(
 	NoctValue *array,
 	uint32_t index,
 	NoctValue *val,
-	int *i)
+	int32_t *i)
 {
 	int type;
 
@@ -1426,7 +1426,7 @@ noct_get_array_elem_check_long(
 	NoctValue *array,
 	uint32_t index,
 	NoctValue *val,
-	long *l)
+	int64_t *l)
 {
 	int type;
 
@@ -1642,7 +1642,7 @@ noct_set_array_elem_make_int(
 	NoctValue *array,
 	uint32_t index,
 	NoctValue *val,
-	int i)
+	int32_t i)
 {
 	assert(env != NULL);
 	assert(array != NULL);
@@ -1666,7 +1666,7 @@ noct_set_array_elem_make_long(
 	NoctValue *array,
 	uint32_t index,
 	NoctValue *val,
-	long l)
+	int64_t l)
 {
 	assert(env != NULL);
 	assert(array != NULL);
@@ -1767,7 +1767,7 @@ noct_get_dict_elem_check_int(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	int *i)
+	int32_t *i)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -1798,7 +1798,7 @@ noct_get_dict_elem_check_long(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	long *l)
+	int64_t *l)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -2009,7 +2009,7 @@ noct_set_dict_elem_make_int(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	int i)
+	int32_t i)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -2034,7 +2034,7 @@ noct_set_dict_elem_make_long(
 	NoctValue *dict,
 	const char *key,
 	NoctValue *val,
-	long l)
+	int64_t l)
 {
 	assert(env != NULL);
 	assert(dict != NULL);
@@ -2138,7 +2138,7 @@ noct_get_arg_check_int(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val,
-	int *i)
+	int32_t *i)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -2168,7 +2168,7 @@ noct_get_arg_check_long(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val,
-	long *l)
+	int64_t *l)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -2210,9 +2210,9 @@ noct_get_arg_check_int_long(
 
 	/* Check the value type. */
 	if (val->type == NOCT_VALUE_INT) {
-		*i = (uint32_t)val->val.i;
+		*i = (size_t)(uint32_t)val->val.i;
 	} else if (val->type == NOCT_VALUE_LONG) {
-		*i = (uint64_t)val->val.l;
+		*i = (size_t)(uint64_t)val->val.l;
 	} else {
 		rt_error(env, N_TR("Argument (%d: %s) not an integer."),
 			 index,
@@ -2403,7 +2403,7 @@ bool
 noct_set_return_make_int(
 	NoctEnv *env,
 	NoctValue *val,
-	int i)
+	int32_t i)
 {
 	assert(env != NULL);
 	assert(val != NULL);
@@ -2424,7 +2424,7 @@ bool
 noct_set_return_make_long(
 	NoctEnv *env,
 	NoctValue *val,
-	long l)
+	int64_t l)
 {
 	assert(env != NULL);
 	assert(val != NULL);
