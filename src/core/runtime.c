@@ -820,7 +820,7 @@ rt_make_string(
 	size_t len;
 	uint32_t hash;
 
-	len = strlen(data) + 1;
+	len = strlen(data) + 1; /* Including NUL. */
 	hash = 0;
 	if (!rt_make_string_with_hash(env, val, data, len, hash))
 		return false;
@@ -1030,6 +1030,22 @@ rt_get_dict_size(
 	size_t *size)
 {
 	/* Delegate to the object model implementation. */
+	if (!om_get_dict_size(env, dict, size))
+		return false;
+
+	return true;
+}
+
+/*
+ * Get the allocation size of a dictionary.
+ */
+bool
+rt_get_dict_alloc_size(
+	struct rt_env *env,
+	struct rt_value *dict,
+	size_t *size)
+{
+	/* Delegate to the object model implementation. */
 	if (!om_get_dict_alloc_size(env, dict, size))
 		return false;
 
@@ -1104,7 +1120,7 @@ rt_get_dict_key_by_index(
 	if (!om_read_dict_index(env, dict, index, key, &val))
 		return false;
 
-	return false;
+	return true;
 }
 
 /*
@@ -1123,7 +1139,7 @@ rt_get_dict_value_by_index(
 	if (!om_read_dict_index(env, dict, index, &key, val))
 		return false;
 
-	return false;
+	return true;
 }
 
 /*
@@ -1153,11 +1169,16 @@ rt_get_dict_elem_cstr(
 	const char *key,
 	struct rt_value *val)
 {
+	size_t len;
+
+	/* Including NUL. */
+	len = strlen(key) + 1;
+
 	/* Delegate to the object model implementation. */
 	if (!om_read_dict_with_hash(env,
 				    dict,
 				    key,
-				    strlen(key),
+				    len,
 				    rt_string_hash(key),
 				    val))
 		return false;
@@ -1211,11 +1232,16 @@ rt_set_dict_elem_cstr(
 	const char *key,
 	struct rt_value *val)
 {
+	size_t len;
+
+	/* Including NUL. */
+	len = strlen(key) + 1;
+
 	/* Delegate to the object model implementation. */
 	if (!om_write_dict_with_hash(env,
 				     dict,
 				     key,
-				     strlen(key),
+				     len,
 				     rt_string_hash(key),
 				     val))
 		return false;
@@ -1940,7 +1966,7 @@ rt_get_global(
 	size_t len;
 	uint32_t hash;
 
-	len = strlen(name) + 1;
+	len = strlen(name) + 1; /* Including NUL. */
 	hash = rt_string_hash(name);
 
 	if (!rt_get_global_with_hash(env, name, len, hash, val))

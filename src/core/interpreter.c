@@ -13,6 +13,7 @@
 #include "runtime.h"
 #include "interpreter.h"
 #include "bytecode.h"
+#include "objectmodel.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -197,7 +198,7 @@ static INLINE bool rt_get_string(
         }
 
         *s = (const char *)&func->bytecode[*pc + 8];
-
+        
         *pc = *pc + 8 + *len;
 
         return true;
@@ -873,6 +874,23 @@ rt_visit_jmpiffalse_op(
         return true;
 }
 
+/* Visit a OP_SAFEPOINT instruction. */
+static INLINE bool
+rt_visit_safepoint_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        UNUSED_PARAMETER(func);
+        UNUSED_PARAMETER(pc);
+
+        DEBUG_TRACE(*pc, "SAFEPOINT");
+
+        om_safepoint(env);
+
+        return true;
+}
+
 /* Visit an instruction. */
 static bool
 rt_visit_op(
@@ -1057,6 +1075,12 @@ rt_visit_op(
                 /* Same as JMPIFTRUE. (JMPIFEQ is an optimization hint for JIT-compiler.) */
                 if (!rt_visit_jmpiftrue_op(env, func, pc))
                         return false;
+                break;
+        case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                if (!rt_visit_safepoint(env, func, pc))
+                        return false;
+#endif
                 break;
         default:
                 rt_error(env, "Unknown opcode %d at pc=%d.", func->bytecode[*pc], *pc);

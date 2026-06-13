@@ -132,7 +132,7 @@ om_write_array(
 	if (index >= arr->alloc_size) {
 		/* Array expansion is required. Determine the new size. */
 		new_size = arr->alloc_size * 2;
-		while (index > new_size * 2)
+		while (new_size < index)
 			new_size *= 2;
 
 		/* Try expanding. */
@@ -149,6 +149,8 @@ om_write_array(
 
 	/* Write. */
 	arr->table[index] = *val;
+	if (index >= arr->size)
+		arr->size = index + 1;
 
 	/* Write barrier for the remember set. */
 	rt_gc_array_write_barrier(env, arr, index, val);
@@ -309,7 +311,31 @@ om_make_dict(
 }
 
 /*
- * Make an empty array.
+ * Get the size of a dictionary.
+ */
+bool
+om_get_dict_size(
+	struct rt_env *env,
+	struct rt_value *val,
+	size_t *size)
+{
+	struct rt_dict *dict;
+
+	UNUSED_PARAMETER(env);
+
+	/* Track the newer chain. */
+	dict = val->val.dict;
+	while (dict->newer != NULL)
+		dict = dict->newer;
+
+	/* Get the allocated size. */
+	*size = dict->size;
+
+	return true;
+}
+
+/*
+ * Get the allocation size of a dictionary.
  */
 bool
 om_get_dict_alloc_size(
@@ -472,6 +498,7 @@ om_read_dict_index(
 	struct rt_value *val)
 {
 	struct rt_dict *dict;
+	size_t i, items;
 
 	UNUSED_PARAMETER(env);
 
@@ -481,14 +508,27 @@ om_read_dict_index(
 		dict = dict->newer;
 
 	/* Check for the size. */
-	if (index >= dict->alloc_size) {
+	if (index >= dict->size) {
 		/* Index is out-of-bound. */
 		return false;
 	}
 
-	/* Read. */
-	*val = dict->value[index];
-	*key = dict->key[index];
+	/* Search. */
+	items = 0;
+	for (i = 0 ; i < dict->alloc_size; i++) {
+		if (dict->key[i].type != NOCT_VALUE_STRING)
+			continue;
+		if (items == index) {
+			*val = dict->value[i];
+			*key = dict->key[i];
+			break;
+		}
+		items++;
+	}
+	if (i == dict->alloc_size) {
+		/* Failed. */
+		return false;
+	}
 
 	return true;
 }
@@ -514,7 +554,7 @@ om_write_dict(
 
 retry:
 	/* Track the newer chain. */
-	dict = val->val.dict;
+	dict = dict_val->val.dict;
 	while (dict->newer != NULL)
 		dict = dict->newer;
 
@@ -567,18 +607,21 @@ retry:
 		}
 	}
 	if (found_tombstone) {
-		index = first_tombstone_index;
+		i = first_tombstone_index;
 		is_insertion = true;
 	}
 
 	/* Execute an in-place write */
 	dict->value[i] = *val;
-	if (is_insertion)
+	if (is_insertion) {
 		dict->key[i] = *key;
+		dict->size++;
+	}
 
 	/* Write barrier for the remember set. */
-	rt_gc_dict_write_barrier(env, dict, key);
 	rt_gc_dict_write_barrier(env, dict, val);
+	if (is_insertion)
+		rt_gc_dict_write_barrier(env, dict, key);
 
 	/* Succeeded. */
 	return true;
@@ -818,6 +861,7 @@ om_merge_dict(
 	struct rt_dict *d, *s1, *s2;
 	size_t src1_size, src2_size, dst_size;
 	size_t i, j, k, index;
+	bool is_insert;
 
 	/* Track the newer chains. */
 	s1 = src1->val.dict;
@@ -863,31 +907,36 @@ om_merge_dict(
 		else
 			sn = s2;
 			
-		for (j = 0; j < s1->alloc_size; j++) {
+		for (j = 0; j < sn->alloc_size; j++) {
 			/* Skip an empty or removed entry. */
 			if (sn->key[j].type != NOCT_VALUE_STRING)
 				continue;
 
 			/* In-place write. */
+			is_insert = true;
 			index = sn->key[j].val.str->hash & (uint32_t)(d->alloc_size - 1);
 			for (k = index;
 			     k != ((index - 1 + d->alloc_size) & (d->alloc_size - 1));
-			     k = (j + 1) & ((uint32_t)d->alloc_size - 1)) {
+			     k = (k + 1) & ((uint32_t)d->alloc_size - 1)) {
 				/* Skip an empty slot. */
-				if (d->key[i].type != NOCT_VALUE_STRING)
+				if (d->key[k].type != NOCT_VALUE_STRING)
 					break;
 
 				/* Found the same key. */
-				if (d->key[i].val.str->len == sn->key[j].val.str->len &&
-				    d->key[i].val.str->hash == sn->key[j].val.str->hash &&
-				    strcmp(d->key[i].val.str->data, sn->key[j].val.str->data) == 0)
+				if (d->key[k].val.str->len == sn->key[j].val.str->len &&
+				    d->key[k].val.str->hash == sn->key[j].val.str->hash &&
+				    strcmp(d->key[k].val.str->data, sn->key[j].val.str->data) == 0) {
+					is_insert = false;
 					break;
+				}
 			}
 
 			/* Copy an item. */
-			d->key[k] = sn->key[j];
 			d->value[k] = sn->value[j];
-			d->size++;
+			if (is_insert) {
+				d->key[k] = sn->key[j];
+				d->size++;
+			}
 
 			/* Write barrier. */
 			rt_gc_dict_write_barrier(env, d, &d->key[k]);

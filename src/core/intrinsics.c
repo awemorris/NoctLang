@@ -29,13 +29,15 @@ static bool rt_intrin_String_charCount(NoctEnv *env);
 static bool rt_intrin_String_charAt(NoctEnv *env);
 static bool rt_intrin_String_substring(NoctEnv *env);
 static bool rt_intrin_String_indexOf(NoctEnv *env);
-static bool rt_intrin_Array_new(NoctEnv *env);
+static bool rt_intrin_Array_make(NoctEnv *env);
+static bool rt_intrin_Array_size(NoctEnv *env);
 static bool rt_intrin_Array_push(NoctEnv *env);
 static bool rt_intrin_Array_pop(NoctEnv *env);
 static bool rt_intrin_Array_resize(NoctEnv *env);
 static bool rt_intrin_Array_copy(NoctEnv *env);
-static bool rt_intrin_Dict_new(NoctEnv *env);
+static bool rt_intrin_Dict_make(NoctEnv *env);
 static bool rt_intrin_Dict_merge(NoctEnv *env);
+static bool rt_intrin_Dict_size(NoctEnv *env);
 static bool rt_intrin_Dict_hasKey(NoctEnv *env);
 static bool rt_intrin_Dict_remove(NoctEnv *env);
 static bool rt_intrin_Dict_copy(NoctEnv *env);
@@ -77,13 +79,15 @@ struct intrin_item {
 	{"String",	"charAt",	"String.charAt",	rt_intrin_String_charAt,	2, {"s", "index"}},
 	{"String",	"substring",	"String.substring",	rt_intrin_String_substring,	3, {"s", "start", "len"}},
 	{"String",	"indexOf",	"String.indexOf",	rt_intrin_String_indexOf,	2, {"s", "search"}},
-	{"Array",	"new",		"Array.new",		rt_intrin_Array_new,		1, {"size"}},
+	{"Array",	"make",		"Array.make",		rt_intrin_Array_make,		1, {"size"}},
+	{"Array",	"size",		"Array.size",		rt_intrin_Array_size,		1, {"arr"}},
 	{"Array",	"push",		"Array.push",		rt_intrin_Array_push,		2, {"arr", "val"}},
 	{"Array",	"pop",		"Array.pop",		rt_intrin_Array_pop,		1, {"arr"}},
 	{"Array",	"resize",	"Array.resize",		rt_intrin_Array_resize,		2, {"arr", "size"}},
 	{"Array",	"copy",		"Array.copy",		rt_intrin_Array_copy,		1, {"arr"}},
-	{"Dict",	"new",		"Dict.new",		rt_intrin_Dict_new,		1, {"size"}},
+	{"Dict",	"make",		"Dict.make",		rt_intrin_Dict_make,		0, {NULL}},
 	{"Dict",	"merge",	"Dict.merge",		rt_intrin_Dict_merge,		2, {"src1", "src2"}},
+	{"Dict",	"size",		"Dict.size",		rt_intrin_Dict_size,		1, {"dict"}},
 	{"Dict",	"hasKey",	"Dict.hasKey",		rt_intrin_Dict_hasKey,		2, {"dict", "key"}},
 	{"Dict",	"remove",	"Dict.remove",		rt_intrin_Dict_remove,		2, {"dict", "key"}},
 	{"Dict",	"copy",		"Dict.copy",		rt_intrin_Dict_copy,		1, {"dict"}},
@@ -139,7 +143,8 @@ rt_register_intrinsics(
 			continue;
 
 		/* Load the package. */
-		if (strcmp(intrin_items[i].package_name, last_pkg_name) != 0) {
+		if (last_pkg_name == NULL ||
+		    strcmp(intrin_items[i].package_name, last_pkg_name) != 0) {
 			last_pkg_name = intrin_items[i].package_name;
 			if (!rt_check_global(env, last_pkg_name)) {
 				if (!rt_make_empty_dict(env, &pkg))
@@ -662,7 +667,7 @@ rt_intrin_String_substring(
 {
 	NoctValue str, start, len, ret;
 	const char *str_s;
-	int start_i, len_i, i, ofs, copy_start, copy_mblen;
+	size_t start_i, len_i, i, ofs, copy_start, copy_mblen;
 	const char *s;
 	char *tmp;
 
@@ -673,22 +678,18 @@ rt_intrin_String_substring(
 		return false;
 
 	/* Get the argument "start". */
-	if (!noct_get_arg_check_int(env, 1, &start, &start_i))
+	if (!noct_get_arg_check_int_long(env, 1, &start, &start_i))
 		return false;
 
 	/* Get the argument "len". */
-	if (!noct_get_arg_check_int(env, 2, &len, &len_i))
+	if (!noct_get_arg_check_int_long(env, 2, &len, &len_i))
 		return false;
-
-	/* Correct the value of start if it is negative. */
-	if (start_i < 0)
-		start_i = 0;
 
 	/* Search the position (start_i) and (start_i + len). */
 	s = str_s;
 	i = 0;
 	ofs = 0;
-	copy_start = -1;
+	copy_start = (size_t)-1;
 	copy_mblen = 0;
 	while (*s != '\0') {
 		uint32_t codepoint;
@@ -703,11 +704,11 @@ rt_intrin_String_substring(
 			copy_start = ofs;
 		if (i == start_i + len_i)
 			break;
-		if (copy_start != -1)
-			copy_mblen += mblen;
+		if (copy_start != (size_t)-1)
+			copy_mblen += (size_t)mblen;
 
 		s += mblen;
-		ofs += mblen;
+		ofs += (size_t)mblen;
 		i++;
 	}
 
@@ -882,10 +883,10 @@ static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 }
 
 /*
- * Array.new(size)
+ * Array.make(size)
  */
 static bool
-rt_intrin_Array_new(
+rt_intrin_Array_make(
 	NoctEnv *env)
 {
 	struct rt_value arr, size;
@@ -910,6 +911,35 @@ rt_intrin_Array_new(
 		return false;
 
 	noct_unpin_local(env, 2, &arr, &size);
+
+	return true;
+}
+
+/*
+ * Array.size(arr)
+ */
+static bool
+rt_intrin_Array_size(
+	NoctEnv *env)
+{
+	struct rt_value arr, ret;
+	size_t size;
+
+	noct_pin_local(env, 2, &arr, &ret);
+
+	/* Retrieve the "arr" argument from the first parameter (index 0). */
+	if (!noct_get_arg_check_array(env, 0, &arr))
+		return false;
+
+	/* Get the current size of the array. */
+	if (!noct_get_array_size(env, &arr, &size))
+		return false;
+
+	/* Set the return value. */
+	if (!noct_set_return_make_int_long(env, &ret, size))
+		return false;
+
+	noct_unpin_local(env, 2, &arr, &ret);
 
 	return true;
 }
@@ -1055,10 +1085,10 @@ rt_intrin_Array_copy(
 }
 
 /*
- * Dict.new()
+ * Dict.make()
  */
 static bool
-rt_intrin_Dict_new(
+rt_intrin_Dict_make(
 	NoctEnv *env)
 {
 	struct rt_value ret;
@@ -1106,6 +1136,35 @@ rt_intrin_Dict_merge(
 		return false;
 
 	noct_unpin_local(env, 3, &src1, &src2, &ret);
+
+	return true;
+}
+
+/*
+ * Dict.size(dict)
+ */
+static bool
+rt_intrin_Dict_size(
+	struct rt_env *env)
+{
+	NoctValue dict, ret;
+	size_t size;
+
+	noct_pin_local(env, 2, &dict, &ret);
+
+	/* Retrieve the argument "dict" at the index 0. */
+	if (!noct_get_arg_check_dict(env, 0, &dict))
+		return false;
+
+	/* Get the size. */
+	if (!noct_get_dict_size(env, &dict, &size))
+		return false;
+
+	/* Set the return value. */
+	if (!noct_set_return_make_int_long(env, &ret, size))
+		return false;
+
+	noct_unpin_local(env, 2, &dict, &ret);
 
 	return true;
 }

@@ -533,6 +533,13 @@ rt_get_dict_size(
 	struct rt_value *dict,
 	size_t *size);
 
+/* Get the allocation size of a dictionary. */
+bool
+rt_get_dict_alloc_size(
+	struct rt_env *env,
+	struct rt_value *dict,
+	size_t *size);
+
 /* Checks if a key exists in a dictionary. */
 bool
 rt_check_dict_key(

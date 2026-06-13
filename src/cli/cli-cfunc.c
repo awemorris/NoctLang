@@ -34,7 +34,6 @@ struct napi_item {
  */
 bool register_cli_cfunc(NoctEnv *env)
 {
-	NoctValue dict;
 	int i;
 
 	for (i = 0; i < (int)(sizeof(napi_items) / sizeof(struct napi_item)); i++) {
@@ -46,12 +45,6 @@ bool register_cli_cfunc(NoctEnv *env)
 					 NULL))
 			return false;
 	}
-
-	/* Add a global variable "App". */
-	if (!noct_make_empty_dict(env, &dict))
-		return false;
-	if (!noct_set_global(env, "App", &dict))
-		return false;
 
 	return true;
 }

@@ -92,7 +92,16 @@ om_make_dict(
 	struct rt_value *val);
 
 /*
- * Make an empty array.
+ * Get the size of a dictionary.
+ */
+bool
+om_get_dict_size(
+	struct rt_env *env,
+	struct rt_value *val,
+	size_t *size);
+
+/*
+ * Get the allocation size of a dictionary.
  */
 bool
 om_get_dict_alloc_size(
