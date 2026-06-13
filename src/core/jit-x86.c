@@ -1479,6 +1479,42 @@ jit_visit_jmpifeq_op(
         return true;
 }
 
+/* Visit a OP_SAFEPOINT instruction. */
+static INLINE bool
+jit_visit_safepoint_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int dict;
+        const char *field;
+        uint32_t len, hash;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(dict);
+        CONSUME_STRING(field, len, hash);
+
+        /* if (!rt_safepoint_helper(env)) return false; */
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
+                /* ebp-12: exception_handler */
+
+                /* movl -8(%ebp), %eax */            IB(0x8b); IB(0x45); IB(0xf8);
+                /* pushl %eax */                     IB(0x50);
+
+                /* movl $ex_safepoint_helper, %eax */IB(0xb8); ID((uint32_t)ex_safepoint_helper);
+                /* call *%eax */                     IB(0xff); IB(0xd0);
+                /* addl $4, %esp */                  IB(0x83); IB(0xc4); IB(4);
+
+                /* cmpl $0, %eax */                  IB(0x83); IB(0xf8); IB(0x00);
+                /* jne next */                       IB(0x75); IB(0x03);
+                /* jmp -12(%ebp) */                  IB(0xff); IB(0x65); IB(0xf4);
+        /* next:*/
+        }
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -1713,6 +1749,12 @@ jit_visit_bytecode(
                 case OP_JMPIFEQ:
                         if (!jit_visit_jmpiftrue_op(ctx))
                                 return false;
+                        break;
+                case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                        if (!jit_visit_safepoint_op(ctx))
+                                return false;
+#endif
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

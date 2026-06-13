@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <limits.h>
 #include <assert.h>
 
 #define NEVER_COME_HERE		0
@@ -684,6 +685,8 @@ rt_intrin_String_substring(
 	/* Get the argument "len". */
 	if (!noct_get_arg_check_int_long(env, 2, &len, &len_i))
 		return false;
+	if (len_i == (size_t)-1)
+		len_i = LONG_MAX;
 
 	/* Search the position (start_i) and (start_i + len). */
 	s = str_s;

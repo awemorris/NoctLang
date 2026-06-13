@@ -2216,6 +2216,18 @@ rt_unpin_local(
 }
 
 /*
+ * Make a safepoint.
+ */
+bool
+rt_safepoint(
+	struct rt_env *env)
+{
+	om_safepoint(env);
+
+	return true;
+}
+
+/*
  * Error Handling
  */
 

@@ -52,6 +52,7 @@
 #define ex_storedot_helper noct_ex_storedot_helper
 #define ex_call_helper noct_ex_call_helper
 #define ex_thiscall_helper noct_ex_thiscall_helper
+#define ex_safepoint_helper noct_ex_safepoint_helper
 
 /* Generate a JIT-compiled code for a function. */
 bool

@@ -791,7 +791,7 @@ jit_visit_dconst_op(
                 STP_PUSH        (REG_X0, REG_X1);
                 STP_PUSH        (REG_X30, REG_XZR);
 
-                /* Arg1 x0: rt */
+                /* Arg1 x0: env */
 
                 /* Arg2 x1: &env->frame->tmpvar[dst] */
                 MOVZ            (REG_X2, IMM16(dst), LSL_0);
@@ -1334,7 +1334,7 @@ jit_visit_loadsymbol_op(
                 STP_PUSH        (REG_X0, REG_X1);
                 STP_PUSH        (REG_X30, REG_XZR);
 
-                /* Arg1 x0: rt */
+                /* Arg1 x0: env */
 
                 /* Arg2 x1: dst */
                 MOVZ            (REG_X1, IMM16(dst), LSL_0);
@@ -1597,7 +1597,7 @@ jit_visit_call_op(
                 STP_PUSH        (REG_X0, REG_X1);
                 STP_PUSH        (REG_X30, REG_XZR);
 
-                /* Arg1 x0: rt */
+                /* Arg1 x0: env */
 
                 /* Arg2 x1: dst */
                 MOVZ            (REG_X1, IMM16(dst), LSL_0);
@@ -1677,7 +1677,7 @@ jit_visit_thiscall_op(
                 STP_PUSH        (REG_X0, REG_X1);
                 STP_PUSH        (REG_X30, REG_XZR);
 
-                /* Arg1 x0: rt */
+                /* Arg1 x0: env */
 
                 /* Arg2 x1: dst */
                 MOVZ            (REG_X1, IMM16(dst), LSL_0);
@@ -1866,6 +1866,37 @@ jit_visit_jmpifeq_op(
                 BEQ             (IMM19(0));
         }
 
+        return true;
+}
+
+/* Visit a OP_SAFEPOINT instruction. */
+static INLINE bool
+jit_visit_safepoint_op(
+        struct jit_context *ctx)
+{
+        /* if (!ex_safepoint_helper(env)) return false; */
+        ASM {
+                /* x0 = env */
+
+                STP_PUSH        (REG_X0, REG_X1);
+                STP_PUSH        (REG_X30, REG_XZR);
+
+                /* Arg1 x0: env */
+
+                /* Call ex_call_helper(). */
+                MOVZ            (REG_X5, IMM16(((uint64_t)ex_safepoint_helper) & 0xffff), LSL_0);
+                MOVK            (REG_X5, IMM16((((uint64_t)ex_safepoint_helper) >> 16) & 0xffff), LSL_16);
+                MOVK            (REG_X5, IMM16((((uint64_t)ex_safepoint_helper) >> 32) & 0xffff), LSL_32);
+                MOVK            (REG_X5, IMM16((((uint64_t)ex_safepoint_helper) >> 48) & 0xffff), LSL_48);
+                BLR             (REG_X5);
+
+                /* If failed: */
+                CMP_IMM         (REG_X0, IMM12(0));
+                LDP_POP         (REG_X30, REG_X1);
+                LDP_POP         (REG_X0, REG_X1);
+                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+        }
+        
         return true;
 }
 
@@ -2111,6 +2142,12 @@ jit_visit_bytecode(
                 case OP_JMPIFEQ:
                         if (!jit_visit_jmpifeq_op(ctx))
                                 return false;
+                        break;
+                case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                        if (!jit_visit_safepoint_op(ctx))
+                                return false;
+#endif
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

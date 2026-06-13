@@ -1711,6 +1711,43 @@ jit_visit_jmpifeq_op(
         return true;
 }
 
+/* Visit a OP_SAFEPOINT instruction. */
+static INLINE bool
+jit_visit_safepoint_op(
+        struct jit_context *ctx)
+{
+        uint64_t f;
+
+        f = (uint64_t)ex_loaddot_helper;
+
+        /* if (!ex_safepoint_helper(env)) return false; */
+        ASM {
+                /* R14: env */
+                /* R15: &env->frame->tmpvar[0] */
+                /* R31: saved LR */
+
+                /* Arg1 R3 = env */
+                /* mr r3, r14 */                IW(0x7873c37d);
+
+                /* Call ex_safepoint_helper(). */
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
+                /* sldi r12, r12, 32 */         IW(0xc6078c79);
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+                /* mflr r31 */                  IW(0xa602e87f);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* mtlr r31 */                  IW(0xa603e87f);
+
+                /* If failed: */
+                /* cmpwi r3, 0 */               IW(0x0000032c);
+                /* beq exception_handler */     IW(0x00008241 | EXC());
+        }
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -1934,6 +1971,12 @@ jit_visit_bytecode(
                 case OP_JMPIFEQ:
                         if (!jit_visit_jmpifeq_op(ctx))
                                 return false;
+                        break;
+                case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                        if (!jit_visit_safepoint_op(ctx))
+                                return false;
+#endif
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

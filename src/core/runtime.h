@@ -786,6 +786,11 @@ rt_unpin_local(
 	struct rt_env *env,
 	struct rt_value *val);
 
+/* Make a safepoint. */
+bool
+rt_safepoint(
+	struct rt_env *env);
+
 /*
  * Error Handling
  */

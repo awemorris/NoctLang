@@ -1642,6 +1642,39 @@ jit_visit_jmpifeq_op(
         return true;
 }
 
+/* Visit a OP_SAFEPOINT instruction. */
+static inline bool
+jit_visit_safepoint_op(
+        struct jit_context *ctx)
+{
+        uint32_t f;
+
+        f = (uint32_t)ex_safepoint_helper;
+
+        /* if (!ex_safepoint_helper(env)) return false; */
+        ASM {
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* Arg1 $a0 = env */
+                /* move $a0, $s0 */             IW(0x02002025);
+
+                /* Call ex_call_helper(). */
+                /* lui  $t9, f@h */             IW(0x3c190000 | hi16(f));
+                /* ori  $t9, $t9, f@l */        IW(0x37390000 | lo16(f));
+                /* move $s2, $ra */             IW(0x03e09025);
+                /* jalr $t9 */                  IW(0x0320f809);
+                /* nop */                       IW(0x00000000);
+                /* move $ra, $s2 */             IW(0x0240f825);
+
+                /* If failed: */
+                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
+                /* nop */                       IW(0x00000000);
+        }
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -1878,6 +1911,12 @@ jit_visit_bytecode(
                 case OP_JMPIFEQ:
                         if (!jit_visit_jmpifeq_op(ctx))
                                 return false;
+                        break;
+                case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                        if (!jit_visit_safepoint_op(ctx))
+                                return false;
+#endif
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

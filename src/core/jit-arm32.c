@@ -1893,6 +1893,42 @@ jit_visit_jmpifeq_op(
         return true;
 }
 
+/* Visit a OP_SAFEPOINT instruction. */
+static INLINE bool
+jit_visit_safepoint_op(
+        struct jit_context *ctx)
+{
+        /* if (!ex_safepoint_helper(env)) return false; */
+        ASM {
+                /* r11 = env */
+                /* r12 = &env->frame->tmpvar[0] */
+
+                PUSH            (REG_R4);
+                PUSH            (REG_R11);
+                PUSH            (REG_R12);
+                PUSH            (REG_LR);
+
+                /* Arg1 r0: env */
+                MOV             (REG_R0, REG_R11);
+
+                /* Call ex_safepoint_helper(). */
+                MOVW            (REG_R4, (uint32_t)ex_safepoint_helper & 0xffff);
+                MOVT            (REG_R4, ((uint32_t)ex_safepoint_helper >> 16) & 0xffff);
+                BLX             (REG_R4);
+                ADD_IMM         (REG_SP, REG_SP, IMM16(16));
+
+                /* If failed: */
+                CMP_IMM         (REG_R0, 0);
+                POP             (REG_LR);
+                POP             (REG_R12);
+                POP             (REG_R11);
+                POP             (REG_R4);
+                BEQ             ((uint32_t)ctx->exception_code - (uint32_t)ctx->code);
+        }
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2141,6 +2177,12 @@ jit_visit_bytecode(
                 case OP_JMPIFEQ:
                         if (!jit_visit_jmpifeq_op(ctx))
                                 return false;
+                        break;
+                case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                        if (!jit_visit_safepoint_op(ctx))
+                                return false;
+#endif
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

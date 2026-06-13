@@ -1571,3 +1571,19 @@ noct_ex_thiscall_helper(
 
 	return true;
 }
+
+/*
+ * SAFEPOINT helper.
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_safepoint_helper(
+	NoctEnv *env)
+{
+	/* Do call. */
+	if (!rt_safepoint(env))
+		return false;
+
+	return true;
+}

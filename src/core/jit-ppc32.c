@@ -238,7 +238,7 @@ static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
                 /* R15: &env->frame->tmpvar[0] */                                               \
                 /* R31: saved LR */                                                             \
                                                                                                 \
-                /* Arg1 R3: rt */                                                               \
+                /* Arg1 R3: env */                                                               \
                 /* mr r3, r14 */                IW(0x7873c37d);                                 \
                                                                                                 \
                 /* Arg2 R4: dst */                                                              \
@@ -269,7 +269,7 @@ static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
                 /* R15: &env->frame->tmpvar[0] */                                               \
                 /* R31: saved LR */                                                             \
                                                                                                 \
-                /* Arg1 R3: rt */                                                               \
+                /* Arg1 R3: env */                                                               \
                 /* mr r3, r14 */                IW(0x7873c37d);                                 \
                                                                                                 \
                 /* Arg2 R4: dst */                                                              \
@@ -502,7 +502,7 @@ jit_visit_aconst_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3: rt */
+                /* Arg1 R3: env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2 R4 = dst_addr = &env->frame->tmpvar[dst] */
@@ -544,7 +544,7 @@ jit_visit_dconst_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3: rt */
+                /* Arg1 R3: env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2 R4 = dst_addr = &env->frame->tmpvar[dst] */
@@ -1089,7 +1089,7 @@ jit_visit_loadsymbol_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3 = rt */
+                /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2 R4 = dst */
@@ -1146,7 +1146,7 @@ jit_visit_storesymbol_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3 = rt */
+                /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2: R4 = dst */
@@ -1164,7 +1164,7 @@ jit_visit_storesymbol_op(
                 /* Arg5 R7 = src */
                 /* li r7, src */                IW(0x0000e038 | lo16(src));
 
-                /* Call rt_storesymbol_helper(). */
+                /* Call ex_storesymbol_helper(). */
                 /* lis  r12, f[31:16] */        IW(0x0000803d | hi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lo16(f));
                 /* mflr r31 */                  IW(0xa602e87f);
@@ -1204,7 +1204,7 @@ jit_visit_loaddot_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3 = rt */
+                /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2 R4 = dst */
@@ -1225,7 +1225,7 @@ jit_visit_loaddot_op(
                 /* lis  r8, hash[31:16] */      IW(0x0000003d | hi16(hash));
                 /* ori  r8, r8, hash[15:0] */   IW(0x00000861 | lo16(hash));
 
-                /* Call rt_loaddot_helper(). */
+                /* Call ex_loaddot_helper(). */
                 /* lis  r12, f[31:16] */        IW(0x0000803d | hi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lo16(f));
                 /* mflr r31 */                  IW(0xa602e87f);
@@ -1265,7 +1265,7 @@ jit_visit_storedot_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3 = rt */
+                /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2 R4 = dict */
@@ -1286,7 +1286,7 @@ jit_visit_storedot_op(
                 /* Arg6 R8: src */
                 /* li r8, src */                IW(0x00000039 | tvar16(src));
 
-                /* Call rt_storedot_helper(). */
+                /* Call ex_storedot_helper(). */
                 /* lis  r12, f[31:16] */        IW(0x0000803d | hi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lo16(f));
                 /* mflr r31 */                  IW(0xa602e87f);
@@ -1349,7 +1349,7 @@ jit_visit_call_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3 = rt */
+                /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2 R4 = dst */
@@ -1365,7 +1365,7 @@ jit_visit_call_op(
                 /* lis  r7, arg[31:16] */       IW(0x0000e03c | hi16(arg_addr));
                 /* ori  r7, r7, arg[15:0] */    IW(0x0000e760 | lo16(arg_addr));
 
-                /* Call rt_call_helper(). */
+                /* Call ex_call_helper(). */
                 /* lis  r12, f[31:16] */        IW(0x0000803d | hi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lo16(f));
                 /* mflr r31 */                  IW(0xa602e87f);
@@ -1431,7 +1431,7 @@ jit_visit_thiscall_op(
                 /* R15: &rhenv->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-                /* Arg1 R3 = rt */
+                /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
                 /* Arg2 R4 = dst */
@@ -1459,7 +1459,7 @@ jit_visit_thiscall_op(
                 /* lis  r10, arg[31:16] */      IW(0x0000403d | hi16(arg_addr));
                 /* ori  r10, r10, arg[15:0] */  IW(0x00004a61 | lo16(arg_addr));
 
-                /* Call rt_thiscall_helper(). */
+                /* Call ex_thiscall_helper(). */
                 /* lis  r12, f[31:16] */        IW(0x0000803d | hi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lo16(f));
                 /* mflr r31 */                  IW(0xa602e87f);
@@ -1616,6 +1616,40 @@ jit_visit_jmpifeq_op(
         ASM {
                 /* Patched later. */
                 /* beq 0 */     IW(0x00008241);
+        }
+
+        return true;
+}
+
+/* Visit a OP_SAFEPOINT instruction. */
+static INLINE bool
+jit_visit_safepoint_op(
+        struct jit_context *ctx)
+{
+        uint32_t f;
+
+        f = (uint32_t)ex_loaddot_helper;
+
+        /* if (!ex_safepoint_helper(env)) return false; */
+        ASM {
+                /* R14: env */
+                /* R15: &env->frame->tmpvar[0] */
+                /* R31: saved LR */
+
+                /* Arg1 R3 = env */
+                /* mr r3, r14 */                IW(0x7873c37d);
+
+                /* Call ex_safepoint_helper(). */
+                /* lis  r12, f[31:16] */        IW(0x0000803d | hi16(f));
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lo16(f));
+                /* mflr r31 */                  IW(0xa602e87f);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* mtlr r31 */                  IW(0xa603e87f);
+
+                /* If failed: */
+                /* cmpwi r3, 0 */               IW(0x0000032c);
+                /* beq exception_handler */     IW(0x00008241 | (uint32_t)((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) & 0xff) << 24) | (uint32_t)(((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) >> 8) & 0xff) << 16));
         }
 
         return true;
@@ -1844,6 +1878,12 @@ jit_visit_bytecode(
                 case OP_JMPIFEQ:
                         if (!jit_visit_jmpifeq_op(ctx))
                                 return false;
+                        break;
+                case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                        if (!jit_visit_safepoint_op(ctx))
+                                return false;
+#endif
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

@@ -165,13 +165,13 @@ expand_array(
 	struct rt_env *env,
 	struct rt_value *arr_val,
 	struct rt_array *arr,
-	size_t size)
+	size_t new_alloc_size)
 {
 	struct rt_array *new_arr;
-	size_t old_size, i;
+	size_t copy_size, i;
 
 	/* Allocate the new array. */
-	new_arr = rt_gc_alloc_array(env, size);
+	new_arr = rt_gc_alloc_array(env, new_alloc_size);
 	if (new_arr == NULL) {
 		/*
 		 * Error: out-of-memory.
@@ -185,13 +185,14 @@ expand_array(
 		arr = arr->newer;
 
 	/* Do copy. */
-	old_size = arr->size;
-	new_arr->size = size;
-	if (old_size >= size)
-		old_size = size;
-	for (i = 0; i < old_size; i++) {
+	if (new_alloc_size < arr->size)
+		copy_size = new_alloc_size;
+	else
+		copy_size = arr->size;
+	for (i = 0; i < copy_size; i++) {
 		/* Copy an entry. */
 		new_arr->table[i] = arr->table[i];
+		new_arr->size++;
 
 		/* Write barrier for the remember set. */
 		rt_gc_array_write_barrier(env, new_arr, i, &new_arr->table[i]);
@@ -224,6 +225,13 @@ om_resize_array(
 		/* Out-of-memory error. */
 		return false;
 	}
+
+	/* Track the newer chain. */
+	arr = arr_val->val.arr;
+	while (arr->newer != NULL)
+		arr = arr->newer;
+
+	arr->size = req_size;
 
 	/* Succeeded to expand. */
 	return true;

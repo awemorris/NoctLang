@@ -1667,6 +1667,50 @@ jit_visit_jmpifeq_op(
         return true;
 }
 
+/* Visit a OP_SAFEPOINT instruction. */
+static INLINE bool
+jit_visit_safepoint_op(
+        struct jit_context *ctx)
+{
+        if (IS_MSABI) {
+                /* if (!rt_safepoint_helper(env)) return false; */
+                ASM {
+                        /* r13: exception_handler */
+                        /* r14: env */
+                        /* r14: &env->frame->tmpvar[0] */
+
+                        /* subq %rsp, $32 */                      IB(0x48); IB(0x83); IB(0xec); IB(0x20);
+                        /* (1st) movq %r14 -> %rcx */             IB(0x4c); IB(0x89); IB(0xf1);
+                        /* movabs rt_safepoint_helper -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)ex_safepoint_helper);
+                        /* call *%rax */                          IB(0xff); IB(0xd0);
+                        /* addq %rsp, $32 */                      IB(0x48); IB(0x83); IB(0xc4); IB(0x20);
+
+                        /* testl %eax, %eax */                    IB(0x83); IB(0xf8); IB(0x00);
+                        /* jne 8 <next> */                        IB(0x75); IB(0x03);
+                        /* jmp *%r13 */                           IB(0x41); IB(0xff); IB(0xe5);
+                /* next: */
+                }
+        } else {
+                /* if (!rt_safepoint_helper(env)) return false; */
+                ASM {
+                        /* r13: exception_handler */
+                        /* r14: env */
+                        /* r14: &env->frame->tmpvar[0] */
+
+                        /* (1st) movq %r14, %rdi */               IB(0x4c); IB(0x89); IB(0xf7);
+                        /* movabs rt_safepoint_helper -> %rax */  IB(0x48); IB(0xb8); IQ((uint64_t)ex_safepoint_helper);
+                        /* call *%rax */                          IB(0xff); IB(0xd0);
+
+                        /* testl %eax, %eax */                    IB(0x83); IB(0xf8); IB(0x00);
+                        /* jne 8 <next> */                        IB(0x75); IB(0x03);
+                        /* jmp *%r13 */                           IB(0x41); IB(0xff); IB(0xe5);
+                /* next:*/
+                }
+        }
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -1955,6 +1999,12 @@ jit_visit_bytecode(
                 case OP_JMPIFEQ:
                         if (!jit_visit_jmpifeq_op(ctx))
                                 return false;
+                        break;
+                case OP_SAFEPOINT:
+#if defined(NOCT_USE_MULTITHREAD)
+                        if (!jit_visit_safepoint_op(ctx))
+                                return false;
+#endif
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);
