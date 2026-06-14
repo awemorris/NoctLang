@@ -86,13 +86,13 @@ endif()
 # FLEX
 #
 
-#find_package(FLEX REQUIRED)
-#
-#FLEX_TARGET(Lexer
-#  ${CMAKE_CURRENT_SOURCE_DIR}/src/core/lexer.l
-#  ${CMAKE_CURRENT_BINARY_DIR}/lexer.yy.c
-#  COMPILE_FLAGS "--prefix=ast_yy"
-#)
+find_package(FLEX REQUIRED)
+
+FLEX_TARGET(Lexer
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/core/lexer.l
+  ${CMAKE_CURRENT_BINARY_DIR}/lexer.yy.c
+  COMPILE_FLAGS "--prefix=ast_yy"
+)
 
 # ---
 
@@ -100,14 +100,14 @@ endif()
 # BISON
 #
 
-#find_package(BISON REQUIRED)
-#
-#BISON_TARGET(Parser
-#  ${CMAKE_CURRENT_SOURCE_DIR}/src/core/parser.y
-#  ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.c
-#  DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.h
-#  COMPILE_FLAGS "-p ast_yy -Wcounterexamples"
-#)
+find_package(BISON REQUIRED)
+
+BISON_TARGET(Parser
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/core/parser.y
+  ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.c
+  DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.h
+  COMPILE_FLAGS "-p ast_yy -Wcounterexamples"
+)
 
 # ---
 

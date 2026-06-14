@@ -84,7 +84,9 @@ static bool serialize_printer(
 {
 	int type;
 	int ival;
+	int64_t lval;
 	float fval;
+	double lfval;
 	const char *sval;
 	size_t items, i;
 	char digits[1024];
@@ -99,10 +101,22 @@ static bool serialize_printer(
 		snprintf(digits, sizeof(digits), "%d", ival);
 		strncat(buf, digits, size);
 		break;
+	case NOCT_VALUE_LONG:
+		if (!noct_get_long(env, value, &lval))
+			return false;
+		snprintf(digits, sizeof(digits), "%lld", lval);
+		strncat(buf, digits, size);
+		break;
 	case NOCT_VALUE_FLOAT:
 		if (!noct_get_float(env, value, &fval))
 			return false;
-		snprintf(digits, sizeof(digits), "%f", fval);
+		snprintf(digits, sizeof(digits), "%.7g", fval);
+		strncat(buf, digits, size);
+		break;
+	case NOCT_VALUE_DOUBLE:
+		if (!noct_get_double(env, value, &lfval))
+			return false;
+		snprintf(digits, sizeof(digits), "%.15g", lfval);
 		strncat(buf, digits, size);
 		break;
 	case NOCT_VALUE_STRING:

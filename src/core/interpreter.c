@@ -141,6 +141,32 @@ static INLINE bool rt_get_u32(
         return true;
 }
 
+#define GET_U64(v) if (!rt_get_u64(env, func, pc, v)) return false
+static INLINE bool rt_get_u64(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc,
+        uint64_t *val)
+{
+        if (*pc + 8 > func->bytecode_size) {
+                rt_error(env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        *val = ((uint64_t)func->bytecode[*pc + 0] << 56) |
+               ((uint64_t)func->bytecode[*pc + 1] << 48) |
+               ((uint64_t)func->bytecode[*pc + 2] << 40) |
+               ((uint64_t)func->bytecode[*pc + 3] << 32) |
+               ((uint64_t)func->bytecode[*pc + 4] << 24) |
+               ((uint64_t)func->bytecode[*pc + 5] << 16) |
+               ((uint64_t)func->bytecode[*pc + 6] << 8) |
+                (uint64_t)func->bytecode[*pc + 7];
+
+        *pc = *pc + 8;
+
+        return true;
+}
+
 #define GET_ADDR(v) if (!rt_get_addr(env, func, pc, v)) return false
 static INLINE bool rt_get_addr(
         struct rt_env *env,
@@ -262,6 +288,27 @@ rt_visit_iconst_op(
         return true;
 }
 
+/* Visit a OP_LICONST instruction. */
+static INLINE bool
+rt_visit_liconst_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst;
+        uint64_t val;
+
+        DEBUG_TRACE(*pc, "ICONST");
+
+        GET_TMPVAR(&dst);
+        GET_U64(&val);
+
+        env->frame->tmpvar[dst].type = NOCT_VALUE_LONG;
+        env->frame->tmpvar[dst].val.l = (int64_t)val;
+
+        return true;
+}
+
 /* Visit a OP_FCONST instruction. */
 static INLINE bool
 rt_visit_fconst_op(
@@ -282,6 +329,30 @@ rt_visit_fconst_op(
 
         env->frame->tmpvar[dst].type = NOCT_VALUE_FLOAT;
         env->frame->tmpvar[dst].val.f = val;
+
+        return true;
+}
+
+/* Visit a OP_LFCONST instruction. */
+static INLINE bool
+rt_visit_lfconst_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst;
+        uint64_t raw;
+        double val;
+
+        DEBUG_TRACE(*pc, "FCONST");
+
+        GET_TMPVAR(&dst);
+        GET_U64(&raw);
+
+        val = *(double *)&raw;
+
+        env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE;
+        env->frame->tmpvar[dst].val.lf = val;
 
         return true;
 }
@@ -918,8 +989,16 @@ rt_visit_op(
                 if (!rt_visit_iconst_op(env, func, pc))
                         return false;
                 break;
+        case OP_LICONST:
+                if (!rt_visit_liconst_op(env, func, pc))
+                        return false;
+                break;
         case OP_FCONST:
                 if (!rt_visit_fconst_op(env, func, pc))
+                        return false;
+                break;
+        case OP_LFCONST:
+                if (!rt_visit_lfconst_op(env, func, pc))
                         return false;
                 break;
         case OP_SCONST:

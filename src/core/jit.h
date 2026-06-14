@@ -197,6 +197,35 @@ jit_get_opr_imm32(
 }
 
 /*
+ * Get an imm64 operand.
+ */
+#define CONSUME_IMM64(d)	if (!jit_get_opr_imm64(ctx, &d)) return false
+static INLINE bool
+jit_get_opr_imm64(
+	struct jit_context *ctx,
+	uint64_t *d)
+{
+	if (ctx->lpc + 8 > ctx->func->bytecode_size) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		*d = 0;
+		return false;
+	}
+
+	*d = ((uint64_t)ctx->func->bytecode[ctx->lpc + 0] << 56) |
+	     ((uint64_t)ctx->func->bytecode[ctx->lpc + 1] << 48) |
+	     ((uint64_t)ctx->func->bytecode[ctx->lpc + 2] << 40) |
+	     ((uint64_t)ctx->func->bytecode[ctx->lpc + 3] << 32) |
+	     ((uint64_t)ctx->func->bytecode[ctx->lpc + 4] << 24) |
+	     ((uint64_t)ctx->func->bytecode[ctx->lpc + 5] << 16) |
+	     ((uint64_t)ctx->func->bytecode[ctx->lpc + 6] << 8) |
+             ((uint64_t)ctx->func->bytecode[ctx->lpc + 7]);
+
+	ctx->lpc += 8;
+
+	return true;
+}
+
+/*
  * Get an imm16 operand that represents tmpvar index.
  */
 #define CONSUME_TMPVAR(d)	if (!jit_get_opr_tmpvar(ctx, &d)) return false

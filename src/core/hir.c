@@ -1957,9 +1957,17 @@ hir_visit_term(
 		t->type = HIR_TERM_INT;
 		t->val.i = aterm->val.i;
 		break;
+	case AST_TERM_LONG:
+		t->type = HIR_TERM_LONG;
+		t->val.l = aterm->val.l;
+		break;
 	case AST_TERM_FLOAT:
 		t->type = HIR_TERM_FLOAT;
-		t->val.f = (float)aterm->val.f;
+		t->val.f = aterm->val.f;
+		break;
+	case AST_TERM_DOUBLE:
+		t->type = HIR_TERM_DOUBLE;
+		t->val.lf = aterm->val.lf;
 		break;
 	case AST_TERM_STRING:
 		t->type = HIR_TERM_STRING;
