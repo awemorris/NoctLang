@@ -5,6 +5,7 @@
  */
 
 #include "parser.tab.h"
+#include <noct/c89compat.h>
 #include <limits.h>
 
 #ifdef _MSC_VER

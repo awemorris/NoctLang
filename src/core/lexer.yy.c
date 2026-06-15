@@ -811,6 +811,7 @@ static const flex_int16_t yy_chk[576] =
  */
 
 #include "parser.tab.h"
+#include <noct/c89compat.h>
 #include <limits.h>
 
 #ifdef _MSC_VER
@@ -832,8 +833,8 @@ char *ast_strdup(const char *s);
 void ast_free(void *p);
 
 extern YYLTYPE yylloc;
-#line 836 "/home/awe/src/noct/build-debug/lexer.yy.c"
 #line 837 "/home/awe/src/noct/build-debug/lexer.yy.c"
+#line 838 "/home/awe/src/noct/build-debug/lexer.yy.c"
 
 #define INITIAL 0
 
@@ -1093,9 +1094,9 @@ YY_DECL
 		}
 
 	{
-#line 34 "/home/awe/src/noct/src/core/lexer.l"
+#line 35 "/home/awe/src/noct/src/core/lexer.l"
 
-#line 1099 "/home/awe/src/noct/build-debug/lexer.yy.c"
+#line 1100 "/home/awe/src/noct/build-debug/lexer.yy.c"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -1151,7 +1152,7 @@ do_action:	/* This label is used only to access EOF actions. */
 case 1:
 /* rule 1 can match eol */
 YY_RULE_SETUP
-#line 35 "/home/awe/src/noct/src/core/lexer.l"
+#line 36 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1161,7 +1162,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 2:
 YY_RULE_SETUP
-#line 41 "/home/awe/src/noct/src/core/lexer.l"
+#line 42 "/home/awe/src/noct/src/core/lexer.l"
 {
                         double v;
 			sscanf(yytext, "%lf", &v);
@@ -1174,7 +1175,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 3:
 YY_RULE_SETUP
-#line 50 "/home/awe/src/noct/src/core/lexer.l"
+#line 51 "/home/awe/src/noct/src/core/lexer.l"
 {
                         double v;
 			sscanf(yytext, "%lf", &v);
@@ -1187,7 +1188,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 4:
 YY_RULE_SETUP
-#line 59 "/home/awe/src/noct/src/core/lexer.l"
+#line 60 "/home/awe/src/noct/src/core/lexer.l"
 {
                         double v;
 			sscanf(yytext, "%lf", &v);
@@ -1200,7 +1201,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 5:
 YY_RULE_SETUP
-#line 68 "/home/awe/src/noct/src/core/lexer.l"
+#line 69 "/home/awe/src/noct/src/core/lexer.l"
 {
 			sscanf(yytext, "%" SCNd64, &ast_yylval.lval);
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1211,7 +1212,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 6:
 YY_RULE_SETUP
-#line 75 "/home/awe/src/noct/src/core/lexer.l"
+#line 76 "/home/awe/src/noct/src/core/lexer.l"
 {
                         int64_t v;
 			sscanf(yytext, "%" SCNd64, &v);
@@ -1228,7 +1229,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 7:
 YY_RULE_SETUP
-#line 88 "/home/awe/src/noct/src/core/lexer.l"
+#line 89 "/home/awe/src/noct/src/core/lexer.l"
 {
 			sscanf(yytext, "%" SCNx64, &ast_yylval.lval);
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1239,7 +1240,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 8:
 YY_RULE_SETUP
-#line 95 "/home/awe/src/noct/src/core/lexer.l"
+#line 96 "/home/awe/src/noct/src/core/lexer.l"
 {
 			sscanf(yytext, "%x", &ast_yylval.ival);
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1251,7 +1252,7 @@ YY_RULE_SETUP
 case 9:
 /* rule 9 can match eol */
 YY_RULE_SETUP
-#line 102 "/home/awe/src/noct/src/core/lexer.l"
+#line 103 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylval.sval = ast_strdup(yytext + 1);
 			ast_yylval.sval[yyleng - 2] = '\0';
@@ -1263,7 +1264,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 10:
 YY_RULE_SETUP
-#line 110 "/home/awe/src/noct/src/core/lexer.l"
+#line 111 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1273,7 +1274,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 11:
 YY_RULE_SETUP
-#line 116 "/home/awe/src/noct/src/core/lexer.l"
+#line 117 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1283,7 +1284,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 12:
 YY_RULE_SETUP
-#line 122 "/home/awe/src/noct/src/core/lexer.l"
+#line 123 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1293,7 +1294,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 13:
 YY_RULE_SETUP
-#line 128 "/home/awe/src/noct/src/core/lexer.l"
+#line 129 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1303,7 +1304,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 14:
 YY_RULE_SETUP
-#line 134 "/home/awe/src/noct/src/core/lexer.l"
+#line 135 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1313,7 +1314,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 15:
 YY_RULE_SETUP
-#line 140 "/home/awe/src/noct/src/core/lexer.l"
+#line 141 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1323,7 +1324,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 16:
 YY_RULE_SETUP
-#line 146 "/home/awe/src/noct/src/core/lexer.l"
+#line 147 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1333,7 +1334,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 17:
 YY_RULE_SETUP
-#line 152 "/home/awe/src/noct/src/core/lexer.l"
+#line 153 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1343,7 +1344,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 18:
 YY_RULE_SETUP
-#line 158 "/home/awe/src/noct/src/core/lexer.l"
+#line 159 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1353,7 +1354,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 19:
 YY_RULE_SETUP
-#line 164 "/home/awe/src/noct/src/core/lexer.l"
+#line 165 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1363,7 +1364,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 20:
 YY_RULE_SETUP
-#line 170 "/home/awe/src/noct/src/core/lexer.l"
+#line 171 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1373,7 +1374,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 21:
 YY_RULE_SETUP
-#line 176 "/home/awe/src/noct/src/core/lexer.l"
+#line 177 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1383,7 +1384,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 22:
 YY_RULE_SETUP
-#line 182 "/home/awe/src/noct/src/core/lexer.l"
+#line 183 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1393,7 +1394,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 23:
 YY_RULE_SETUP
-#line 188 "/home/awe/src/noct/src/core/lexer.l"
+#line 189 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1403,7 +1404,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 24:
 YY_RULE_SETUP
-#line 194 "/home/awe/src/noct/src/core/lexer.l"
+#line 195 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1413,7 +1414,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 25:
 YY_RULE_SETUP
-#line 200 "/home/awe/src/noct/src/core/lexer.l"
+#line 201 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1423,7 +1424,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 26:
 YY_RULE_SETUP
-#line 206 "/home/awe/src/noct/src/core/lexer.l"
+#line 207 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1433,7 +1434,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 27:
 YY_RULE_SETUP
-#line 212 "/home/awe/src/noct/src/core/lexer.l"
+#line 213 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1443,7 +1444,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 28:
 YY_RULE_SETUP
-#line 218 "/home/awe/src/noct/src/core/lexer.l"
+#line 219 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1453,7 +1454,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 29:
 YY_RULE_SETUP
-#line 224 "/home/awe/src/noct/src/core/lexer.l"
+#line 225 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1463,7 +1464,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 30:
 YY_RULE_SETUP
-#line 230 "/home/awe/src/noct/src/core/lexer.l"
+#line 231 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1473,7 +1474,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 31:
 YY_RULE_SETUP
-#line 236 "/home/awe/src/noct/src/core/lexer.l"
+#line 237 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1483,7 +1484,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 32:
 YY_RULE_SETUP
-#line 242 "/home/awe/src/noct/src/core/lexer.l"
+#line 243 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1493,7 +1494,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 33:
 YY_RULE_SETUP
-#line 248 "/home/awe/src/noct/src/core/lexer.l"
+#line 249 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1503,7 +1504,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 34:
 YY_RULE_SETUP
-#line 254 "/home/awe/src/noct/src/core/lexer.l"
+#line 255 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1513,7 +1514,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 35:
 YY_RULE_SETUP
-#line 260 "/home/awe/src/noct/src/core/lexer.l"
+#line 261 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1523,7 +1524,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 36:
 YY_RULE_SETUP
-#line 266 "/home/awe/src/noct/src/core/lexer.l"
+#line 267 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1533,7 +1534,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 37:
 YY_RULE_SETUP
-#line 272 "/home/awe/src/noct/src/core/lexer.l"
+#line 273 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1543,7 +1544,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 38:
 YY_RULE_SETUP
-#line 278 "/home/awe/src/noct/src/core/lexer.l"
+#line 279 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1553,7 +1554,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 39:
 YY_RULE_SETUP
-#line 284 "/home/awe/src/noct/src/core/lexer.l"
+#line 285 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1563,7 +1564,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 40:
 YY_RULE_SETUP
-#line 290 "/home/awe/src/noct/src/core/lexer.l"
+#line 291 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1573,7 +1574,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 41:
 YY_RULE_SETUP
-#line 296 "/home/awe/src/noct/src/core/lexer.l"
+#line 297 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1583,7 +1584,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 42:
 YY_RULE_SETUP
-#line 302 "/home/awe/src/noct/src/core/lexer.l"
+#line 303 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1593,7 +1594,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 43:
 YY_RULE_SETUP
-#line 308 "/home/awe/src/noct/src/core/lexer.l"
+#line 309 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1603,7 +1604,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 44:
 YY_RULE_SETUP
-#line 314 "/home/awe/src/noct/src/core/lexer.l"
+#line 315 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1614,7 +1615,7 @@ YY_RULE_SETUP
 case 45:
 /* rule 45 can match eol */
 YY_RULE_SETUP
-#line 320 "/home/awe/src/noct/src/core/lexer.l"
+#line 321 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1624,7 +1625,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 46:
 YY_RULE_SETUP
-#line 326 "/home/awe/src/noct/src/core/lexer.l"
+#line 327 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1634,7 +1635,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 47:
 YY_RULE_SETUP
-#line 332 "/home/awe/src/noct/src/core/lexer.l"
+#line 333 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1644,7 +1645,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 48:
 YY_RULE_SETUP
-#line 338 "/home/awe/src/noct/src/core/lexer.l"
+#line 339 "/home/awe/src/noct/src/core/lexer.l"
 {
 			/* extend is equal to new. */
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1655,7 +1656,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 49:
 YY_RULE_SETUP
-#line 345 "/home/awe/src/noct/src/core/lexer.l"
+#line 346 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1665,7 +1666,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 50:
 YY_RULE_SETUP
-#line 351 "/home/awe/src/noct/src/core/lexer.l"
+#line 352 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1676,7 +1677,7 @@ YY_RULE_SETUP
 case 51:
 /* rule 51 can match eol */
 YY_RULE_SETUP
-#line 357 "/home/awe/src/noct/src/core/lexer.l"
+#line 358 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1686,7 +1687,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 52:
 YY_RULE_SETUP
-#line 363 "/home/awe/src/noct/src/core/lexer.l"
+#line 364 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1696,7 +1697,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 53:
 YY_RULE_SETUP
-#line 369 "/home/awe/src/noct/src/core/lexer.l"
+#line 370 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1706,7 +1707,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 54:
 YY_RULE_SETUP
-#line 375 "/home/awe/src/noct/src/core/lexer.l"
+#line 376 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1716,7 +1717,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 55:
 YY_RULE_SETUP
-#line 381 "/home/awe/src/noct/src/core/lexer.l"
+#line 382 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1726,7 +1727,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 56:
 YY_RULE_SETUP
-#line 387 "/home/awe/src/noct/src/core/lexer.l"
+#line 388 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1737,7 +1738,7 @@ YY_RULE_SETUP
 case 57:
 /* rule 57 can match eol */
 YY_RULE_SETUP
-#line 393 "/home/awe/src/noct/src/core/lexer.l"
+#line 394 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1748,7 +1749,7 @@ YY_RULE_SETUP
 case 58:
 /* rule 58 can match eol */
 YY_RULE_SETUP
-#line 399 "/home/awe/src/noct/src/core/lexer.l"
+#line 400 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1758,7 +1759,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 59:
 YY_RULE_SETUP
-#line 405 "/home/awe/src/noct/src/core/lexer.l"
+#line 406 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1768,7 +1769,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 60:
 YY_RULE_SETUP
-#line 411 "/home/awe/src/noct/src/core/lexer.l"
+#line 412 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1778,7 +1779,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 61:
 YY_RULE_SETUP
-#line 417 "/home/awe/src/noct/src/core/lexer.l"
+#line 418 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1788,7 +1789,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 62:
 YY_RULE_SETUP
-#line 423 "/home/awe/src/noct/src/core/lexer.l"
+#line 424 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1798,7 +1799,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 63:
 YY_RULE_SETUP
-#line 429 "/home/awe/src/noct/src/core/lexer.l"
+#line 430 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1808,7 +1809,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 64:
 YY_RULE_SETUP
-#line 435 "/home/awe/src/noct/src/core/lexer.l"
+#line 436 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1818,7 +1819,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 65:
 YY_RULE_SETUP
-#line 441 "/home/awe/src/noct/src/core/lexer.l"
+#line 442 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1828,7 +1829,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 66:
 YY_RULE_SETUP
-#line 447 "/home/awe/src/noct/src/core/lexer.l"
+#line 448 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1838,7 +1839,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 67:
 YY_RULE_SETUP
-#line 453 "/home/awe/src/noct/src/core/lexer.l"
+#line 454 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1848,7 +1849,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 68:
 YY_RULE_SETUP
-#line 459 "/home/awe/src/noct/src/core/lexer.l"
+#line 460 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1858,7 +1859,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 69:
 YY_RULE_SETUP
-#line 465 "/home/awe/src/noct/src/core/lexer.l"
+#line 466 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1868,7 +1869,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 70:
 YY_RULE_SETUP
-#line 471 "/home/awe/src/noct/src/core/lexer.l"
+#line 472 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1878,7 +1879,7 @@ YY_RULE_SETUP
 case 71:
 /* rule 71 can match eol */
 YY_RULE_SETUP
-#line 476 "/home/awe/src/noct/src/core/lexer.l"
+#line 477 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -1888,7 +1889,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 72:
 YY_RULE_SETUP
-#line 482 "/home/awe/src/noct/src/core/lexer.l"
+#line 483 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylval.ival = 0;
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1899,7 +1900,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 73:
 YY_RULE_SETUP
-#line 489 "/home/awe/src/noct/src/core/lexer.l"
+#line 490 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylval.ival = 1;
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1910,7 +1911,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 74:
 YY_RULE_SETUP
-#line 496 "/home/awe/src/noct/src/core/lexer.l"
+#line 497 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylval.ival = 0;
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1921,7 +1922,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 75:
 YY_RULE_SETUP
-#line 503 "/home/awe/src/noct/src/core/lexer.l"
+#line 504 "/home/awe/src/noct/src/core/lexer.l"
 {
 			ast_yylval.sval = ast_strdup(yytext);
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -1932,10 +1933,10 @@ YY_RULE_SETUP
 	YY_BREAK
 case 76:
 YY_RULE_SETUP
-#line 510 "/home/awe/src/noct/src/core/lexer.l"
+#line 511 "/home/awe/src/noct/src/core/lexer.l"
 ECHO;
 	YY_BREAK
-#line 1939 "/home/awe/src/noct/build-debug/lexer.yy.c"
+#line 1940 "/home/awe/src/noct/build-debug/lexer.yy.c"
 case YY_STATE_EOF(INITIAL):
 	yyterminate();
 
@@ -3105,7 +3106,7 @@ void yyfree (void * ptr , yyscan_t yyscanner)
 
 #define YYTABLES_NAME "yytables"
 
-#line 510 "/home/awe/src/noct/src/core/lexer.l"
+#line 511 "/home/awe/src/noct/src/core/lexer.l"
 
 
 int ast_yywrap(yyscan_t scanner)
