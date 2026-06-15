@@ -1690,7 +1690,7 @@ rt_set_packed_elem(
 			break;
 		case NOCT_VALUE_FLOAT:
 			*((uint32_t *)packed->val.packed->packed_buffer + index) = (uint32_t)(int)val->val.f;
-			break;
+ 			break;
 		case NOCT_VALUE_DOUBLE:
 			*((uint32_t *)packed->val.packed->packed_buffer + index) = (uint32_t)(int)val->val.lf;
 			break;
@@ -1702,16 +1702,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_INT64:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((int64_t *)packed->val.packed->packed_buffer + index) = (int64_t)(uint64_t)val->val.i;
+			*((int64_t *)packed->val.packed->packed_buffer + index) = (int64_t)(uint64_t)(uint32_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
 			*((int64_t *)packed->val.packed->packed_buffer + index) = (int64_t)(uint64_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((int64_t *)packed->val.packed->packed_buffer + index) = (int64_t)(uint64_t)(int)val->val.f;
+			*((int64_t *)packed->val.packed->packed_buffer + index) = (int64_t)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((int64_t *)packed->val.packed->packed_buffer + index) = (int64_t)(uint64_t)(int)val->val.lf;
+			*((int64_t *)packed->val.packed->packed_buffer + index) = (int64_t)val->val.lf;
 			break;
 		default:
 			rt_error(env, N_TR("Value is not a number."));
@@ -1721,16 +1721,16 @@ rt_set_packed_elem(
 	case NOCT_PACKED_UINT64:
 		switch (val->type) {
 		case NOCT_VALUE_INT:
-			*((uint64_t *)packed->val.packed->packed_buffer + index) = (uint64_t)val->val.i;
+			*((uint64_t *)packed->val.packed->packed_buffer + index) = (uint64_t)(uint32_t)val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
 			*((uint64_t *)packed->val.packed->packed_buffer + index) = (uint64_t)val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			*((uint64_t *)packed->val.packed->packed_buffer + index) = (uint64_t)(int)val->val.f;
+			*((uint64_t *)packed->val.packed->packed_buffer + index) = (uint64_t)(int64_t)val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			*((uint64_t *)packed->val.packed->packed_buffer + index) = (uint64_t)(int)val->val.lf;
+			*((uint64_t *)packed->val.packed->packed_buffer + index) = (uint64_t)(int64_t)val->val.lf;
 			break;
 		default:
 			rt_error(env, N_TR("Value is not a number."));

@@ -83,7 +83,8 @@ func arch_test(name, toolchain, qemu) {
         "syntax/34-substring.noct",
         "syntax/35-forv.noct",
         "syntax/36-dict-gc.noct",
-        "syntax/37-if-if-else.noct"
+        "syntax/37-if-if-else.noct",
+        "syntax/38-packed.noct"
     ];
 
     // Run tests without JIT.
