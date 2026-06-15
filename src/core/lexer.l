@@ -6,7 +6,6 @@
 
 #include <noct/c89compat.h>
 #include "parser.tab.h"
-#include <limits.h>
 
 #ifdef _MSC_VER
 #define strdup _strdup
