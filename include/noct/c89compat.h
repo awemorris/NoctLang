@@ -423,6 +423,18 @@ typedef unsigned long uintptr_t;
 #endif
 
 /*
+ * Definitions of PRId64 and SCNd64
+ */
+#if defined(__WATCOMC__)
+#ifndef PRId64
+#define PRId64 "lld"
+#endif
+#ifndef SCNd64
+#define SCNd64 "lld"
+#endif
+#endif
+
+/*
  * Definition of the import/export keyword.
  */
 #if defined(NOCT_USE_DLL)
