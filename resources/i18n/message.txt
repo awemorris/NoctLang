@@ -428,6 +428,8 @@ zh:字典索引超出范围。
 tw:字典索引超出範圍。
 ja:辞書のインデックスが範囲外です。
 ---
+ID:Not a packed.
+---
 ID:Symbol "%s" not found.
 en:Symbol "%s" not found.
 es:El símbolo "%s" no se ha encontrado.
@@ -662,6 +664,8 @@ ru:Аргумент (%d: %s) не является словарем.
 zh:参数 (%d: %s) 不是字典。
 tw:參數 (%d: %s) 不是字典。
 ja:引数 (%d: %s) が辞書ではありません。
+---
+ID:Argument (%d: %s) not a packed.
 ---
 ID:Not a function.
 en:Not a function.

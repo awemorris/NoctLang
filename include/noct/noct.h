@@ -52,6 +52,7 @@ enum NoctPackedType {
 	NOCT_PACKED_UINT64  = 7,
 	NOCT_PACKED_FLOAT32 = 8,
 	NOCT_PACKED_FLOAT64 = 9,
+	NOCT_PACKED_ANY     = 10,
 };
 
 /*
@@ -726,6 +727,26 @@ noct_get_dict_native_pointer(
 	NoctValue *dict,
 	void **native_pointer,
 	void (**native_finalizer)(void *native_pointer));
+
+/*
+ * Retrieves the type of packed elements.
+ */
+NOCT_DLL
+bool
+noct_get_packed_type(
+	NoctEnv *env,
+	NoctValue *packed,
+	int *type);
+
+/*
+ * Retrieves the number of packed elements.
+ */
+NOCT_DLL
+bool
+noct_get_packed_size(
+	NoctEnv *env,
+	NoctValue *packed,
+	size_t *size);
 
 /*
  * Retrieves a tmpvar size from the current stack frame.
@@ -1693,6 +1714,18 @@ noct_get_arg_check_dict(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val);
+
+/*
+ * Convenience function to retrieve a packed function argument with
+ * type checking.
+ */
+NOCT_DLL
+bool
+noct_get_arg_check_packed(
+	NoctEnv *env,
+	uint32_t index,
+	NoctValue *val,
+	int type);
 
 /*
  * Convenience function to retrieve a function argument of function

@@ -1487,7 +1487,7 @@ rt_get_packed_size(
 	assert(size != NULL);
 
 	/* Get the type. */
-	*size = packed->val.packed->size;
+	*size = packed->val.packed->elem_size;
 
 	return true;
 }

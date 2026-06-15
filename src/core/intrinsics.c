@@ -52,6 +52,8 @@ static bool rt_intrin_Packed_uint32(NoctEnv *env);
 static bool rt_intrin_Packed_uint64(NoctEnv *env);
 static bool rt_intrin_Packed_float32(NoctEnv *env);
 static bool rt_intrin_Packed_float64(NoctEnv *env);
+static bool rt_intrin_Packed_size(NoctEnv *env);
+static bool rt_intrin_Packed_type(NoctEnv *env);
 static bool rt_intrin_Math_abs(NoctEnv *env);
 static bool rt_intrin_Math_sqrt(NoctEnv *env);
 static bool rt_intrin_Math_sin(NoctEnv *env);
@@ -102,6 +104,8 @@ struct intrin_item {
 	{"Packed",	"uint64",	"Packed.uint64",	rt_intrin_Packed_uint64,	1, {"size"}},
 	{"Packed",	"float32",	"Packed.float32",	rt_intrin_Packed_float32,	1, {"size"}},
 	{"Packed",	"float64",	"Packed.float64",	rt_intrin_Packed_float64,	1, {"size"}},
+	{"Packed",	"size",		"Packed.size",		rt_intrin_Packed_size,		1, {"packed"}},
+	{"Packed",	"type",		"Packed.type",		rt_intrin_Packed_type,		1, {"packed"}},
 	{"Math",	"abs",		"Math.abs",		rt_intrin_Math_abs,		1, {"x"}},
 	{"Math",	"sqrt",		"Math.sqrt",		rt_intrin_Math_sqrt,		1, {"x"}},
 	{"Math",	"sin",		"Math.sin",		rt_intrin_Math_sin,		1, {"x"}},
@@ -1569,6 +1573,101 @@ rt_intrin_Packed_float64(
 		return false;
 
 	noct_unpin_local(env, 2, &v_size, &v_ret);
+
+	return true;
+}
+
+/*
+ * Packed.size(packed)
+ */
+static bool
+rt_intrin_Packed_size(
+	struct rt_env *env)
+{
+	NoctValue packed, ret;
+	size_t size;
+
+	noct_pin_local(env, 2, &packed, &ret);
+
+	/* Retrieve the argument "packed" at the index 0. */
+	if (!noct_get_arg_check_packed(env, 0, &packed, NOCT_PACKED_ANY))
+		return false;
+
+	/* Get the size. */
+	if (!noct_get_packed_size(env, &packed, &size))
+		return false;
+
+	/* Set the return value. */
+	if (!noct_set_return_make_int_long(env, &ret, size))
+		return false;
+
+	noct_unpin_local(env, 2, &packed, &ret);
+
+	return true;
+}
+
+/*
+ * Packed.type(packed)
+ */
+static bool
+rt_intrin_Packed_type(
+	struct rt_env *env)
+{
+	NoctValue packed, ret;
+	int type;
+
+	noct_pin_local(env, 2, &packed, &ret);
+
+	/* Retrieve the argument "packed" at the index 0. */
+	if (!noct_get_arg_check_packed(env, 0, &packed, NOCT_PACKED_ANY))
+		return false;
+
+	/* Get the type. */
+	if (!noct_get_packed_type(env, &packed, &type))
+		return false;
+
+	/* Set the return value. */
+	switch (type) {
+	case NOCT_PACKED_INT8:
+		if (!noct_set_return_make_string(env, &ret, "int8"))
+			return false;
+		break;
+	case NOCT_PACKED_INT16:
+		if (!noct_set_return_make_string(env, &ret, "int16"))
+			return false;
+		break;
+	case NOCT_PACKED_INT32:
+		if (!noct_set_return_make_string(env, &ret, "int32"))
+			return false;
+		break;
+	case NOCT_PACKED_INT64:
+		if (!noct_set_return_make_string(env, &ret, "int64"))
+			return false;
+		break;
+	case NOCT_PACKED_UINT8:
+		if (!noct_set_return_make_string(env, &ret, "uint8"))
+			return false;
+		break;
+	case NOCT_PACKED_UINT16:
+		if (!noct_set_return_make_string(env, &ret, "uint16"))
+			return false;
+		break;
+	case NOCT_PACKED_UINT32:
+		if (!noct_set_return_make_string(env, &ret, "uint32"))
+			return false;
+		break;
+	case NOCT_PACKED_UINT64:
+		if (!noct_set_return_make_string(env, &ret, "uint64"))
+			return false;
+		break;
+	default:
+		assert(0);
+		if (!noct_set_return_make_string(env, &ret, "(error)"))
+			return false;
+		break;
+	}
+
+	noct_unpin_local(env, 2, &packed, &ret);
 
 	return true;
 }

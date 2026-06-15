@@ -1089,6 +1089,54 @@ noct_get_dict_native_pointer(
 
 NOCT_DLL
 bool
+noct_get_packed_type(
+	NoctEnv *env,
+	NoctValue *packed,
+	int *type)
+{
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(type != NULL);
+
+	/* Check the type. */
+	if (packed->type != NOCT_VALUE_PACKED) {
+		rt_error(env, N_TR("Not a packed."));
+		return false;
+	}
+
+	/* Get the packed type. */
+	if (!rt_get_packed_type(env, packed, type))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_packed_size(
+	NoctEnv *env,
+	NoctValue *packed,
+	size_t *size)
+{
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(size != NULL);
+
+	/* Check the type. */
+	if (packed->type != NOCT_VALUE_PACKED) {
+		rt_error(env, N_TR("Not a packed."));
+		return false;
+	}
+
+	/* Get the packed element count. */
+	if (!rt_get_packed_size(env, packed, size))
+		return false;
+
+	return true;
+}
+
+NOCT_DLL
+bool
 noct_get_tmpvar_size(
 	NoctEnv *env,
 	uint32_t *size)
@@ -2359,6 +2407,54 @@ noct_get_arg_check_dict(
 			 index,
 			 env->frame->func->param_name[index]);
 		return false;
+	}
+
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_arg_check_packed(
+	NoctEnv *env,
+	uint32_t index,
+	NoctValue *val,
+	int type)
+{
+	assert(env != NULL);
+	assert(val != NULL);
+
+	/* Get the argument. */
+	if (!noct_get_arg(env, index, val))
+		return false;
+
+	/* Check the value type. */
+	if (val->type != NOCT_VALUE_PACKED) {
+		rt_error(env,
+			 N_TR("Argument (%d: %s) not a packed."),
+			 index,
+			 env->frame->func->param_name[index]);
+		return false;
+	}
+	if (type != NOCT_PACKED_ANY) {
+		if (val->val.packed->type != type) {
+			const char *type_s;
+			switch (type) {
+			case NOCT_PACKED_INT8:   type_s = "int8"; break;
+			case NOCT_PACKED_INT16:  type_s = "int16"; break;
+			case NOCT_PACKED_INT32:  type_s = "int32"; break;
+			case NOCT_PACKED_INT64:  type_s = "int64"; break;
+			case NOCT_PACKED_UINT8:  type_s = "uint8"; break;
+			case NOCT_PACKED_UINT16: type_s = "uint16"; break;
+			case NOCT_PACKED_UINT32: type_s = "uint32"; break;
+			case NOCT_PACKED_UINT64: type_s = "uint64"; break;
+			default: assert(0); type_s = "(error)"; break;
+			}
+			rt_error(env,
+				 N_TR("Argument (%d: %s) not a packed of type %s."),
+				 index,
+				 env->frame->func->param_name[index],
+				 type_s);
+		}
 	}
 
 	return true;
