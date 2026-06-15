@@ -16,8 +16,12 @@
 #include <stdarg.h>
 #include <assert.h>
 
-#ifdef _WIN32
-#include <windows.h>
+#if defined(NOCT_TARGET_WINDOWS)
+#include <fcntl.h>
+#elif defined(NOCT_TARGET_DOS4G)
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 #define NEVER_COME_HERE		(0)
@@ -27,6 +31,7 @@ static bool cfunc_File_readText(NoctEnv *env);
 static bool cfunc_File_writeText(NoctEnv *env);
 static bool cfunc_File_readForEachLine(NoctEnv *env);
 static bool cfunc_File_writeForEachLine(NoctEnv *env);
+static bool cfunc_File_checkFileExists(NoctEnv *env);
 
 /* FFI table. */
 struct ffi_item {
@@ -41,6 +46,7 @@ static struct ffi_item ffi_items[] = {
 	{"File.writeText",		"writeText",		2,	{"file", "text"},	cfunc_File_writeText},
 	{"File.readForEachLine",	"readForEachLine",	2,	{"file", "func"},	cfunc_File_readForEachLine},
 	{"File.writeForEachLine",	"writeForEachLine",	2,	{"file", "lines"},	cfunc_File_writeForEachLine},
+	{"File.checkFileExists",	"checkFileExists",	1,	{"file"},		cfunc_File_checkFileExists},
 };
 
 /*
@@ -299,6 +305,35 @@ cfunc_File_writeForEachLine(
 		return false;
 
 	noct_unpin_local(env, 4, &file, &lines, &line, &ret);
+
+	return true;
+}
+
+/* Implementation of File.checkFileExists() */
+static bool
+cfunc_File_checkFileExists(
+	NoctEnv *env)
+{
+	NoctValue file, ret;
+	const char *s;
+	int ret_i;
+
+	noct_pin_local(env, 2, &file, &ret);
+
+	/* Get the "file" parameer. */
+	if (!noct_get_arg_check_string(env, 0, &file, &s))
+		return false;
+
+	/* Run a command. */
+	ret_i = 0;
+	if (access(s, 0) == 0)
+		ret_i = 1;
+
+	/* Make a return value. */
+	if (!noct_set_return_make_int(env, &ret, ret_i))
+		return false;
+
+	noct_unpin_local(env, 2, &file, &ret);
 
 	return true;
 }
