@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_STATIC_PARSER_TAB_H_INCLUDED
-# define YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_STATIC_PARSER_TAB_H_INCLUDED
+#ifndef YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_DEBUG_PARSER_TAB_H_INCLUDED
+# define YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_DEBUG_PARSER_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -150,7 +150,7 @@ union YYSTYPE
 	struct ast_kv_list *kv_list;
 	struct ast_kv *kv;
 
-#line 154 "/home/awe/src/noct/build-static/parser.tab.h"
+#line 154 "/home/awe/src/noct/build-debug/parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -183,6 +183,6 @@ int ast_yyparse (void *scanner);
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 
-#line 187 "/home/awe/src/noct/build-static/parser.tab.h"
+#line 187 "/home/awe/src/noct/build-debug/parser.tab.h"
 
-#endif /* !YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_STATIC_PARSER_TAB_H_INCLUDED  */
+#endif /* !YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_DEBUG_PARSER_TAB_H_INCLUDED  */

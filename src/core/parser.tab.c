@@ -185,7 +185,7 @@ struct ast_arg_list *ast_accept_arg_list(struct ast_arg_list *arg_list, struct a
 
 extern void ast_yyerror(void *scanner, char *s);
 
-#line 189 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 189 "/home/awe/src/noct/build-debug/parser.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -1838,7 +1838,7 @@ yyparse (void *scanner)
 	ast_yylloc.last_column = yylloc.first_column = 0;
 }
 
-#line 1842 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 1842 "/home/awe/src/noct/build-debug/parser.tab.c"
 
   yylsp[0] = yylloc;
   goto yysetstate;
@@ -2054,7 +2054,7 @@ yyreduce:
 			(yyval.func_list) = ast_accept_func_list(NULL, (yyvsp[0].func));
 			debug("func_list: class");
 		}
-#line 2058 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2058 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 3: /* func_list: func_list func  */
@@ -2063,7 +2063,7 @@ yyreduce:
 			(yyval.func_list) = ast_accept_func_list((yyvsp[-1].func_list), (yyvsp[0].func));
 			debug("func_list: func_list func");
 		}
-#line 2067 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2067 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 4: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2072,7 +2072,7 @@ yyreduce:
 			(yyval.func) = ast_accept_func((yyvsp[-5].sval), (yyvsp[-3].param_list), (yyvsp[-1].stmt_list));
 			debug("func: func name(param_list) { stmt_list }");
 		}
-#line 2076 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2076 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 5: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2081,7 +2081,7 @@ yyreduce:
 			(yyval.func) = ast_accept_func((yyvsp[-4].sval), NULL, (yyvsp[-1].stmt_list));
 			debug("func: func name() { stmt_list }");
 		}
-#line 2085 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2085 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 6: /* param_list: TOKEN_SYMBOL  */
@@ -2090,7 +2090,7 @@ yyreduce:
 			(yyval.param_list) = ast_accept_param_list(NULL, (yyvsp[0].sval));
 			debug("param_list: symbol");
 		}
-#line 2094 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2094 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 7: /* param_list: param_list TOKEN_COMMA TOKEN_SYMBOL  */
@@ -2099,7 +2099,7 @@ yyreduce:
 			(yyval.param_list) = ast_accept_param_list((yyvsp[-2].param_list), (yyvsp[0].sval));
 			debug("param_list: param_list symbol");
 		}
-#line 2103 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2103 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 8: /* stmt_list: %empty  */
@@ -2108,7 +2108,7 @@ yyreduce:
 			(yyval.stmt_list) = ast_accept_stmt_list(NULL, NULL);
 			debug("stmt_list: empty");
 		}
-#line 2112 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2112 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 9: /* stmt_list: stmt_list stmt  */
@@ -2117,7 +2117,7 @@ yyreduce:
 			(yyval.stmt_list) = ast_accept_stmt_list((yyvsp[-1].stmt_list), (yyvsp[0].stmt));
 			debug("stmt_list: stmt_list stmt");
 		}
-#line 2121 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2121 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 10: /* stmt: expr_stmt  */
@@ -2125,7 +2125,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2129 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2129 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 11: /* stmt: assign_stmt  */
@@ -2133,7 +2133,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2137 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2137 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 12: /* stmt: plusassign_stmt  */
@@ -2141,7 +2141,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2145 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2145 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 13: /* stmt: minusassign_stmt  */
@@ -2149,7 +2149,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2153 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2153 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 14: /* stmt: mulassign_stmt  */
@@ -2157,7 +2157,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2161 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2161 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 15: /* stmt: divassign_stmt  */
@@ -2165,7 +2165,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2169 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2169 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 16: /* stmt: modassign_stmt  */
@@ -2173,7 +2173,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2177 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2177 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 17: /* stmt: andassign_stmt  */
@@ -2181,7 +2181,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2185 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2185 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 18: /* stmt: orassign_stmt  */
@@ -2189,7 +2189,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2193 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2193 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 19: /* stmt: shlassign_stmt  */
@@ -2197,7 +2197,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2201 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2201 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 20: /* stmt: shrassign_stmt  */
@@ -2205,7 +2205,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2209 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2209 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 21: /* stmt: plusplus_stmt  */
@@ -2213,7 +2213,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2217 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2217 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 22: /* stmt: minusminus_stmt  */
@@ -2221,7 +2221,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2225 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2225 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 23: /* stmt: if_stmt  */
@@ -2229,7 +2229,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2233 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2233 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 24: /* stmt: elif_stmt  */
@@ -2237,7 +2237,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2241 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2241 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 25: /* stmt: else_stmt  */
@@ -2245,7 +2245,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2249 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2249 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 26: /* stmt: while_stmt  */
@@ -2253,7 +2253,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2257 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2257 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 27: /* stmt: for_stmt  */
@@ -2261,7 +2261,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2265 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2265 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 28: /* stmt: return_stmt  */
@@ -2269,7 +2269,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2273 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2273 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 29: /* stmt: break_stmt  */
@@ -2277,7 +2277,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2281 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2281 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 30: /* stmt: continue_stmt  */
@@ -2285,7 +2285,7 @@ yyreduce:
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2289 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2289 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 31: /* expr_stmt: expr TOKEN_SEMICOLON  */
@@ -2294,7 +2294,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_expr_stmt((yylsp[-1]).first_line + 1, (yyvsp[-1].expr));
 			debug("expr_stmt");
 		}
-#line 2298 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2298 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 32: /* assign_stmt: expr TOKEN_ASSIGN expr TOKEN_SEMICOLON  */
@@ -2303,7 +2303,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_assign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr), false);
 			debug("assign_stmt");
 		}
-#line 2307 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2307 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 33: /* assign_stmt: TOKEN_VAR expr TOKEN_ASSIGN expr TOKEN_SEMICOLON  */
@@ -2312,7 +2312,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_assign_stmt((yylsp[-4]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr), true);
 			debug("var assign_stmt");
 		}
-#line 2316 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2316 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 34: /* plusassign_stmt: expr TOKEN_PLUSASSIGN expr TOKEN_SEMICOLON  */
@@ -2321,7 +2321,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_plusassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("plusassign_stmt");
 		}
-#line 2325 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2325 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 35: /* minusassign_stmt: expr TOKEN_MINUSASSIGN expr TOKEN_SEMICOLON  */
@@ -2330,7 +2330,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_minusassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("minusassign_stmt");
 		}
-#line 2334 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2334 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 36: /* mulassign_stmt: expr TOKEN_MULASSIGN expr TOKEN_SEMICOLON  */
@@ -2339,7 +2339,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_mulassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("mulassign_stmt");
 		}
-#line 2343 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2343 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 37: /* divassign_stmt: expr TOKEN_DIVASSIGN expr TOKEN_SEMICOLON  */
@@ -2348,7 +2348,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_divassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("divassign_stmt");
 		}
-#line 2352 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2352 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 38: /* modassign_stmt: expr TOKEN_MODASSIGN expr TOKEN_SEMICOLON  */
@@ -2357,7 +2357,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_modassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("modassign_stmt");
 		}
-#line 2361 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2361 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 39: /* andassign_stmt: expr TOKEN_ANDASSIGN expr TOKEN_SEMICOLON  */
@@ -2366,7 +2366,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_andassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("andassign_stmt");
 		}
-#line 2370 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2370 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 40: /* orassign_stmt: expr TOKEN_ORASSIGN expr TOKEN_SEMICOLON  */
@@ -2375,7 +2375,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_orassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("orassign_stmt");
 		}
-#line 2379 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2379 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 41: /* shlassign_stmt: expr TOKEN_SHLASSIGN expr TOKEN_SEMICOLON  */
@@ -2384,7 +2384,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_shlassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("shlassign_stmt");
 		}
-#line 2388 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2388 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 42: /* shrassign_stmt: expr TOKEN_SHRASSIGN expr TOKEN_SEMICOLON  */
@@ -2393,7 +2393,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_shrassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("shrassign_stmt");
 		}
-#line 2397 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2397 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 43: /* plusplus_stmt: expr TOKEN_PLUSPLUS TOKEN_SEMICOLON  */
@@ -2402,7 +2402,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_plusplus_stmt((yylsp[-2]).first_line + 1, (yyvsp[-2].expr));
 			debug("plusplus_stmt");
 		}
-#line 2406 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2406 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 44: /* minusminus_stmt: expr TOKEN_MINUSMINUS TOKEN_SEMICOLON  */
@@ -2411,7 +2411,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_minusminus_stmt((yylsp[-2]).first_line + 1, (yyvsp[-2].expr));
 			debug("plusplus_stmt");
 		}
-#line 2415 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2415 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 45: /* if_stmt: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2420,7 +2420,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_if_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("if_stmt: stmt_list");
 		}
-#line 2424 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2424 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 46: /* if_stmt: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR stmt  */
@@ -2429,7 +2429,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_if_stmt_single((yylsp[-4]).first_line + 1, (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("if_stmt: stmt_list");
 		}
-#line 2433 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2433 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 47: /* elif_stmt: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2438,7 +2438,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_elif_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("elif_stmt: stmt_list");
 		}
-#line 2442 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2442 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 48: /* elif_stmt: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR stmt  */
@@ -2447,7 +2447,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_elif_stmt_single((yylsp[-4]).first_line + 1, (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("elif_stmt: stmt_list");
 		}
-#line 2451 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2451 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 49: /* else_stmt: TOKEN_ELSE_LBLK stmt_list TOKEN_RBLK  */
@@ -2456,7 +2456,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_else_stmt((yylsp[-2]).first_line + 1, (yyvsp[-1].stmt_list));
 			debug("else_stmt: stmt_list");
 		}
-#line 2460 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2460 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 50: /* else_stmt: TOKEN_ELSE stmt  */
@@ -2465,7 +2465,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_else_stmt_single((yylsp[-1]).first_line + 1, (yyvsp[0].stmt));
 			debug("else_stmt: stmt_list");
 		}
-#line 2469 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2469 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 51: /* while_stmt: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2474,7 +2474,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_while_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("while_stmt: stmt_list");
 		}
-#line 2478 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2478 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 52: /* while_stmt: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR stmt  */
@@ -2483,7 +2483,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_while_stmt_single((yylsp[-4]).first_line + 1, (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("while_stmt: stmt_list");
 		}
-#line 2487 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2487 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 53: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2492,7 +2492,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_for_kv_stmt((yylsp[-9]).first_line + 1, (yyvsp[-7].sval), (yyvsp[-5].sval), (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(k, v in array) { stmt_list }");
 		}
-#line 2496 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2496 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 54: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt  */
@@ -2501,7 +2501,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_for_kv_stmt_single((yylsp[-8]).first_line + 1, (yyvsp[-6].sval), (yyvsp[-4].sval), (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("for_stmt: for(k, v in array) stmt");
 		}
-#line 2505 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2505 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 55: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2510,7 +2510,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_for_v_stmt((yylsp[-7]).first_line + 1, (yyvsp[-5].sval), (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(v in array) { stmt_list }");
 		}
-#line 2514 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2514 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 56: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt  */
@@ -2519,7 +2519,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_for_v_stmt_single((yylsp[-6]).first_line + 1, (yyvsp[-4].sval), (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("for_stmt: for(v in array) stmt_list");
 		}
-#line 2523 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2523 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 57: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
@@ -2528,7 +2528,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_for_range_stmt((yylsp[-9]).first_line + 1, (yyvsp[-7].sval), (yyvsp[-5].expr), (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(i in x..y) { stmt_list }");
 		}
-#line 2532 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2532 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 58: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR stmt  */
@@ -2537,7 +2537,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_for_range_stmt_single((yylsp[-8]).first_line + 1, (yyvsp[-6].sval), (yyvsp[-4].expr), (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("for_stmt: for(i in x..y) stmt");
 		}
-#line 2541 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2541 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 59: /* return_stmt: TOKEN_RETURN expr TOKEN_SEMICOLON  */
@@ -2546,7 +2546,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_return_stmt((yylsp[-2]).first_line + 1, (yyvsp[-1].expr));
 			debug("rerurn_stmt:");
 		}
-#line 2550 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2550 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 60: /* return_stmt: TOKEN_RETURN TOKEN_SEMICOLON  */
@@ -2555,7 +2555,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_return_stmt((yylsp[-1]).first_line + 1, NULL);
 			debug("rerurn_stmt NULL:");
 		}
-#line 2559 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2559 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 61: /* break_stmt: TOKEN_BREAK TOKEN_SEMICOLON  */
@@ -2564,7 +2564,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_break_stmt((yylsp[-1]).first_line + 1);
 			debug("break_stmt:");
 		}
-#line 2568 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2568 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 62: /* continue_stmt: TOKEN_CONTINUE TOKEN_SEMICOLON  */
@@ -2573,7 +2573,7 @@ yyreduce:
 			(yyval.stmt) = ast_accept_continue_stmt((yylsp[-1]).first_line + 1);
 			debug("continue_stmt");
 		}
-#line 2577 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2577 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 63: /* expr: term  */
@@ -2582,7 +2582,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_term_expr((yyvsp[0].term));
 			debug("expr: term");
 		}
-#line 2586 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2586 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 64: /* expr: TOKEN_LPAR expr TOKEN_RPAR  */
@@ -2591,7 +2591,7 @@ yyreduce:
 			(yyval.expr) = (yyvsp[-1].expr);
 			debug("expr: (expr)");
 		}
-#line 2595 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2595 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 65: /* expr: expr TOKEN_LARR expr TOKEN_RARR  */
@@ -2600,7 +2600,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_subscr_expr((yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("expr: array[subscript]");
 		}
-#line 2604 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2604 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 66: /* expr: expr TOKEN_OR expr  */
@@ -2609,7 +2609,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_or_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr or expr");
 		}
-#line 2613 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2613 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 67: /* expr: expr TOKEN_AND expr  */
@@ -2618,7 +2618,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_and_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr and expr");
 		}
-#line 2622 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2622 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 68: /* expr: expr TOKEN_XOR expr  */
@@ -2627,7 +2627,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_xor_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr xor expr");
 		}
-#line 2631 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2631 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 69: /* expr: expr TOKEN_OROR expr  */
@@ -2636,7 +2636,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_or_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr or expr");
 		}
-#line 2640 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2640 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 70: /* expr: expr TOKEN_ANDAND expr  */
@@ -2645,7 +2645,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_and_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr and expr");
 		}
-#line 2649 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2649 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 71: /* expr: expr TOKEN_LT expr  */
@@ -2654,7 +2654,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_lt_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr lt expr");
 		}
-#line 2658 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2658 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 72: /* expr: expr TOKEN_LTE expr  */
@@ -2663,7 +2663,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_lte_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr lte expr");
 		}
-#line 2667 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2667 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 73: /* expr: expr TOKEN_GT expr  */
@@ -2672,7 +2672,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_gt_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr gt expr");
 		}
-#line 2676 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2676 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 74: /* expr: expr TOKEN_GTE expr  */
@@ -2681,7 +2681,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_gte_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr gte expr");
 		}
-#line 2685 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2685 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 75: /* expr: expr TOKEN_EQ expr  */
@@ -2690,7 +2690,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_eq_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr eq expr");
 		}
-#line 2694 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2694 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 76: /* expr: expr TOKEN_NEQ expr  */
@@ -2699,7 +2699,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_neq_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr neq expr");
 		}
-#line 2703 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2703 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 77: /* expr: expr TOKEN_PLUS expr  */
@@ -2708,7 +2708,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_plus_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr plus expr");
 		}
-#line 2712 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2712 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 78: /* expr: expr TOKEN_MINUS expr  */
@@ -2717,7 +2717,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_minus_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr sub expr");
 		}
-#line 2721 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2721 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 79: /* expr: expr TOKEN_MUL expr  */
@@ -2726,7 +2726,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_mul_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr mul expr");
 		}
-#line 2730 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2730 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 80: /* expr: expr TOKEN_DIV expr  */
@@ -2735,7 +2735,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_div_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr div expr");
 		}
-#line 2739 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2739 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 81: /* expr: expr TOKEN_MOD expr  */
@@ -2744,7 +2744,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_mod_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr div expr");
 		}
-#line 2748 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2748 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 82: /* expr: expr TOKEN_SHL expr  */
@@ -2753,7 +2753,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_shl_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr shl expr");
 		}
-#line 2757 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2757 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 83: /* expr: expr TOKEN_SHR expr  */
@@ -2762,7 +2762,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_shr_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr shr expr");
 		}
-#line 2766 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2766 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 84: /* expr: TOKEN_MINUS expr  */
@@ -2771,7 +2771,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_neg_expr((yyvsp[0].expr));
 			debug("expr: neg expr");
 		}
-#line 2775 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2775 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 85: /* expr: TOKEN_NOT expr  */
@@ -2780,7 +2780,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_not_expr((yyvsp[0].expr));
 			debug("expr: not expr");
 		}
-#line 2784 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2784 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 86: /* expr: expr TOKEN_DOT TOKEN_SYMBOL  */
@@ -2789,7 +2789,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_dot_expr((yyvsp[-2].expr), (yyvsp[0].sval));
 			debug("expr: expr.symbol");
 		}
-#line 2793 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2793 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 87: /* expr: call_expr  */
@@ -2797,7 +2797,7 @@ yyreduce:
                 {
 			(yyval.expr) = (yyvsp[0].expr);
 		}
-#line 2801 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2801 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 88: /* expr: thiscall_expr  */
@@ -2805,7 +2805,7 @@ yyreduce:
                 {
 			(yyval.expr) = (yyvsp[0].expr);
 		}
-#line 2809 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2809 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 89: /* expr: TOKEN_LARR arg_list TOKEN_RARR  */
@@ -2814,7 +2814,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_array_expr((yyvsp[-1].arg_list));
 			debug("expr: array");
 		}
-#line 2818 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2818 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 90: /* expr: TOKEN_LBLK kv_list TOKEN_RBLK  */
@@ -2823,7 +2823,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_dict_expr((yyvsp[-1].kv_list));
 			debug("expr: dict");
 		}
-#line 2827 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2827 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 91: /* expr: TOKEN_CLASS TOKEN_LBLK kv_list TOKEN_RBLK  */
@@ -2833,7 +2833,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_dict_expr((yyvsp[-1].kv_list));
 			debug("expr: dict");
 		}
-#line 2837 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2837 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 92: /* expr: TOKEN_CLASS TOKEN_LBLK TOKEN_RBLK  */
@@ -2843,7 +2843,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_dict_expr(NULL);
 			debug("expr: dict");
 		}
-#line 2847 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2847 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 93: /* expr: lambda_expr  */
@@ -2851,7 +2851,7 @@ yyreduce:
                 {
 			(yyval.expr) = (yyvsp[0].expr);
 		}
-#line 2855 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2855 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 94: /* expr: TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK  */
@@ -2860,7 +2860,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_new_expr((yyvsp[-3].sval), (yyvsp[-1].kv_list));
 			debug("expr: new");
 		}
-#line 2864 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2864 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 95: /* expr: TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK TOKEN_RBLK  */
@@ -2869,7 +2869,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_new_expr((yyvsp[-2].sval), NULL);
 			debug("expr: new");
 		}
-#line 2873 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2873 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 96: /* call_expr: expr TOKEN_LPAR arg_list TOKEN_RPAR  */
@@ -2878,7 +2878,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_call_expr((yyvsp[-3].expr), (yyvsp[-1].arg_list));
 			debug("expr: call(param_list)");
 		}
-#line 2882 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2882 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 97: /* call_expr: expr TOKEN_LPAR TOKEN_RPAR  */
@@ -2887,7 +2887,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_call_expr((yyvsp[-2].expr), NULL);
 			debug("expr: call()");
 		}
-#line 2891 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2891 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 98: /* thiscall_expr: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR arg_list TOKEN_RPAR  */
@@ -2896,7 +2896,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_thiscall_expr((yyvsp[-5].expr), (yyvsp[-3].sval), (yyvsp[-1].arg_list));
 			debug("expr: thiscall(param_list)");
 		}
-#line 2900 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2900 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 99: /* thiscall_expr: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR  */
@@ -2905,7 +2905,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_thiscall_expr((yyvsp[-4].expr), (yyvsp[-2].sval), NULL);
 			debug("expr: thiscall(param_list)");
 		}
-#line 2909 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2909 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 100: /* lambda_expr: TOKEN_LPAR param_list TOKEN_RPAR_DARROW_LBLK stmt_list TOKEN_RBLK  */
@@ -2914,7 +2914,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_func_expr((yyvsp[-3].param_list), (yyvsp[-1].stmt_list));
 			debug("expr: func param_list stmt_list");
 		}
-#line 2918 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2918 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 101: /* lambda_expr: TOKEN_LPAR TOKEN_RPAR_DARROW_LBLK stmt_list TOKEN_RBLK  */
@@ -2923,7 +2923,7 @@ yyreduce:
 			(yyval.expr) = ast_accept_func_expr(NULL, (yyvsp[-1].stmt_list));
 			debug("expr: func stmt_list");
 		}
-#line 2927 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2927 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 102: /* arg_list: expr  */
@@ -2932,7 +2932,7 @@ yyreduce:
 			(yyval.arg_list) = ast_accept_arg_list(NULL, (yyvsp[0].expr));
 			debug("arg_list: expr");
 		}
-#line 2936 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2936 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 103: /* arg_list: arg_list TOKEN_COMMA expr  */
@@ -2941,7 +2941,7 @@ yyreduce:
 			(yyval.arg_list) = ast_accept_arg_list((yyvsp[-2].arg_list), (yyvsp[0].expr));
 			debug("arg_list: arg_list arg");
 		}
-#line 2945 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2945 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 104: /* kv_list: kv  */
@@ -2950,7 +2950,7 @@ yyreduce:
 			(yyval.kv_list) = ast_accept_kv_list(NULL, (yyvsp[0].kv));
 			debug("kv_list: kv");
 		}
-#line 2954 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2954 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 105: /* kv_list: kv_list TOKEN_COMMA kv  */
@@ -2959,7 +2959,7 @@ yyreduce:
 			(yyval.kv_list) = ast_accept_kv_list((yyvsp[-2].kv_list), (yyvsp[0].kv));
 			debug("kv_list: kv_list kv");
 		}
-#line 2963 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2963 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 106: /* kv: TOKEN_STR TOKEN_COLON expr  */
@@ -2968,7 +2968,7 @@ yyreduce:
 			(yyval.kv) = ast_accept_kv((yyvsp[-2].sval), (yyvsp[0].expr));
 			debug("kv");
 		}
-#line 2972 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2972 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 107: /* kv: TOKEN_SYMBOL TOKEN_COLON expr  */
@@ -2977,7 +2977,7 @@ yyreduce:
 			(yyval.kv) = ast_accept_kv((yyvsp[-2].sval), (yyvsp[0].expr));
 			debug("kv");
 		}
-#line 2981 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2981 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 108: /* term: TOKEN_INT  */
@@ -2986,7 +2986,7 @@ yyreduce:
 			(yyval.term) = ast_accept_int_term((yyvsp[0].ival));
 			debug("term: int");
 		}
-#line 2990 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2990 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 109: /* term: TOKEN_LONG  */
@@ -2995,7 +2995,7 @@ yyreduce:
 			(yyval.term) = ast_accept_long_term((yyvsp[0].lval));
 			debug("term: long");
 		}
-#line 2999 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 2999 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 110: /* term: TOKEN_FLOAT  */
@@ -3004,7 +3004,7 @@ yyreduce:
 			(yyval.term) = ast_accept_float_term((yyvsp[0].fval));
 			debug("term: float");
 		}
-#line 3008 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 3008 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 111: /* term: TOKEN_DOUBLE  */
@@ -3013,7 +3013,7 @@ yyreduce:
 			(yyval.term) = ast_accept_double_term((yyvsp[0].lfval));
 			debug("term: double");
 		}
-#line 3017 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 3017 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 112: /* term: TOKEN_STR  */
@@ -3022,7 +3022,7 @@ yyreduce:
 			(yyval.term) = ast_accept_str_term((yyvsp[0].sval));
 			debug("term: string");
 		}
-#line 3026 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 3026 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 113: /* term: TOKEN_SYMBOL  */
@@ -3031,7 +3031,7 @@ yyreduce:
 			(yyval.term) = ast_accept_symbol_term((yyvsp[0].sval));
 			debug("term: symbol");
 		}
-#line 3035 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 3035 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 114: /* term: TOKEN_LARR TOKEN_RARR  */
@@ -3040,7 +3040,7 @@ yyreduce:
 			(yyval.term) = ast_accept_empty_array_term();
 			debug("term: empty array symbol");
 		}
-#line 3044 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 3044 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
   case 115: /* term: TOKEN_LBLK TOKEN_RBLK  */
@@ -3049,11 +3049,11 @@ yyreduce:
 			(yyval.term) = ast_accept_empty_dict_term();
 			debug("term: empty dict symbol");
 		}
-#line 3053 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 3053 "/home/awe/src/noct/build-debug/parser.tab.c"
     break;
 
 
-#line 3057 "/home/awe/src/noct/build-static/parser.tab.c"
+#line 3057 "/home/awe/src/noct/build-debug/parser.tab.c"
 
       default: break;
     }
