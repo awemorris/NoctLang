@@ -2262,6 +2262,7 @@ ast_malloc(
 	void *ret;
 
 	ret = arena_alloc(&ast_arena, size);
+	assert((uintptr_t)ret % 8 == 0);
 	if (ret == NULL) {
 		ast_out_of_memory();
 		return NULL;

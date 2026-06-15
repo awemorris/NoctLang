@@ -415,7 +415,7 @@ jit_visit_liconst_op(
                 /* daddu $t0, $t0, $s1 */       IW(0x0191602d);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
-                /* li $t1, 5 */                 IW(0x240d0000);
+                /* li $t1, 5 */                 IW(0x240d0005);
                 /* sw $t1, 0($t0) */            IW(0xad8d0000);
 
                 /* env->frame->tmpvar[dst].val.i = val */
@@ -424,7 +424,7 @@ jit_visit_liconst_op(
                 /* dsll $t1, $t1, 16 */         IW(0x000d6c38);
                 /* ori  $t1, f@lh */            IW(0x35ad0000 | lohi16(val));
                 /* dsll $t1, $t1, 16 */         IW(0x000d6c38);
-                /* ori  $t1, f@ll */            IW(0x35ad0000 | lolo16(val))
+                /* ori  $t1, f@ll */            IW(0x35ad0000 | lolo16(val));
                 /* sd  $t1, 8($t0) */           IW(0xfd8d0008);
         }
 
@@ -489,7 +489,7 @@ jit_visit_lfconst_op(
                 /* daddu $t0, $t0, $s1 */       IW(0x0191602d);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
-                /* li $t1, 6 */                 IW(0x240d0000);
+                /* li $t1, 6 */                 IW(0x240d0006);
                 /* sw $t1, 0($t0) */            IW(0xad8d0000);
 
                 /* env->frame->tmpvar[dst].val.i = val */
@@ -498,7 +498,7 @@ jit_visit_lfconst_op(
                 /* dsll $t1, $t1, 16 */         IW(0x000d6c38);
                 /* ori  $t1, f@lh */            IW(0x35ad0000 | lohi16(val));
                 /* dsll $t1, $t1, 16 */         IW(0x000d6c38);
-                /* ori  $t1, f@ll */            IW(0x35ad0000 | lolo16(val))
+                /* ori  $t1, f@ll */            IW(0x35ad0000 | lolo16(val));
                 /* sd  $t1, 8($t0) */           IW(0xfd8d0008);
         }
 

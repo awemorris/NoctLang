@@ -404,23 +404,19 @@ jit_visit_liconst_op(
 
                 /* env->frame->tmpvar[dst].val.i = val */
 #if defined(NOCT_ARCH_LE)
-#if 0
                 /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
                 /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff)));
                 /* sw  $t1, 8($t0) */           IW(0xad090008);
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* sw  $t1, 12($t0) */          IW(0xad09000c);
-#endif
 #else
-#if 0
                 /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* sw  $t1, 8($t0) */           IW(0xad090008);
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff))); 
                 /* sw  $t1, 12($t0) */          IW(0xad09000c);
-#endif
 #endif
         }
 
@@ -490,23 +486,19 @@ jit_visit_lfconst_op(
 
                 /* env->frame->tmpvar[dst].val.i = val */
 #if defined(NOCT_ARCH_LE)
-#if 0
                 /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
                 /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff)));
                 /* sw  $t1, 8($t0) */           IW(0xad090008);
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* sw  $t1, 12($t0) */          IW(0xad09000c);
-#endif
 #else
-#if 0
                 /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
                 /* sw  $t1, 8($t0) */           IW(0xad090008);
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff))); 
                 /* sw  $t1, 12($t0) */          IW(0xad09000c);
-#endif
 #endif
         }
 

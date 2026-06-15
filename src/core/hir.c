@@ -1966,9 +1966,11 @@ hir_visit_term(
 		t->val.f = aterm->val.f;
 		break;
 	case AST_TERM_DOUBLE:
+	{
 		t->type = HIR_TERM_DOUBLE;
 		t->val.lf = aterm->val.lf;
 		break;
+	}
 	case AST_TERM_STRING:
 		t->type = HIR_TERM_STRING;
 		t->val.s = hir_strdup(aterm->val.s);
