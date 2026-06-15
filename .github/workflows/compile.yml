@@ -19,19 +19,19 @@ jobs:
 
       - name: Build for x86
         run: |
-          cmake --preset windows-vs2022-x86
-          cmake --build --preset windows-vs2022-x86 --config Release --parallel
+          cmake --preset windows-vs2026-x86
+          cmake --build --preset windows-vs2026-x86 --config Release --parallel
 
       - name: Build for x64
         run: |
-          cmake --preset windows-vs2022-x64
-          cmake --build --preset windows-vs2022-x64 --config Release --parallel
-          cp out/build/windows-vs2022-x64/Release/noct.exe noct-win64.exe
+          cmake --preset windows-vs2026-x64
+          cmake --build --preset windows-vs2026-x64 --config Release --parallel
+          cp out/build/windows-vs2026-x64/Release/noct.exe noct-win64.exe
 
       - name: Build for arm64
         run: |
-          cmake --preset windows-vs2022-arm64
-          cmake --build --preset windows-vs2022-arm64 --config Release --parallel
+          cmake --preset windows-vs2026-arm64
+          cmake --build --preset windows-vs2026-arm64 --config Release --parallel
 
       - name: Build nuget
         run: |
@@ -45,12 +45,12 @@ jobs:
           mkdir build/native/lib/arm64
           cp include/noct/noct.h build/native/include/noct/
           cp include/noct/c89compat.h build/native/include/noct/
-          cp out/build/windows-vs2022-x86/Release/noct.lib  build/native/lib/x86/
-          cp out/build/windows-vs2022-x86/Release/noctapi.lib  build/native/lib/x86/
-          cp out/build/windows-vs2022-x64/Release/noct.lib  build/native/lib/x64/
-          cp out/build/windows-vs2022-x64/Release/noctapi.lib  build/native/lib/x64/
-          cp out/build/windows-vs2022-arm64/Release/noct.lib build/native/lib/arm64/
-          cp out/build/windows-vs2022-arm64/Release/noctapi.lib build/native/lib/arm64/
+          cp out/build/windows-vs2026-x86/Release/noct.lib  build/native/lib/x86/
+          cp out/build/windows-vs2026-x86/Release/noctapi.lib  build/native/lib/x86/
+          cp out/build/windows-vs2026-x64/Release/noct.lib  build/native/lib/x64/
+          cp out/build/windows-vs2026-x64/Release/noctapi.lib  build/native/lib/x64/
+          cp out/build/windows-vs2026-arm64/Release/noct.lib build/native/lib/arm64/
+          cp out/build/windows-vs2026-arm64/Release/noctapi.lib build/native/lib/arm64/
           cp resources/windows/Noct.nuspec ./
           nuget pack Noct.nuspec
 
