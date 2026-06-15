@@ -364,7 +364,7 @@ typedef unsigned long uintptr_t;
 #include <stdint.h>
 #endif
 
-#if defined(HAVE_INTTYPES_H)
+#if defined(HAVE_INTTYPES_H) && !defined(__WATCOMC__)
 #include <inttypes.h>
 #endif
 
