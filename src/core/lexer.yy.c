@@ -810,8 +810,8 @@ static const flex_int16_t yy_chk[576] =
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-#include "parser.tab.h"
 #include <noct/c89compat.h>
+#include "parser.tab.h"
 #include <limits.h>
 
 #ifdef _MSC_VER
