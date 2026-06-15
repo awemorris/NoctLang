@@ -1,3 +1,5 @@
+#include <noct/c89compat.h>
+
 #line 2 "/home/awe/src/noct/build-debug/lexer.yy.c"
 
 #line 4 "/home/awe/src/noct/build-debug/lexer.yy.c"
@@ -810,7 +812,6 @@ static const flex_int16_t yy_chk[576] =
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-#include <noct/c89compat.h>
 #include "parser.tab.h"
 
 #ifdef _MSC_VER
