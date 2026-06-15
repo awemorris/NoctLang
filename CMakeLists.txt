@@ -491,6 +491,7 @@ if(NOCT_ENABLE_CLI)
   # Include include/noct/, src/core/, and src/backend/
   target_include_directories(noctcli PRIVATE
      ${NOCT_INCLUDE_DIRS}
+     ${CMAKE_CURRENT_SOURCE_DIR}/include
      ${CMAKE_CURRENT_SOURCE_DIR}/src/core
      ${CMAKE_CURRENT_SOURCE_DIR}/src/backend
   )
