@@ -360,6 +360,22 @@ typedef unsigned long uintptr_t;
 #endif
 #endif
 
+#if defined(HAVE_STDINT_H)
+#include <stdint.h>
+#endif
+
+#if defined(HAVE_INTTYPES_H)
+#include <inttypes.h>
+#endif
+
+#if defined(HAVE_SYS_TYPES_H)
+#include <sys/types.h>
+#endif
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
+#include <stdint.h>
+#endif
+
 /*
  * Definition of the inline keyword.
  */

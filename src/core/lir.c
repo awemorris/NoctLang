@@ -2137,6 +2137,8 @@ lir_cleanup(struct lir_func *func)
 		noct_free(func->param_name[i]);
 	noct_free(func->bytecode);
 	memset(func, 0, sizeof(struct lir_func));
+	noct_free(lir_file_name);
+	lir_file_name = NULL;
 }
 
 /*
@@ -2331,7 +2333,7 @@ lir_dump(
 			uint64_t val;
 			IMM2(dst);
 			IMM8(val);
-			printf("%04d: LICONST(dst:%d, val:%lld)\n", ofs, dst, val);
+			printf("%04d: LICONST(dst:%d, val:%" PRId64 ")\n", ofs, dst, val);
 			break;
 		}
 		case OP_FCONST:

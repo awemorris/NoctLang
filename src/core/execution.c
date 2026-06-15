@@ -176,15 +176,15 @@ noct_ex_add_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_DOUBLE;
-			dst_val->val.f = src1_val->val.lf + (double)src2_val->val.i;
+			dst_val->val.lf = src1_val->val.lf + (double)src2_val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_DOUBLE;
-			dst_val->val.f = src1_val->val.lf + (double)src2_val->val.l;
+			dst_val->val.lf = src1_val->val.lf + (double)src2_val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
 			dst_val->type = NOCT_VALUE_DOUBLE;
-			dst_val->val.f = src1_val->val.lf + (double)src2_val->val.f;
+			dst_val->val.lf = src1_val->val.lf + (double)src2_val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
 			dst_val->type = NOCT_VALUE_DOUBLE;
@@ -745,11 +745,11 @@ noct_ex_and_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (uint32_t)src1_val->val.i & (uint32_t)src2_val->val.i;
+			dst_val->val.i = (int32_t)((uint32_t)src1_val->val.i & (uint32_t)src2_val->val.i);
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)(uint32_t)src1_val->val.i & (uint64_t)src2_val->val.l;
+			dst_val->val.l = (int64_t)((uint64_t)(uint32_t)src1_val->val.i & (uint64_t)src2_val->val.l);
 			break;
 		default:
 			rt_error(env, N_TR("Value is not an integer."));
@@ -760,11 +760,11 @@ noct_ex_and_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)src1_val->val.l & (uint64_t)(uint32_t)src2_val->val.i;
+			dst_val->val.l = (int64_t)((uint64_t)src1_val->val.l & (uint64_t)(uint32_t)src2_val->val.i);
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)src1_val->val.l & (uint64_t)src2_val->val.l;
+			dst_val->val.l = (int64_t)((uint64_t)src1_val->val.l & (uint64_t)src2_val->val.l);
 			break;
 		default:
 			rt_error(env, N_TR("Value is not an integer."));
@@ -804,11 +804,11 @@ noct_ex_or_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (uint32_t)src1_val->val.i | (uint32_t)src2_val->val.i;
+			dst_val->val.i = (int32_t)((uint32_t)src1_val->val.i | (uint32_t)src2_val->val.i);
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)(uint32_t)src1_val->val.i | (uint64_t)src2_val->val.l;
+			dst_val->val.l = (int64_t)((uint64_t)(uint32_t)src1_val->val.i | (uint64_t)src2_val->val.l);
 			break;
 		default:
 			rt_error(env, N_TR("Value is not an integer."));
@@ -819,11 +819,11 @@ noct_ex_or_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)src1_val->val.l | (uint64_t)(uint32_t)src2_val->val.i;
+			dst_val->val.l = (int64_t)((uint64_t)src1_val->val.l | (uint64_t)(uint32_t)src2_val->val.i);
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)(uint32_t)src1_val->val.l | (uint64_t)src2_val->val.l;
+			dst_val->val.l = (int64_t)((uint64_t)(uint32_t)src1_val->val.l | (uint64_t)src2_val->val.l);
 			break;
 		default:
 			rt_error(env, N_TR("Value is not an integer."));
@@ -863,11 +863,11 @@ noct_ex_xor_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (uint32_t)src1_val->val.i ^ (uint32_t)src2_val->val.i;
+			dst_val->val.i = (int32_t)((uint32_t)src1_val->val.i ^ (uint32_t)src2_val->val.i);
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.i = (uint64_t)(uint32_t)src1_val->val.i ^ (uint64_t)src2_val->val.l;
+			dst_val->val.l = (int64_t)((uint64_t)(uint32_t)src1_val->val.i ^ (uint64_t)src2_val->val.l);
 			break;
 		default:
 			rt_error(env, N_TR("Value is not an integer."));
@@ -878,11 +878,11 @@ noct_ex_xor_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)src1_val->val.l ^ (uint64_t)(uint32_t)src2_val->val.i;
+			dst_val->val.l = (int64_t)((uint64_t)src1_val->val.l ^ (uint64_t)(uint32_t)src2_val->val.i);
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_LONG;
-			dst_val->val.l = (uint64_t)src1_val->val.l ^ (uint64_t)src2_val->val.l;
+			dst_val->val.l = (int64_t)((uint64_t)src1_val->val.l ^ (uint64_t)src2_val->val.l);
 			break;
 		default:
 			rt_error(env, N_TR("Value is not an integer."));

@@ -30,15 +30,14 @@ static int console_wide_printf(const char *format, ...);
 struct ffi_item {
 	const char *global_name;
 	const char *field_name;
-	int param_count;
+	size_t param_count;
 	const char *param[NOCT_ARG_MAX];
 	bool (*cfunc)(NoctEnv *env);
 };
 static struct ffi_item ffi_items[] = {
-	{"__Console_print",	"print",	1,	{"msg"},	cfunc_Console_print},
+	{"Console.print",	"print",	1,	{"msg"},	cfunc_Console_print},
 };
 
-	
 /*
  * Register "Console.*" functions.
  */
@@ -64,7 +63,7 @@ noct_register_api_console(
 		if (!noct_register_cfunc(
 			    env,
 			    ffi_items[i].global_name,
-			    1,
+			    ffi_items[i].param_count,
 			    ffi_items[i].param,
 			    ffi_items[i].cfunc,
 			    NULL))

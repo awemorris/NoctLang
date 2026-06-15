@@ -66,7 +66,7 @@ extern YYLTYPE yylloc;
 			return TOKEN_FLOAT;
 		}
 [0-9]+[lL]      {
-			sscanf(yytext, "%lld", &ast_yylval.lval);
+			sscanf(yytext, "%" SCNd64, &ast_yylval.lval);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
@@ -74,7 +74,7 @@ extern YYLTYPE yylloc;
 		}
 [0-9]*		{
                         int64_t v;
-			sscanf(yytext, "%lld", &v);
+			sscanf(yytext, "%" SCNd64, &v);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
@@ -86,7 +86,7 @@ extern YYLTYPE yylloc;
  			return TOKEN_INT;
 		}
 0x[0-9a-fA-F]{1,16}l {
-			sscanf(yytext, "%llx", &ast_yylval.lval);
+			sscanf(yytext, "%" SCNx64, &ast_yylval.lval);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;

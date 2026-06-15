@@ -220,7 +220,7 @@ bool
 noct_register_cfunc(
 	NoctEnv *env,
 	const char *name,
-	uint32_t param_count,
+	size_t param_count,
 	const char *param_name[],
 	bool (*cfunc)(NoctEnv *env),
 	NoctFunc **ret_func);
@@ -1906,6 +1906,12 @@ noct_register_api_system(
 NOCT_DLL
 bool
 noct_register_api_console(
+	NoctEnv *env);
+
+/* Register the "File.*" APIs. */
+NOCT_DLL
+bool
+noct_register_api_file(
 	NoctEnv *env);
 
 /*

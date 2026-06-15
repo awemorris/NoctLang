@@ -140,6 +140,7 @@ om_write_array(
 		/* Try expanding. */
 		if (!expand_array(env, arr_val, arr, new_size)) {
 			/* Out-of-memory error. */
+			rt_out_of_memory(env);
 			return false;
 		}
 
@@ -178,6 +179,7 @@ expand_array(
 		/*
 		 * Error: out-of-memory.
 		 */
+		rt_out_of_memory(env);
 		return false;
 	}
 
@@ -225,6 +227,7 @@ om_resize_array(
 	/* Try expanding. (including size reduction) */
 	if (!expand_array(env, arr_val, arr, req_size)) {
 		/* Out-of-memory error. */
+		rt_out_of_memory(env);
 		return false;
 	}
 
@@ -263,6 +266,7 @@ om_copy_array(
 	d = rt_gc_alloc_array(env, size);
 	if (d == NULL) {
 		/* Out-of-memory error. */
+		rt_out_of_memory(env);
 		return false;
 	}
 
@@ -480,6 +484,7 @@ om_read_dict_with_hash(
 		/* Stop if an empty slot. */
 		if (dict->key[i].type == NOCT_VALUE_INT) {
 			/* Failed: Key not found. */
+			rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
 			return false;
 		}
 
@@ -520,6 +525,7 @@ om_read_dict_index(
 	/* Check for the size. */
 	if (index >= dict->size) {
 		/* Index is out-of-bound. */
+		rt_error(env, N_TR("Dictionary index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -537,6 +543,7 @@ om_read_dict_index(
 	}
 	if (i == dict->alloc_size) {
 		/* Failed. */
+		rt_error(env, N_TR("Dictionary index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -646,6 +653,7 @@ expand_phase:
 	/* Try expanding. */
 	if (!expand_dict(env, dict_val, dict, new_size)) {
 		/* Out-of-memory error.	 */
+		rt_out_of_memory(env);
 		return false;
 	}
 
@@ -669,6 +677,7 @@ expand_dict(
 	new_dict = rt_gc_alloc_dict(env, size);
 	if (new_dict == NULL) {
 		/* Error: out-of-memory. */
+		rt_out_of_memory(env);
 		return false;
 	}
 
@@ -790,6 +799,7 @@ om_erase_dict_entry(
 	}
 	if (is_not_found) {
 		/* Failed: Key not found. */
+		rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
 		return false;
 	}
 
@@ -827,6 +837,7 @@ om_copy_dict(
 	d = rt_gc_alloc_dict(env, size);
 	if (d == NULL) {
 		/* Out-of-memory error. */
+		rt_out_of_memory(env);
 		return false;
 	}
 
@@ -894,6 +905,7 @@ om_merge_dict(
 	d = rt_gc_alloc_dict(env, dst_size);
 	if (d == NULL) {
 		/* Out-of-memory error. */
+		rt_out_of_memory(env);
 		return false;
 	}
 

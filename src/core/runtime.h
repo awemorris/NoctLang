@@ -166,7 +166,7 @@ struct rt_func {
 	struct rt_gc_object head;
 
 	char *name;
-	uint32_t param_count;
+	size_t param_count;
 	char *param_name[NOCT_ARG_MAX];
 
 	char *file_name;
@@ -409,7 +409,7 @@ bool
 rt_register_cfunc(
 	struct rt_env *env,
 	const char *name,
-	uint32_t param_count,
+	size_t param_count,
 	const char *param_name[],
 	bool (*cfunc)(struct rt_env *env),
 	struct rt_func **ret_func);

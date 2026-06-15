@@ -183,6 +183,8 @@ rt_free_func(
 
 	if (func->jit_code != NULL)
 		func->jit_code = NULL;
+
+	noct_free(func);
 }
 
 #if defined(NOCT_USE_MULTITHREAD)
@@ -580,7 +582,7 @@ bool
 rt_register_cfunc(
 	struct rt_env *env,
 	const char *name,
-	uint32_t param_count,
+	size_t param_count,
 	const char *param_name[],
 	bool (*cfunc)(struct rt_env *env),
 	struct rt_func **ret_func)
@@ -610,7 +612,7 @@ rt_register_cfunc(
 		}
 	}
 	func->cfunc = cfunc;
-	func->tmpvar_size = param_count + 1;
+	func->tmpvar_size = (uint32_t)param_count + 1;
 
 	global.type = NOCT_VALUE_FUNC;
 	global.val.func = func;

@@ -103,7 +103,7 @@ bool
 noct_register_cfunc(
 	NoctEnv *env,
 	const char *name,
-	uint32_t param_count,
+	size_t param_count,
 	const char *param_name[],
 	bool (*cfunc)(NoctEnv *env),
 	NoctFunc **ret_func)
@@ -2462,7 +2462,7 @@ noct_get_arg_check_packed(
 
 NOCT_DLL
 bool
-noct_get_arg_func(
+noct_get_arg_check_func(
 	NoctEnv *env,
 	uint32_t index,
 	NoctValue *val,
