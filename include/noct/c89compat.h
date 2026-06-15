@@ -360,7 +360,7 @@ typedef unsigned long uintptr_t;
 #endif
 #endif
 
-#if defined(HAVE_STDINT_H)
+#if defined(HAVE_STDINT_H) && !defined(__WATCOMC__)
 #include <stdint.h>
 #endif
 
@@ -368,7 +368,7 @@ typedef unsigned long uintptr_t;
 #include <inttypes.h>
 #endif
 
-#if defined(HAVE_SYS_TYPES_H)
+#if defined(HAVE_SYS_TYPES_H) && !defined(__WATCOMC__)
 #include <sys/types.h>
 #endif
 
