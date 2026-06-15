@@ -382,7 +382,7 @@ jit_visit_iconst_op(
                 /* li r3, dst */        IW(0x00006038 | tvar16(dst));
                 /* add r3, r3, r15 */   IW(0x147a637c);
 
-                /* env->frame->tmpvar[dst].type = RT_VALUE_INT */
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_INT */
                 /* li r4, 0 */          IW(0x00008038);
                 /* stw r4, 0(r3) */     IW(0x00008390);
 
@@ -390,6 +390,54 @@ jit_visit_iconst_op(
                 /* lis r4, val@h */     IW(0x0000803c | hi16(val));
                 /* ori r4, r4, val@l */ IW(0x00008460 | lo16(val));
                 /* stw r4, 8(r3) */     IW(0x08008390);
+        }
+
+        return true;
+}
+
+/* Visit a OP_LICONST instruction. */
+static INLINE bool
+jit_visit_liconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set an integer constant. */
+        ASM {
+                /* R14: env */
+                /* R15: &env->frame->tmpvar[0] */
+                /* R31: saved LR */
+
+                /* R3 = dst_addr = &env->frame->tmpvar[dst] */
+                /* li r3, dst */        IW(0x00006038 | tvar16(dst));
+                /* add r3, r3, r15 */   IW(0x147a637c);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
+                /* li r4, 5 */          IW(0x05008038);
+                /* stw r4, 0(r3) */     IW(0x00008390);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+#if defined(NOCT_ARCH_LE)
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)(val & 0xffffffff)));
+                /* stw r4, 8(r3) */     IW(0x08008390);
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* stw r4, 12(r3) */    IW(0x0c008390);
+#else
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* stw r4, 8(r3) */     IW(0x08008390);
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)(val & 0xffffffff)));
+                /* stw r4, 12(r3) */    IW(0x0c008390);
+#endif
         }
 
         return true;
@@ -418,7 +466,7 @@ jit_visit_fconst_op(
                 /* li r3, dst */        IW(0x00006038 | lo16((uint32_t)dst));
                 /* add r3, r3, r15 */   IW(0x147a637c);
 
-                /* env->frame->tmpvar[dst].type = RT_VALUE_FLOAT */
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_FLOAT */
                 /* li r4, 1 */          IW(0x01008038);
                 /* stw r4, 0(r3) */     IW(0x00008390);
 
@@ -426,6 +474,54 @@ jit_visit_fconst_op(
                 /* lis r4, val@h */             IW(0x0000803c | hi16(val));
                 /* ori r4, r4, val@l */         IW(0x00008460 | lo16(val));
                 /* stw r4, 8(r3) */             IW(0x08008390);
+        }
+
+        return true;
+}
+
+/* Visit a OP_LFCONST instruction. */
+static INLINE bool
+jit_visit_lfconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set an integer constant. */
+        ASM {
+                /* R14: env */
+                /* R15: &env->frame->tmpvar[0] */
+                /* R31: saved LR */
+
+                /* R3 = dst_addr = &env->frame->tmpvar[dst] */
+                /* li r3, dst */        IW(0x00006038 | tvar16(dst));
+                /* add r3, r3, r15 */   IW(0x147a637c);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+                /* li r4, 6 */          IW(0x06008038);
+                /* stw r4, 0(r3) */     IW(0x00008390);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+#if defined(NOCT_ARCH_LE)
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)(val & 0xffffffff)));
+                /* stw r4, 8(r3) */     IW(0x08008390);
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* stw r4, 12(r3) */    IW(0x0c008390);
+#else
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* stw r4, 8(r3) */     IW(0x08008390);
+                /* lis r4, val@h */     IW(0x0000803c | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori r4, r4, val@l */ IW(0x00008460 | lo16((uint32_t)(val & 0xffffffff)));
+                /* stw r4, 12(r3) */    IW(0x0c008390);
+#endif
         }
 
         return true;
@@ -1727,8 +1823,16 @@ jit_visit_bytecode(
                         if (!jit_visit_iconst_op(ctx))
                                 return false;
                         break;
+                case OP_LICONST:
+                        if (!jit_visit_liconst_op(ctx))
+                                return false;
+                        break;
                 case OP_FCONST:
                         if (!jit_visit_fconst_op(ctx))
+                                return false;
+                        break;
+                case OP_LFCONST:
+                        if (!jit_visit_lfconst_op(ctx))
                                 return false;
                         break;
                 case OP_SCONST:

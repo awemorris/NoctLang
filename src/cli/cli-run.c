@@ -34,6 +34,7 @@ int command_run(int argc, char *argv[])
 
 	/* Parse options. */
 	file_arg = 1;
+	is_oneliner = false;
 	for (i = 1; i < (uint32_t)argc; i++) {
 		if (argv[i][0] != '-')
 			break;

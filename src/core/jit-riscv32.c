@@ -602,6 +602,42 @@ jit_visit_iconst_op(
 	return true;
 }
 
+/* Visit a OP_LICONST instruction. */
+static INLINE bool
+jit_visit_liconst_op(
+	struct jit_context *ctx)
+{
+	int dst;
+	uint64_t val;
+
+	CONSUME_TMPVAR(dst);
+	CONSUME_IMM64(val);
+
+	dst *= (int)sizeof(struct rt_value);
+
+	/* Set an integer constant. */
+	ASM {
+		/* s10: env */
+		/* s11: &env->frame->tmpvar[0] */
+
+		/* t0 = &env->frame->tmpvar[dst] */
+		ORI	(REG_T0, REG_ZERO, IMM12(dst));
+		ADD	(REG_T0, REG_S11, REG_T0);
+
+		/* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
+		ORI	(REG_T1, REG_ZERO, IMM12(5));
+		SW	(REG_T1, 0, REG_T0);
+
+		/* env->frame->tmpvar[dst].val.i = val */
+		LI_32	(REG_T2, IMM32((uint32_t)(val & 0xffffffff)));
+		SW	(REG_T2, 8, REG_T0);
+		LI_32	(REG_T2, IMM32((uint32_t)((val >> 32) & 0xffffffff)));
+		SW	(REG_T2, 12, REG_T0);
+	}
+
+	return true;
+}
+
 /* Visit a OP_FCONST instruction. */
 static INLINE bool
 jit_visit_fconst_op(
@@ -631,6 +667,42 @@ jit_visit_fconst_op(
 		/* Assign env->frame->tmpvar[dst].val.f = val. */
 		LI_32	(REG_T2, IMM32(val));
 		SW	(REG_T2, 8, REG_T0);
+	}
+
+	return true;
+}
+
+/* Visit a OP_LFCONST instruction. */
+static INLINE bool
+jit_visit_lfconst_op(
+	struct jit_context *ctx)
+{
+	int dst;
+	uint64_t val;
+
+	CONSUME_TMPVAR(dst);
+	CONSUME_IMM64(val);
+
+	dst *= (int)sizeof(struct rt_value);
+
+	/* Set an integer constant. */
+	ASM {
+		/* s10: env */
+		/* s11: &env->frame->tmpvar[0] */
+
+		/* t0 = &env->frame->tmpvar[dst] */
+		ORI	(REG_T0, REG_ZERO, IMM12(dst));
+		ADD	(REG_T0, REG_S11, REG_T0);
+
+		/* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+		ORI	(REG_T1, REG_ZERO, IMM12(6));
+		SW	(REG_T1, 0, REG_T0);
+
+		/* env->frame->tmpvar[dst].val.i = val */
+		LI_32	(REG_T2, IMM32((uint32_t)(val & 0xffffffff)));
+		SW	(REG_T2, 8, REG_T0);
+		LI_32	(REG_T2, IMM32((uint32_t)((val >> 32) & 0xffffffff)));
+		SW	(REG_T2, 12, REG_T0);
 	}
 
 	return true;
@@ -1811,8 +1883,16 @@ jit_visit_bytecode(
 			if (!jit_visit_iconst_op(ctx))
 				return false;
 			break;
+		case OP_LICONST:
+			if (!jit_visit_liconst_op(ctx))
+				return false;
+			break;
 		case OP_FCONST:
 			if (!jit_visit_fconst_op(ctx))
+				return false;
+			break;
+		case OP_LFCONST:
+			if (!jit_visit_lfconst_op(ctx))
 				return false;
 			break;
 		case OP_SCONST:

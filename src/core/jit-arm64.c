@@ -266,7 +266,7 @@ jit_put_str_imm(
         uint32_t imm)
 {
         if (!jit_put_word(ctx,
-                          0xf9000000 |                  /* movk */
+                          0xf9000000 |                  /* str */
                           (rs)        |                 /* rs */
                           (rd << 5) |                   /* rd */
                           (((imm / 8) & 0x1ff) << 10))) /* imm */
@@ -636,6 +636,43 @@ jit_visit_iconst_op(
         return true;
 }
 
+/* Visit a OP_LICONST instruction. */
+static INLINE bool
+jit_visit_liconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set an integer constant. */
+        ASM {
+                /* x0 = env */
+                /* x1 = &env->frame->tmpvar[0] */
+
+                /* x2 = &env->frame->tmpvar[dst] */
+                MOVZ            (REG_X2, IMM16(dst), LSL_0);
+                ADD             (REG_X2, REG_X2, REG_X1);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
+                MOVZ            (REG_X3, IMM16(5), LSL_0);
+                STR             (REG_X3, REG_X2);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+                MOVZ            (REG_X3, IMM16(val & 0xffff), LSL_0);
+                MOVK            (REG_X3, IMM16((val >> 16) & 0xffff), LSL_16);
+                MOVK            (REG_X3, IMM16((val >> 32) & 0xffff), LSL_32);
+                MOVK            (REG_X3, IMM16((val >> 48) & 0xffff), LSL_48);
+                STR_IMM         (REG_X3, REG_X2, IMM9(8));
+        }
+
+        return true;
+}
+
 /* Visit a OP_FCONST instruction. */
 static INLINE bool
 jit_visit_fconst_op(
@@ -665,6 +702,43 @@ jit_visit_fconst_op(
                 /* Assign env->frame->tmpvar[dst].val.f = val. */
                 MOVZ            (REG_X3, IMM16(val & 0xffff), LSL_0);
                 MOVK            (REG_X3, IMM16((val >> 16) & 0xffff), LSL_16);
+                STR_IMM         (REG_X3, REG_X2, IMM9(8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_LFCONST instruction. */
+static INLINE bool
+jit_visit_lfconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set an integer constant. */
+        ASM {
+                /* x0 = env */
+                /* x1 = &env->frame->tmpvar[0] */
+
+                /* x2 = &env->frame->tmpvar[dst] */
+                MOVZ            (REG_X2, IMM16(dst), LSL_0);
+                ADD             (REG_X2, REG_X2, REG_X1);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+                MOVZ            (REG_X3, IMM16(6), LSL_0);
+                STR             (REG_X3, REG_X2);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+                MOVZ            (REG_X3, IMM16(val & 0xffff), LSL_0);
+                MOVK            (REG_X3, IMM16((val >> 16) & 0xffff), LSL_16);
+                MOVK            (REG_X3, IMM16((val >> 32) & 0xffff), LSL_32);
+                MOVK            (REG_X3, IMM16((val >> 48) & 0xffff), LSL_48);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
 
@@ -1987,8 +2061,16 @@ jit_visit_bytecode(
                         if (!jit_visit_iconst_op(ctx))
                                 return false;
                         break;
+                case OP_LICONST:
+                        if (!jit_visit_liconst_op(ctx))
+                                return false;
+                        break;
                 case OP_FCONST:
                         if (!jit_visit_fconst_op(ctx))
+                                return false;
+                        break;
+                case OP_LFCONST:
+                        if (!jit_visit_lfconst_op(ctx))
                                 return false;
                         break;
                 case OP_SCONST:

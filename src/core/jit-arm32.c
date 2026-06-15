@@ -640,6 +640,44 @@ jit_visit_iconst_op(
         return true;
 }
 
+/* Visit a OP_LICONST instruction. */
+static INLINE bool
+jit_visit_liconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set an integer constant. */
+        ASM {
+                /* r11 = env */
+                /* r12 = &env->frame->tmpvar[0] */
+
+                /* r0 = &env->frame->tmpvar[dst] */
+                MOVW    (REG_R0, (uint32_t)dst);
+                ADD     (REG_R0, REG_R0, REG_R12);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
+                MOVW    (REG_R1, 5);
+                STR     (REG_R1, REG_R0, 0);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+                MOVW    (REG_R1, val & 0xffff);
+                MOVT    (REG_R1, (val >> 16) & 0xffff);
+                STR     (REG_R1, REG_R0, 8);
+                MOVW    (REG_R1, (val >> 32) & 0xffff);
+                MOVT    (REG_R1, (val >> 48) & 0xffff);
+                STR     (REG_R1, REG_R0, 12);
+        }
+
+        return true;
+}
+
 /* Visit a OP_FCONST instruction. */
 static INLINE bool
 jit_visit_fconst_op(
@@ -670,6 +708,44 @@ jit_visit_fconst_op(
                 MOVW    (REG_R1, val & 0xffff);
                 MOVT    (REG_R1, (val >> 16) & 0xffff);
                 STR     (REG_R1, REG_R0, 8);
+        }
+
+        return true;
+}
+
+/* Visit a OP_LFCONST instruction. */
+static INLINE bool
+jit_visit_lfconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set an integer constant. */
+        ASM {
+                /* r11 = env */
+                /* r12 = &env->frame->tmpvar[0] */
+
+                /* r0 = &env->frame->tmpvar[dst] */
+                MOVW    (REG_R0, (uint32_t)dst);
+                ADD     (REG_R0, REG_R0, REG_R12);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+                MOVW    (REG_R1, 6);
+                STR     (REG_R1, REG_R0, 0);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+                MOVW    (REG_R1, val & 0xffff);
+                MOVT    (REG_R1, (val >> 16) & 0xffff);
+                STR     (REG_R1, REG_R0, 8);
+                MOVW    (REG_R1, (val >> 32) & 0xffff);
+                MOVT    (REG_R1, (val >> 48) & 0xffff);
+                STR     (REG_R1, REG_R0, 12);
         }
 
         return true;
@@ -2031,8 +2107,16 @@ jit_visit_bytecode(
                         if (!jit_visit_iconst_op(ctx))
                                 return false;
                         break;
+                case OP_LICONST:
+                        if (!jit_visit_liconst_op(ctx))
+                                return false;
+                        break;
                 case OP_FCONST:
                         if (!jit_visit_fconst_op(ctx))
+                                return false;
+                        break;
+                case OP_LFCONST:
+                        if (!jit_visit_lfconst_op(ctx))
                                 return false;
                         break;
                 case OP_SCONST:

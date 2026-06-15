@@ -2314,7 +2314,9 @@ hir_free_term(
 {
 	switch (t->type) {
 	case HIR_TERM_INT:
+	case HIR_TERM_LONG:
 	case HIR_TERM_FLOAT:
+	case HIR_TERM_DOUBLE:
 		break;
 	case HIR_TERM_SYMBOL:
 		if (t->val.symbol != NULL) {

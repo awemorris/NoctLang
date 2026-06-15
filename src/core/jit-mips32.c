@@ -363,7 +363,7 @@ jit_visit_iconst_op(
                 /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
 
-                /* env->frame->tmpvar[dst].type = RT_VALUE_INT */
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_INT */
                 /* li $t1, 0 */                 IW(0x24090000);
                 /* sw $t1, 0($t0) */            IW(0xad090000);
 
@@ -371,6 +371,57 @@ jit_visit_iconst_op(
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16(val));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16(val));
                 /* sw  $t1, 8($t0) */           IW(0xad090008);
+        }
+
+        return true;
+}
+
+/* Visit a OP_LICONST instruction. */
+static INLINE bool
+jit_visit_liconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set a long integer constant. */
+        ASM {
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* $t0 = dst_addr = &env->frame->tmpvar[dst] */
+                /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
+                /* addu $t0, $t0, $s1 */        IW(0x01114021);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
+                /* li $t1, 5 */                 IW(0x24090005);
+                /* sw $t1, 0($t0) */            IW(0xad090000);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+#if defined(NOCT_ARCH_LE)
+#if 0
+                /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff)));
+                /* sw  $t1, 8($t0) */           IW(0xad090008);
+                /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* sw  $t1, 12($t0) */          IW(0xad09000c);
+#endif
+#else
+#if 0
+                /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* sw  $t1, 8($t0) */           IW(0xad090008);
+                /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff))); 
+                /* sw  $t1, 12($t0) */          IW(0xad09000c);
+#endif
+#endif
         }
 
         return true;
@@ -398,7 +449,7 @@ jit_visit_fconst_op(
                 /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
                 /* addu $t0, $t0, $s1 */        IW(0x01114021);
 
-                /* env->frame->tmpvar[dst].type = RT_VALUE_FLOAT */
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_FLOAT */
                 /* li $t1, 1 */                 IW(0x24090001);
                 /* sw $t1, 0($t0) */            IW(0xad090000);
 
@@ -406,6 +457,57 @@ jit_visit_fconst_op(
                 /* lui $t1, val@h */            IW(0x3c090000 | hi16(val));
                 /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16(val));
                 /* sw  $t1, 8($t0) */           IW(0xad090008);
+        }
+
+        return true;
+}
+
+/* Visit a OP_LFCONST instruction. */
+static INLINE bool
+jit_visit_lfconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* Set a long integer constant. */
+        ASM {
+                /* $s0: env */
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* $t0 = dst_addr = &env->frame->tmpvar[dst] */
+                /* li $t0, dst */               IW(0x24080000 | lo16((uint32_t)dst));
+                /* addu $t0, $t0, $s1 */        IW(0x01114021);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+                /* li $t1, 6 */                 IW(0x24090006);
+                /* sw $t1, 0($t0) */            IW(0xad090000);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+#if defined(NOCT_ARCH_LE)
+#if 0
+                /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff)));
+                /* sw  $t1, 8($t0) */           IW(0xad090008);
+                /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* sw  $t1, 12($t0) */          IW(0xad09000c);
+#endif
+#else
+#if 0
+                /* lui $t1, val@lh */           IW(0x3c090000 | hi16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* ori $t1, $t1, val@ll */      IW(0x35290000 | lo16((uint32_t)((val >> 32) & 0xffffffff)));
+                /* sw  $t1, 8($t0) */           IW(0xad090008);
+                /* lui $t1, val@h */            IW(0x3c090000 | hi16((uint32_t)(val & 0xffffffff)));
+                /* ori $t1, $t1, val@l */       IW(0x35290000 | lo16((uint32_t)(val & 0xffffffff))); 
+                /* sw  $t1, 12($t0) */          IW(0xad09000c);
+#endif
+#endif
         }
 
         return true;
@@ -1762,8 +1864,16 @@ jit_visit_bytecode(
                         if (!jit_visit_iconst_op(ctx))
                                 return false;
                         break;
+                case OP_LICONST:
+                        if (!jit_visit_liconst_op(ctx))
+                                return false;
+                        break;
                 case OP_FCONST:
                         if (!jit_visit_fconst_op(ctx))
+                                return false;
+                        break;
+                case OP_LFCONST:
+                        if (!jit_visit_lfconst_op(ctx))
                                 return false;
                         break;
                 case OP_SCONST:

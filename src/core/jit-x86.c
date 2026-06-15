@@ -345,17 +345,57 @@ jit_visit_iconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &env->frame->tmpvar[dst].type = RT_VALUE_INT; */
-        /* &env->frame->tmpvar[dst].val.i = val; */
+        /* env->frame->tmpvar[dst].type = NOCT_VALUE_INT; */
+        /* env->frame->tmpvar[dst].val.i = val; */
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
+                /* %eax = &env->frame->tmpvar[dst] */
                 /* movl $dst, %eax */          IB(0xb8); ID((uint32_t)dst);
                 /* addl -4(%ebp), %eax */      IB(0x03); IB(0x45); IB(0xfc);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_INT */
                 /* movl $0, (%eax) */          IB(0xc7); IB(0x00); ID(0);
+
+                /* env->frame->tmpvar[dst].val.i = val */
                 /* movl $val, 8(%eax) */       IB(0xc7); IB(0x40); IB(0x08); ID(val);
+        }
+
+        return true;
+}
+
+/* Visit a OP_LICONST instruction. */
+static INLINE bool
+jit_visit_liconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG; */
+        /* env->frame->tmpvar[dst].val.l = val; */
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
+                /* ebp-12: exception_handler */
+
+                /* %eax = &env->frame->tmpvar[dst] */
+                /* movl $dst -> %eax */          IB(0xb8); ID((uint32_t)dst);
+                /* addl -4(%ebp) -> %eax */      IB(0x03); IB(0x45); IB(0xfc);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
+                /* movl $5 -> (%eax) */          IB(0xc7); IB(0x00); ID(5);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+                /* movl LO(val) -> 8(%eax) */    IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
+                /* movl HI(val) -> 12(%eax) */   IB(0xc7); IB(0x40); IB(0x0c); ID((uint32_t)(val >> 32));
         }
 
         return true;
@@ -374,17 +414,57 @@ jit_visit_fconst_op(
 
         dst *= (int)sizeof(struct rt_value);
 
-        /* &env->frame->tmpvar[dst].type = RT_VALUE_INT; */
+        /* &env->frame->tmpvar[dst].type = NOCT_VALUE_FLOAT; */
         /* &env->frame->tmpvar[dst].val.i = val; */
         ASM {
                 /* ebp-4: &env->frame->tmpvar[0] */
                 /* ebp-8: env */
                 /* ebp-12: exception_handler */
 
-                /* movl $dst, %eax */          IB(0xb8); ID((uint32_t)dst);
-                /* addl -4(%ebp), %eax */      IB(0x03); IB(0x45); IB(0xfc);
-                /* movl $1, (%eax) */          IB(0xc7); IB(0x00); ID(1);
-                /* movl $val, 8(%eax) */       IB(0xc7); IB(0x40); IB(0x08); ID(val);
+                /* %eax = &env->frame->tmpvar[dst] */
+                /* movl $dst -> %eax */          IB(0xb8); ID((uint32_t)dst);
+                /* addl -4(%ebp) -> %eax */      IB(0x03); IB(0x45); IB(0xfc);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+                /* movl $1 -> (%eax) */          IB(0xc7); IB(0x00); ID(1);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+                /* movl $val -> 8(%eax) */       IB(0xc7); IB(0x40); IB(0x08); ID(val);
+        }
+
+        return true;
+}
+
+/* Visit a OP_LFCONST instruction. */
+static INLINE bool
+jit_visit_lfconst_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        uint64_t val;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM64(val);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE; */
+        /* env->frame->tmpvar[dst].val.l = val; */
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+                /* ebp-8: env */
+                /* ebp-12: exception_handler */
+
+                /* %eax = &env->frame->tmpvar[dst] */
+                /* movl $dst -> %eax */          IB(0xb8); ID((uint32_t)dst);
+                /* addl -4(%ebp) -> %eax */      IB(0x03); IB(0x45); IB(0xfc);
+
+                /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+                /* movl $6 -> (%eax) */          IB(0xc7); IB(0x00); ID(6);
+
+                /* env->frame->tmpvar[dst].val.i = val */
+                /* movl LO(val) -> 8(%eax) */    IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
+                /* movl HI(val) -> 12(%eax) */   IB(0xc7); IB(0x40); IB(0x0c); ID((uint32_t)(val >> 32));
         }
 
         return true;
@@ -1605,8 +1685,16 @@ jit_visit_bytecode(
                         if (!jit_visit_iconst_op(ctx))
                                 return false;
                         break;
+                case OP_LICONST:
+                        if (!jit_visit_liconst_op(ctx))
+                                return false;
+                        break;
                 case OP_FCONST:
                         if (!jit_visit_fconst_op(ctx))
+                                return false;
+                        break;
+                case OP_LFCONST:
+                        if (!jit_visit_lfconst_op(ctx))
                                 return false;
                         break;
                 case OP_SCONST:
