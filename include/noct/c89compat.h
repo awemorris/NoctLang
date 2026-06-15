@@ -419,8 +419,14 @@ typedef unsigned long uintptr_t;
 #ifndef PRId64
 #define PRId64 "lld"
 #endif
+#ifndef PRIx64
+#define PRIx64 "llx"
+#endif
 #ifndef SCNd64
 #define SCNd64 "lld"
+#endif
+#ifndef SCNx64
+#define SCNx64 "llx"
 #endif
 #endif
 
