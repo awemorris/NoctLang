@@ -310,6 +310,42 @@ func main() {
 }
 ```
 
+### Typed Array (Packed)
+
+```
+func main() {
+    // Allocate uint8.
+    // (Available Types: int8/int16/int32/int64/uint8/uint16/uint32/uint64/float32/float64)
+    var a = Packed.uint8(1024);
+
+    // Access via [] notation.
+    for(i in 0..Packed.size(a))
+        a[i] = i;
+}
+```
+
+### File I/O
+
+```
+func main() {
+    // Read the entire text.
+    var text = File.readText("text.txt");
+
+    // Read lines.
+    File.readForEachLine("text.txt", (line) => { print(line); });
+}
+```
+
+```
+func main() {
+    // Write a string.
+    File.writeText("text.txt", "aaa\nbbb");
+
+    // Write lines.
+    File.writeForEachLine("text.txt", ["aaa", "bbb"]);
+}
+```
+
 ### Object-Oriented Model
 
 The object-oriented model in Noct is a lightweight variation of prototype-based OOP.
