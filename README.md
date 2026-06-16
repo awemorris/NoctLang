@@ -90,6 +90,28 @@ Note: On major smartphones and consoles, runtime code generation (JIT)
 is generally prohibited or tightly restricted by platform
 policies. Noct runs there with interpreter or AOT compilation.
 
+### Speedup
+
+A synthetic benchmark shows that our JIT compiler speeds up execution
+time by 4.11-11.15 times.
+
+```
+func main() {
+    var sum = 0;
+    for(i in 0..10000) {
+        for(j in 0..100000) {
+            sum = sum + 1;
+        }
+    }
+}
+```
+
+| CPU                     | Arch      | Interpreter (s) | JIT (s)  | Speedup   |
+|-------------------------|-----------|-----------------|----------|-----------|
+| Apple M5                | Arm64     | 11.34           | 2.76     | x4.11     |
+| Intel Core Ultra 5 228V | x86_64    | 34.95           | 5.93     | x5.89     |
+| Ingenic JZ4770          | MIPS32    | 1447.36         | 129.75   | x11.15    |
+
 ---
 
 ## Core Design & Features
