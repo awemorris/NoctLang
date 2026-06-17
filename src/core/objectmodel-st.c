@@ -280,7 +280,7 @@ om_copy_array(
 		s = s->newer;
 
 	/* Copy the dictionary with write-barrier. */
-	for (i = 0; i < size; i++) {
+	for (i = 0; i < s->size; i++) {
 		/* Copy an item. */
 		d->table[i] = s->table[i];
 		d->size++;
@@ -422,7 +422,7 @@ om_check_dict_key(
 	}
 
 	/* Not found. */
-	if (!ret)
+	if (!*ret)
 		return false;
 
 	/* Found. */
@@ -778,6 +778,7 @@ om_erase_dict_entry(
 
 	/* Search an index for in-place write. */
 	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
+	is_not_found = true;
 	for (i = index;
 	     i != ((index - 1 + dict->alloc_size) & (dict->alloc_size - 1));
 	     i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
