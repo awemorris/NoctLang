@@ -2536,10 +2536,34 @@ om_make_dict(
 }
 
 /*
- * Make an empty array.
+ * Get the dictionary allocation size.
  */
 bool
 om_get_dict_alloc_size(
+	struct rt_env *env,
+	struct rt_value *val,
+	size_t *size)
+{
+	struct rt_dict *dict;
+
+	/*
+	 * Start a dictionary read.
+	 */
+	dict = start_dict_read(env, val);
+
+	/*
+	 * Get the allocated size.
+	 */
+	*size = dict->alloc_size;
+
+	return true;
+}
+
+/*
+ * Get the dictionary element size.
+ */
+bool
+om_get_dict_size(
 	struct rt_env *env,
 	struct rt_value *val,
 	size_t *size)

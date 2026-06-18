@@ -20,6 +20,10 @@
 #include "gc.h"
 #include "objectmodel.h"
 
+#if defined(NOCT_USE_MULTITHREAD)
+#include "atomic.h"
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -216,9 +220,6 @@ rt_create_thread_env(
 	env->frame = &env->frame_alloc[0];
 	env->frame->tmpvar = &env->frame->tmpvar_alloc[0];
 	env->frame->tmpvar_size = RT_TMPVAR_MAX;
-
-	/* Initialize for GC. */
-	rt_gc_init_env(env);
 
 	/* Succeeded. */
 	*new_env = env;
@@ -1862,14 +1863,14 @@ rt_make_packed_copy(
 
 #define ACQUIRE_GLOBAL()									\
 	while (1) {										\
-		int old = atomic_fetch_add_acquire(&env->vm->global_var_counter, 1);		\
+		int old = atomic_fetch_add_acquire_int(&env->vm->global_var_counter, 1);	\
 		if (old == 0)									\
 			break;									\
-		atomic_fetch_sub_release(&env->vm->global_var_counter, 1);			\
+		atomic_fetch_sub_release_int(&env->vm->global_var_counter, 1);			\
 	}
 
 #define RELEASE_GLOBAL()									\
-	atomic_fetch_sub_release(&env->vm->global_var_counter, 1);
+	atomic_fetch_sub_release_int(&env->vm->global_var_counter, 1);
 
 #endif
 
