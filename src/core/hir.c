@@ -1715,7 +1715,7 @@ hir_visit_array_expr(
 {
 	struct hir_expr *e;
 	struct ast_expr *elem;
-	uint32_t count, index;
+	size_t count, index;
 
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
@@ -1782,7 +1782,7 @@ hir_visit_dict_expr(
 {
 	struct hir_expr *e;
 	struct ast_kv *kv;
-	uint32_t count, index;
+	size_t count, index;
 
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);

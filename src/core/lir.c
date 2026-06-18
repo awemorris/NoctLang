@@ -1461,7 +1461,7 @@ lir_visit_array_expr(
 	struct hir_expr *expr,
 	struct hir_block *block)
 {
-	uint32_t elem_count, i;
+	size_t elem_count, i;
 	int elem_tmpvar;
 	int index_tmpvar;
 
@@ -1516,7 +1516,7 @@ lir_visit_dict_expr(
 	struct hir_expr *expr,
 	struct hir_block *block)
 {
-	uint32_t kv_count, i;
+	size_t kv_count, i;
 	int key_tmpvar;
 	int value_tmpvar;
 	int index_tmpvar;

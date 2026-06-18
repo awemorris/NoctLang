@@ -170,7 +170,6 @@ rt_gc_alloc_string(
 	struct rt_string *rts;
 	char *s;
 	int retry;
-	size_t size;
 
 	/* Check for overflow. */
 	if (len > SIZE_MAX - sizeof(struct rt_string)) {
