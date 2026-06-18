@@ -412,6 +412,7 @@ rt_gc_alloc_array(
 #if defined(NOCT_USE_MULTITHREAD)
 		arr->shared = 0;
 		arr->write_lock = 0;
+		arr->creator = env;
 #endif
 
 		/* Succeeded. */
@@ -473,6 +474,7 @@ rt_gc_alloc_array_graduate(
 #if defined(NOCT_USE_MULTITHREAD)
 		arr->shared = 0;
 		arr->write_lock = 0;
+		arr->creator = env;
 #endif
 
 		/* Succeeded. (graduate) */
@@ -548,6 +550,7 @@ rt_gc_alloc_array_tenure(
 #if defined(NOCT_USE_MULTITHREAD)
 		arr->shared = 0;
 		arr->write_lock = 0;
+		arr->creator = env;
 #endif
 
 		/* Succeeded. */
@@ -629,6 +632,7 @@ rt_gc_alloc_dict(
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
+		dict->creator = env;
 #endif
 
 		/* Succeeded. */
@@ -697,6 +701,7 @@ rt_gc_alloc_dict_graduate(
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
+		dict->creator = env;
 #endif
 
 		/* Succeeded. (graduate) */
@@ -779,6 +784,7 @@ rt_gc_alloc_dict_tenure(
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
+		dict->creator = env;
 #endif
 
 		/* Succeeded. */

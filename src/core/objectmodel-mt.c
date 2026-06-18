@@ -2304,6 +2304,8 @@ retry:
 		 * Do a write now without SeqLock.
 		 */
 		arr->table[index] = *val;
+		if (index >= arr->size)
+			arr->size = index + 1;
 
 		/*
 		 * Write barrier for the remember set.
@@ -2342,6 +2344,12 @@ retry:
 	increment_array_seqlock(env, arr);	/* Make unstable. (LSB set) */
 	arr->table[index] = *val;		/* Store two machine words. */
 	increment_array_seqlock(env, arr);	/* Make stable. (LSB cleared) */
+
+	/*
+	 * Increment the size.
+	 */
+	if (index >= arr->size)
+		arr->size = index + 1;
 
 	/*
 	 * Write barrier for the remember set.
@@ -2578,7 +2586,7 @@ om_get_dict_size(
 	/*
 	 * Get the allocated size.
 	 */
-	*size = dict->alloc_size;
+	*size = dict->size;
 
 	return true;
 }
@@ -2820,6 +2828,7 @@ om_read_dict_index(
 {
 	struct rt_dict *dict;
 	int seq1, seq2;
+	size_t count, i;
 
 	/*
 	 * Start a dictionary read.
@@ -2844,39 +2853,53 @@ om_read_dict_index(
 		 * Thread-local, not shared.
 		 * Read without SeqLock.
 		 */
-		*val = dict->value[index];
-		*key = dict->key[index];
+		count = 0;
+		for (i = 0; i < dict->alloc_size; i++) {
+			if (dict->key[i].type != NOCT_VALUE_STRING)
+				continue;
+			if (count++ == index) {
+				*val = dict->value[i];
+				*key = dict->key[i];
+				break;
+			}
+		}
+		if (i == dict->alloc_size)
+			return false;
 	} else {
 		/*
 		 * Shared.
 		 */
+		count = 0;
+		for (i = 0; i < dict->alloc_size; i++) {
+			int type;
 
-		int type = atomic_load_acquire_int(&dict->key[index].type);
-
-		/*
-		 * Skip if a removed or emtpty slot.
-		 */
-		if (type != NOCT_VALUE_STRING) {
 			/*
-			 * No entry at the index.
+			 * Skip if a removed or emtpty slot.
 			 */
-			return false;
-		}
-
-		/*
-		 * Get the key string pointer at the second word.
-		 */
-		do {
-			seq1 = get_dict_seqlock(env, dict);
-			if (seq1 & 1)
+			type = atomic_load_acquire_int(&dict->key[index].type);
+			if (type != NOCT_VALUE_STRING)
 				continue;
 
-			*val = dict->value[index];
+			if (count++ == index) {
+				/*
+				 * Get the key string pointer at the second word.
+				 */
+				do {
+					seq1 = get_dict_seqlock(env, dict);
+					if (seq1 & 1)
+						continue;
 
-			seq2 = get_dict_seqlock(env, dict);
+					*val = dict->value[i];
 
-		} while ((seq1 != seq2)   ||    /* Race write has occurred, or */
-			 (seq2 & 1) != 0);      /* Read an unstable value. */
+					seq2 = get_dict_seqlock(env, dict);
+
+				} while ((seq1 != seq2)   ||    /* Race write has occurred, or */
+					 (seq2 & 1) != 0);      /* Read an unstable value. */
+				break;
+			}
+		}
+		if (i == dict->alloc_size)
+			return false;
 	}
 
 	/*
@@ -3031,7 +3054,7 @@ in_place_write_phase:
 		}
 	}
 	if (found_tombstone) {
-		index = first_tombstone_index;
+		i = first_tombstone_index;
 		is_insertion = true;
 	}
 
@@ -3044,8 +3067,10 @@ in_place_write_phase:
 		 * Thread-local, not shared. Write without SeqLock.
 		 */
 		dict->value[i] = *val;
-		if (is_insertion)
+		if (is_insertion) {
 			dict->key[i] = *key;
+			dict->size++;
+		}
 
 		/*
 		 * Write barrier for the remember set.
@@ -3074,6 +3099,8 @@ in_place_write_phase:
 		 * the key's type last.
 		 */
 		if (is_insertion) {
+			dict->size++;
+
 			/*
 			 * Key write barrier for the remember set.
 			 */

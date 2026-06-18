@@ -1112,35 +1112,15 @@ rt_check_dict_key_cstr(
  * Get a dictionary key by index.
  */
 bool
-rt_get_dict_key_by_index(
+rt_get_dict_by_index(
 	struct rt_env *env,
 	struct rt_value *dict,
 	size_t index,
-	struct rt_value *key)
-{
-	struct rt_value val;
-
-	/* Delegate to the object model implementation. */
-	if (!om_read_dict_index(env, dict, index, key, &val))
-		return false;
-
-	return true;
-}
-
-/*
- * Get a dictionary value by index.
- */
-bool
-rt_get_dict_value_by_index(
-	struct rt_env *env,
-	struct rt_value *dict,
-	size_t index,
+	struct rt_value *key,
 	struct rt_value *val)
 {
-	struct rt_value key;
-
 	/* Delegate to the object model implementation. */
-	if (!om_read_dict_index(env, dict, index, &key, val))
+	if (!om_read_dict_index(env, dict, index, key, val))
 		return false;
 
 	return true;

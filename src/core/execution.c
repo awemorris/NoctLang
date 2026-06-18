@@ -2141,6 +2141,7 @@ noct_ex_getdictkeybyindex_helper(
 	struct rt_value *dst_val;
 	struct rt_value *dict_val;
 	struct rt_value *subscr_val;
+	struct rt_value val;
 	size_t index;
 
 	dst_val = &env->frame->tmpvar[dst];
@@ -2161,7 +2162,7 @@ noct_ex_getdictkeybyindex_helper(
 	}
 
 	/* Load the element. */
-	if (!rt_get_dict_key_by_index(env, dict_val, index, dst_val))
+	if (!rt_get_dict_by_index(env, dict_val, index, dst_val, &val))
 		return false;
 
 	return true;
@@ -2182,6 +2183,7 @@ noct_ex_getdictvalbyindex_helper(
 	struct rt_value *dst_val;
 	struct rt_value *dict_val;
 	struct rt_value *subscr_val;
+	struct rt_value key;
 	size_t index;
 
 	dst_val = &env->frame->tmpvar[dst];
@@ -2202,7 +2204,7 @@ noct_ex_getdictvalbyindex_helper(
 	}
 
 	/* Load the element. */
-	if (!rt_get_dict_value_by_index(env, dict_val, index, dst_val))
+	if (!rt_get_dict_by_index(env, dict_val, index, &key, dst_val))
 		return false;
 
 	return true;
