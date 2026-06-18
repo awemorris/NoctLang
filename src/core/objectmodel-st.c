@@ -101,7 +101,7 @@ om_read_array(
 	/* Check for the array size. */
 	if (index >= arr->size) {
 		/* Index is out-of-range. */
-		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -134,8 +134,13 @@ om_write_array(
 	if (index >= arr->alloc_size) {
 		/* Array expansion is required. Determine the new size. */
 		new_size = arr->alloc_size * 2;
-		while (new_size < index)
+		while (new_size < index) {
+			if (new_size > SIZE_MAX / 2) {
+				rt_out_of_memory(env);
+				return false;
+			}
 			new_size *= 2;
+		}
 
 		/* Try expanding. */
 		if (!expand_array(env, arr_val, arr, new_size)) {
@@ -899,8 +904,13 @@ om_merge_dict(
 
 	/* Determine the destination size. */
 	dst_size = 1;
-	while (dst_size < src1_size || dst_size < src2_size)
+	while (dst_size < src1_size || dst_size < src2_size) {
+		if (dst_size > SIZE_MAX / 2) {
+			rt_out_of_memory(env);
+			return false;
+		}
 		dst_size *= 2;
+	}
 
 	/* Make a dictionary. */
 	d = rt_gc_alloc_dict(env, dst_size);

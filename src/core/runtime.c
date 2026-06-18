@@ -561,7 +561,7 @@ rt_read_bytecode_line(
 	static char line[1024];
 	uint32_t i;
 
-	for (i = 0; i < sizeof(line); i++) {
+	for (i = 0; i < sizeof(line) - 1; i++) {
 		if (*pos >= size)
 			return NULL;
 
@@ -572,6 +572,7 @@ rt_read_bytecode_line(
 			return line;
 		}
 	}
+	line[i] = '\0'; // for secuity reason
 	return NULL;
 }
 
@@ -1513,7 +1514,7 @@ rt_get_packed_elem(
 	assert(val != NULL);
 
 	if (index >= packed->val.packed->elem_size) {
-		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -1582,7 +1583,7 @@ rt_set_packed_elem(
 	assert(val != NULL);
 
 	if (index >= packed->val.packed->elem_size) {
-		rt_error(env, N_TR("Array index %d is out-of-range."), index);
+		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
 		return false;
 	}
 
