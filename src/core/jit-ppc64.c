@@ -339,10 +339,10 @@ static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
                 /* std r0, 24(r1) */            IW(0x180001f8);                               \
                                                                                               \
                 /* Call. */                                                                   \
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);                               \
+                /* addi r1, r1, -128 */         IW(0x80ff2138);                               \
                 /* mtctr r12 */                 IW(0xa603897d);                               \
                 /* bctrl */                     IW(0x2104804e);                               \
-                /* addi r1, r1, 64 */           IW(0x40002138);                               \
+                /* addi r1, r1, 128 */          IW(0x80002138);                               \
                                                                                               \
                 /* Restore LR. */                                                             \
                 /* ld r0, 24(r1) */             IW(0x180001e8);                               \
@@ -394,10 +394,10 @@ static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
                 /* std r0, 24(r1) */            IW(0x180001f8);                               \
                                                                                               \
                 /* Call. */                                                                   \
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);                               \
+                /* addi r1, r1, -128 */         IW(0x80ff2138);                               \
                 /* mtctr r12 */                 IW(0xa603897d);                               \
                 /* bctrl */                     IW(0x2104804e);                               \
-                /* addi r1, r1, 64 */           IW(0x40002138);                               \
+                /* addi r1, r1, 128 */          IW(0x80002138);                               \
                                                                                               \
                 /* Restore LR. */                                                             \
                 /* ld r0, 24(r1) */             IW(0x180001e8);                               \
@@ -770,10 +770,10 @@ jit_visit_sconst_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -841,10 +841,10 @@ jit_visit_aconst_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -912,10 +912,10 @@ jit_visit_dconst_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -1502,10 +1502,10 @@ jit_visit_loadsymbol_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -1591,10 +1591,10 @@ jit_visit_storesymbol_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -1685,10 +1685,10 @@ jit_visit_loaddot_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -1779,10 +1779,10 @@ jit_visit_storedot_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -1890,10 +1890,10 @@ jit_visit_call_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -2019,10 +2019,10 @@ jit_visit_thiscall_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
@@ -2228,10 +2228,10 @@ jit_visit_safepoint_op(
                 /* std r0, 24(r1) */            IW(0x180001f8);
 
                 /* Call. */
-                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* addi r1, r1, -128 */         IW(0x80ff2138);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
-                /* addi r1, r1, 64 */           IW(0x40002138);
+                /* addi r1, r1, 128 */          IW(0x80002138);
 
                 /* Restore LR. */
                 /* ld r0, 24(r1) */             IW(0x180001e8);
