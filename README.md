@@ -93,7 +93,7 @@ policies. Noct runs there with interpreter or AOT compilation.
 ### Speedup
 
 A synthetic benchmark shows that our JIT compiler speeds up execution
-time by 4.11-11.15 times.
+time by 4.1-13.5 times.
 
 ```
 func main() {
