@@ -48,6 +48,11 @@ static bool is_writable;
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
 
+/*
+ * Note that ppc64 (ELFv1) and ppc64le (ELFv2) have different calling
+ * convention.
+ */
+
 #if defined(NOCT_ARCH_BE) && _CALL_ELF == 1
 #define ELF_V1
 #endif

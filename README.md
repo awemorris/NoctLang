@@ -549,36 +549,42 @@ Our CI is running on GitHub Actions. Each push to the main branch
 triggers builds and binary releases, ensuring stability across
 supported platforms.
 
-### Testing Machines
+### Testing Machines and Environments
 
-| Target          | Board                   | Processor                           | OS                     |
-|-----------------|-------------------------|-------------------------------------|------------------------|
-| x86 / x86_64    | Fujitsu Primergy        | Intel Xeon Gold 6130                | Linux                  |
-| x86 / x86_64    | Fujitsu Primergy        | Intel Xeon Silver 4114              | Linux                  |
-| x86 / x86_64    | Lenovo ThinkPad         | Intel Core Ultra 5 228V             | Windows, Linux         |
-| x86 / x86_64    | Generic Desktop PC      | Intel Core i5-13400                 | Windows, Linux         |
-| x86 / x86_64    | Generic Desktop PC      | Intel Core i9-12900H                | Windows, Linux         |
-| x86_64          | MacBook Air             | Intel Core i5                       | macOS 10.13            |
-| x86_64          | ThinkPad X260           | Intel Core i5-6500U                 | Solaris 11, Haiku      |
-| x86_64          | Panasonic Let's Note    | Intel Core i5-7200U                 | Windows                |
-| x86_64          | Panasonic Let's Note    | Intel Core i5-8250U                 | Windows                |
-| x86_64          | Dell Latitude           | Intel Core i5-1135G7                | FreeBSD                |
-| x86_64          | Dell Latitude           | Intel Core i5-1240P                 | Linux                  |
-| Armv7           | Raspberry Pi Zero 2     | Broadcom RP3A0 Arm Cortex-A53       | Raspberry Pi OS 32-bit |
-| Armv7           | Raspberry Pi 4          | Broadcom BCM2711 Arm Cortex-A72     | Raspberry Pi OS 32-bit |
-| Arm64           | Raspberry Pi 4          | Broadcom BCM2711 Arm Cortex-A72     | Raspberry Pi OS 64-bit |
-| Arm64           | MacBook Air M1          | Apple M1                            | macOS 15               |
-| Arm64           | MacBook Pro M4 Pro      | Apple M4 Pro                        | macOS 15               |
-| Arm64           | MacBook Pro M5          | Apple M5                            | macOS 26               |
-| RISC-V 32       | qemu                    | qemu-user RV32GC                    | Linux                  |
-| RISC-V 64       | VisionFive 2            | StarFive JH7110 RV64GC              | Linux                  |
-| MIPS32          | Anbernic RG350          | Ingenic JZ4770 MIPS32r2             | Linux                  |
-| MIPS32          | Cobalt Qube 2700        | QED RM5230                          | Linux, NetBSD          |
-| MIPS64          | qemu                    | qemu-user mips64                    | Linux                  |
-| MIPS64          | EdgeRouter Lite 3       | Cavium Octeon CN5020 MIPS64         | Linux                  |
-| PowerPC 32/64   | PowerMac G5             | PowerPC G5                          | Mac OS X 10.4          |
-| PowerPC 64      | IBM Power8 S814         | IBM POWER8                          | Linux (ppc64le)        |
-| 68000           | Macintosh LC630         | Motorola 68040                      | NetBSD                 |
+| Vendor          | Machine                    | Processor               | Architecture        | ABI             | OS                     |
+|-----------------|----------------------------|-------------------------|---------------------|-----------------|------------------------|
+| Apple           | MacBook Pro M5             | Apple M5                | Armv9               | arm64           | macOS 26               |
+|                 | MacBook Air                | Intel Core i5           | Intel64             | x86_64          | macOS 10.13            |
+|                 | PowerMac G5                | PowerPC G5 970FX        | PowerPC 64          | ppc64 (ELFv1)   | Debian forky           |
+|                 |                            |                         |                     | ppc32           | Debian forky           |
+| IBM             | Power8 S814                | Power8                  | Power8              | ppc64le (ELFv2) | Debian trixie          |
+| Fujitsu         | Primergy TX2550 M5         | Intel Xeon Gold 6130 x2 | Intel64 Skylake-SP  | x86_64          | Debian trixie          |
+|                 |                            |                         |                     | x86             | Debian trixie          |
+| Lenovo          | ThinkPad X9                | Intel Core Ultra 5 228V | Intel64 Lunar-Lake  | x64 (MS ABI)    | Windows 11             |
+|                 |                            |                         |                     | x86_64          | Debian trixie          |
+|                 | ThinkPad X260              | Intel Core i5-6500U     | Intel64 Skylake     | x86_64          | Solaris 11             |
+| Panasonic       | Let's Note LX6             | Intel Core i5-7200U     | Intel64 Kaby Lake   | x86_64          | Haiku                  |
+|                 | Let's Note SV8             | Intel Core i5-8250U     | Intel64 Coffee Lake | x86_64          | Windows 11             |
+| Dell            | Latitude 5330              | Intel Core i5-1240P     | Intel64 Alder Lake  | x86_64          | Debian Trixie          |
+|                 | Latitude 5230              | Intel Core i5-1135G7    | Intel64 Tiger Lake  | x86_64          | FreeBSD 15             |
+| RPi             | Raspberry Pi 4B            | Broadcom BCM2711        | Arm Cortex-A72      | aarch64         | Raspberry Pi OS 64-bit |
+|                 |                            |                         |                     | armv7-eabihf    | Raspberry Pi OS 32-bit |
+|                 | Raspberry Pi Zero 2        | Broadcom RP3A0          | Arm Cortex-A53      | aarch64         | Raspberry Pi OS 64-bit |
+|                 |                            |                         |                     | armv7-eabihf    | Raspberry Pi OS 32-bit |
+| Anbernic        | RG350                      | Ingenic JZ4770          | MIPS32r2            | mipsel          | Debian forky           |
+| Cobalt Networks | Cobalt Qube 2800           | QED RM5231              | MIPS-IV             | mipseb          | NetBSD                 |
+| StarFive        | Vision Five 2              | JH7110                  | RISC-V RV64GC       | riscv64         | Debian Trixie          |
+| qemu            | qemu                       | RISC-V 32               | RV32GC              | riscv32         | qemu-user              |
+|                 |                            | 68040                   | 680x0               | m68k            | qemu-user              |
+
+Now preparing...
+
+| Vendor          | Machine                    | Processor               | Architecture        | ABI             | OS                     |
+|-----------------|----------------------------|-------------------------|---------------------|-----------------|------------------------|
+| Apple           | Macintosh LC630            | Motorola 68040          | 680x0               | m68k            | Debian forky           |
+| Fujitsu         | SPARC Enterprise M3000     | SPARC64 VII+            | SPARC V9            | sparc64         | Solaris 10             |
+| Imagination     | MIPS Creator CI 40         | MIPS interAptive        | MIPS32r3            | mips            | Debian forky           |
+| Generic         | Loongson PC                | Loongson 3A4000         | MIPS64              | mips64          | Debian forky           |
 
 ---
 
