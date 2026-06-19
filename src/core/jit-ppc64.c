@@ -48,6 +48,14 @@ static bool is_writable;
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
 
+#if defined(NOCT_ARCH_BE)
+static inline void *ppc64_elf_v1_get_toc(void) {
+    void *toc;
+    __asm__ volatile ("mr %0, 2" : "=r"(toc));
+    return toc;
+}
+#endif
+
 /*
  * Generate a JIT-compiled code for a function.
  */
@@ -78,6 +86,21 @@ jit_build(
         ctx.env = env;
         ctx.func = func;
 
+#if defined(NOCT_ARCH_BE)
+        {
+                struct ppc64_elf_v1_func_desc {
+                        void *entry;
+                        void *toc;
+                        void *env;
+                } desc;
+                desc.entry = (void *)ctx.code;
+                desc.toc = ppc64_elf_v1_get_toc();
+                desc.env = NULL;
+                *(struct ppc64_elf_v1_func_desc *)ctx.code = desc;
+                ctx.code += 24;
+        }
+#endif
+
         /* Make code writable and non-executable. */
         if (!is_writable) {
                 jit_map_writable(jit_code_region, JIT_CODE_MAX);
@@ -88,6 +111,7 @@ jit_build(
         if (!jit_visit_bytecode(&ctx))
                 return false;
 
+        /* Increment the JIT pointer. */
         jit_code_region_cur = ctx.code;
 
         /* Patch branches. */
@@ -96,6 +120,7 @@ jit_build(
                         return false;
         }
 
+        /* Set the jit_code pointer. */
         func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
 
         return true;
