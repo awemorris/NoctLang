@@ -437,17 +437,17 @@ jit_visit_iconst_op(
                 /* R31: saved LR */
 
                 /* R3 = dst_addr = &env->frame->tmpvar[dst] */
-                /* li r3, dst */        IW(0x00006038 | lo16((uint32_t)dst));
-                /* add r3, r3, r15 */   IW(0x147a637c);
+                /* li r3, dst */           IW(0x00006038 | lo16((uint32_t)dst));
+                /* add r3, r3, r15 */      IW(0x147a637c);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_INT */
-                /* li r4, 0 */          IW(0x00008038);
-                /* std r4, 0(r3) */     IW(0x000083f8);
+                /* li r4, 0 */             IW(0x00008038);
+                /* stw r4, 0(r3) */        IW(0x00008390);
 
                 /* env->frame->tmpvar[dst].val.i = val */
-                /* lis r4, val@h */             IW(0x0000803c | hi16(val));
-                /* ori r4, r4, val@l */         IW(0x00008460 | lo16(val));
-                /* stw r4, 8(r3) */             IW(0x08008390);
+                /* lis r4, val@h */        IW(0x0000803c | hi16(val));
+                /* ori r4, r4, val@l */    IW(0x00008460 | lo16(val));
+                /* stw r4, 8(r3) */        IW(0x08008390);
         }
 
         return true;
@@ -478,7 +478,7 @@ jit_visit_liconst_op(
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
                 /* li r4, 5 */             IW(0x05008038);
-                /* std r4, 0(r3) */        IW(0x000083f8);
+                /* stw r4, 0(r3) */        IW(0x00008390);
 
                 /* env->frame->tmpvar[dst].val.l = val */
                 /* lis  r4, val@hh */      IW(0x0000803c | hihi16(val));
@@ -512,17 +512,17 @@ jit_visit_fconst_op(
                 /* R31: saved LR */
 
                 /* R3 = dst_addr = &env->frame->tmpvar[dst] */
-                /* li r3, dst */        IW(0x00006038 | lo16((uint32_t)dst));
-                /* add r3, r3, r15 */   IW(0x147a637c);
+                /* li r3, dst */           IW(0x00006038 | lo16((uint32_t)dst));
+                /* add r3, r3, r15 */      IW(0x147a637c);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_FLOAT */
-                /* li r4, 1 */          IW(0x01008038);
-                /* std r4, 0(r3) */     IW(0x000083f8);
+                /* li r4, 1 */             IW(0x01008038);
+                /* stw r4, 0(r3) */        IW(0x00008390);
 
                 /* env->frame->tmpvar[dst].val.i = val */
-                /* lis r4, val@h */             IW(0x0000803c | hi16(val));
-                /* ori r4, r4, val@l */         IW(0x00008460 | lo16(val));
-                /* stw r4, 8(r3) */             IW(0x08008390);
+                /* lis r4, val@h */        IW(0x0000803c | hi16(val));
+                /* ori r4, r4, val@l */    IW(0x00008460 | lo16(val));
+                /* stw r4, 8(r3) */        IW(0x08008390);
         }
 
         return true;
@@ -553,7 +553,7 @@ jit_visit_lfconst_op(
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
                 /* li r4, 6 */             IW(0x06008038);
-                /* std r4, 0(r3) */        IW(0x000083f8);
+                /* stw r4, 0(r3) */        IW(0x00008390);
 
                 /* env->frame->tmpvar[dst].val.lf = val */
                 /* lis  r4, val@hh */      IW(0x0000803c | hihi16(val));
