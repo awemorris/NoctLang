@@ -93,7 +93,7 @@ jit_build(
                         void *toc;
                         void *env;
                 } desc;
-                desc.entry = (void *)ctx.code;
+                desc.entry = (void *)(ctx.code + 24);
                 desc.toc = ppc64_elf_v1_get_toc();
                 desc.env = NULL;
                 *(struct ppc64_elf_v1_func_desc *)ctx.code = desc;
@@ -212,14 +212,10 @@ jit_put_word(
                 return false;
         }
 
-#if defined(NOCT_ARCH_LE)
         tmp = ((word & 0xff) << 24) |
               (((word >> 8) & 0xff) << 16) |
               (((word >> 16) & 0xff) << 8) |
               ((word >> 24) & 0xff);
-#else
-        tmp = word;
-#endif
 
         *(uint32_t *)ctx->code = tmp;
         ctx->code = (uint32_t *)ctx->code + 1;
