@@ -1871,6 +1871,7 @@ jit_visit_bytecode(
                 /* std r14, -8(r1) */           IW(0xf8ffc1f9);
                 /* std r15, -16(r1) */          IW(0xf0ffe1f9);
                 /* std r31, -24(r1) */          IW(0xe8ffe1fb);
+                /* std r2,  -32(r1) */          IW(0xe0ff41f8);
                 /* addi r1, r1, -64 */          IW(0xc0ff2138);
 
                 /* R14 = env */
@@ -1889,6 +1890,7 @@ jit_visit_bytecode(
         ASM {
         /* EXCEPTION: */
                 /* addi r1, r1, 64 */           IW(0x40002138);
+                /* ld r2, -32(r1) */            IW(0xe0ff41e8);
                 /* ld r31, -24(r1) */           IW(0xe8ffe1eb);
                 /* ld r15, -16(r1) */           IW(0xf0ffe1e9);
                 /* ld r14, -8(r1) */            IW(0xf8ffc1e9);
@@ -2107,6 +2109,7 @@ jit_visit_bytecode(
         ASM {
         /* EPILOGUE: */
                 /* addi r1, r1, 64 */           IW(0x40002138);
+                /* ld r2, -32(r1) */            IW(0xe0ff41e8);
                 /* ld r31, -24(r1) */           IW(0xe8ffe1eb);
                 /* ld r15, -16(r1) */           IW(0xf0ffe1e9);
                 /* ld r14, -8(r1) */            IW(0xf8ffc1e9);
