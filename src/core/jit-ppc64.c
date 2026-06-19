@@ -153,7 +153,10 @@ jit_free(
 void
 jit_commit(
         struct rt_env *env)
+
 {
+	UNUSED_PARAMETER(env);
+
         /* Make code executable and non-writable. */
         jit_map_executable(jit_code_region, JIT_CODE_MAX);
 
@@ -1882,7 +1885,7 @@ jit_visit_bytecode(
                 /* ld r15, 0(r15) */            IW(0x0000efe9);
 
                 /* Skip an exception handler. */
-                /* b body */                    IW(0x1c000048);
+                /* b body */                    IW(0x20000048);
         }
 
         /* Put an exception handler. */
@@ -2127,7 +2130,7 @@ jit_patch_branch(
 {
         uint32_t *target_code;
         int offset;
-        int i;
+	uint32_t i;
 
         if (ctx->pc_entry_count == 0)
                 return true;
