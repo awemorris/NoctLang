@@ -742,7 +742,7 @@ jit_visit_inc_op(
                 /* add r3, r3, r15 */   IW(0x147a637c);
 
                 /* env->frame->tmpvar[dst].val.i++ */
-                /* ld r4, 8(r3) */      IW(0x080083e8);
+                /* lwz r4, 8(r3) */     IW(0x08008380);
                 /* addi r4, r4, 1 */    IW(0x01008438);
                 /* stw r4, 8(r3) */     IW(0x08008390);
         }
