@@ -54,6 +54,9 @@ static inline void *ppc64_elf_v1_get_toc(void) {
     __asm__ volatile ("mr %0, 2" : "=r"(toc));
     return toc;
 }
+#define PPC64_DESC_ENTRY(f) (*(uint64_t *)(f))
+#else
+#define PPC64_DESC_ENTRY(f) ((uint64_t)(f))
 #endif
 
 /*
@@ -304,11 +307,11 @@ static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
                 /* li r6, src2 */               IW(0x0000c038 | tvar16(src2));                    \
                                                                                                   \
                 /* Call f(). */                                                                   \
-                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16((uint64_t)f));             \
-                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16((uint64_t)f));             \
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f));      \
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f));      \
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);                                   \
-                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16((uint64_t)f));             \
-                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16((uint64_t)f));             \
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f));      \
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f));      \
                 /* mflr r31 */                  IW(0xa602e87f);                                   \
                 /* mtctr r12 */                 IW(0xa603897d);                                   \
                 /* bctrl */                     IW(0x2104804e);                                   \
@@ -335,11 +338,11 @@ static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
                 /* li r5, src */                IW(0x0000a038 | tvar16(src));                     \
                                                                                                   \
                 /* Call f(). */                                                                   \
-                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16((uint64_t)f));             \
-                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16((uint64_t)f));             \
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f));      \
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f));      \
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);                                   \
-                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16((uint64_t)f));             \
-                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16((uint64_t)f));             \
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f));      \
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f));      \
                 /* mflr r31 */                  IW(0xa602e87f);                                   \
                 /* mtctr r12 */                 IW(0xa603897d);                                   \
                 /* bctrl */                     IW(0x2104804e);                                   \
@@ -577,7 +580,7 @@ jit_visit_sconst_op(
         CONSUME_TMPVAR(dst);
         CONSUME_STRING(val, len, hash);
 
-        f = (uint64_t)ex_make_string_with_hash;
+        f = PPC64_DESC_ENTRY((uint64_t)ex_make_string_with_hash);
         dst *= (int)sizeof(struct rt_value);
 
         /* rt_make_string_with_hash(env, &env->frame->tmpvar[dst], val, len, hash); */
@@ -637,7 +640,7 @@ jit_visit_aconst_op(
 
         CONSUME_TMPVAR(dst);
 
-        f = (uint64_t)ex_make_empty_array;
+        f = PPC64_DESC_ENTRY(ex_make_empty_array);
         dst *= (int)sizeof(struct rt_value);
 
         /* rt_make_empty_array(env, &env->frame->tmpvar[dst]); */
@@ -682,7 +685,7 @@ jit_visit_dconst_op(
 
         CONSUME_TMPVAR(dst);
 
-        f = (uint64_t)ex_make_empty_dict;
+        f = PPC64_DESC_ENTRY(ex_make_empty_dict);
         dst *= (int)sizeof(struct rt_value);
 
         /* rt_make_empty_dict(env, &env->frame->tmpvar[dst]); */
@@ -1233,7 +1236,7 @@ jit_visit_loadsymbol_op(
         CONSUME_STRING(src_s, len, hash);
 
         src = (uint64_t)(intptr_t)src_s;
-        f = (uint64_t)ex_loadsymbol_helper;
+        f = PPC64_DESC_ENTRY(ex_loadsymbol_helper);
 
         /* if (!ex_loadsymbol_helper(env, dst, src, len, hash)) return false; */
         ASM {
@@ -1296,7 +1299,7 @@ jit_visit_storesymbol_op(
         CONSUME_TMPVAR(src);
 
         dst = (uint64_t)(intptr_t)dst_s;
-        f = (uint64_t)ex_storesymbol_helper;
+        f = PPC64_DESC_ENTRY(ex_storesymbol_helper);
 
         /* if (!ex_storesymbol_helper(env, dst, len, hash, src)) return false; */
         ASM {
@@ -1361,7 +1364,7 @@ jit_visit_loaddot_op(
         CONSUME_STRING(field_s, len, hash);
 
         field = (uint64_t)(intptr_t)field_s;
-        f = (uint64_t)ex_loaddot_helper;
+        f = PPC64_DESC_ENTRY(ex_loaddot_helper);
 
         /* if (!ex_loaddot_helper(env, dst, dict, field, len, hash)) return false; */
         ASM {
@@ -1429,7 +1432,7 @@ jit_visit_storedot_op(
         CONSUME_TMPVAR(src);
 
         field = (uint64_t)(intptr_t)field_s;
-        f = (uint64_t)ex_storedot_helper;
+        f = PPC64_DESC_ENTRY(ex_storedot_helper);
 
         /* if (!ex_storedot_helper(env, dict, field, len, hash, src)) return false; */
         ASM {
@@ -1519,7 +1522,7 @@ jit_visit_call_op(
                 arg_addr = 0;
         }
 
-        f = (uint64_t)ex_call_helper;
+        f = PPC64_DESC_ENTRY(ex_call_helper);
 
         /* if (!ex_call_helper(env, dst, func, arg_count, arg)) return false; */
         ASM {
@@ -1607,7 +1610,7 @@ jit_visit_thiscall_op(
                 arg_addr = 0;
         }
 
-        f = (uint64_t)ex_thiscall_helper;
+        f = PPC64_DESC_ENTRY(ex_thiscall_helper);
 
         /* if (!ex_thiscall_helper(env, dst, obj, symbol, arg_count, arg)) return false; */
         ASM {
@@ -1821,7 +1824,7 @@ jit_visit_safepoint_op(
 {
         uint64_t f;
 
-        f = (uint64_t)ex_loaddot_helper;
+        f = PPC64_DESC_ENTRY(ex_safepoint_helper);
 
         /* if (!ex_safepoint_helper(env)) return false; */
         ASM {
