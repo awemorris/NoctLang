@@ -481,11 +481,19 @@ jit_visit_liconst_op(
                 /* std r4, 0(r3) */        IW(0x000083f8);
 
                 /* env->frame->tmpvar[dst].val.i = val */
+#if defined(NOCT_ARCH_LE)
                 /* lis  r4, val@hh */      IW(0x0000803c | hihi16(val));
                 /* ori  r4, r4, val@hl */  IW(0x00008460 | hilo16(val));
                 /* sldi r4, r4, 32 */      IW(0xc6078478);
                 /* oris r4, r4, val@lh */  IW(0x00008464 | lohi16(val));
                 /* ori  r4, r4, val@ll */  IW(0x00008460 | lolo16(val));
+#else
+                /* lis  r4, val@ll */      IW(0x0000803c | lolo16(val));
+                /* ori  r4, r4, val@lh */  IW(0x00008460 | lohi16(val));
+                /* sldi r4, r4, 32 */      IW(0xc6078478);
+                /* oris r4, r4, val@hl */  IW(0x00008464 | hilo16(val));
+                /* ori  r4, r4, val@hh */  IW(0x00008460 | hihi16(val));
+#endif
                 /* std  r4, 8(r3) */       IW(0x080083f8);
         }
 
@@ -556,11 +564,19 @@ jit_visit_lfconst_op(
                 /* std r4, 0(r3) */        IW(0x000083f8);
 
                 /* env->frame->tmpvar[dst].val.i = val */
+#if defined(NOCT_ARCH_LE)
                 /* lis  r4, val@hh */      IW(0x0000803c | hihi16(val));
                 /* ori  r4, r4, val@hl */  IW(0x00008460 | hilo16(val));
                 /* sldi r4, r4, 32 */      IW(0xc6078478);
                 /* oris r4, r4, val@lh */  IW(0x00008464 | lohi16(val));
                 /* ori  r4, r4, val@ll */  IW(0x00008460 | lolo16(val));
+#else
+                /* lis  r4, val@ll */      IW(0x0000803c | lolo16(val));
+                /* ori  r4, r4, val@lh */  IW(0x00008460 | lohi16(val));
+                /* sldi r4, r4, 32 */      IW(0xc6078478);
+                /* oris r4, r4, val@hl */  IW(0x00008464 | hilo16(val));
+                /* ori  r4, r4, val@hh */  IW(0x00008460 | hihi16(val));
+#endif
                 /* std  r4, 8(r3) */       IW(0x080083f8);
         }
 
