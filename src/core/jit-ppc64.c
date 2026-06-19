@@ -58,8 +58,8 @@ static inline void *ppc64_elf_v1_get_toc(void) {
     __asm__ volatile ("mr %0, 2" : "=r"(toc));
     return toc;
 }
-#define PPC64_DESC_ENTRY(f)   ((uint64_t *)(f)[0])
-#define PPC64_DESC_TOC(f)     ((uint64_t *)(f)[1])
+#define PPC64_DESC_ENTRY(f)   (((uint64_t *)(f))[0])
+#define PPC64_DESC_TOC(f)     (((uint64_t *)(f))[1])
 #else
 #define PPC64_DESC_ENTRY(f)   ((uint64_t)(f))
 #define PPC64_DESC_TOC(f)     ((uint64_t)0)
@@ -96,6 +96,10 @@ jit_build(
         ctx.func = func;
 
 #if defined(NOCT_ARCH_BE)
+        /*
+         * Function pointers point to descriptors on ppc64 ELF v1.
+         * Make func->jit_code a pointer to a descriptor.
+         */
         {
                 struct ppc64_elf_v1_func_desc {
                         void *entry;
@@ -298,148 +302,186 @@ static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
 }
 
 #ifdef ELF_V1
-#define ASM_BINARY_OP(f)                                                                          \
-        ASM {                                                                                     \
-                /* R14: env */                                                                    \
-                /* R15: &env->frame->tmpvar[0] */                                                 \
-                /* R31: saved LR */                                                               \
-                                                                                                  \
-                /* Load TOC to R2*/                                                               \
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(PPC64_DESC_TOC((f))));     \
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(PPC64_DESC_TOC((f))));     \
-                /* sldi r2, r2, 32 */           IW(0xc6074278);                                   \
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(PPC64_DESC_TOC((f))));     \
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(PPC64_DESC_TOC((f))));     \
-                                                                                                  \
-                /* Arg1 R3: env */                                                                \
-                /* mr r3, r14 */                IW(0x7873c37d);                                   \
-                                                                                                  \
-                /* Arg2 R4: dst */                                                                \
-                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                     \
-                                                                                                  \
-                /* Arg3 R5: src1 */                                                               \
-                /* li r5, src1 */               IW(0x0000a038 | tvar16(src1));                    \
-                                                                                                  \
-                /* Arg4 R6: src2 */                                                               \
-                /* li r6, src2 */               IW(0x0000c038 | tvar16(src2));                    \
-                                                                                                  \
-                /* Call f(). */                                                                   \
-                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f)));     \
-                /* sldi r12, r12, 32 */         IW(0xc6078c79);                                   \
-                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f)));     \
-                /* mflr r31 */                  IW(0xa602e87f);                                   \
-                /* mtctr r12 */                 IW(0xa603897d);                                   \
-                /* bctrl */                     IW(0x2104804e);                                   \
-                /* mtlr r31 */                  IW(0xa603e87f);                                   \
-                                                                                                  \
-                /* If failed: */                                                                  \
-                /* cmpwi r3, 0 */               IW(0x0000032c);                                   \
-                /* beq exception_handler */     IW(0x00008241 | EXC());                           \
+#define ASM_BINARY_OP(f)                                                                      \
+        ASM {                                                                                 \
+                /* R14: env */                                                                \
+                /* R15: &env->frame->tmpvar[0] */                                             \
+                /* R31: saved LR */                                                           \
+                                                                                              \
+                /* Arg1 R3: env */                                                            \
+                /* mr r3, r14 */                IW(0x7873c37d);                               \
+                                                                                              \
+                /* Arg2 R4: dst */                                                            \
+                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                 \
+                                                                                              \
+                /* Arg3 R5: src1 */                                                           \
+                /* li r5, src1 */               IW(0x0000a038 | tvar16(src1));                \
+                                                                                              \
+                /* Arg4 R6: src2 */                                                           \
+                /* li r6, src2 */               IW(0x0000c038 | tvar16(src2));                \
+                                                                                              \
+                /* Load f(). */                                                               \
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f))); \
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f))); \
+                /* sldi r12, r12, 32 */         IW(0xc6078c79);                               \
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f))); \
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f))); \
+                                                                                              \
+                /* Load TOC to R2. */                                                         \
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(PPC64_DESC_TOC(f)));   \
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(PPC64_DESC_TOC(f)));   \
+                /* sldi r2, r2, 32 */           IW(0xc6074278);                               \
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(PPC64_DESC_TOC(f)));   \
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(PPC64_DESC_TOC(f)));   \
+                                                                                              \
+                /* Save LR. */                                                                \
+                /* mflr r0 */                   IW(0xa602087c);                               \
+                /* std r0, 24(r1) */            IW(0x180001f8);                               \
+                                                                                              \
+                /* Call. */                                                                   \
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);                               \
+                /* mtctr r12 */                 IW(0xa603897d);                               \
+                /* bctrl */                     IW(0x2104804e);                               \
+                /* addi r1, r1, 64 */           IW(0x40002138);                               \
+                                                                                              \
+                /* Restore LR. */                                                             \
+                /* ld r0, 24(r1) */             IW(0x180001e8);                               \
+                /* mtlr r0 */                   IW(0xa603087c);                               \
+                                                                                              \
+                /* If failed: */                                                              \
+                /* cmpwi r3, 0 */               IW(0x0000032c);                               \
+                /* beq exception_handler */     IW(0x00008241 | EXC());                       \
         }
 
-#define ASM_UNARY_OP(f)                                                                           \
-        ASM {                                                                                     \
-                /* R14: env */                                                                    \
-                /* R15: &env->frame->tmpvar[0] */                                                 \
-                /* R31: saved LR */                                                               \
-                                                                                                  \
-                /* Load TOC to R2*/                                                               \
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(PPC64_DESC_TOC((f))));     \
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(PPC64_DESC_TOC((f))));     \
-                /* sldi r2, r2, 32 */           IW(0xc6074278);                                   \
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(PPC64_DESC_TOC((f))));     \
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(PPC64_DESC_TOC((f))));     \
-                                                                                                  \
-                /* Arg1 R3: env */                                                                \
-                /* mr r3, r14 */                IW(0x7873c37d);                                   \
-                                                                                                  \
-                /* Arg2 R4: dst */                                                                \
-                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                     \
-                                                                                                  \
-                /* Arg3 R5: src1 */                                                               \
-                /* li r5, src */                IW(0x0000a038 | tvar16(src));                     \
-                                                                                                  \
-                /* Call f(). */                                                                   \
-                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f)));     \
-                /* sldi r12, r12, 32 */         IW(0xc6078c79);                                   \
-                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f)));     \
-                /* mflr r31 */                  IW(0xa602e87f);                                   \
-                /* mtctr r12 */                 IW(0xa603897d);                                   \
-                /* bctrl */                     IW(0x2104804e);                                   \
-                /* mtlr r31 */                  IW(0xa603e87f);                                   \
-                                                                                                  \
-                /* If failed: */                                                                  \
-                /* cmpwi r3, 0 */               IW(0x0000032c);                                   \
-                /* beq exception_handler */     IW(0x00008241 | EXC());                           \
+#define ASM_UNARY_OP(f)                                                                       \
+        ASM {                                                                                 \
+                /* R14: env */                                                                \
+                /* R15: &env->frame->tmpvar[0] */                                             \
+                /* R31: saved LR */                                                           \
+                                                                                              \
+                /* Load TOC to R2*/                                                           \
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(PPC64_DESC_TOC((f)))); \
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(PPC64_DESC_TOC((f)))); \
+                /* sldi r2, r2, 32 */           IW(0xc6074278);                               \
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(PPC64_DESC_TOC((f)))); \
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(PPC64_DESC_TOC((f)))); \
+                                                                                              \
+                /* Arg1 R3: env */                                                            \
+                /* mr r3, r14 */                IW(0x7873c37d);                               \
+                                                                                              \
+                /* Arg2 R4: dst */                                                            \
+                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                 \
+                                                                                              \
+                /* Arg3 R5: src1 */                                                           \
+                /* li r5, src */                IW(0x0000a038 | tvar16(src));                 \
+                                                                                              \
+                /* Load f(). */                                                               \
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f))); \
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f))); \
+                /* sldi r12, r12, 32 */         IW(0xc6078c79);                               \
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f))); \
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f))); \
+                                                                                              \
+                /* Load TOC to R2. */                                                         \
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(PPC64_DESC_TOC(f)));   \
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(PPC64_DESC_TOC(f)));   \
+                /* sldi r2, r2, 32 */           IW(0xc6074278);                               \
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(PPC64_DESC_TOC(f)));   \
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(PPC64_DESC_TOC(f)));   \
+                                                                                              \
+                /* Save LR. */                                                                \
+                /* mflr r0 */                   IW(0xa602087c);                               \
+                /* std r0, 24(r1) */            IW(0x180001f8);                               \
+                                                                                              \
+                /* Call. */                                                                   \
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);                               \
+                /* mtctr r12 */                 IW(0xa603897d);                               \
+                /* bctrl */                     IW(0x2104804e);                               \
+                /* addi r1, r1, 64 */           IW(0x40002138);                               \
+                                                                                              \
+                /* Restore LR. */                                                             \
+                /* ld r0, 24(r1) */             IW(0x180001e8);                               \
+                /* mtlr r0 */                   IW(0xa603087c);                               \
+                                                                                              \
+                /* If failed: */                                                              \
+                /* cmpwi r3, 0 */               IW(0x0000032c);                               \
+                /* beq exception_handler */     IW(0x00008241 | EXC());                       \
         }
 #else
-#define ASM_BINARY_OP(f)                                                                          \
-        ASM {                                                                                     \
-                /* R14: env */                                                                    \
-                /* R15: &env->frame->tmpvar[0] */                                                 \
-                /* R31: saved LR */                                                               \
-                                                                                                  \
-                /* Arg1 R3: env */                                                                \
-                /* mr r3, r14 */                IW(0x7873c37d);                                   \
-                                                                                                  \
-                /* Arg2 R4: dst */                                                                \
-                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                     \
-                                                                                                  \
-                /* Arg3 R5: src1 */                                                               \
-                /* li r5, src1 */               IW(0x0000a038 | tvar16(src1));                    \
-                                                                                                  \
-                /* Arg4 R6: src2 */                                                               \
-                /* li r6, src2 */               IW(0x0000c038 | tvar16(src2));                    \
-                                                                                                  \
-                /* Call f(). */                                                                   \
-                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f)));     \
-                /* sldi r12, r12, 32 */         IW(0xc6078c79);                                   \
-                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f)));     \
-                /* mflr r31 */                  IW(0xa602e87f);                                   \
-                /* mtctr r12 */                 IW(0xa603897d);                                   \
-                /* bctrl */                     IW(0x2104804e);                                   \
-                /* mtlr r31 */                  IW(0xa603e87f);                                   \
-                                                                                                  \
-                /* If failed: */                                                                  \
-                /* cmpwi r3, 0 */               IW(0x0000032c);                                   \
-                /* beq exception_handler */     IW(0x00008241 | EXC());                           \
+#define ASM_BINARY_OP(f)                                                                      \
+        ASM {                                                                                 \
+                /* R14: env */                                                                \
+                /* R15: &env->frame->tmpvar[0] */                                             \
+                /* R31: saved LR */                                                           \
+                                                                                              \
+                /* Arg1 R3: env */                                                            \
+                /* mr r3, r14 */                IW(0x7873c37d);                               \
+                                                                                              \
+                /* Arg2 R4: dst */                                                            \
+                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                 \
+                                                                                              \
+                /* Arg3 R5: src1 */                                                           \
+                /* li r5, src1 */               IW(0x0000a038 | tvar16(src1));                \
+                                                                                              \
+                /* Arg4 R6: src2 */                                                           \
+                /* li r6, src2 */               IW(0x0000c038 | tvar16(src2));                \
+                                                                                              \
+                /* Load f(). */                                                               \
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16((uint64_t)(f)));       \
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16((uint64_t)(f)));       \
+                /* sldi r12, r12, 32 */         IW(0xc6078c79);                               \
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16((uint64_t)(f)));       \
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16((uint64_t)(f)));       \
+                                                                                              \
+                /* Call. */                                                                   \
+                /* mflr r31 */                  IW(0xa602e87f);                               \
+                /* mtctr r12 */                 IW(0xa603897d);                               \
+                /* bctrl */                     IW(0x2104804e);                               \
+                /* mtlr r31 */                  IW(0xa603e87f);                               \
+                                                                                              \
+                /* If failed: */                                                              \
+                /* cmpwi r3, 0 */               IW(0x0000032c);                               \
+                /* beq exception_handler */     IW(0x00008241 | EXC());                       \
         }
 
-#define ASM_UNARY_OP(f)                                                                           \
-        ASM {                                                                                     \
-                /* R14: env */                                                                    \
-                /* R15: &env->frame->tmpvar[0] */                                                 \
-                /* R31: saved LR */                                                               \
-                                                                                                  \
-                /* Arg1 R3: env */                                                                \
-                /* mr r3, r14 */                IW(0x7873c37d);                                   \
-                                                                                                  \
-                /* Arg2 R4: dst */                                                                \
-                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                     \
-                                                                                                  \
-                /* Arg3 R5: src1 */                                                               \
-                /* li r5, src */                IW(0x0000a038 | tvar16(src));                     \
-                                                                                                  \
-                /* Call f(). */                                                                   \
-                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(PPC64_DESC_ENTRY(f)));     \
-                /* sldi r12, r12, 32 */         IW(0xc6078c79);                                   \
-                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(PPC64_DESC_ENTRY(f)));     \
-                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(PPC64_DESC_ENTRY(f)));     \
-                /* mflr r31 */                  IW(0xa602e87f);                                   \
-                /* mtctr r12 */                 IW(0xa603897d);                                   \
-                /* bctrl */                     IW(0x2104804e);                                   \
-                /* mtlr r31 */                  IW(0xa603e87f);                                   \
-                                                                                                  \
-                /* If failed: */                                                                  \
-                /* cmpwi r3, 0 */               IW(0x0000032c);                                   \
-                /* beq exception_handler */     IW(0x00008241 | EXC());                           \
+#define ASM_UNARY_OP(f)                                                                       \
+        ASM {                                                                                 \
+                /* R14: env */                                                                \
+                /* R15: &env->frame->tmpvar[0] */                                             \
+                /* R31: saved LR */                                                           \
+                                                                                              \
+                /* Arg1 R3: env */                                                            \
+                /* mr r3, r14 */                IW(0x7873c37d);                               \
+                                                                                              \
+                /* Arg2 R4: dst */                                                            \
+                /* li r4, dst */                IW(0x00008038 | tvar16(dst));                 \
+                                                                                              \
+                /* Arg3 R5: src1 */                                                           \
+                /* li r5, src */                IW(0x0000a038 | tvar16(src));                 \
+                                                                                              \
+                /* Call f(). */                                                               \
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16((uint64_t)(f)));       \
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16((uint64_t)(f)));       \
+                /* sldi r12, r12, 32 */         IW(0xc6078c79);                               \
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16((uint64_t)(f)));       \
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16((uint64_t)(f)));       \
+                                                                                              \
+                /* Load f(). */                                                               \
+                /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16((uint64_t)(f)));       \
+                /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16((uint64_t)(f)));       \
+                /* sldi r12, r12, 32 */         IW(0xc6078c79);                               \
+                /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16((uint64_t)(f)));       \
+                /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16((uint64_t)(f)));       \
+                                                                                              \
+                /* Call. */                                                                   \
+                /* mflr r31 */                  IW(0xa602e87f);                               \
+                /* mtctr r12 */                 IW(0xa603897d);                               \
+                /* bctrl */                     IW(0x2104804e);                               \
+                /* mtlr r31 */                  IW(0xa603e87f);                               \
+                                                                                              \
+                /* If failed: */                                                              \
+                /* cmpwi r3, 0 */               IW(0x0000032c);                               \
+                /* beq exception_handler */     IW(0x00008241 | EXC());                       \
         }
 #endif
 
@@ -680,15 +722,6 @@ jit_visit_sconst_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3: env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -711,16 +744,41 @@ jit_visit_sconst_op(
                 /* lis  r7, hash[31:16] */      IW(0x0000e03c | hi16(hash));
                 /* ori  r7, r7, hash[15:0] */   IW(0x0000e760 | lo16(hash));
 
-                /* Call rt_make_string_with_hash(). */
+                /* Load rt_make_string_with_hash(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -750,15 +808,6 @@ jit_visit_aconst_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3: env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -766,16 +815,41 @@ jit_visit_aconst_op(
                 /* li r4, dst */                IW(0x00008038 | lo16((uint32_t)dst));
                 /* add r4, r4, r15 */           IW(0x147a847c);
 
-                /* Call rt_make_empty_array(). */
+                /* Load rt_make_empty_array(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -805,15 +879,6 @@ jit_visit_dconst_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3: env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -821,16 +886,41 @@ jit_visit_dconst_op(
                 /* li r4, dst */                IW(0x00008038 | lo16((uint32_t)dst));
                 /* add r4, r4, r15 */           IW(0x147a847c);
 
-                /* Call rt_make_empty_dict(). */
+                /* Load rt_make_empty_dict(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -1365,15 +1455,6 @@ jit_visit_loadsymbol_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3 = rt */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -1395,16 +1476,41 @@ jit_visit_loadsymbol_op(
                 /* lis  r7, hash[31:16] */      IW(0x0000e03c | hi16(hash));
                 /* ori  r7, r7, hash[15:0] */   IW(0x0000e760 | lo16(hash));
 
-                /* Call rt_loadsymbol_helper(). */
+                /* Load rt_loadsymbol_helper(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -1438,15 +1544,6 @@ jit_visit_storesymbol_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -1468,16 +1565,41 @@ jit_visit_storesymbol_op(
                 /* Arg5 R7 = src */
                 /* li r7, src */                IW(0x0000e038 | tvar16(src));
 
-                /* Call rt_storesymbol_helper(). */
+                /* Load rt_storesymbol_helper(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -1513,15 +1635,6 @@ jit_visit_loaddot_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -1546,16 +1659,41 @@ jit_visit_loaddot_op(
                 /* lis  r8, hash[31:16] */      IW(0x0000003d | hi16(hash));
                 /* ori  r8, r8, hash[15:0] */   IW(0x00000861 | lo16(hash));
 
-                /* Call rt_loaddot_helper(). */
+                /* Load rt_loaddot_helper(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -1591,15 +1729,6 @@ jit_visit_storedot_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -1630,10 +1759,35 @@ jit_visit_storedot_op(
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -1691,15 +1845,6 @@ jit_visit_call_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -1719,16 +1864,41 @@ jit_visit_call_op(
                 /* oris r7, r7, arg[31:16] */   IW(0x0000e764 | lohi16(arg_addr));
                 /* ori  r7, r7, arg[15:0] */    IW(0x0000e760 | lolo16(arg_addr));
 
-                /* Call rt_call_helper(). */
+                /* Load rt_call_helper(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -1789,15 +1959,6 @@ jit_visit_thiscall_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
@@ -1832,16 +1993,41 @@ jit_visit_thiscall_op(
                 /* oris r10, r10, arg[31:16] */  IW(0x00004a65 | lohi16(arg_addr));
                 /* ori  r10, r10, arg[15:0] */   IW(0x00004a61 | lolo16(arg_addr));
 
-                /* Call rt_thiscall_helper(). */
+                /* Load rt_thiscall_helper(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -2005,7 +2191,7 @@ jit_visit_safepoint_op(
         uint64_t f, toc;
 
         f = PPC64_DESC_ENTRY(ex_safepoint_helper);
-        toc = PPC64_DESC_TOC(ex_safepoint_heler);
+        toc = PPC64_DESC_TOC(ex_safepoint_helper);
 
         /* if (!ex_safepoint_helper(env)) return false; */
         ASM {
@@ -2013,28 +2199,44 @@ jit_visit_safepoint_op(
                 /* R15: &env->frame->tmpvar[0] */
                 /* R31: saved LR */
 
-#ifdef ELF_V1
-                /* Load TOC to R2*/
-                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
-                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
-                /* sldi r2, r2, 32 */           IW(0xc6074278);
-                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
-                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
-#endif
-
                 /* Arg1 R3 = env */
                 /* mr r3, r14 */                IW(0x7873c37d);
 
-                /* Call ex_safepoint_helper(). */
+                /* Load ex_safepoint_helper(). */
                 /* lis  r12, f[63:48] */        IW(0x0000803d | hihi16(f));
                 /* ori  r12, r12, f[47:32] */   IW(0x00008c61 | hilo16(f));
                 /* sldi r12, r12, 32 */         IW(0xc6078c79);
                 /* oris r12, r12, f[31:16] */   IW(0x00008c65 | lohi16(f));
                 /* ori  r12, r12, f[15:0] */    IW(0x00008c61 | lolo16(f));
+
+#ifndef ELF_V1
+                /* Call. */
                 /* mflr r31 */                  IW(0xa602e87f);
                 /* mtctr r12 */                 IW(0xa603897d);
                 /* bctrl */                     IW(0x2104804e);
                 /* mtlr r31 */                  IW(0xa603e87f);
+#else
+                /* Load TOC to R2. */
+                /* lis  r2, toc[63:48] */       IW(0x0000403c | hihi16(toc));
+                /* ori  r2, r2, toc[47:32] */   IW(0x00004260 | hilo16(toc));
+                /* sldi r2, r2, 32 */           IW(0xc6074278);
+                /* oris r2, r2, toc[31:16] */   IW(0x00004264 | lohi16(toc));
+                /* ori  r2, r2, toc[15:0] */    IW(0x00004260 | lolo16(toc));
+
+                /* Save LR. */
+                /* mflr r0 */                   IW(0xa602087c);
+                /* std r0, 24(r1) */            IW(0x180001f8);
+
+                /* Call. */
+                /* addi r1, r1, -64 */          IW(0xc0ff2138);
+                /* mtctr r12 */                 IW(0xa603897d);
+                /* bctrl */                     IW(0x2104804e);
+                /* addi r1, r1, 64 */           IW(0x40002138);
+
+                /* Restore LR. */
+                /* ld r0, 24(r1) */             IW(0x180001e8);
+                /* mtlr r0 */                   IW(0xa603087c);
+#endif
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
@@ -2064,6 +2266,22 @@ jit_visit_bytecode(
                 /* std r2,  -32(r1) */          IW(0xe0ff41f8);
                 /* addi r1, r1, -64 */          IW(0xc0ff2138);
 
+                /*
+                 * [Stack Allocation]
+                 *
+                 * old      new    purpose
+                 * ------------------------
+                 * -64(r1):  0(r1): empty
+                 * -56(r1):  8(r1): empty
+                 * -48(r1): 16(r1): empty
+                 * -40(r1): 24(r1): LR space   --> We use 24(r1) for r31 save
+                 * -32(r1): 32(r1): r2 save
+                 * -24(r1): 40(r1): r31 save
+                 * -16(r1): 48(r1): r15 save
+                 *  -8(r1): 56(r1): r14 save
+                 *   0(r1): 64(r1): ---
+                 */
+     
                 /* R14 = env */
                 /* mr r14, r3 */                IW(0x781b6e7c);
 
