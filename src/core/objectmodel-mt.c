@@ -3528,19 +3528,19 @@ om_merge_dict(
 			index = sn->key[j].val.str->hash & (uint32_t)(d->alloc_size - 1);
 			for (k = index;
 			     k != ((index - 1 + d->alloc_size) & (d->alloc_size - 1));
-			     k = (j + 1) & ((uint32_t)d->alloc_size - 1)) {
+			     k = (k + 1) & ((uint32_t)d->alloc_size - 1)) {
 				/*
 				 * Skip an empty slot
 				 */
-				if (d->key[i].type != NOCT_VALUE_STRING)
+				if (d->key[k].type != NOCT_VALUE_STRING)
 					break;
 
 				/*
 				 * Found the same key.
 				 */
-				if (d->key[i].val.str->len == sn->key[j].val.str->len &&
-				    d->key[i].val.str->hash == sn->key[j].val.str->hash &&
-				    strcmp(d->key[i].val.str->data, sn->key[j].val.str->data) == 0)
+				if (d->key[k].val.str->len == sn->key[j].val.str->len &&
+				    d->key[k].val.str->hash == sn->key[j].val.str->hash &&
+				    strcmp(d->key[k].val.str->data, sn->key[j].val.str->data) == 0)
 					break;
 			}
 
