@@ -278,7 +278,7 @@ rt_intrin_Long_from(
 	{
 		/* If it is an int, widen it. */
 		int val_i;
-		if (!noct_get_int(env, &val, &val_i))
+		if (!noct_get_int(env, &val, (int32_t *)&val_i))
 			return false;
 		if (!noct_set_return_make_long(env, &ret, val_i))
 			return false;
@@ -315,7 +315,7 @@ rt_intrin_Long_from(
 		const char *val_s;
 		if (!noct_get_string(env, &val, &val_s))
 			return false;
-		if (!noct_set_return_make_long(env, &ret, atol(val_s)))
+		if (!noct_set_return_make_long(env, &ret, atoll(val_s)))
 			return false;
 		break;
 	}
@@ -357,7 +357,7 @@ rt_intrin_Float_from(
 	{
 		/* If it is an int, convert to float. */
 		int val_i;
-		if (!noct_get_int(env, &val, &val_i))
+		if (!noct_get_int(env, &val, (int32_t *)&val_i))
 			return false;
 		if (!noct_set_return_make_float(env, &ret, (float)val_i))
 			return false;
@@ -436,7 +436,7 @@ rt_intrin_Double_from(
 	{
 		/* If it is an int, convert to double. */
 		int val_i;
-		if (!noct_get_int(env, &val, &val_i))
+		if (!noct_get_int(env, &val, (int32_t *)&val_i))
 			return false;
 		if (!noct_set_return_make_double(env, &ret, (double)val_i))
 			return false;
@@ -516,7 +516,7 @@ rt_intrin_String_from(
 	{
 		/* If it is an int, convert to double. */
 		int val_i;
-		if (!noct_get_int(env, &val, &val_i))
+		if (!noct_get_int(env, &val, (int32_t *)&val_i))
 			return false;
 		snprintf(buf, sizeof(buf), "%d", val_i);
 		if (!noct_set_return_make_string(env, &ret, buf))
@@ -1287,7 +1287,7 @@ rt_intrin_Packed_int8(
 
 	noct_pin_local(env, 2, &v_size, &v_ret);
 
-	if (!noct_get_arg_check_int(env, 0, &v_size, (int *)&i_size))
+	if (!noct_get_arg_check_int(env, 0, &v_size, (int32_t *)&i_size))
 		return false;
 
 	if (i_size == 0) {
@@ -1728,7 +1728,7 @@ rt_intrin_Math_abs(
 
 	switch (type) {
 	case NOCT_VALUE_INT:
-		if (!noct_get_int(env, &x, &ival))
+		if (!noct_get_int(env, &x, (int32_t *)&ival))
 			return false;
 		if (ival == INT_MIN) {
 			if (!noct_set_return_make_long(env, &ret, (int64_t)INT_MAX + 1))
@@ -1777,7 +1777,7 @@ rt_intrin_Math_sqrt(
 
 	switch (type) {
 	case NOCT_VALUE_INT:
-		if (!noct_get_int(env, &x, &ival))
+		if (!noct_get_int(env, &x, (int32_t *)&ival))
 			return false;
 		if (!noct_set_return_make_float(env, &ret, sqrtf((float)ival)))
 			return false;

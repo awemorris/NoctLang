@@ -402,6 +402,7 @@ om_check_dict_key(
 
 	/* Search for the key. */
 	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
+	*ret = false;
 	for (i = index;
 	     i != ((index - 1 + size) & (size - 1));
 	     i = (i + 1) & ((uint32_t)size - 1)) {
@@ -412,7 +413,6 @@ om_check_dict_key(
 		/* Stop if an empty slot. */
 		if (dict->key[i].type == NOCT_VALUE_INT) {
 			/* Failed: Key not found. */
-			*ret = false;
 			break;
 		}
 
@@ -426,11 +426,6 @@ om_check_dict_key(
 		}
 	}
 
-	/* Not found. */
-	if (!*ret)
-		return false;
-
-	/* Found. */
 	return true;
 }
 
