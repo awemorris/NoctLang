@@ -48,12 +48,11 @@ compile_source(
 		return false;
 
 	/* Make an output file name. (*.nb) */
-	strcpy(bc_fname, file_name);
-	dot = strstr(bc_fname, ".");
+	dot = strrchr(file_name, '.');
 	if (dot != NULL)
-		strcpy(dot, ".nb");
+		snprintf(bc_fname, sizeof(bc_fname), "%.*s.nb", (int)(dot - file_name), file_name);
 	else
-		strcat(bc_fname, ".nb");
+		snprintf(bc_fname, sizeof(bc_fname), "%s.nb", file_name);
 
 	/* Start translation. */
 	if (!noct_bcback_start(bc_fname)) {
