@@ -327,6 +327,7 @@ func main() {
 
 ### File I/O
 
+Text input.
 ```
 func main() {
     // Read the entire text.
@@ -337,6 +338,7 @@ func main() {
 }
 ```
 
+Text output.
 ```
 func main() {
     // Write a string.
@@ -345,6 +347,19 @@ func main() {
     // Write lines.
     File.writeForEachLine("text.txt", ["aaa", "bbb"]);
 }
+```
+
+Binary file I/O.
+```
+var in_file = File.open("test1.bin", "r");
+var data = File.read(in_file, 100);  # data => uint8[]
+for (i in 0..100)
+    print(data[i]);
+File.close(in_file);
+
+var out_file = File.open("test2.bin", "w");
+File.write(out_file, data, 0, Packed.size(data));
+File.close(out_file);
 ```
 
 ### Object-Oriented Model
