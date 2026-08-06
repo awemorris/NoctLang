@@ -388,9 +388,12 @@ om_check_dict_key(
 	bool *ret)
 {
 	struct rt_dict *dict;
-	size_t size, index, i;
+	size_t size, index, i, n;
 
 	UNUSED_PARAMETER(env);
+
+	/* Make sure the key has a cached hash. */
+	rt_cache_string_hash(key->val.str);
 
 	/* Track the newer chain. */
 	dict = dict_val->val.dict;
@@ -400,12 +403,11 @@ om_check_dict_key(
 	/* Get the dictionary allocation size. */
 	size = dict->alloc_size;
 
-	/* Search for the key. */
-	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
+	/* Search for the key. Probe every slot at most once. */
+	index = key->val.str->hash & (uint32_t)(size - 1);
 	*ret = false;
-	for (i = index;
-	     i != ((index - 1 + size) & (size - 1));
-	     i = (i + 1) & ((uint32_t)size - 1)) {
+	i = index;
+	for (n = 0; n < size; n++, i = (i + 1) & ((uint32_t)size - 1)) {
 		/* Skip if a removed slot. (tombstone) */
 		if (dict->key[i].type == NOCT_VALUE_FLOAT)
 			continue;
@@ -439,6 +441,9 @@ om_read_dict(
 	struct rt_value *key,
 	struct rt_value *val)
 {
+	/* Make sure the key has a cached hash. */
+	rt_cache_string_hash(key->val.str);
+
 	if (!om_read_dict_with_hash(env,
 				    dict_val,
 				    key->val.str->data,
@@ -463,7 +468,8 @@ om_read_dict_with_hash(
 	struct rt_value *val)
 {
 	struct rt_dict *dict;
-	size_t index, i;
+	size_t index, i, n;
+	bool found;
 
 	UNUSED_PARAMETER(env);
 
@@ -472,20 +478,21 @@ om_read_dict_with_hash(
 	while (dict->newer != NULL)
 		dict = dict->newer;
 
-	/* Search for the key. */
+	/* Search for the key. Probe every slot at most once. */
 	index = key_hash & (uint32_t)(dict->alloc_size - 1);
-	for (i = index;
-	     i != ((index - 1 + dict->alloc_size) & (dict->alloc_size - 1));
-	     i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
+	found = false;
+	i = index;
+	for (n = 0;
+	     n < dict->alloc_size;
+	     n++, i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
 		/* Skip if a removed slot. (tombstone) */
 		if (dict->key[i].type == NOCT_VALUE_FLOAT)
 			continue;
 
 		/* Stop if an empty slot. */
 		if (dict->key[i].type == NOCT_VALUE_INT) {
-			/* Failed: Key not found. */
-			rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
-			return false;
+			/* Key not found. */
+			break;
 		}
 
 		if (dict->key[i].val.str->len == key_len &&
@@ -493,8 +500,15 @@ om_read_dict_with_hash(
 		    strcmp(dict->key[i].val.str->data, key) == 0) {
 			/* Found the key. */
 			*val = dict->value[i];
+			found = true;
 			break;
 		}
+	}
+
+	if (!found) {
+		/* Failed: Key not found. */
+		rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
+		return false;
 	}
 
 	/* Succeeded. */
@@ -562,12 +576,16 @@ om_write_dict(
 {
 	struct rt_dict *dict;
 	size_t new_size;
-	size_t index, i;
+	size_t index, i, n;
 	bool is_insertion;
 	bool found_tombstone;
+	bool found_slot;
 	size_t first_tombstone_index;
 
 	UNUSED_PARAMETER(env);
+
+	/* Make sure the key has a cached hash. */
+	rt_cache_string_hash(key->val.str);
 
 retry:
 	/* Track the newer chain. */
@@ -586,12 +604,15 @@ retry:
 		goto expand_phase;
 	}
 
-	/* Search an index for in-place write. */
+	/* Search an index for in-place write. Probe every slot at most once. */
 	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
 	found_tombstone = false;
-	for (i = index;
-	     i != ((index - 1 + dict->alloc_size) & (dict->alloc_size - 1));
-	     i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
+	found_slot = false;
+	is_insertion = false;
+	i = index;
+	for (n = 0;
+	     n < dict->alloc_size;
+	     n++, i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
 		/*
 		 * Found a tombstone for a removed slot.
 		 * Skip for now with a  mark.
@@ -611,6 +632,7 @@ retry:
 		if (dict->key[i].type == NOCT_VALUE_INT) {
 			/* Proceed to write. (insertion) */
 			is_insertion = true;
+			found_slot = true;
 			break;
 		}
 
@@ -620,12 +642,26 @@ retry:
 		    strcmp(dict->key[i].val.str->data, key->val.str->data) == 0) {
 			/* Proceed to write. (non-insertion) */
 			is_insertion = false;
+			found_slot = true;
 			break;
 		}
 	}
-	if (found_tombstone) {
+	if (found_slot && is_insertion && found_tombstone) {
+		/*
+		 * Insert into the first tombstone slot instead of the empty
+		 * slot. (An update of an existing key must not be redirected
+		 * to a tombstone; that would duplicate the key.)
+		 */
 		i = first_tombstone_index;
-		is_insertion = true;
+	} else if (!found_slot) {
+		if (found_tombstone) {
+			/* Reuse the tombstone slot for insertion. */
+			i = first_tombstone_index;
+			is_insertion = true;
+		} else {
+			/* The table is completely full. Expand and retry. */
+			goto expand_phase;
+		}
 	}
 
 	/* Execute an in-place write */
@@ -718,6 +754,13 @@ expand_dict(
 	}
 	new_dict->size = dict->size;
 
+	/*
+	 * Carry over the native pointer: a handle dictionary must keep
+	 * its control block across an expansion.
+	 */
+	new_dict->native_pointer = dict->native_pointer;
+	new_dict->native_finalizer = dict->native_finalizer;
+
 	/* Link the new object, that is, do copy-publish. */
 	dict->newer = new_dict;
 
@@ -739,6 +782,8 @@ om_write_dict_with_hash(
 {
 	struct rt_value s;
 
+	s.type = NOCT_VALUE_INT;
+	s.val.i = 0;
 	rt_pin_local(env, &s);
 
 	if (!rt_make_string_with_hash(env, &s, key, len, hash)) {
@@ -766,28 +811,36 @@ om_erase_dict_entry(
 	struct rt_value *key)
 {
 	struct rt_dict *dict;
-	size_t index, i;
+	size_t index, i, n;
 	bool is_not_found;
 
 	UNUSED_PARAMETER(env);
+
+	/* Make sure the key has a cached hash. */
+	rt_cache_string_hash(key->val.str);
 
 	/* Track the newer chain. */
 	dict = dict_val->val.dict;
 	while (dict->newer != NULL)
 		dict = dict->newer;
 
-	/* Search an index for in-place write. */
+	/* Search an index for in-place write. Probe every slot at most once. */
 	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
 	is_not_found = true;
-	for (i = index;
-	     i != ((index - 1 + dict->alloc_size) & (dict->alloc_size - 1));
-	     i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
+	i = index;
+	for (n = 0;
+	     n < dict->alloc_size;
+	     n++, i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
 		/*
 		 * Found a tombstone for a removed slot.
 		 * Skip for now with a mark.
 		 */
 		if (dict->key[i].type == NOCT_VALUE_FLOAT)
 			continue;
+
+		/* Stop if an empty slot. */
+		if (dict->key[i].type == NOCT_VALUE_INT)
+			break;
 
 		/* Found the same key. Proceed to write. */
 		if (dict->key[i].val.str->len == key->val.str->len &&
@@ -809,6 +862,7 @@ om_erase_dict_entry(
 	dict->key[i].val.f = 0.0f;
 	dict->value[i].type = NOCT_VALUE_INT;
 	dict->value[i].val.i = 0;
+	dict->size--;
 
 	/* Succeeded. */
 	return true;
@@ -898,8 +952,12 @@ om_merge_dict(
 	src2_size = s2->size;
 
 	/* Determine the destination size. */
+	/*
+	 * All entries may be distinct, so reserve for src1_size + src2_size
+	 * entries and keep the load factor under 75%.
+	 */
 	dst_size = 1;
-	while (dst_size < src1_size || dst_size < src2_size) {
+	while (dst_size - dst_size / 4 < src1_size + src2_size) {
 		if (dst_size > SIZE_MAX / 2) {
 			rt_out_of_memory(env);
 			return false;
@@ -1033,6 +1091,26 @@ om_safepoint(
  */
 void
 om_init_env(
+	struct rt_env *env)
+{
+	UNUSED_PARAMETER(env);
+}
+
+/*
+ * Enter a blocking native region. (No-op in the single-threaded model.)
+ */
+void
+om_enter_blocking(
+	struct rt_env *env)
+{
+	UNUSED_PARAMETER(env);
+}
+
+/*
+ * Leave a blocking native region. (No-op in the single-threaded model.)
+ */
+void
+om_leave_blocking(
 	struct rt_env *env)
 {
 	UNUSED_PARAMETER(env);

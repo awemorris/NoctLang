@@ -1780,6 +1780,18 @@ noct_ex_eq_helper(
 			break;
 		}
 		break;
+	case NOCT_VALUE_ARRAY:
+	case NOCT_VALUE_DICT:
+	case NOCT_VALUE_PACKED:
+	case NOCT_VALUE_FUNC:
+		/* Reference types compare by identity. */
+		dst_val->type = NOCT_VALUE_INT;
+		if (src2_val->type == src1_val->type &&
+		    src1_val->val.obj == src2_val->val.obj)
+			dst_val->val.i = 1;
+		else
+			dst_val->val.i = 0;
+		break;
 	default:
 		dst_val->type = NOCT_VALUE_INT;
 		dst_val->val.i = 0;
@@ -1891,6 +1903,18 @@ noct_ex_neq_helper(
 			dst_val->val.i = 1;
 			break;
 		}
+		break;
+	case NOCT_VALUE_ARRAY:
+	case NOCT_VALUE_DICT:
+	case NOCT_VALUE_PACKED:
+	case NOCT_VALUE_FUNC:
+		/* Reference types compare by identity. */
+		dst_val->type = NOCT_VALUE_INT;
+		if (src2_val->type == src1_val->type &&
+		    src1_val->val.obj == src2_val->val.obj)
+			dst_val->val.i = 0;
+		else
+			dst_val->val.i = 1;
 		break;
 	default:
 		dst_val->type = NOCT_VALUE_INT;
@@ -2345,16 +2369,41 @@ noct_ex_call_helper(
 	}
 	callee = env->frame->tmpvar[func].val.func;
 
+	/*
+	 * Pin the argument and result slots.
+	 *
+	 * These live on the C stack, and rt_call() crosses a safepoint,
+	 * so without pinning a collection running in another thread
+	 * would move the objects and leave these copies dangling.
+	 */
+	memset(&ret, 0, sizeof(ret));
+	for (i = 0; i < arg_count; i++)
+		memset(&arg_val[i], 0, sizeof(arg_val[i]));
+	if (!rt_pin_local(env, &ret))
+		return false;
+	for (i = 0; i < arg_count; i++) {
+		if (!rt_pin_local(env, &arg_val[i]))
+			return false;
+	}
+
 	/* Get values of arguments. */
 	for (i = 0; i < arg_count; i++)
 		arg_val[i] = env->frame->tmpvar[arg[i]];
 
 	/* Do call. */
-	if (!rt_call(env, callee, (uint32_t)arg_count, &arg_val[0], &ret))
+	if (!rt_call(env, callee, (uint32_t)arg_count, &arg_val[0], &ret)) {
+		for (i = arg_count - 1; i >= 0; i--)
+			rt_unpin_local(env, &arg_val[i]);
+		rt_unpin_local(env, &ret);
 		return false;
+	}
 
 	/* Store a return value. */
 	env->frame->tmpvar[dst] = ret;
+
+	for (i = arg_count - 1; i >= 0; i--)
+		rt_unpin_local(env, &arg_val[i]);
+	rt_unpin_local(env, &ret);
 
 	return true;
 }
@@ -2392,31 +2441,69 @@ noct_ex_thiscall_helper(
 	}
 
 	/* Get a function from a receiver object. */
+	memset(&callee_value, 0, sizeof(callee_value));
+	if (!rt_pin_local(env, &callee_value))
+		return false;
 	if (!rt_get_dict_elem_with_hash(env,
 					&env->frame->tmpvar[obj],
 					name,
 					name_len,
 					name_hash,
-					&callee_value))
+					&callee_value)) {
+		rt_unpin_local(env, &callee_value);
 		return false;
+	}
 	if (callee_value.type != NOCT_VALUE_FUNC) {
+		rt_unpin_local(env, &callee_value);
 		rt_error(env, N_TR("Not a function."));
 		return false;
 	}
 	callee = callee_value.val.func;
 
-	/* Get values of arguments. */
+	/*
+	 * Pin the argument and result slots.
+	 *
+	 * These live on the C stack, and rt_call() crosses a safepoint,
+	 * so without pinning a collection running in another thread
+	 * would move the objects and leave these copies dangling.
+	 */
 	arg_count++;
+	memset(&ret, 0, sizeof(ret));
+	for (i = 0; i < arg_count; i++)
+		memset(&arg_val[i], 0, sizeof(arg_val[i]));
+	if (!rt_pin_local(env, &ret)) {
+		rt_unpin_local(env, &callee_value);
+		return false;
+	}
+	for (i = 0; i < arg_count; i++) {
+		if (!rt_pin_local(env, &arg_val[i])) {
+			rt_unpin_local(env, &ret);
+			rt_unpin_local(env, &callee_value);
+			return false;
+		}
+	}
+
+	/* Get values of arguments. */
 	arg_val[0] = *obj_val;
 	for (i = 1; i < arg_count; i++)
 		arg_val[i] = env->frame->tmpvar[arg[i - 1]];
 
 	/* Do call. */
-	if (!rt_call(env, callee, (uint32_t)arg_count, &arg_val[0], &ret))
+	if (!rt_call(env, callee, (uint32_t)arg_count, &arg_val[0], &ret)) {
+		for (i = arg_count - 1; i >= 0; i--)
+			rt_unpin_local(env, &arg_val[i]);
+		rt_unpin_local(env, &ret);
+		rt_unpin_local(env, &callee_value);
 		return false;
+	}
 
 	/* Store a return value. */
 	env->frame->tmpvar[dst] = ret;
+
+	for (i = arg_count - 1; i >= 0; i--)
+		rt_unpin_local(env, &arg_val[i]);
+	rt_unpin_local(env, &ret);
+	rt_unpin_local(env, &callee_value);
 
 	return true;
 }

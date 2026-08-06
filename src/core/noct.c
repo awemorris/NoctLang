@@ -12,6 +12,7 @@
 #include <noct/noct.h>
 #include "runtime.h"
 #include "jit.h"
+#include "objectmodel.h"
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -28,6 +29,11 @@ noct_set_default_config(
 	config->jit_enable             = true;
 	config->jit_threshold          = JIT_DEFAULT_THRESHOLD;
 	config->optimize_level         = 0;
+#if defined(NOCT_USE_JIT)
+	config->jit_code_size          = JIT_CODE_MAX;
+#else
+	config->jit_code_size          = 0;
+#endif
 	config->gc_nursery_size        = RT_GC_DEFAULT_NURSERY_SIZE;
 	config->gc_graduate_size       = RT_GC_DEFAULT_GRADUATE_SIZE;
 	config->gc_tenure_size         = RT_GC_DEFAULT_TENURE_SIZE;
@@ -133,7 +139,57 @@ noct_create_thread_env(
 
 	return true;
 }
+
+NOCT_DLL
+void
+noct_attach_thread_env(
+	NoctEnv *env)
+{
+	assert(env != NULL);
+
+	rt_attach_thread_env(env);
+}
+
+NOCT_DLL
+void
+noct_release_thread_env(
+	NoctEnv *env)
+{
+	assert(env != NULL);
+
+	rt_release_thread_env(env);
+}
+
+NOCT_DLL
+void
+noct_detach_thread_env(
+	NoctEnv *env)
+{
+	assert(env != NULL);
+
+	rt_detach_thread_env(env);
+}
 #endif
+
+NOCT_DLL
+void
+noct_enter_blocking(
+	NoctEnv *env)
+{
+	assert(env != NULL);
+
+	om_enter_blocking(env);
+}
+
+NOCT_DLL
+void
+noct_leave_blocking(
+	NoctEnv *env)
+{
+	assert(env != NULL);
+
+	om_leave_blocking(env);
+}
 
 NOCT_DLL
 bool

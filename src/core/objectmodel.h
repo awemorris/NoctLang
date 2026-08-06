@@ -249,4 +249,25 @@ void
 om_init_env(
 	struct rt_env *env);
 
+/*
+ * Enter a blocking native region.
+ *
+ * The calling thread is treated as parked at a safepoint until
+ * om_leave_blocking() is called. The thread must not touch the VM heap
+ * or any NoctValue while inside the blocking region.
+ */
+void
+om_enter_blocking(
+	struct rt_env *env);
+
+/*
+ * Leave a blocking native region.
+ *
+ * The calling thread becomes in-flight again. If a stop-the-world
+ * request is in progress, this call parks until it completes.
+ */
+void
+om_leave_blocking(
+	struct rt_env *env);
+
 #endif

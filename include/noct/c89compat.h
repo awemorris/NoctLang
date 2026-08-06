@@ -183,6 +183,7 @@ extern "C" {
  * | NOCT_TARGET_SOLARIS10 | Solaris        |                             |
  * | NOCT_TARGET_BEOS      | BeOS and Haiku |                             |
  * | NOCT_TARGET_DOS4G     | DOS4G          |                             |
+ * | NOCT_TARGET_PC98BE    | PC-98 BE       | Freestanding bootstrap env. |
  *
  * Additional:
 
@@ -221,7 +222,8 @@ extern "C" {
         ( \
                 !defined(__ANDROID__) &&   \
                 !defined(HAL_TARGET_UNITY) && \
-                !defined(HAL_TARGET_OPENHARMONY) \
+                !defined(HAL_TARGET_OPENHARMONY) && \
+		!defined(NOCT_TARGET_PC98BE) \
 	)
 #define NOCT_TARGET_LINUX
 #ifndef NOCT_TARGET_POSIX
@@ -297,14 +299,15 @@ extern "C" {
     !defined(NOCT_TARGET_OPENBSD) &&              \
     !defined(NOCT_TARGET_SOLARIS11) &&            \
     !defined(NOCT_TARGET_SOLARIS10) &&            \
-    !defined(NOCT_TARGET_PIOSIX) &&               \
+    !defined(NOCT_TARGET_POSIX) &&                \
     !defined(NOCT_TARGET_IOS) &&                  \
     !defined(NOCT_TARGET_ANDROID) &&              \
     !defined(NOCT_TARGET_OPENHARMONY) &&          \
     !defined(NOCT_TARGET_WASM) &&                 \
     !defined(NOCT_TARGET_BEOS) &&                 \
     !defined(NOCT_TARGET_UNITY) &&                \
-    !defined(NOCT_TARGET_DOS4G)
+    !defined(NOCT_TARGET_DOS4G) &&                \
+    !defined(NOCT_TARGET_PC98BE)
 #error "No target detected."
 #endif
 

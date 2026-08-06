@@ -83,12 +83,12 @@ jit_build(
 
         /* If the first call, map a memory region for the generated code. */
         if (jit_code_region == NULL) {
-                if (!jit_map_memory_region((void **)&jit_code_region, JIT_CODE_MAX)) {
+                if (!jit_map_memory_region((void **)&jit_code_region, jit_get_code_size(env))) {
                         rt_error(env, "Memory mapping failed.");
                         return false;
                 }
                 jit_code_region_cur = jit_code_region;
-                jit_code_region_tail = jit_code_region + JIT_CODE_MAX / 4;
+                jit_code_region_tail = jit_code_region + jit_get_code_size(env) / 4;
                 is_writable = true;
         }
 
@@ -127,7 +127,7 @@ jit_build(
 
         /* Make code writable and non-executable. */
         if (!is_writable) {
-                jit_map_writable(jit_code_region, JIT_CODE_MAX);
+                jit_map_writable(jit_code_region, jit_get_code_size(env));
                 is_writable = true;
         }
 
@@ -160,7 +160,7 @@ jit_free(
         UNUSED_PARAMETER(env);
 
         if (jit_code_region != NULL) {
-                jit_unmap_memory_region(jit_code_region, JIT_CODE_MAX);
+                jit_unmap_memory_region(jit_code_region, jit_get_code_size(env));
 
                 jit_code_region = NULL;
                 jit_code_region_cur = NULL;
@@ -179,7 +179,7 @@ jit_commit(
 	UNUSED_PARAMETER(env);
 
         /* Make code executable and non-writable. */
-        jit_map_executable(jit_code_region, JIT_CODE_MAX);
+        jit_map_executable(jit_code_region, jit_get_code_size(env));
 
         is_writable = false;
 }

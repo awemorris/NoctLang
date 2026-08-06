@@ -234,6 +234,9 @@ To forcibly enable the JIT compiler from the startup:
 noct --force-jit script.noct
 ```
 
+To start the interactive REPL, run `noct` without a script. The reusable REPL
+session API for embedded hosts is documented in [docs/repl.md](docs/repl.md).
+
 ### Compile into Bytecode
 
 To compile a script into a bytecode file:
@@ -254,6 +257,7 @@ noct --elisp script.el script.noct
 
 ```
   --jit-threshold=N    ... call-count threshold for compilation
+  --jit-code-size=N    ... maximum generated-code reservation in bytes
 ```
 
 ### Garbage Collection Options

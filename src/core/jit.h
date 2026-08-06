@@ -79,11 +79,29 @@ jit_free(
 #define BROKEN_BYTECODE		N_TR("Broken bytecode.")
 
 /* Code size. */
-#if !defined(NOCT_TARGET_DOS4G)
+#if defined(NOCT_JIT_CODE_MAX)
+#define JIT_CODE_MAX		NOCT_JIT_CODE_MAX
+#elif !defined(NOCT_TARGET_DOS4G) && !defined(NOCT_TARGET_PC98BE)
 #define JIT_CODE_MAX		(16 * 1024 * 1024)
 #else
 #define JIT_CODE_MAX		(1 * 1024 * 1024)
 #endif
+
+/*
+ * Return the per-VM JIT reservation, clamped to the target's compiled limit.
+ * A zero value keeps source compatibility with callers that zero-initialize
+ * NoctConfig instead of starting with noct_set_default_config().
+ */
+static INLINE size_t
+jit_get_code_size(
+	struct rt_env *env)
+{
+	size_t size = env->vm->config.jit_code_size;
+
+	if (size == 0 || size > JIT_CODE_MAX)
+		size = JIT_CODE_MAX;
+	return size;
+}
 
 /* PC entry size. */
 #define PC_ENTRY_MAX		2048

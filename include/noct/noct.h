@@ -121,6 +121,9 @@ struct rt_config {
 	/* Optimization level. */
 	int optimize_level;
 
+	/* Maximum bytes reserved for generated JIT code. */
+	size_t jit_code_size;
+
 	/* GC nursery region size. */
 	size_t gc_nursery_size;
 
@@ -136,7 +139,7 @@ struct rt_config {
 	/* GC tenure-promotion threshold. */
 	size_t gc_promotion_threshold;
 
-	uint64_t reserved[56];
+	uint64_t reserved[55];
 };
 typedef struct rt_config NoctConfig;
 
@@ -182,7 +185,12 @@ noct_destroy_vm(
 	NoctVM *vm);
 
 /*
- * Creates a thread-local environment (=context) for the current thread.
+ * Creates a thread-local environment (=context) for another thread.
+ *
+ * Must be called from a thread that is currently running VM code, i.e.
+ * from inside a native API function. The new environment is parked: the
+ * thread that will use it must call noct_attach_thread_env() first. A
+ * previously detached environment may be reused.
  */
 #if defined(NOCT_USE_MULTITHREAD)
 NOCT_DLL
@@ -190,7 +198,68 @@ bool
 noct_create_thread_env(
 	NoctEnv *prev_env,
 	NoctEnv **new_env);
+
+/*
+ * Adopts an environment in the current thread.
+ *
+ * After this call, the calling thread may run VM code with the given
+ * environment. If a garbage collection is in progress, this call waits
+ * for it to complete before returning.
+ */
+NOCT_DLL
+void
+noct_attach_thread_env(
+	NoctEnv *env);
+
+/*
+ * Releases an environment that was created but never adopted.
+ *
+ * Use this when thread creation fails after noct_create_thread_env()
+ * has already succeeded.
+ */
+NOCT_DLL
+void
+noct_release_thread_env(
+	NoctEnv *env);
+
+/*
+ * Detaches the current thread's environment for later reuse.
+ *
+ * Must be called on the calling thread's own environment after all VM
+ * calls have returned. The environment must not be used afterwards.
+ */
+NOCT_DLL
+void
+noct_detach_thread_env(
+	NoctEnv *env);
 #endif
+
+/*
+ * Enters a blocking native region.
+ *
+ * Call this before a potentially long blocking operation (e.g. waiting
+ * on a lock, joining a thread, or a blocking syscall) inside a native
+ * function. While inside the region, the calling thread is treated as
+ * stopped for the garbage collector, so it must not touch any NoctValue
+ * or call any other noct_*() function.
+ *
+ * In the single-threaded build, this is a no-op.
+ */
+NOCT_DLL
+void
+noct_enter_blocking(
+	NoctEnv *env);
+
+/*
+ * Leaves a blocking native region.
+ *
+ * If a garbage collection is in progress, this call waits for it to
+ * complete before returning.
+ */
+NOCT_DLL
+void
+noct_leave_blocking(
+	NoctEnv *env);
 
 /*
  * Registers functions from a source code text.
@@ -1923,10 +1992,146 @@ noct_register_api_file(
 	NoctEnv *env);
 
 /*
+ * Optional directory enumerator for freestanding FileUtil backends.
+ * read() returns 1 for an entry, 0 at end-of-directory, and -1 on error.
+ */
+struct NoctDirectoryBackend {
+	int (*read)(void *context, const char *path, size_t index,
+		    char *name, size_t name_capacity, int *is_directory);
+};
+
+NOCT_DLL
+void
+noct_set_directory_backend(
+	const struct NoctDirectoryBackend *backend,
+	void *context);
+
+/* Register the "Thread.*" APIs. (Multithread build only) */
+#if defined(NOCT_USE_MULTITHREAD)
+NOCT_DLL
+bool
+noct_register_api_thread(
+	NoctEnv *env);
+#endif
+
+/* Register the "HttpServer.*" APIs. */
+NOCT_DLL
+bool
+noct_register_api_httpserver(
+	NoctEnv *env);
+
+/*
+ * Register the "Term.*" APIs. (non-standard API)
+ *
+ * A full-screen terminal abstraction. On platforms without a backend,
+ * registration succeeds but Term.open() reports failure.
+ */
+NOCT_DLL
+bool
+noct_register_api_term(
+	NoctEnv *env);
+
+/*
+ * Target-neutral backend for Term.*.
+ *
+ * Freestanding targets can implement the terminal without emulating a POSIX
+ * tty.  Rows and columns are one-based at the Noct API boundary.  read_key()
+ * returns a Unicode codepoint, a NOCT_TERM_KEY_* value with optional modifier
+ * bits, or -1 when the timeout expires.
+ */
+struct NoctTermStyle {
+	int foreground;		/* -1 means the terminal default. */
+	int background;		/* -1 means the terminal default. */
+	bool bold;
+	bool reverse;
+	bool underline;
+};
+
+struct NoctTermBackend {
+	int (*open)(void *context);
+	void (*close)(void *context);
+	int (*is_tty)(void *context);
+	int (*size)(void *context, unsigned *rows, unsigned *columns);
+	int (*resized)(void *context);
+	int (*move_to)(void *context, unsigned row, unsigned column);
+	int (*write)(void *context, const char *utf8, size_t length);
+	int (*clear)(void *context);
+	int (*clear_to_eol)(void *context);
+	int (*set_style)(void *context, const struct NoctTermStyle *style);
+	int (*show_cursor)(void *context, int visible);
+	int (*flush)(void *context);
+	int (*read_key)(void *context, int timeout_ms);
+	int (*pending_input)(void *context);
+};
+
+#define NOCT_TERM_MOD_META	(1 << 27)
+#define NOCT_TERM_MOD_CTRL	(1 << 26)
+#define NOCT_TERM_MOD_SHIFT	(1 << 25)
+#define NOCT_TERM_KEY_BASE	0xe000
+#define NOCT_TERM_KEY_UP	(NOCT_TERM_KEY_BASE + 0)
+#define NOCT_TERM_KEY_DOWN	(NOCT_TERM_KEY_BASE + 1)
+#define NOCT_TERM_KEY_RIGHT	(NOCT_TERM_KEY_BASE + 2)
+#define NOCT_TERM_KEY_LEFT	(NOCT_TERM_KEY_BASE + 3)
+#define NOCT_TERM_KEY_HOME	(NOCT_TERM_KEY_BASE + 4)
+#define NOCT_TERM_KEY_END	(NOCT_TERM_KEY_BASE + 5)
+#define NOCT_TERM_KEY_PGUP	(NOCT_TERM_KEY_BASE + 6)
+#define NOCT_TERM_KEY_PGDN	(NOCT_TERM_KEY_BASE + 7)
+#define NOCT_TERM_KEY_INSERT	(NOCT_TERM_KEY_BASE + 8)
+#define NOCT_TERM_KEY_DELETE	(NOCT_TERM_KEY_BASE + 9)
+#define NOCT_TERM_KEY_F1	(NOCT_TERM_KEY_BASE + 11)
+
+NOCT_DLL
+bool
+noct_register_api_term_backend(
+	NoctEnv *env,
+	const struct NoctTermBackend *backend,
+	void *context);
+
+NOCT_DLL
+bool
+noct_register_api_process(NoctEnv *env);
+
+/*
  * Custom Allocators
  *  - Override the macros and build a custom library.
  *  - We don't use indirect calls for allocation because it's slow on
  *    Linux due to Spectre mitigation.
+ */
+
+/*
+ * [For PC-98 BE]
+ * The PC-98 Bootstrap Environment supplies these functions from its
+ * freestanding C runtime.  Keeping the declarations here lets the
+ * selected Noct core compile without pretending that the target is
+ * DOS or POSIX.
+ */
+#if defined(NOCT_TARGET_PC98BE)
+void *noct_pc98be_malloc(size_t size);
+void *noct_pc98be_calloc(size_t nmemb, size_t size);
+void *noct_pc98be_realloc(void *ptr, size_t size);
+char *noct_pc98be_strdup(const char *s);
+void noct_pc98be_free(void *ptr);
+
+#ifndef noct_malloc
+#define noct_malloc	noct_pc98be_malloc
+#endif
+#ifndef noct_calloc
+#define noct_calloc	noct_pc98be_calloc
+#endif
+#ifndef noct_realloc
+#define noct_realloc	noct_pc98be_realloc
+#endif
+#ifndef noct_strdup
+#define noct_strdup	noct_pc98be_strdup
+#endif
+#ifndef noct_free
+#define noct_free	noct_pc98be_free
+#endif
+
+#endif /* defined(NOCT_TARGET_PC98BE) */
+
+/*
+ * Default allocators.
  */
 
 #ifndef noct_malloc
@@ -1935,6 +2140,10 @@ noct_register_api_file(
 
 #ifndef noct_calloc
 #define noct_calloc	calloc
+#endif
+
+#ifndef noct_realloc
+#define noct_realloc	realloc
 #endif
 
 #ifndef noct_strdup

@@ -19,6 +19,7 @@ static void print_debug(const char *s);
 #endif
 
 #define YYMALLOC ast_malloc
+#define YYFREE ast_free
 
 extern int ast_error_line;
 extern int ast_error_column;
@@ -26,6 +27,7 @@ extern int ast_error_column;
 int ast_yylex(void *);
 void ast_yyerror(void *, char *s);
 void *ast_malloc(size_t size); 
+void ast_free(void *p);
 
 /* Internal: called back from the parser. */
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);
@@ -76,6 +78,8 @@ struct ast_expr *ast_accept_mul_expr(struct ast_expr *expr1, struct ast_expr *ex
 struct ast_expr *ast_accept_div_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_mod_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_and_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_land_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_lor_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_or_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_xor_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_shl_expr(struct ast_expr *expr1, struct ast_expr *expr2);
@@ -184,26 +188,23 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <term> term;
 %type <arg_list> arg_list;
 
-%left UNARYMINUS
+/*
+ * Operator precedence, lowest to highest, matching C:
+ *   ||  &&  |  ^  &  ==/!=  relational  shift  +/-  * / %  unary  postfix
+ * Operators of one group share a level and associate left; unary
+ * operators associate right.
+ */
 %left TOKEN_OROR
 %left TOKEN_ANDAND
-%left TOKEN_NOT
 %left TOKEN_OR
-%left TOKEN_AND
 %left TOKEN_XOR
-%left TOKEN_LT
-%left TOKEN_LTE
-%left TOKEN_GT
-%left TOKEN_GTE
-%left TOKEN_EQ
-%left TOKEN_NEQ
-%left TOKEN_PLUS
-%left TOKEN_MINUS
-%left TOKEN_SHL
-%left TOKEN_SHR
-%left TOKEN_MUL
-%left TOKEN_DIV
-%left TOKEN_MOD
+%left TOKEN_AND
+%left TOKEN_EQ TOKEN_NEQ
+%left TOKEN_LT TOKEN_LTE TOKEN_GT TOKEN_GTE
+%left TOKEN_SHL TOKEN_SHR
+%left TOKEN_PLUS TOKEN_MINUS
+%left TOKEN_MUL TOKEN_DIV TOKEN_MOD
+%right TOKEN_NOT UNARYMINUS
 %left TOKEN_DOT
 %right TOKEN_RPAR_DARROW_LBLK
 %right TOKEN_ARROW
@@ -562,13 +563,13 @@ expr		: term
 		}
 		| expr TOKEN_OROR expr
 		{
-			$$ = ast_accept_or_expr($1, $3);
-			debug("expr: expr or expr");
+			$$ = ast_accept_lor_expr($1, $3);
+			debug("expr: expr || expr");
 		}
 		| expr TOKEN_ANDAND expr
 		{
-			$$ = ast_accept_and_expr($1, $3);
-			debug("expr: expr and expr");
+			$$ = ast_accept_land_expr($1, $3);
+			debug("expr: expr && expr");
 		}
 		| expr TOKEN_LT expr
 		{

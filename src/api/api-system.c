@@ -27,6 +27,8 @@
 
 /* Forward declaration. */
 static bool cfunc_System_import(NoctEnv *env);
+static bool cfunc_System_registerSource(NoctEnv *env);
+static bool cfunc_System_getEnv(NoctEnv *env);
 static bool cfunc_System_shell(NoctEnv *env);
 static bool cfunc_System_runCommand(NoctEnv *env);
 static bool cfunc_System_getOSName(NoctEnv *env);
@@ -48,6 +50,20 @@ static struct ffi_item ffi_items[] = {
 		1,
 		{"file"},
 		cfunc_System_import
+	},
+	{
+		"System.registerSource",
+		"registerSource",
+		1,
+		{"source"},
+		cfunc_System_registerSource
+	},
+	{
+		"System.getEnv",
+		"getEnv",
+		1,
+		{"name"},
+		cfunc_System_getEnv
 	},
 	{
 		"System.shell",
@@ -127,6 +143,34 @@ noct_register_api_system(
 }
 
 /* Implementation of import() */
+/*
+ * System.getEnv(name)
+ *
+ * Returns the environment variable's value, or "" when unset.
+ */
+static bool
+cfunc_System_getEnv(NoctEnv *env)
+{
+	NoctValue name, ret;
+	const char *name_s;
+	const char *val;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &name, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &name, &name_s))
+		goto cleanup;
+	val = getenv(name_s);
+	if (val == NULL)
+		val = "";
+	if (!noct_set_return_make_string(env, &ret, val))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &name, &ret);
+	return ok;
+}
+
 static bool
 cfunc_System_import(
 	NoctEnv *env)
@@ -154,6 +198,34 @@ cfunc_System_import(
 			return false;
 	}
 
+	return true;
+}
+
+/*
+ * System.registerSource(source)
+ *
+ * Compiles and registers Noct source text held in a string, without a
+ * file. New global functions become immediately callable. Used to add
+ * generated code (e.g. the Lisp compiler) to the running VM.
+ */
+static bool
+cfunc_System_registerSource(NoctEnv *env)
+{
+	NoctValue src;
+	const char *src_s;
+
+	memset(&src, 0, sizeof(src));
+	if (!noct_pin_local(env, 1, &src))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &src, &src_s)) {
+		noct_unpin_local(env, 1, &src);
+		return false;
+	}
+	if (!noct_register_source(env, "<registerSource>", src_s)) {
+		noct_unpin_local(env, 1, &src);
+		return false;
+	}
+	noct_unpin_local(env, 1, &src);
 	return true;
 }
 
@@ -245,7 +317,7 @@ cfunc_System_runCommand(
 			}
 
 			/* Parse the command line arguments. TODO: support quotation */
-			cmd_copy = strdup(command);
+			cmd_copy = noct_strdup(command);
 			i = 0;
 			token = strtok(cmd_copy, " ");
 			while (token != NULL && i < 63) {
@@ -258,7 +330,7 @@ cfunc_System_runCommand(
 			execvp(argv[0], argv);
 
 			printf("execvp() failed for %s.\n", argv[0]);
-			free(cmd_copy);
+			noct_free(cmd_copy);
 			return EXIT_FAILURE;
 		} else {
 			if (wait_for_finish)
@@ -385,7 +457,7 @@ static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_
 	fseek(fp, 0, SEEK_SET);
 
 	/* Allocate a buffer. */
-	*data = malloc(*size + 1);
+	*data = noct_malloc(*size + 1);
 	if (*data == NULL) {
 		noct_out_of_memory(env);
 		return false;

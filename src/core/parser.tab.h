@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_DEBUG_PARSER_TAB_H_INCLUDED
-# define YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_DEBUG_PARSER_TAB_H_INCLUDED
+#ifndef YY_AST_YY_PARSER_TAB_H_INCLUDED
+# define YY_AST_YY_PARSER_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -120,8 +120,8 @@ extern int ast_yydebug;
     TOKEN_OR = 321,                /* TOKEN_OR  */
     TOKEN_XOR = 322,               /* TOKEN_XOR  */
     TOKEN_VAR = 323,               /* TOKEN_VAR  */
-    UNARYMINUS = 324,              /* UNARYMINUS  */
-    TOKEN_NOT = 325,               /* TOKEN_NOT  */
+    TOKEN_NOT = 324,               /* TOKEN_NOT  */
+    UNARYMINUS = 325,              /* UNARYMINUS  */
     CALL = 326                     /* CALL  */
   };
   typedef enum yytokentype yytoken_kind_t;
@@ -131,7 +131,7 @@ extern int ast_yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 119 "/home/awe/src/noct/src/core/parser.y"
+#line 123 "parser.y"
 
 	int ival;
 	int64_t lval;
@@ -150,7 +150,7 @@ union YYSTYPE
 	struct ast_kv_list *kv_list;
 	struct ast_kv *kv;
 
-#line 154 "/home/awe/src/noct/build-debug/parser.tab.h"
+#line 154 "parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -179,10 +179,10 @@ extern YYLTYPE ast_yylloc;
 int ast_yyparse (void *scanner);
 
 /* "%code provides" blocks.  */
-#line 115 "/home/awe/src/noct/src/core/parser.y"
+#line 119 "parser.y"
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 
-#line 187 "/home/awe/src/noct/build-debug/parser.tab.h"
+#line 187 "parser.tab.h"
 
-#endif /* !YY_AST_YY_HOME_AWE_SRC_NOCT_BUILD_DEBUG_PARSER_TAB_H_INCLUDED  */
+#endif /* !YY_AST_YY_PARSER_TAB_H_INCLUDED  */

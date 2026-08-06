@@ -6,33 +6,45 @@ project(Noct VERSION 1.0 LANGUAGES C)
 #
 
 # Choose one.
-option(NOCT_ENABLE_STATIC       "Build a static library"           OFF)
-option(NOCT_ENABLE_SHARED       "Build a shared library"           OFF)
-option(NOCT_ENABLE_OBJECT       "Build objects only"               OFF)
+option(NOCT_ENABLE_STATIC         "Build a static library"                OFF)
+option(NOCT_ENABLE_SHARED         "Build a shared library"                OFF)
+option(NOCT_ENABLE_OBJECT         "Build objects only"                    OFF)
 
 # Options
-option(NOCT_ENABLE_CLI          "Enable CLI"                       OFF)
-option(NOCT_ENABLE_JIT          "Enable JIT compilation"           OFF)
-option(NOCT_ENABLE_MULTITHREAD  "Enable multithread support"       OFF)
-option(NOCT_ENABLE_I18N         "Enable translation (built-in)"    OFF)
-option(NOCT_ENABLE_I18N_LIBINTL "Enable translation (gettext)"     OFF)
-option(NOCT_ENABLE_API          "Enable standard API"              OFF)
-option(NOCT_ENABLE_INSTALL      "Enable installation"              OFF)
-option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"          OFF)
-option(NOCT_ENABLE_CBACKEND     "Enable C backend"                 OFF)
-option(NOCT_ENABLE_ELBACKEND    "Enable Emacs Lisp backend"        OFF)
-option(NOCT_ENABLE_SCMBACKEND   "Enable Scheme backend"            OFF)
-option(NOCT_ENABLE_REPL         "Enable REPL"                      OFF)
-option(NOCT_ENABLE_MDOC         "Install mdoc(7) man page"         OFF)
+option(NOCT_ENABLE_CLI            "Enable CLI"                            OFF)
+option(NOCT_ENABLE_JIT            "Enable JIT compilation"                OFF)
+option(NOCT_ENABLE_MULTITHREAD    "Enable multithread support"            OFF)
+option(NOCT_ENABLE_I18N           "Enable translation (built-in)"         OFF)
+option(NOCT_ENABLE_I18N_LIBINTL   "Enable translation (gettext)"          OFF)
+option(NOCT_ENABLE_API            "Enable standard API"                   OFF)
+option(NOCT_ENABLE_API_SYSTEM     "Enable the System standard API"        OFF)
+option(NOCT_ENABLE_API_CONSOLE    "Enable the Console standard API"       OFF)
+option(NOCT_ENABLE_API_FILE       "Enable the File standard API"          OFF)
+option(NOCT_ENABLE_API_THREAD     "Enable the Thread standard API"        OFF)
+option(NOCT_ENABLE_API_HTTPSERVER "Enable the HttpServer standard API"    OFF)
+option(NOCT_ENABLE_API_TERM       "Enable the Term non-standard API"      OFF)
+option(NOCT_ENABLE_API_PROCESS "Enable the Process non-standard API" ON)
+option(NOCT_ENABLE_INSTALL        "Enable installation"                   OFF)
+option(NOCT_ENABLE_BCBACKEND      "Enable bytecode backend"               OFF)
+option(NOCT_ENABLE_CBACKEND       "Enable C backend"                      OFF)
+option(NOCT_ENABLE_ELBACKEND      "Enable Emacs Lisp backend"             OFF)
+option(NOCT_ENABLE_SCMBACKEND     "Enable Scheme backend"                 OFF)
+option(NOCT_ENABLE_REPL           "Enable reusable REPL and CLI mode"     OFF)
+option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
 
 #
 # Choose one if needed.
 #  - These targets cannot be automatically determined.
 #
-option(NOCT_TARGET_UNITY        "Build for Unity"                  OFF)
-option(NOCT_TARGET_OPENHARMONY  "Build for OpenHarmony"            OFF)
-option(NOCT_TARGET_MACOS7       "Build for MacOS 7"                OFF)
-option(NOCT_TARGET_DOS4G        "Build for DOS4G"                  OFF)
+option(NOCT_TARGET_UNITY          "Build for Unity"                       OFF)
+option(NOCT_TARGET_OPENHARMONY    "Build for OpenHarmony"                 OFF)
+option(NOCT_TARGET_MACOS7         "Build for MacOS 7"                     OFF)
+option(NOCT_TARGET_DOS4G          "Build for DOS4G"                       OFF)
+option(NOCT_TARGET_PC98BE         "Build for PC-98 Bootstrap Environment" OFF)
+
+if(NOCT_TARGET_PC98BE AND NOCT_ENABLE_MULTITHREAD)
+  message(FATAL_ERROR "NOCT_TARGET_PC98BE currently supports only the single-threaded object model")
+endif()
 
 # ---
 
@@ -153,6 +165,7 @@ set(
   src/core/execution.c     # Runtime execution helper part
   src/core/gc.c            # Runtime GC part
   src/core/intrinsics.c    # Intrinsics
+  src/core/regex.c         # Regex engine
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
 )
@@ -219,6 +232,14 @@ if(NOCT_ENABLE_I18N)
   endif()
 endif()
 
+# Determine the reusable REPL session engine.
+if(NOCT_ENABLE_REPL)
+  set(
+    NOCT_REPL_SOURCE
+    src/repl/repl.c
+  )
+endif()
+
 # Add the target "libnoct", the core sandboxed virtual machine.
 add_library(
   noct
@@ -231,6 +252,7 @@ add_library(
   ${NOCT_ELBE_SOURCE}
   ${NOCT_SCMBE_SOURCE}
   ${NOCT_I18N_SOURCE}
+  ${NOCT_REPL_SOURCE}
 )
 if(NOCT_ENABLE_SHARED)
   set_target_properties(noct PROPERTIES 
@@ -243,16 +265,41 @@ if(NOCT_ENABLE_SHARED)
   )
 endif()
 
+# Determine the optional standard API files.
+set(NOCT_API_SOURCE)
+if(NOCT_ENABLE_API_SYSTEM)
+  list(APPEND NOCT_API_SOURCE src/api/api-system.c)
+endif()
+if(NOCT_ENABLE_API_CONSOLE)
+  list(APPEND NOCT_API_SOURCE src/api/api-console.c)
+endif()
+if(NOCT_ENABLE_API_FILE)
+  list(APPEND NOCT_API_SOURCE src/api/api-file.c)
+  list(APPEND NOCT_API_SOURCE src/api/jisx0208.c)
+endif()
+if(NOCT_ENABLE_API_THREAD AND NOCT_ENABLE_MULTITHREAD)
+  list(APPEND NOCT_API_SOURCE src/api/api-thread.c)
+endif()
+if(NOCT_ENABLE_API_HTTPSERVER)
+  list(APPEND NOCT_API_SOURCE src/api/api-httpserver.c)
+endif()
+if(NOCT_ENABLE_API_TERM)
+  list(APPEND NOCT_API_SOURCE src/api/api-term.c)
+  list(APPEND NOCT_API_SOURCE src/api/api-term-backend.c)
+endif()
+if(NOCT_ENABLE_API_PROCESS)
+  list(APPEND NOCT_API_SOURCE src/api/api-process.c)
+endif()
+
 # Add the target "libnoctapi", the standard library.
 if(NOCT_ENABLE_API)
+  if(NOT NOCT_API_SOURCE)
+    message(FATAL_ERROR "NOCT_ENABLE_API requires at least one NOCT_ENABLE_API_* component")
+  endif()
   add_library(
     noctapi
     ${NOCT_LIB_TYPE}
-
-    # Optional libraries here.
-    src/api/api-system.c
-    src/api/api-console.c
-    src/api/api-file.c
+    ${NOCT_API_SOURCE}
   )
   if(NOCT_ENABLE_SHARED)
     set_target_properties(noctapi PROPERTIES 
@@ -291,6 +338,14 @@ endif()
 # Multithread Support
 if(NOCT_ENABLE_MULTITHREAD)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_MULTITHREAD)
+  if(NOT WIN32)
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
+    target_link_libraries(noct PUBLIC Threads::Threads)
+    if(NOCT_ENABLE_API)
+      target_link_libraries(noctapi PUBLIC Threads::Threads)
+    endif()
+  endif()
 endif()
 
 # If building a shared library.
@@ -343,6 +398,11 @@ if(NOCT_TARGET_DOS4G)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_DOS4G NOCT_MEMORY_SMALL)
 endif()
 
+# PC-98 Bootstrap Environment Target
+if(NOCT_TARGET_PC98BE)
+  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_PC98BE NOCT_MEMORY_SMALL)
+endif()
+
 # _CRT_SECURE_NO_WARNINGS
 if(WIN32 AND MSVC)
   list(APPEND NOCT_PUBLIC_CPPFLAGS _CRT_SECURE_NO_WARNINGS)
@@ -354,6 +414,21 @@ target_compile_definitions(noct PRIVATE ${NOCT_PRIVATE_CPPFLAGS})
 if(NOCT_ENABLE_API)
   target_compile_definitions(noctapi PUBLIC ${NOCT_PUBLIC_CPPFLAGS})
   target_compile_definitions(noctapi PRIVATE ${NOCT_PRIVATE_CPPFLAGS})
+endif()
+
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
+  target_compile_definitions(noct PRIVATE NOCT_USE_HTTPSERVER)
+  target_compile_definitions(noctapi PRIVATE NOCT_USE_HTTPSERVER)
+endif()
+
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_TERM)
+  target_compile_definitions(noct PRIVATE NOCT_USE_TERM)
+  target_compile_definitions(noctapi PRIVATE NOCT_USE_TERM)
+endif()
+
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
+  target_compile_definitions(noct PRIVATE NOCT_USE_PROCESS)
+  target_compile_definitions(noctapi PRIVATE NOCT_USE_PROCESS)
 endif()
 
 # ---
@@ -406,6 +481,12 @@ endif()
 if(NOCT_ENABLE_SHARED)
   if(NOCT_ENABLE_API)
     target_link_libraries(noctapi PUBLIC noct)
+  endif()
+endif()
+
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
+  if(WIN32)
+    target_link_libraries(noctapi PUBLIC wsock32 ws2_32)
   endif()
 endif()
 
@@ -465,6 +546,15 @@ if(NOCT_ENABLE_CLI)
   # Define feature macros.
   if(NOCT_ENABLE_SHARED)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_DLL)
+  endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_HTTPSERVER)
+  endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_TERM)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_TERM)
+  endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_PROCESS)
   endif()
   if(NOCT_ENABLE_JIT)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_JIT)
@@ -544,6 +634,7 @@ if(NOCT_ENABLE_INSTALL)
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/c89compat.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/aot.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/backend.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/repl.h"
     DESTINATION
       "${CMAKE_INSTALL_INCLUDEDIR}/noct"
   )

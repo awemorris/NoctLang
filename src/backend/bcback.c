@@ -60,14 +60,6 @@ noct_bcback_translate(
 		return false;
 	}
 
-	/* Put a file header. */
-	func_count = hir_get_function_count();
-	fprintf(fp, "Noct Bytecode 1.0\n");
-	fprintf(fp, "Source\n");
-	fprintf(fp, "%s\n", source_file_name);
-	fprintf(fp, "Number Of Functions\n");
-	fprintf(fp, "%d\n", func_count);
-
 	/* Transform AST to HIR. */
 	if (!hir_build()) {
 		printf(N_TR("Error: %s:%d: %s\n"),
@@ -76,6 +68,14 @@ noct_bcback_translate(
 		       hir_get_error_message());
 		return false;
 	}
+
+	/* Put a file header. (The count is known only after hir_build.) */
+	func_count = hir_get_function_count();
+	fprintf(fp, "Noct Bytecode 1.0\n");
+	fprintf(fp, "Source\n");
+	fprintf(fp, "%s\n", source_file_name);
+	fprintf(fp, "Number Of Functions\n");
+	fprintf(fp, "%d\n", func_count);
 
 	/* For each HIR function. */
 	for (i = 0; i < func_count; i++) {

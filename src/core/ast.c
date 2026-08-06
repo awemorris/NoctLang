@@ -25,7 +25,7 @@
 
 /* Arena allocator size. */
 #if !defined(NOCT_MEMORY_SMALL)
-#define ARENA_SIZE		(4 * 1024 * 1024)
+#define ARENA_SIZE		(64 * 1024 * 1024)
 #else
 #define ARENA_SIZE		(512 * 1024)
 #endif
@@ -1174,6 +1174,22 @@ ast_accept_and_expr(
 	struct ast_expr *expr2)
 {
 	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_AND);
+}
+
+struct ast_expr *
+ast_accept_land_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_LAND);
+}
+
+struct ast_expr *
+ast_accept_lor_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_LOR);
 }
 
 /* Called from the parser when it accepted a expr with a | or || operator. */

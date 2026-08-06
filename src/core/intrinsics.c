@@ -11,6 +11,7 @@
 
 #include "runtime.h"
 #include "intrinsics.h"
+#include "regex.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,12 @@ static bool rt_intrin_Double_from(NoctEnv *env);
 static bool rt_intrin_String_from(NoctEnv *env);
 static bool rt_intrin_String_charCount(NoctEnv *env);
 static bool rt_intrin_String_charAt(NoctEnv *env);
+static bool rt_intrin_String_charCodeAt(NoctEnv *env);
+static bool rt_intrin_String_toUpperCase(NoctEnv *env);
+static bool rt_intrin_String_toLowerCase(NoctEnv *env);
+static bool rt_intrin_Regex_search(NoctEnv *env);
+static bool rt_intrin_Regex_matches(NoctEnv *env);
+static bool rt_intrin_Regex_replaceAll(NoctEnv *env);
 static bool rt_intrin_String_substring(NoctEnv *env);
 static bool rt_intrin_String_indexOf(NoctEnv *env);
 static bool rt_intrin_Array_make(NoctEnv *env);
@@ -54,6 +61,13 @@ static bool rt_intrin_Packed_float32(NoctEnv *env);
 static bool rt_intrin_Packed_float64(NoctEnv *env);
 static bool rt_intrin_Packed_size(NoctEnv *env);
 static bool rt_intrin_Packed_type(NoctEnv *env);
+static bool rt_intrin_Packed_copy(NoctEnv *env);
+static bool rt_intrin_Packed_fill(NoctEnv *env);
+static bool rt_intrin_Packed_toString(NoctEnv *env);
+static bool rt_intrin_Packed_fromString(NoctEnv *env);
+static bool rt_intrin_String_byteLength(NoctEnv *env);
+static bool rt_intrin_String_chr(NoctEnv *env);
+static size_t packed_elem_bytes(int type);
 static bool rt_intrin_Math_abs(NoctEnv *env);
 static bool rt_intrin_Math_sqrt(NoctEnv *env);
 static bool rt_intrin_Math_sin(NoctEnv *env);
@@ -61,6 +75,8 @@ static bool rt_intrin_Math_cos(NoctEnv *env);
 static bool rt_intrin_Math_tan(NoctEnv *env);
 static bool rt_intrin_Math_random(NoctEnv *env);
 static bool rt_intrin_Global_hasVariable(NoctEnv *env);
+static bool rt_intrin_Global_get(NoctEnv *env);
+static bool rt_intrin_Type_of(NoctEnv *env);
 static bool rt_intrin_GC_youngGC(NoctEnv *env);
 static bool rt_intrin_GC_oldGC(NoctEnv *env);
 static bool rt_intrin_GC_compactGC(NoctEnv *env);
@@ -80,8 +96,16 @@ struct intrin_item {
 	{"String",	"from",		"String.from",		rt_intrin_String_from,		1, {"val"}},
 	{"String",	"charCount",	"String.charCount",	rt_intrin_String_charCount,	1, {"s"}},
 	{"String",	"charAt",	"String.charAt",	rt_intrin_String_charAt,	2, {"s", "index"}},
+	{"String",	"charCodeAt",	"String.charCodeAt",	rt_intrin_String_charCodeAt,	2, {"s", "index"}},
+	{"String",	"toUpperCase",	"String.toUpperCase",	rt_intrin_String_toUpperCase,	1, {"s"}},
+	{"String",	"toLowerCase",	"String.toLowerCase",	rt_intrin_String_toLowerCase,	1, {"s"}},
+	{"Regex",	"search",	"Regex.search",		rt_intrin_Regex_search,		3, {"pat", "s", "from"}},
+	{"Regex",	"matches",	"Regex.matches",	rt_intrin_Regex_matches,	2, {"pat", "s"}},
+	{"Regex",	"replaceAll",	"Regex.replaceAll",	rt_intrin_Regex_replaceAll,	3, {"pat", "s", "repl"}},
 	{"String",	"substring",	"String.substring",	rt_intrin_String_substring,	3, {"s", "start", "len"}},
 	{"String",	"indexOf",	"String.indexOf",	rt_intrin_String_indexOf,	2, {"s", "search"}},
+	{"String",	"byteLength",	"String.byteLength",	rt_intrin_String_byteLength,	1, {"s"}},
+	{"String",	"chr",		"String.chr",		rt_intrin_String_chr,		1, {"codepoint"}},
 	{"Array",	"make",		"Array.make",		rt_intrin_Array_make,		1, {"size"}},
 	{"Array",	"size",		"Array.size",		rt_intrin_Array_size,		1, {"arr"}},
 	{"Array",	"push",		"Array.push",		rt_intrin_Array_push,		2, {"arr", "val"}},
@@ -106,6 +130,10 @@ struct intrin_item {
 	{"Packed",	"float64",	"Packed.float64",	rt_intrin_Packed_float64,	1, {"size"}},
 	{"Packed",	"size",		"Packed.size",		rt_intrin_Packed_size,		1, {"packed"}},
 	{"Packed",	"type",		"Packed.type",		rt_intrin_Packed_type,		1, {"packed"}},
+	{"Packed",	"copy",		"Packed.copy",		rt_intrin_Packed_copy,		5, {"dst", "dstIndex", "src", "srcIndex", "count"}},
+	{"Packed",	"fill",		"Packed.fill",		rt_intrin_Packed_fill,		4, {"dst", "index", "count", "value"}},
+	{"Packed",	"toString",	"Packed.toString",	rt_intrin_Packed_toString,	3, {"src", "offset", "length"}},
+	{"Packed",	"fromString",	"Packed.fromString",	rt_intrin_Packed_fromString,	3, {"dst", "offset", "s"}},
 	{"Math",	"abs",		"Math.abs",		rt_intrin_Math_abs,		1, {"x"}},
 	{"Math",	"sqrt",		"Math.sqrt",		rt_intrin_Math_sqrt,		1, {"x"}},
 	{"Math",	"sin",		"Math.sin",		rt_intrin_Math_sin,		1, {"x"}},
@@ -113,6 +141,9 @@ struct intrin_item {
 	{"Math",	"tan",		"Math.tan",		rt_intrin_Math_tan,		1, {"x"}},
 	{"Math",	"random",	"Math.random",		rt_intrin_Math_random,		0, {NULL}},
 	{"Global",	"isSet",	"Global.isSet",		rt_intrin_Global_hasVariable,	1, {"name"}},
+	{"Global",	"hasVariable",	"Global.hasVariable",	rt_intrin_Global_hasVariable,	1, {"name"}},
+	{"Global",	"get",	"Global.get",		rt_intrin_Global_get,		1, {"name"}},
+	{"Type",	"of",		"Type.of",		rt_intrin_Type_of,		1, {"val"}},
 	{"GC",		"youngGC",	"GC.youngGC",		rt_intrin_GC_youngGC,		0, {NULL}},
 	{"GC",		"oldGC",	"GC.oldGC",		rt_intrin_GC_oldGC,		0, {NULL}},
 	{"GC",		"compactGC",	"GC.compactGC",		rt_intrin_GC_compactGC,		0, {NULL}},
@@ -669,6 +700,473 @@ rt_intrin_String_charAt(
 }
 
 /*
+ * String.charCodeAt(s, i)
+ *
+ * Returns the Unicode codepoint of the character at index i (in
+ * characters), or -1 if i is out of range.
+ */
+static bool
+rt_intrin_String_charCodeAt(
+	NoctEnv *env)
+{
+	NoctValue str, index, ret;
+	const char *str_s;
+	size_t index_i;
+	const char *s;
+	size_t i;
+	int mblen;
+
+	memset(&str, 0, sizeof(str));
+	memset(&index, 0, sizeof(index));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 3, &str, &index, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &index, &index_i))
+		return false;
+
+	s = str_s;
+	i = 0;
+	while (*s != '\0') {
+		uint32_t codepoint;
+		mblen = utf8_to_utf32(s, &codepoint);
+		if (mblen <= 0)
+			break;
+		if (i == index_i) {
+			if (!noct_set_return_make_int(env, &ret, (int)codepoint))
+				return false;
+			noct_unpin_local(env, 3, &str, &index, &ret);
+			return true;
+		}
+		s += mblen;
+		i++;
+	}
+
+	if (!noct_set_return_make_int(env, &ret, -1))
+		return false;
+
+	noct_unpin_local(env, 3, &str, &index, &ret);
+
+	return true;
+}
+
+/*
+ * String.toUpperCase(s) / String.toLowerCase(s)
+ *
+ * ASCII-only case mapping; other characters pass through.
+ */
+static bool
+rt_intrin_String_case_common(
+	NoctEnv *env,
+	bool upper)
+{
+	NoctValue str, ret;
+	const char *str_s;
+	char *buf;
+	size_t len, i;
+
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &str, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+
+	len = strlen(str_s);
+	buf = malloc(len + 1);
+	if (buf == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	for (i = 0; i < len; i++) {
+		char c = str_s[i];
+		if (upper && c >= 'a' && c <= 'z')
+			c = (char)(c - 0x20);
+		else if (!upper && c >= 'A' && c <= 'Z')
+			c = (char)(c + 0x20);
+		buf[i] = c;
+	}
+	buf[len] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, buf)) {
+		free(buf);
+		return false;
+	}
+	free(buf);
+
+	noct_unpin_local(env, 2, &str, &ret);
+
+	return true;
+}
+
+static bool
+rt_intrin_String_toUpperCase(
+	NoctEnv *env)
+{
+	return rt_intrin_String_case_common(env, true);
+}
+
+static bool
+rt_intrin_String_toLowerCase(
+	NoctEnv *env)
+{
+	return rt_intrin_String_case_common(env, false);
+}
+
+/*
+ * Regex intrinsics
+ *
+ * Positions are character indices (0-based), consistent with the
+ * String.* functions. Regex.search returns 0 when there is no match,
+ * otherwise a dictionary:
+ *   { start, end, groups: [ {start, end} ... ] }
+ * with end exclusive and unmatched groups having start == end == -1.
+ */
+
+/* Decode both common string arguments and compile the pattern. */
+static bool
+rx_intrin_prepare(
+	NoctEnv *env,
+	const char *pat_s,
+	const char *str_s,
+	bool anchor_end,
+	struct rx_prog **pprog,
+	uint32_t **pstr,
+	int *pstrlen)
+{
+	char errbuf[128];
+	uint32_t *pat_cp;
+	int pat_len;
+
+	*pprog = malloc(noct_rx_prog_size());
+	if (*pprog == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	pat_len = noct_rx_utf8_len(pat_s);
+	pat_cp = malloc(sizeof(uint32_t) * (size_t)(pat_len + 1));
+	if (pat_cp == NULL) {
+		free(*pprog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	noct_rx_utf8_decode(pat_s, pat_cp);
+
+	if (noct_rx_compile(*pprog, pat_cp, pat_len, anchor_end,
+			    errbuf, sizeof(errbuf)) < 0) {
+		free(pat_cp);
+		free(*pprog);
+		rt_error(env, N_TR("Regex error: %s"), errbuf);
+		return false;
+	}
+	free(pat_cp);
+
+	*pstrlen = noct_rx_utf8_len(str_s);
+	*pstr = malloc(sizeof(uint32_t) * (size_t)(*pstrlen + 1));
+	if (*pstr == NULL) {
+		free(*pprog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	noct_rx_utf8_decode(str_s, *pstr);
+
+	return true;
+}
+
+/*
+ * Regex.search(pat, s, from)
+ */
+static bool
+rt_intrin_Regex_search(
+	NoctEnv *env)
+{
+	NoctValue pat, str, from, ret, groups, g, tmp;
+	const char *pat_s, *str_s;
+	int from_i;
+	struct rx_prog *prog;
+	uint32_t *cps;
+	int len, r, i;
+	struct rx_match m;
+
+	memset(&pat, 0, sizeof(pat));
+	memset(&str, 0, sizeof(str));
+	memset(&from, 0, sizeof(from));
+	memset(&ret, 0, sizeof(ret));
+	memset(&groups, 0, sizeof(groups));
+	memset(&g, 0, sizeof(g));
+	memset(&tmp, 0, sizeof(tmp));
+	noct_pin_local(env, 7, &pat, &str, &from, &ret, &groups, &g, &tmp);
+
+	if (!noct_get_arg_check_string(env, 0, &pat, &pat_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_int(env, 2, &from, &from_i))
+		return false;
+
+	if (!rx_intrin_prepare(env, pat_s, str_s, false, &prog, &cps, &len))
+		return false;
+
+	if (from_i < 0)
+		from_i = 0;
+	if (from_i > len)
+		from_i = len;
+
+	r = noct_rx_search(prog, cps, len, from_i, &m);
+	free(cps);
+	free(prog);
+	if (r < 0) {
+		rt_error(env, N_TR("Regex too complex."));
+		return false;
+	}
+	if (r == 0) {
+		if (!noct_set_return_make_int(env, &ret, 0))
+			return false;
+		noct_unpin_local(env, 7, &pat, &str, &from, &ret, &groups, &g, &tmp);
+		return true;
+	}
+
+	if (!noct_make_empty_dict(env, &ret))
+		return false;
+	if (!noct_set_dict_elem_make_int(env, &ret, "start", &tmp, m.start))
+		return false;
+	if (!noct_set_dict_elem_make_int(env, &ret, "end", &tmp, m.end))
+		return false;
+	if (!noct_make_empty_array(env, &groups))
+		return false;
+	for (i = 1; i <= m.ngroups; i++) {
+		if (!noct_make_empty_dict(env, &g))
+			return false;
+		if (!noct_set_dict_elem_make_int(env, &g, "start", &tmp, m.group_start[i]))
+			return false;
+		if (!noct_set_dict_elem_make_int(env, &g, "end", &tmp, m.group_end[i]))
+			return false;
+		if (!noct_set_array_elem(env, &groups, (size_t)(i - 1), &g))
+			return false;
+	}
+	if (!noct_set_dict_elem_cstr(env, &ret, "groups", &groups))
+		return false;
+	if (!noct_set_return(env, &ret))
+		return false;
+
+	noct_unpin_local(env, 7, &pat, &str, &from, &ret, &groups, &g, &tmp);
+
+	return true;
+}
+
+/*
+ * Regex.matches(pat, s)
+ *
+ * Whole-string match, like Java's String.matches().
+ */
+static bool
+rt_intrin_Regex_matches(
+	NoctEnv *env)
+{
+	NoctValue pat, str, ret;
+	const char *pat_s, *str_s;
+	struct rx_prog *prog;
+	uint32_t *cps;
+	int len, r;
+	struct rx_match m;
+
+	memset(&pat, 0, sizeof(pat));
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 3, &pat, &str, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &pat, &pat_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &str, &str_s))
+		return false;
+
+	if (!rx_intrin_prepare(env, pat_s, str_s, true, &prog, &cps, &len))
+		return false;
+
+	/* Anchored at both ends: try position 0 only. */
+	r = noct_rx_search(prog, cps, len, 0, &m);
+	free(cps);
+	free(prog);
+	if (r < 0) {
+		rt_error(env, N_TR("Regex too complex."));
+		return false;
+	}
+	if (r == 1 && m.start != 0)
+		r = 0;
+
+	if (!noct_set_return_make_int(env, &ret, r == 1 ? 1 : 0))
+		return false;
+
+	noct_unpin_local(env, 3, &pat, &str, &ret);
+
+	return true;
+}
+
+/*
+ * Regex.replaceAll(pat, s, repl)
+ *
+ * $0-$9 in the replacement refer to groups; $$ is a literal dollar.
+ */
+static bool
+rt_intrin_Regex_replaceAll(
+	NoctEnv *env)
+{
+	NoctValue pat, str, repl, ret;
+	const char *pat_s, *str_s, *repl_s;
+	struct rx_prog *prog;
+	uint32_t *cps, *rep_cp, *out;
+	int len, rep_len, out_len, out_alloc;
+	int from, i, r;
+	struct rx_match m;
+	char *out_utf8;
+	int utf8_len;
+
+	memset(&pat, 0, sizeof(pat));
+	memset(&str, 0, sizeof(str));
+	memset(&repl, 0, sizeof(repl));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 4, &pat, &str, &repl, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &pat, &pat_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 2, &repl, &repl_s))
+		return false;
+
+	if (!rx_intrin_prepare(env, pat_s, str_s, false, &prog, &cps, &len))
+		return false;
+
+	rep_len = noct_rx_utf8_len(repl_s);
+	rep_cp = malloc(sizeof(uint32_t) * (size_t)(rep_len + 1));
+	if (rep_cp == NULL) {
+		free(cps);
+		free(prog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	noct_rx_utf8_decode(repl_s, rep_cp);
+
+	out_alloc = len + 64;
+	out_len = 0;
+	out = malloc(sizeof(uint32_t) * (size_t)out_alloc);
+	if (out == NULL) {
+		free(rep_cp);
+		free(cps);
+		free(prog);
+		rt_out_of_memory(env);
+		return false;
+	}
+
+#define RX_OUT(cp_)							\
+	do {								\
+		if (out_len >= out_alloc) {				\
+			uint32_t *nb;					\
+			out_alloc = out_alloc * 2;			\
+			nb = realloc(out, sizeof(uint32_t) * (size_t)out_alloc); \
+			if (nb == NULL) {				\
+				free(out);				\
+				free(rep_cp);				\
+				free(cps);				\
+				free(prog);				\
+				rt_out_of_memory(env);			\
+				return false;				\
+			}						\
+			out = nb;					\
+		}							\
+		out[out_len++] = (cp_);					\
+	} while (0)
+
+	from = 0;
+	while (from <= len) {
+		r = noct_rx_search(prog, cps, len, from, &m);
+		if (r < 0) {
+			free(out);
+			free(rep_cp);
+			free(cps);
+			free(prog);
+			rt_error(env, N_TR("Regex too complex."));
+			return false;
+		}
+		if (r == 0)
+			break;
+
+		/* Copy the text before the match. */
+		for (i = from; i < m.start; i++)
+			RX_OUT(cps[i]);
+
+		/* Expand the replacement. */
+		for (i = 0; i < rep_len; i++) {
+			if (rep_cp[i] == '$' && i + 1 < rep_len) {
+				uint32_t nc = rep_cp[i + 1];
+				if (nc == '$') {
+					RX_OUT('$');
+					i++;
+					continue;
+				}
+				if (nc >= '0' && nc <= '9') {
+					int gi = (int)(nc - '0');
+					int gs = m.group_start[gi];
+					int ge = m.group_end[gi];
+					int k;
+					if (gs >= 0) {
+						for (k = gs; k < ge; k++)
+							RX_OUT(cps[k]);
+					}
+					i++;
+					continue;
+				}
+			}
+			RX_OUT(rep_cp[i]);
+		}
+
+		if (m.end > m.start) {
+			from = m.end;
+		} else {
+			/* An empty match: emit one char and advance. */
+			if (m.end < len)
+				RX_OUT(cps[m.end]);
+			from = m.end + 1;
+		}
+	}
+	for (i = from; i < len; i++)
+		RX_OUT(cps[i]);
+#undef RX_OUT
+
+	/* Encode back to UTF-8. */
+	out_utf8 = malloc((size_t)(out_len * 4 + 1));
+	if (out_utf8 == NULL) {
+		free(out);
+		free(rep_cp);
+		free(cps);
+		free(prog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	utf8_len = 0;
+	for (i = 0; i < out_len; i++)
+		utf8_len += noct_rx_utf8_encode(out[i], out_utf8 + utf8_len);
+	out_utf8[utf8_len] = '\0';
+
+	free(out);
+	free(rep_cp);
+	free(cps);
+	free(prog);
+
+	if (!noct_set_return_make_string(env, &ret, out_utf8)) {
+		free(out_utf8);
+		return false;
+	}
+	free(out_utf8);
+
+	noct_unpin_local(env, 4, &pat, &str, &repl, &ret);
+
+	return true;
+}
+
+/*
  * String.substring(s, start, len)
  */
 static bool
@@ -760,9 +1258,13 @@ rt_intrin_String_indexOf(
 	NoctValue str, substr, ret;
 	const char *str_s;
 	const char *substr_s;
-	size_t i, len_str, len_substr, range_max;
+	const char *s;
+	size_t len_str, len_substr, char_index;
 	int result;
 
+	memset(&str, 0, sizeof(str));
+	memset(&substr, 0, sizeof(substr));
+	memset(&ret, 0, sizeof(ret));
 	noct_pin_local(env, 3, &str, &substr, &ret);
 
 	/* Get the argument "s". */
@@ -773,17 +1275,37 @@ rt_intrin_String_indexOf(
 	if (!noct_get_arg_check_string(env, 1, &substr, &substr_s))
 		return false;
 
-	/* Do search. */
+	/*
+	 * Do search.
+	 *
+	 * The result is a character index, matching String.charAt() and
+	 * String.substring(). Walking character by character also keeps
+	 * a match from starting in the middle of a multibyte sequence.
+	 */
 	len_str = strlen(str_s);
 	len_substr = strlen(substr_s);
 	result = -1;
 	if (len_str >= len_substr) {
-		range_max = len_str - len_substr;
-		for (i = 0; i < range_max; i++) {
-			if (strncmp(str_s + i, substr_s, len_substr) == 0) {
-				result = (int)i;
+		s = str_s;
+		char_index = 0;
+		while (true) {
+			uint32_t codepoint;
+			int mblen;
+
+			if (strncmp(s, substr_s, len_substr) == 0) {
+				result = (int)char_index;
 				break;
 			}
+			if (*s == '\0')
+				break;
+
+			mblen = utf8_to_utf32(s, &codepoint);
+			if (mblen <= 0) {
+				/* UTF-8 error. */
+				break;
+			}
+			s += mblen;
+			char_index++;
 		}
 	}
 
@@ -826,19 +1348,21 @@ get_string_length(
 /* Get a top character of a utf-8 string as a utf-32. */
 static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 {
-	size_t mbslen, octets, i;
+	size_t octets, i;
 	uint32_t ret;
 
 	assert(mbs != NULL);
 
-	/* If mbs is empty. */
-	mbslen = strlen(mbs);
-	if(mbslen == 0)
-		return 0;
+	/*
+	 * Never call strlen() here: this runs once per character in
+	 * every string scan, and taking the length of the remaining
+	 * string each time turns those scans quadratic. The
+	 * continuation-byte checks below catch truncated sequences.
+	 */
 
 	/* Check the first byte, get an octet count. */
 	if (mbs[0] == '\0')
-		octets = 0;
+		return 0;
 	else if ((mbs[0] & 0x80) == 0)
 		octets = 1;
 	else if ((mbs[0] & 0xe0) == 0xc0)
@@ -848,11 +1372,7 @@ static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 	else if ((mbs[0] & 0xf8) == 0xf0)
 		octets = 4;
 	else
-		return -1;	/* Not suppoerted. */
-
-	/* Check the mbs length. */
-	if (mbslen < octets)
-		return -1;	/* mbs is too short. */
+		return -1;	/* Not supported. */
 
 	/* Check for 2-4 bytes. */
 	for (i = 1; i < octets; i++) {
@@ -1238,9 +1758,16 @@ rt_intrin_Dict_remove(
 	if (!noct_get_arg_check_string(env, 1, &key, &key_s))
 		return false;
 
-	/* Remove the key. */
-	if (!noct_remove_dict_elem(env, &dict, &key))
-		return false;
+	/* Removing an absent key is a no-op, not an error. */
+	{
+		bool has;
+		if (!noct_check_dict_key_cstr(env, &dict, key_s, &has))
+			return false;
+		if (has) {
+			if (!noct_remove_dict_elem(env, &dict, &key))
+				return false;
+		}
+	}
 
 	noct_unpin_local(env, 2, &dict, &key);
 
@@ -1602,6 +2129,432 @@ rt_intrin_Packed_float64(
 /*
  * Packed.size(packed)
  */
+/*
+ * Get the byte size of one packed element.
+ */
+static size_t
+packed_elem_bytes(
+	int type)
+{
+	switch (type) {
+	case NOCT_PACKED_INT8:
+	case NOCT_PACKED_UINT8:
+		return 1;
+	case NOCT_PACKED_INT16:
+	case NOCT_PACKED_UINT16:
+		return 2;
+	case NOCT_PACKED_INT32:
+	case NOCT_PACKED_UINT32:
+	case NOCT_PACKED_FLOAT32:
+		return 4;
+	default:
+		break;
+	}
+	return 8;
+}
+
+/*
+ * Packed.copy()
+ *
+ * Copies "count" elements from src to dst. Indices and the count are
+ * in elements, matching Packed.size() and the [] notation.
+ *
+ * The two regions may overlap, which is what makes this usable for
+ * moving the gap of a gap buffer.
+ */
+static bool
+rt_intrin_Packed_copy(
+	NoctEnv *env)
+{
+	NoctValue dst, dst_index, src, src_index, count, ret;
+	size_t dst_index_n, src_index_n, count_n;
+	size_t dst_size, src_size, elem_bytes;
+	int dst_type, src_type;
+	void *dst_buf, *src_buf;
+
+	memset(&dst, 0, sizeof(dst));
+	memset(&dst_index, 0, sizeof(dst_index));
+	memset(&src, 0, sizeof(src));
+	memset(&src_index, 0, sizeof(src_index));
+	memset(&count, 0, sizeof(count));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 6, &dst, &dst_index, &src, &src_index, &count, &ret);
+
+	/* Get the arguments. */
+	if (!noct_get_arg_check_packed(env, 0, &dst, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &dst_index, &dst_index_n))
+		return false;
+	if (!noct_get_arg_check_packed(env, 2, &src, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 3, &src_index, &src_index_n))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 4, &count, &count_n))
+		return false;
+
+	/* Both sides must hold the same element type. */
+	if (!noct_get_packed_type(env, &dst, &dst_type))
+		return false;
+	if (!noct_get_packed_type(env, &src, &src_type))
+		return false;
+	if (dst_type != src_type) {
+		noct_error(env, N_TR("Packed element types do not match."));
+		return false;
+	}
+
+	/* Check the ranges. */
+	if (!noct_get_packed_size(env, &dst, &dst_size))
+		return false;
+	if (!noct_get_packed_size(env, &src, &src_size))
+		return false;
+	if (dst_index_n > dst_size || count_n > dst_size - dst_index_n) {
+		noct_error(env, N_TR("Packed destination range is out-of-bounds."));
+		return false;
+	}
+	if (src_index_n > src_size || count_n > src_size - src_index_n) {
+		noct_error(env, N_TR("Packed source range is out-of-bounds."));
+		return false;
+	}
+
+	/* Copy. */
+	if (count_n > 0) {
+		if (!noct_get_packed_pointer(env, &dst, &dst_buf))
+			return false;
+		if (!noct_get_packed_pointer(env, &src, &src_buf))
+			return false;
+		elem_bytes = packed_elem_bytes(dst_type);
+		memmove((char *)dst_buf + dst_index_n * elem_bytes,
+			(char *)src_buf + src_index_n * elem_bytes,
+			count_n * elem_bytes);
+	}
+
+	/* Set the return value. */
+	if (!noct_set_return_make_int_long(env, &ret, count_n))
+		return false;
+
+	noct_unpin_local(env, 6, &dst, &dst_index, &src, &src_index, &count, &ret);
+
+	return true;
+}
+
+/*
+ * Packed.fill()
+ *
+ * Sets "count" elements of dst to "value", starting at "index".
+ */
+static bool
+rt_intrin_Packed_fill(
+	NoctEnv *env)
+{
+	NoctValue dst, index, count, value, ret;
+	size_t index_n, count_n, dst_size, i;
+	int dst_type, value_type;
+	int64_t ival;
+	double dval;
+	void *dst_buf;
+
+	memset(&dst, 0, sizeof(dst));
+	memset(&index, 0, sizeof(index));
+	memset(&count, 0, sizeof(count));
+	memset(&value, 0, sizeof(value));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 5, &dst, &index, &count, &value, &ret);
+
+	/* Get the arguments. */
+	if (!noct_get_arg_check_packed(env, 0, &dst, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &index, &index_n))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 2, &count, &count_n))
+		return false;
+	if (!noct_get_arg(env, 3, &value))
+		return false;
+
+	/* Check the range. */
+	if (!noct_get_packed_size(env, &dst, &dst_size))
+		return false;
+	if (index_n > dst_size || count_n > dst_size - index_n) {
+		noct_error(env, N_TR("Packed destination range is out-of-bounds."));
+		return false;
+	}
+
+	/* Accept any numeric value and convert it to the element type. */
+	if (!noct_get_value_type(env, &value, &value_type))
+		return false;
+	ival = 0;
+	dval = 0.0;
+	switch (value_type) {
+	case NOCT_VALUE_INT:
+		ival = value.val.i;
+		dval = (double)value.val.i;
+		break;
+	case NOCT_VALUE_LONG:
+		ival = value.val.l;
+		dval = (double)value.val.l;
+		break;
+	case NOCT_VALUE_FLOAT:
+		ival = (int64_t)value.val.f;
+		dval = (double)value.val.f;
+		break;
+	case NOCT_VALUE_DOUBLE:
+		ival = (int64_t)value.val.lf;
+		dval = value.val.lf;
+		break;
+	default:
+		noct_error(env, N_TR("Fill value is not a number."));
+		return false;
+	}
+
+	/* Fill. */
+	if (count_n > 0) {
+		if (!noct_get_packed_type(env, &dst, &dst_type))
+			return false;
+		if (!noct_get_packed_pointer(env, &dst, &dst_buf))
+			return false;
+
+		switch (dst_type) {
+		case NOCT_PACKED_INT8:
+		case NOCT_PACKED_UINT8:
+			memset((char *)dst_buf + index_n, (int)(uint8_t)ival, count_n);
+			break;
+		case NOCT_PACKED_INT16:
+		case NOCT_PACKED_UINT16:
+			for (i = 0; i < count_n; i++)
+				((uint16_t *)dst_buf)[index_n + i] = (uint16_t)ival;
+			break;
+		case NOCT_PACKED_INT32:
+		case NOCT_PACKED_UINT32:
+			for (i = 0; i < count_n; i++)
+				((uint32_t *)dst_buf)[index_n + i] = (uint32_t)ival;
+			break;
+		case NOCT_PACKED_FLOAT32:
+			for (i = 0; i < count_n; i++)
+				((float *)dst_buf)[index_n + i] = (float)dval;
+			break;
+		case NOCT_PACKED_FLOAT64:
+			for (i = 0; i < count_n; i++)
+				((double *)dst_buf)[index_n + i] = dval;
+			break;
+		default:
+			for (i = 0; i < count_n; i++)
+				((uint64_t *)dst_buf)[index_n + i] = (uint64_t)ival;
+			break;
+		}
+	}
+
+	/* Set the return value. */
+	if (!noct_set_return_make_int_long(env, &ret, count_n))
+		return false;
+
+	noct_unpin_local(env, 5, &dst, &index, &count, &value, &ret);
+
+	return true;
+}
+
+/*
+ * Packed.toString()
+ *
+ * Interprets "length" bytes of a uint8/int8 packed array, starting at
+ * "offset", as UTF-8 text and returns it as a string.
+ *
+ * Note: strings are NUL-terminated internally, so a NUL byte inside
+ * the range truncates the result.
+ */
+static bool
+rt_intrin_Packed_toString(
+	NoctEnv *env)
+{
+	NoctValue src, offset, length, ret;
+	size_t offset_n, length_n, size;
+	int type;
+	void *buf;
+	char *tmp;
+
+	memset(&src, 0, sizeof(src));
+	memset(&offset, 0, sizeof(offset));
+	memset(&length, 0, sizeof(length));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 4, &src, &offset, &length, &ret);
+
+	if (!noct_get_arg_check_packed(env, 0, &src, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &offset, &offset_n))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 2, &length, &length_n))
+		return false;
+
+	if (!noct_get_packed_type(env, &src, &type))
+		return false;
+	if (type != NOCT_PACKED_UINT8 && type != NOCT_PACKED_INT8) {
+		noct_error(env, N_TR("Packed element type must be a byte."));
+		return false;
+	}
+	if (!noct_get_packed_size(env, &src, &size))
+		return false;
+	if (offset_n > size || length_n > size - offset_n) {
+		noct_error(env, N_TR("Packed source range is out-of-bounds."));
+		return false;
+	}
+	if (!noct_get_packed_pointer(env, &src, &buf))
+		return false;
+
+	tmp = noct_malloc(length_n + 1);
+	if (tmp == NULL) {
+		noct_out_of_memory(env);
+		return false;
+	}
+	memcpy(tmp, (char *)buf + offset_n, length_n);
+	tmp[length_n] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, tmp)) {
+		noct_free(tmp);
+		return false;
+	}
+	noct_free(tmp);
+
+	noct_unpin_local(env, 4, &src, &offset, &length, &ret);
+
+	return true;
+}
+
+/*
+ * Packed.fromString()
+ *
+ * Writes the UTF-8 bytes of a string into a uint8/int8 packed array at
+ * "offset" and returns the number of bytes written.
+ */
+static bool
+rt_intrin_Packed_fromString(
+	NoctEnv *env)
+{
+	NoctValue dst, offset, str, ret;
+	size_t offset_n, size, len;
+	const char *str_s;
+	int type;
+	void *buf;
+
+	memset(&dst, 0, sizeof(dst));
+	memset(&offset, 0, sizeof(offset));
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 4, &dst, &offset, &str, &ret);
+
+	if (!noct_get_arg_check_packed(env, 0, &dst, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &offset, &offset_n))
+		return false;
+	if (!noct_get_arg_check_string(env, 2, &str, &str_s))
+		return false;
+
+	if (!noct_get_packed_type(env, &dst, &type))
+		return false;
+	if (type != NOCT_PACKED_UINT8 && type != NOCT_PACKED_INT8) {
+		noct_error(env, N_TR("Packed element type must be a byte."));
+		return false;
+	}
+	if (!noct_get_packed_size(env, &dst, &size))
+		return false;
+	len = strlen(str_s);
+	if (offset_n > size || len > size - offset_n) {
+		noct_error(env, N_TR("Packed destination range is out-of-bounds."));
+		return false;
+	}
+	if (!noct_get_packed_pointer(env, &dst, &buf))
+		return false;
+
+	memcpy((char *)buf + offset_n, str_s, len);
+
+	if (!noct_set_return_make_int_long(env, &ret, len))
+		return false;
+
+	noct_unpin_local(env, 4, &dst, &offset, &str, &ret);
+
+	return true;
+}
+
+/*
+ * String.byteLength()
+ *
+ * Returns the UTF-8 byte length of a string, excluding the NUL.
+ */
+static bool
+rt_intrin_String_byteLength(
+	NoctEnv *env)
+{
+	NoctValue str, ret;
+	const char *str_s;
+
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &str, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+
+	if (!noct_set_return_make_int_long(env, &ret, strlen(str_s)))
+		return false;
+
+	noct_unpin_local(env, 2, &str, &ret);
+
+	return true;
+}
+
+/*
+ * String.chr()
+ *
+ * Returns a one-character string for a Unicode codepoint.
+ */
+static bool
+rt_intrin_String_chr(
+	NoctEnv *env)
+{
+	NoctValue cp_v, ret;
+	size_t cp_n;
+	int64_t cp;
+	char tmp[8];
+	size_t len;
+
+	memset(&cp_v, 0, sizeof(cp_v));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &cp_v, &ret);
+
+	if (!noct_get_arg_check_int_long(env, 0, &cp_v, &cp_n))
+		return false;
+	cp = (int64_t)cp_n;
+	if (cp <= 0 || cp > 0x10FFFF) {
+		noct_error(env, N_TR("Invalid codepoint."));
+		return false;
+	}
+
+	if (cp < 0x80) {
+		tmp[0] = (char)cp;
+		len = 1;
+	} else if (cp < 0x800) {
+		tmp[0] = (char)(0xC0 | (cp >> 6));
+		tmp[1] = (char)(0x80 | (cp & 0x3F));
+		len = 2;
+	} else if (cp < 0x10000) {
+		tmp[0] = (char)(0xE0 | (cp >> 12));
+		tmp[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+		tmp[2] = (char)(0x80 | (cp & 0x3F));
+		len = 3;
+	} else {
+		tmp[0] = (char)(0xF0 | (cp >> 18));
+		tmp[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+		tmp[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+		tmp[3] = (char)(0x80 | (cp & 0x3F));
+		len = 4;
+	}
+	tmp[len] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, tmp))
+		return false;
+
+	noct_unpin_local(env, 2, &cp_v, &ret);
+
+	return true;
+}
+
 static bool
 rt_intrin_Packed_size(
 	struct rt_env *env)
@@ -1888,6 +2841,94 @@ rt_intrin_Math_random(
 /*
  * Global.hasVariable(name)
  */
+/*
+ * Type.of()
+ *
+ * Returns the type of a value as a string: "int", "long", "float",
+ * "double", "string", "array", "dict", "packed" or "func".
+ */
+static bool
+rt_intrin_Type_of(
+	NoctEnv *env)
+{
+	NoctValue val, ret;
+	const char *name;
+	int type;
+
+	memset(&val, 0, sizeof(NoctValue));
+	memset(&ret, 0, sizeof(NoctValue));
+	noct_pin_local(env, 2, &val, &ret);
+
+	/* Retrieve the argument "val" at the index 0. */
+	if (!noct_get_arg(env, 0, &val))
+		return false;
+
+	/* Get the type tag. */
+	if (!noct_get_value_type(env, &val, &type))
+		return false;
+
+	switch (type) {
+	case NOCT_VALUE_INT:	name = "int";		break;
+	case NOCT_VALUE_LONG:	name = "long";		break;
+	case NOCT_VALUE_FLOAT:	name = "float";		break;
+	case NOCT_VALUE_DOUBLE:	name = "double";	break;
+	case NOCT_VALUE_STRING:	name = "string";	break;
+	case NOCT_VALUE_ARRAY:	name = "array";		break;
+	case NOCT_VALUE_DICT:	name = "dict";		break;
+	case NOCT_VALUE_PACKED:	name = "packed";	break;
+	case NOCT_VALUE_FUNC:	name = "func";		break;
+	default:
+		name = "unknown";
+		break;
+	}
+
+	/* Set the return value. */
+	if (!noct_set_return_make_string(env, &ret, name))
+		return false;
+
+	noct_unpin_local(env, 2, &val, &ret);
+
+	return true;
+}
+
+/*
+ * Global.get(name)
+ *
+ * Returns the value of a global variable (including a function) by
+ * name, or 0 when it is unset. Used by the Lisp compiler to grab a
+ * freshly registered function.
+ */
+static bool
+rt_intrin_Global_get(
+	NoctEnv *env)
+{
+	NoctValue name, ret;
+	const char *name_s;
+	bool has_var;
+
+	memset(&name, 0, sizeof(name));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &name, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &name, &name_s))
+		return false;
+	if (!noct_check_global(env, name_s, &has_var))
+		return false;
+	if (!has_var) {
+		if (!noct_set_return_make_int(env, &ret, 0))
+			return false;
+		noct_unpin_local(env, 2, &name, &ret);
+		return true;
+	}
+	if (!noct_get_global(env, name_s, &ret))
+		return false;
+	if (!noct_set_return(env, &ret))
+		return false;
+
+	noct_unpin_local(env, 2, &name, &ret);
+	return true;
+}
+
 static bool
 rt_intrin_Global_hasVariable(
 	NoctEnv *env)

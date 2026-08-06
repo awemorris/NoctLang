@@ -59,7 +59,7 @@ static uint32_t tmpvar_count;
 
 /* Relocation type */
 #define LOC_BLOCK_TOP		0
-#define LOC_BLOCK_INCREMENTER	1
+#define LOC_BLOCK_CONTINUE	1
 
 struct loc_entry {
 	/* Type. */
@@ -107,6 +107,7 @@ static bool lir_check_lhs_local(struct hir_block *block, struct hir_expr *lhs, i
 static bool lir_visit_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_binary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
+static bool lir_visit_logical_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_dot_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_call_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_thiscall_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
@@ -131,7 +132,7 @@ static bool lir_put_imm32(uint32_t imm);
 static bool lir_put_imm64(uint64_t imm);
 static bool lir_put_string(const char *data);
 static bool lir_put_branch_addr(struct hir_block *block);
-static bool lir_put_incrementer_addr(struct hir_block *block);
+static bool lir_put_continue_addr(struct hir_block *block);
 static bool lir_put_u8(uint8_t b);
 static bool lir_put_u16(uint16_t b);
 static bool lir_put_u32(uint32_t b);
@@ -163,13 +164,13 @@ lir_build(
 
 	/* Initialize the bytecode buffer. */
 	if (bytecode != NULL) {
-		free(bytecode);
+		noct_free(bytecode);
 		bytecode = NULL;
 	}
 	bytecode = noct_calloc(BYTECODE_BUF_SIZE, 1);
 	if (bytecode == NULL) {
 		lir_out_of_memory();
-		free(bytecode);
+		noct_free(bytecode);
 		bytecode = NULL;
 		return false;
 	}
@@ -240,7 +241,7 @@ lir_build(
 		(*lir_func)->bytecode = NULL;
 	}
 	(*lir_func)->bytecode_size = bytecode_top;
-	free(bytecode);
+	noct_free(bytecode);
 	bytecode = NULL;
 
 	/* Copy the file name. */
@@ -347,32 +348,59 @@ lir_visit_basic_block(
 	}
 
 	/*
-	 * If the block is the tail of the siblings, and not the end of
-	 * loop or function, i.e., there is a break, continue, or return.
+	 * If the block is the tail of the siblings, it needs an explicit
+	 * jump unless its successor is the block control would reach by
+	 * falling through anyway.
+	 *
+	 * Falling through is correct only in two cases:
+	 *
+	 *  - The block ends a loop body and continues that same loop:
+	 *    the loop emitter appends the incrementer and the back edge
+	 *    right after this block.
+	 *
+	 *  - The block ends the function body and goes to the end block,
+	 *    which is emitted next.
+	 *
+	 * Everything else (a break, a return from inside a loop, or a
+	 * continue targeting an outer loop) has to jump. Treating those
+	 * as fall-through is what used to make a "return" at the tail of
+	 * a loop body run the rest of the loop instead of returning.
 	 */
-	if (block->stop &&
-	    (block->parent->type != HIR_BLOCK_FOR &&
-	     block->parent->type != HIR_BLOCK_WHILE &&
-	     block->parent->type != HIR_BLOCK_FUNC)) {
+	if (block->stop) {
 		struct hir_block *loop;
+		struct hir_block *parent;
+		bool falls_through;
 
-		/* Check if succ is a loop head. */
-		if (lir_check_succ_loop_head(block, &loop)) {
-			/* Put a safepoint. */
-			if (!lir_put_opcode(OP_SAFEPOINT))
-				return false;
+		parent = block->parent;
+		falls_through = false;
+		if (parent->type == HIR_BLOCK_FOR) {
+			falls_through = block->succ == parent->val.for_.inner;
+		} else if (parent->type == HIR_BLOCK_WHILE) {
+			falls_through = block->succ == parent->val.while_.inner;
+		} else if (parent->type == HIR_BLOCK_FUNC) {
+			falls_through = block->succ != NULL &&
+					block->succ->type == HIR_BLOCK_END;
+		}
 
-			/* Continue edge. */
-			if (!lir_put_opcode(OP_JMP))
-				return false;
-			if (!lir_put_incrementer_addr(loop))
-				return false;
-		} else {
-			/* Break or return edge. */
-			if (!lir_put_opcode(OP_JMP))
-				return false;
-			if (!lir_put_branch_addr(block->succ))
-				return false;
+		if (!falls_through) {
+			/* Check if succ is a loop head. */
+			if (lir_check_succ_loop_head(block, &loop)) {
+				/* Put a safepoint. */
+				if (!lir_put_opcode(OP_SAFEPOINT))
+					return false;
+
+				/* Continue edge. */
+				if (!lir_put_opcode(OP_JMP))
+					return false;
+				if (!lir_put_continue_addr(loop))
+					return false;
+			} else {
+				/* Break or return edge. */
+				if (!lir_put_opcode(OP_JMP))
+					return false;
+				if (!lir_put_branch_addr(block->succ))
+					return false;
+			}
 		}
 	}
 
@@ -601,8 +629,9 @@ lir_visit_for_range_block(
 		b = b->succ;
 	}
 
-	/* Store the incrementer address. */
+	/* Store the incrementer address. A "continue" jumps here. */
 	block->val.for_.inc_addr = (uint32_t)bytecode_top;
+	block->cont_addr = (uint32_t)bytecode_top;
 
 	/* Increment the loop variable. */
 	if (!lir_put_opcode(OP_INC))
@@ -718,6 +747,12 @@ lir_visit_for_kv_block(
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
 
+	/*
+	 * A "continue" jumps to the loop head: the cursor has already
+	 * been advanced above, before the body runs.
+	 */
+	block->cont_addr = loop_addr;
+
 	/* Visit an inner block. */
 	b = block->val.for_.inner;
 	while (b != NULL) {
@@ -827,6 +862,12 @@ lir_visit_for_v_block(
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
 
+	/*
+	 * A "continue" jumps to the loop head: the cursor has already
+	 * been advanced above, before the body runs.
+	 */
+	block->cont_addr = loop_addr;
+
 	/* Visit an inner block. */
 	b = block->val.for_.inner;
 	while (b != NULL) {
@@ -912,6 +953,9 @@ lir_visit_while_block(
 	if (!lir_put_branch_addr(block->succ))
 		return false;
 	lir_decrement_tmpvar(cmp_tmpvar);
+
+	/* A "continue" jumps to the loop head, re-testing the condition. */
+	block->cont_addr = loop_addr;
 
 	/* Visit an inner block. */
 	b = block->val.while_.inner;
@@ -1132,6 +1176,12 @@ lir_visit_expr(
 		if (!lir_visit_binary_expr(dst_tmpvar, expr, block))
 			return false;
 		break;
+	case HIR_EXPR_LAND:
+	case HIR_EXPR_LOR:
+		/* For the short-circuiting logical operators. */
+		if (!lir_visit_logical_expr(dst_tmpvar, expr, block))
+			return false;
+		break;
 	case HIR_EXPR_DOT:
 		/* For the dot operator. */
 		if (!lir_visit_dot_expr(dst_tmpvar, expr, block))
@@ -1212,6 +1262,109 @@ lir_visit_unary_expr(
 	}
 
 	lir_decrement_tmpvar(opr_tmpvar);
+
+	return true;
+}
+
+/*
+ * Lower a short-circuiting logical operator (&& or ||).
+ *
+ * The result is a boolean 1 or 0, and the second operand is evaluated
+ * only when the first has not already decided the result. Jump targets
+ * inside the expression are backpatched here, because the block-level
+ * patch table only handles jumps to whole HIR blocks.
+ *
+ *   &&:  eval a; if false -> Lzero
+ *        eval b; if false -> Lzero
+ *        dst = 1; jmp Lend
+ *   Lzero: dst = 0
+ *   Lend:
+ *
+ *   ||:  eval a; if true -> Lone
+ *        eval b; if true -> Lone
+ *        dst = 0; jmp Lend
+ *   Lone: dst = 1
+ *   Lend:
+ */
+static void
+lir_patch_u32(uint32_t at, uint32_t value)
+{
+	bytecode[at]     = (uint8_t)((value >> 24) & 0xff);
+	bytecode[at + 1] = (uint8_t)((value >> 16) & 0xff);
+	bytecode[at + 2] = (uint8_t)((value >> 8) & 0xff);
+	bytecode[at + 3] = (uint8_t)(value & 0xff);
+}
+
+static bool
+lir_visit_logical_expr(
+	int dst_tmpvar,
+	struct hir_expr *expr,
+	struct hir_block *block)
+{
+	int cond_tmpvar;
+	bool is_and;
+	uint8_t short_op;
+	uint32_t patch0, patch1, patch_skip, decided_addr, end_addr;
+
+	is_and = (expr->type == HIR_EXPR_LAND);
+	/* && short-circuits on a false operand, || on a true one. */
+	short_op = is_and ? OP_JMPIFFALSE : OP_JMPIFTRUE;
+
+	if (!lir_increment_tmpvar(&cond_tmpvar))
+		return false;
+
+	/* Operand 0. */
+	if (!lir_visit_expr(cond_tmpvar, expr->val.binary.expr[0], block))
+		return false;
+	if (!lir_put_opcode(short_op))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)cond_tmpvar))
+		return false;
+	patch0 = bytecode_top;
+	if (!lir_put_u32(0))
+		return false;
+
+	/* Operand 1. */
+	if (!lir_visit_expr(cond_tmpvar, expr->val.binary.expr[1], block))
+		return false;
+	if (!lir_put_opcode(short_op))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)cond_tmpvar))
+		return false;
+	patch1 = bytecode_top;
+	if (!lir_put_u32(0))
+		return false;
+
+	/* Neither operand triggered the short circuit: the "not decided"
+	 * result (0 for &&, 1 for ||). */
+	if (!lir_put_opcode(OP_ICONST))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_imm32(is_and ? 1u : 0u))
+		return false;
+	if (!lir_put_opcode(OP_JMP))
+		return false;
+	patch_skip = bytecode_top;
+	if (!lir_put_u32(0))
+		return false;
+
+	/* The short-circuit target: the decided result. */
+	decided_addr = bytecode_top;
+	if (!lir_put_opcode(OP_ICONST))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_imm32(is_and ? 0u : 1u))
+		return false;
+
+	end_addr = bytecode_top;
+
+	lir_patch_u32(patch0, decided_addr);
+	lir_patch_u32(patch1, decided_addr);
+	lir_patch_u32(patch_skip, end_addr);
+
+	lir_decrement_tmpvar(cond_tmpvar);
 
 	return true;
 }
@@ -1462,6 +1615,7 @@ lir_visit_array_expr(
 	struct hir_block *block)
 {
 	size_t elem_count, i;
+	int build_tmpvar;
 	int elem_tmpvar;
 	int index_tmpvar;
 
@@ -1470,11 +1624,15 @@ lir_visit_array_expr(
 	assert(expr->val.array.elem_count > 0);
 
 	elem_count = expr->val.array.elem_count;
-	
+
+	/* Build in a scratch tmpvar; see lir_visit_dict_expr. */
+	if (!lir_increment_tmpvar(&build_tmpvar))
+		return false;
+
 	/* Create an array. */
 	if (!lir_put_opcode(OP_ACONST))
 		return false;
-	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 		return false;
 
 	/* Push the elements. */
@@ -1496,7 +1654,7 @@ lir_visit_array_expr(
 			return false;
 		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
-		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)index_tmpvar))
 			return false;
@@ -1504,8 +1662,17 @@ lir_visit_array_expr(
 			return false;
 	}
 
+	/* Move the finished array into dst. */
+	if (!lir_put_opcode(OP_ASSIGN))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
+		return false;
+
 	lir_decrement_tmpvar(index_tmpvar);
 	lir_decrement_tmpvar(elem_tmpvar);
+	lir_decrement_tmpvar(build_tmpvar);
 
 	return true;
 }
@@ -1517,6 +1684,7 @@ lir_visit_dict_expr(
 	struct hir_block *block)
 {
 	size_t kv_count, i;
+	int build_tmpvar;
 	int key_tmpvar;
 	int value_tmpvar;
 	int index_tmpvar;
@@ -1525,11 +1693,18 @@ lir_visit_dict_expr(
 	assert(expr->type == HIR_EXPR_DICT);
 
 	kv_count = expr->val.dict.kv_count;
-	
-	/* Create a dictionary. */
+
+	/*
+	 * Build the dictionary in a scratch tmpvar, not in dst: dst may
+	 * alias a slot the value expressions still read (the $return
+	 * slot is parameter 0's slot, so "return {k: param};" would
+	 * otherwise store the dictionary into itself).
+	 */
+	if (!lir_increment_tmpvar(&build_tmpvar))
+		return false;
 	if (!lir_put_opcode(OP_DCONST))
 		return false;
-	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 		return false;
 
 	/* Push the elements. */
@@ -1553,7 +1728,7 @@ lir_visit_dict_expr(
 			return false;
 		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
-		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)key_tmpvar))
 			return false;
@@ -1561,9 +1736,18 @@ lir_visit_dict_expr(
 			return false;
 	}
 
+	/* Move the finished dictionary into dst. */
+	if (!lir_put_opcode(OP_ASSIGN))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
+		return false;
+
 	lir_decrement_tmpvar(index_tmpvar);
 	lir_decrement_tmpvar(value_tmpvar);
 	lir_decrement_tmpvar(key_tmpvar);
+	lir_decrement_tmpvar(build_tmpvar);
 
 	return true;
 }
@@ -1971,18 +2155,18 @@ static bool lir_put_branch_addr(
 	return true;
 }
 
-static bool lir_put_incrementer_addr(
+static bool lir_put_continue_addr(
 	struct hir_block *block)
 {
 	assert(block != NULL);
-	assert(block->type == HIR_BLOCK_FOR);
+	assert(block->type == HIR_BLOCK_FOR || block->type == HIR_BLOCK_WHILE);
 
 	if (loc_count >= LOC_MAX) {
 		lir_fatal(N_TR("Too many jumps."));
 		return false;
 	}
 
-	loc_tbl[loc_count].type = LOC_BLOCK_INCREMENTER;
+	loc_tbl[loc_count].type = LOC_BLOCK_CONTINUE;
 	loc_tbl[loc_count].offset = (uint32_t)bytecode_top;
 	loc_tbl[loc_count].block = block;
 	loc_count++;
@@ -2107,9 +2291,9 @@ patch_block_address(void)
 			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
 			bytecode[offset + 3] = (uint8_t)(addr & 0xff);
 			break;
-		case LOC_BLOCK_INCREMENTER:
+		case LOC_BLOCK_CONTINUE:
 			offset = loc_tbl[i].offset;
-			addr = loc_tbl[i].block->val.for_.inc_addr;
+			addr = loc_tbl[i].block->cont_addr;
 			bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
 			bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
 			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);

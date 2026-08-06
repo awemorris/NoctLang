@@ -29,7 +29,7 @@
 
 /* Arena allocator size. */
 #if !defined(NOCT_MEMORY_SMALL)
-#define ARENA_SIZE		(4 * 1024 * 1024)
+#define ARENA_SIZE		(64 * 1024 * 1024)
 #else
 #define ARENA_SIZE		(512 * 1024)
 #endif
@@ -51,7 +51,7 @@
  * Constructed HIR.
  */
 
-#define HIR_FUNC_MAX	128
+#define HIR_FUNC_MAX	1024
 
 char *hir_file_name;
 uint32_t hir_func_count;
@@ -901,9 +901,12 @@ hir_visit_elif_stmt(
 	}
 	assert((*prev_block)->val.if_.chain_next == NULL);
 
-	/* Get the exit block. */
-	assert(parent_block->type != HIR_BLOCK_IF);
-	assert(parent_block->succ != NULL);
+	/*
+	 * The exit block is taken from the chain's first if-block below,
+	 * so parent_block itself is not used here. When an if/else-if
+	 * chain is nested inside another if's branch, parent_block is
+	 * that enclosing if-block, which is fine.
+	 */
 
 	/* Alloc an else-if block. */
 	elif_block = hir_malloc(sizeof(struct hir_block));
@@ -1399,6 +1402,12 @@ hir_visit_expr(
 		break;
 	case AST_EXPR_OR:
 		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_OR);
+		break;
+	case AST_EXPR_LAND:
+		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_LAND);
+		break;
+	case AST_EXPR_LOR:
+		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_LOR);
 		break;
 	case AST_EXPR_XOR:
 		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_XOR);
@@ -2224,6 +2233,8 @@ hir_free_expr(
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
 	case HIR_EXPR_OR:
+	case HIR_EXPR_LAND:
+	case HIR_EXPR_LOR:
 	case HIR_EXPR_XOR:
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:
