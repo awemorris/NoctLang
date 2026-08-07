@@ -186,7 +186,6 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <term> term;
 %type <arg_list> arg_list;
 
-%left UNARYMINUS
 %left TOKEN_OROR
 %left TOKEN_ANDAND
 %left TOKEN_NOT
@@ -206,6 +205,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %left TOKEN_MUL
 %left TOKEN_DIV
 %left TOKEN_MOD
+%left UNARYMINUS
 %left TOKEN_DOT
 %right TOKEN_RPAR_DARROW_LBLK
 %right TOKEN_ARROW
