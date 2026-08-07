@@ -28,7 +28,7 @@ option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"          OFF)
 option(NOCT_ENABLE_CBACKEND     "Enable C backend"                 OFF)
 option(NOCT_ENABLE_ELBACKEND    "Enable Emacs Lisp backend"        OFF)
 option(NOCT_ENABLE_SCMBACKEND   "Enable Scheme backend"            OFF)
-option(NOCT_ENABLE_REPL         "Enable REPL"                      OFF)
+option(NOCT_ENABLE_REPL         "Enable reusable REPL and CLI mode" OFF)
 option(NOCT_ENABLE_MDOC         "Install mdoc(7) man page"         OFF)
 
 #
@@ -230,6 +230,14 @@ if(NOCT_ENABLE_I18N)
   endif()
 endif()
 
+# Determine the reusable REPL session engine.
+if(NOCT_ENABLE_REPL)
+  set(
+    NOCT_REPL_SOURCE
+    src/repl/repl.c
+  )
+endif()
+
 # Add the target "libnoct", the core sandboxed virtual machine.
 add_library(
   noct
@@ -242,6 +250,7 @@ add_library(
   ${NOCT_ELBE_SOURCE}
   ${NOCT_SCMBE_SOURCE}
   ${NOCT_I18N_SOURCE}
+  ${NOCT_REPL_SOURCE}
 )
 if(NOCT_ENABLE_SHARED)
   set_target_properties(noct PROPERTIES 
@@ -588,6 +597,7 @@ if(NOCT_ENABLE_INSTALL)
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/c89compat.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/aot.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/backend.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/repl.h"
     DESTINATION
       "${CMAKE_INSTALL_INCLUDEDIR}/noct"
   )

@@ -706,7 +706,7 @@
                 "NOCT_ENABLE_CBACKEND":     "OFF",
                 "NOCT_ENABLE_ELBACKEND":    "OFF",
                 "NOCT_ENABLE_SCMBACKEND":   "OFF",
-                "NOCT_ENABLE_REPL":         "OFF"
+                "NOCT_ENABLE_REPL":         "ON"
             }
         }
     ],
