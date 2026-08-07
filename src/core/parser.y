@@ -186,26 +186,23 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <term> term;
 %type <arg_list> arg_list;
 
+/*
+ * Operator precedence, lowest to highest, matching C:
+ *   ||  &&  |  ^  &  ==/!=  relational  shift  +/-  * / %  unary  postfix
+ * Operators of one group share a level and associate left; unary
+ * operators associate right.
+ */
 %left TOKEN_OROR
 %left TOKEN_ANDAND
-%left TOKEN_NOT
 %left TOKEN_OR
-%left TOKEN_AND
 %left TOKEN_XOR
-%left TOKEN_LT
-%left TOKEN_LTE
-%left TOKEN_GT
-%left TOKEN_GTE
-%left TOKEN_EQ
-%left TOKEN_NEQ
-%left TOKEN_PLUS
-%left TOKEN_MINUS
-%left TOKEN_SHL
-%left TOKEN_SHR
-%left TOKEN_MUL
-%left TOKEN_DIV
-%left TOKEN_MOD
-%left UNARYMINUS
+%left TOKEN_AND
+%left TOKEN_EQ TOKEN_NEQ
+%left TOKEN_LT TOKEN_LTE TOKEN_GT TOKEN_GTE
+%left TOKEN_SHL TOKEN_SHR
+%left TOKEN_PLUS TOKEN_MINUS
+%left TOKEN_MUL TOKEN_DIV TOKEN_MOD
+%right TOKEN_NOT UNARYMINUS
 %left TOKEN_DOT
 %right TOKEN_RPAR_DARROW_LBLK
 %right TOKEN_ARROW
