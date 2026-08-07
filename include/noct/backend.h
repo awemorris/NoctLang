@@ -65,6 +65,11 @@ noct_cback_finalize(void);
 /* Start EL backend. */
 NOCT_DLL
 bool
+noct_elback_load_ns_map(
+	const char *fname);
+
+NOCT_DLL
+bool
 noct_elback_start(
 	const char *fname);
 
