@@ -904,15 +904,25 @@ rt_visit_jmpiftrue_op(
         GET_TMPVAR(&src);
         GET_ADDR(&target);
 
-        /* Assume src is an int. */
-        if (env->frame->tmpvar[src].type != NOCT_VALUE_INT) {
-                rt_error(env, BROKEN_BYTECODE);
-                return false;
-        }
+        /* Evaluate the condition: a zero of any numeric type is false. */
+        {
+                struct rt_value *v = &env->frame->tmpvar[src];
+                bool truthy;
 
-        /* Jump. */
-        if (env->frame->tmpvar[src].val.i == 1)
-                *pc = target;
+                switch (v->type) {
+                case NOCT_VALUE_INT:    truthy = v->val.i != 0;     break;
+                case NOCT_VALUE_LONG:   truthy = v->val.l != 0;     break;
+                case NOCT_VALUE_FLOAT:  truthy = v->val.f != 0.0f;  break;
+                case NOCT_VALUE_DOUBLE: truthy = v->val.lf != 0.0;  break;
+                default:
+                        rt_error(env, BROKEN_BYTECODE);
+                        return false;
+                }
+
+                /* Jump. */
+                if (truthy)
+                        *pc = target;
+        }
 
         return true;
 }
@@ -932,15 +942,25 @@ rt_visit_jmpiffalse_op(
         GET_TMPVAR(&src);
         GET_ADDR(&target);
 
-        /* Assume src is an int. */
-        if (env->frame->tmpvar[src].type != NOCT_VALUE_INT) {
-                rt_error(env, BROKEN_BYTECODE);
-                return false;
-        }
+        /* Evaluate the condition: a zero of any numeric type is false. */
+        {
+                struct rt_value *v = &env->frame->tmpvar[src];
+                bool truthy;
 
-        /* Jump. */
-        if (env->frame->tmpvar[src].val.i == 0)
-                *pc = target;
+                switch (v->type) {
+                case NOCT_VALUE_INT:    truthy = v->val.i != 0;     break;
+                case NOCT_VALUE_LONG:   truthy = v->val.l != 0;     break;
+                case NOCT_VALUE_FLOAT:  truthy = v->val.f != 0.0f;  break;
+                case NOCT_VALUE_DOUBLE: truthy = v->val.lf != 0.0;  break;
+                default:
+                        rt_error(env, BROKEN_BYTECODE);
+                        return false;
+                }
+
+                /* Jump. */
+                if (!truthy)
+                        *pc = target;
+        }
 
         return true;
 }
