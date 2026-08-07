@@ -362,7 +362,10 @@ print(s2); // => "BC"
 
 ### String.indexOf(s1, s2)
 
-Search a substring.
+Searches for a substring and returns the **character index** of the
+first match, or -1 if there is none. The index is in characters, the
+same unit `String.charAt()` and `String.substring()` use, so the three
+combine correctly on multibyte text.
 
 ```
 var index1 = String.indexOf("ABCDEF", "CD");
@@ -370,6 +373,10 @@ print(index1); // => 2
 
 var index2 = String.indexOf("ABCDEF", "DC");
 print(index2); // => -1
+
+var s = "あいu";
+print(String.indexOf(s, "u"));              // => 2, not the byte offset 6
+print(String.substring(s, String.indexOf(s, "い"), 1)); // => "い"
 ```
 
 ### Array.make(size)
@@ -595,6 +602,35 @@ Returns the element type of a packed array.
 ```
 var pi8 = Packed.int8(128);
 print(Packed.type(pi8)); // => "int8"
+```
+
+### Packed.copy(dst, dstIndex, src, srcIndex, count)
+
+Copies `count` elements from `src` to `dst` and returns `count`.
+Indices and the count are in elements, the same unit `Packed.size()`
+and the `[]` notation use.
+
+Both arrays must hold the same element type. The two regions may
+overlap, so this also serves to move a block inside one array, as a
+gap buffer does.
+
+```
+var src = Packed.uint8(8);
+var dst = Packed.uint8(8);
+Packed.copy(dst, 2, src, 0, 4);
+
+// Slide a block down by two, over itself.
+Packed.copy(src, 0, src, 2, 6);
+```
+
+### Packed.fill(dst, index, count, value)
+
+Sets `count` elements of `dst` to `value`, starting at `index`, and
+returns `count`. The value is converted to the array's element type.
+
+```
+var buf = Packed.uint8(1024);
+Packed.fill(buf, 0, 1024, 0);
 ```
 
 ### Math.abs(x)

@@ -1893,28 +1893,31 @@ rt_make_packed_copy(
 	assert(dst != NULL);
 	assert(src != NULL);
 
-	/* If src is preallocated. */
-	if (src->val.packed->size == 0) {
-		switch (src->val.packed->type) {
-		case NOCT_PACKED_INT8:
-		case NOCT_PACKED_UINT8:
-			size = src->val.packed->elem_size;
-			break;
-		case NOCT_PACKED_INT16:
-		case NOCT_PACKED_UINT16:
-			size = src->val.packed->elem_size * 2;
-			break;
-		case NOCT_PACKED_INT32:
-		case NOCT_PACKED_UINT32:
-		case NOCT_PACKED_FLOAT32:
-			size = src->val.packed->elem_size * 4;
-			break;
-		case NOCT_PACKED_INT64:
-		case NOCT_PACKED_UINT64:
-		case NOCT_PACKED_FLOAT64:
-			size = src->val.packed->elem_size * 8;
-			break;
-		}
+	/*
+	 * Determine the byte size.
+	 *
+	 * A preallocated packed carries a zero "size", so the byte size
+	 * has to be derived from the element count and the type. Doing
+	 * it unconditionally also covers the normal case, where "size"
+	 * already holds the same number.
+	 */
+	switch (src->val.packed->type) {
+	case NOCT_PACKED_INT8:
+	case NOCT_PACKED_UINT8:
+		size = src->val.packed->elem_size;
+		break;
+	case NOCT_PACKED_INT16:
+	case NOCT_PACKED_UINT16:
+		size = src->val.packed->elem_size * 2;
+		break;
+	case NOCT_PACKED_INT32:
+	case NOCT_PACKED_UINT32:
+	case NOCT_PACKED_FLOAT32:
+		size = src->val.packed->elem_size * 4;
+		break;
+	default:
+		size = src->val.packed->elem_size * 8;
+		break;
 	}
 
 	/* Allocate an array. */
@@ -1932,7 +1935,7 @@ rt_make_packed_copy(
 	 * a GC execution waits for all threads become not in-flight.
 	 */
 
-	memcpy(dst_packed->packed_buffer, src->val.packed->packed_buffer, src->val.packed->size);
+	memcpy(dst_packed->packed_buffer, src->val.packed->packed_buffer, size);
 
 	dst->type = NOCT_VALUE_PACKED;
 	dst->val.packed = dst_packed;

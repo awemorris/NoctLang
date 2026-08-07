@@ -458,7 +458,12 @@ deep_copy_value(
 			return false;
 		}
 		memcpy(buf, src_buf, size * esize);
-		if (!noct_make_packed(env, dst, ptype, size, esize, buf)) {
+
+		/*
+		 * noct_make_packed() takes the byte size first and the
+		 * element count second.
+		 */
+		if (!noct_make_packed(env, dst, ptype, size * esize, size, buf)) {
 			noct_free(buf);
 			return false;
 		}

@@ -54,6 +54,9 @@ static bool rt_intrin_Packed_float32(NoctEnv *env);
 static bool rt_intrin_Packed_float64(NoctEnv *env);
 static bool rt_intrin_Packed_size(NoctEnv *env);
 static bool rt_intrin_Packed_type(NoctEnv *env);
+static bool rt_intrin_Packed_copy(NoctEnv *env);
+static bool rt_intrin_Packed_fill(NoctEnv *env);
+static size_t packed_elem_bytes(int type);
 static bool rt_intrin_Math_abs(NoctEnv *env);
 static bool rt_intrin_Math_sqrt(NoctEnv *env);
 static bool rt_intrin_Math_sin(NoctEnv *env);
@@ -107,6 +110,8 @@ struct intrin_item {
 	{"Packed",	"float64",	"Packed.float64",	rt_intrin_Packed_float64,	1, {"size"}},
 	{"Packed",	"size",		"Packed.size",		rt_intrin_Packed_size,		1, {"packed"}},
 	{"Packed",	"type",		"Packed.type",		rt_intrin_Packed_type,		1, {"packed"}},
+	{"Packed",	"copy",		"Packed.copy",		rt_intrin_Packed_copy,		5, {"dst", "dstIndex", "src", "srcIndex", "count"}},
+	{"Packed",	"fill",		"Packed.fill",		rt_intrin_Packed_fill,		4, {"dst", "index", "count", "value"}},
 	{"Math",	"abs",		"Math.abs",		rt_intrin_Math_abs,		1, {"x"}},
 	{"Math",	"sqrt",		"Math.sqrt",		rt_intrin_Math_sqrt,		1, {"x"}},
 	{"Math",	"sin",		"Math.sin",		rt_intrin_Math_sin,		1, {"x"}},
@@ -762,9 +767,13 @@ rt_intrin_String_indexOf(
 	NoctValue str, substr, ret;
 	const char *str_s;
 	const char *substr_s;
-	size_t i, len_str, len_substr, range_max;
+	const char *s;
+	size_t len_str, len_substr, char_index;
 	int result;
 
+	memset(&str, 0, sizeof(str));
+	memset(&substr, 0, sizeof(substr));
+	memset(&ret, 0, sizeof(ret));
 	noct_pin_local(env, 3, &str, &substr, &ret);
 
 	/* Get the argument "s". */
@@ -775,21 +784,37 @@ rt_intrin_String_indexOf(
 	if (!noct_get_arg_check_string(env, 1, &substr, &substr_s))
 		return false;
 
-	/* Do search. */
+	/*
+	 * Do search.
+	 *
+	 * The result is a character index, matching String.charAt() and
+	 * String.substring(). Walking character by character also keeps
+	 * a match from starting in the middle of a multibyte sequence.
+	 */
 	len_str = strlen(str_s);
 	len_substr = strlen(substr_s);
 	result = -1;
 	if (len_str >= len_substr) {
-		/*
-		 * The last candidate starts at len_str - len_substr, so the
-		 * bound is inclusive: a match at the very end must be found.
-		 */
-		range_max = len_str - len_substr;
-		for (i = 0; i <= range_max; i++) {
-			if (strncmp(str_s + i, substr_s, len_substr) == 0) {
-				result = (int)i;
+		s = str_s;
+		char_index = 0;
+		while (true) {
+			uint32_t codepoint;
+			int mblen;
+
+			if (strncmp(s, substr_s, len_substr) == 0) {
+				result = (int)char_index;
 				break;
 			}
+			if (*s == '\0')
+				break;
+
+			mblen = utf8_to_utf32(s, &codepoint);
+			if (mblen <= 0) {
+				/* UTF-8 error. */
+				break;
+			}
+			s += mblen;
+			char_index++;
 		}
 	}
 
@@ -1608,6 +1633,228 @@ rt_intrin_Packed_float64(
 /*
  * Packed.size(packed)
  */
+/*
+ * Get the byte size of one packed element.
+ */
+static size_t
+packed_elem_bytes(
+	int type)
+{
+	switch (type) {
+	case NOCT_PACKED_INT8:
+	case NOCT_PACKED_UINT8:
+		return 1;
+	case NOCT_PACKED_INT16:
+	case NOCT_PACKED_UINT16:
+		return 2;
+	case NOCT_PACKED_INT32:
+	case NOCT_PACKED_UINT32:
+	case NOCT_PACKED_FLOAT32:
+		return 4;
+	default:
+		break;
+	}
+	return 8;
+}
+
+/*
+ * Packed.copy()
+ *
+ * Copies "count" elements from src to dst. Indices and the count are
+ * in elements, matching Packed.size() and the [] notation.
+ *
+ * The two regions may overlap, which is what makes this usable for
+ * moving the gap of a gap buffer.
+ */
+static bool
+rt_intrin_Packed_copy(
+	NoctEnv *env)
+{
+	NoctValue dst, dst_index, src, src_index, count, ret;
+	size_t dst_index_n, src_index_n, count_n;
+	size_t dst_size, src_size, elem_bytes;
+	int dst_type, src_type;
+	void *dst_buf, *src_buf;
+
+	memset(&dst, 0, sizeof(dst));
+	memset(&dst_index, 0, sizeof(dst_index));
+	memset(&src, 0, sizeof(src));
+	memset(&src_index, 0, sizeof(src_index));
+	memset(&count, 0, sizeof(count));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 6, &dst, &dst_index, &src, &src_index, &count, &ret);
+
+	/* Get the arguments. */
+	if (!noct_get_arg_check_packed(env, 0, &dst, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &dst_index, &dst_index_n))
+		return false;
+	if (!noct_get_arg_check_packed(env, 2, &src, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 3, &src_index, &src_index_n))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 4, &count, &count_n))
+		return false;
+
+	/* Both sides must hold the same element type. */
+	if (!noct_get_packed_type(env, &dst, &dst_type))
+		return false;
+	if (!noct_get_packed_type(env, &src, &src_type))
+		return false;
+	if (dst_type != src_type) {
+		noct_error(env, N_TR("Packed element types do not match."));
+		return false;
+	}
+
+	/* Check the ranges. */
+	if (!noct_get_packed_size(env, &dst, &dst_size))
+		return false;
+	if (!noct_get_packed_size(env, &src, &src_size))
+		return false;
+	if (dst_index_n > dst_size || count_n > dst_size - dst_index_n) {
+		noct_error(env, N_TR("Packed destination range is out-of-bounds."));
+		return false;
+	}
+	if (src_index_n > src_size || count_n > src_size - src_index_n) {
+		noct_error(env, N_TR("Packed source range is out-of-bounds."));
+		return false;
+	}
+
+	/* Copy. */
+	if (count_n > 0) {
+		if (!noct_get_packed_pointer(env, &dst, &dst_buf))
+			return false;
+		if (!noct_get_packed_pointer(env, &src, &src_buf))
+			return false;
+		elem_bytes = packed_elem_bytes(dst_type);
+		memmove((char *)dst_buf + dst_index_n * elem_bytes,
+			(char *)src_buf + src_index_n * elem_bytes,
+			count_n * elem_bytes);
+	}
+
+	/* Set the return value. */
+	if (!noct_set_return_make_int_long(env, &ret, count_n))
+		return false;
+
+	noct_unpin_local(env, 6, &dst, &dst_index, &src, &src_index, &count, &ret);
+
+	return true;
+}
+
+/*
+ * Packed.fill()
+ *
+ * Sets "count" elements of dst to "value", starting at "index".
+ */
+static bool
+rt_intrin_Packed_fill(
+	NoctEnv *env)
+{
+	NoctValue dst, index, count, value, ret;
+	size_t index_n, count_n, dst_size, i;
+	int dst_type, value_type;
+	int64_t ival;
+	double dval;
+	void *dst_buf;
+
+	memset(&dst, 0, sizeof(dst));
+	memset(&index, 0, sizeof(index));
+	memset(&count, 0, sizeof(count));
+	memset(&value, 0, sizeof(value));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 5, &dst, &index, &count, &value, &ret);
+
+	/* Get the arguments. */
+	if (!noct_get_arg_check_packed(env, 0, &dst, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &index, &index_n))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 2, &count, &count_n))
+		return false;
+	if (!noct_get_arg(env, 3, &value))
+		return false;
+
+	/* Check the range. */
+	if (!noct_get_packed_size(env, &dst, &dst_size))
+		return false;
+	if (index_n > dst_size || count_n > dst_size - index_n) {
+		noct_error(env, N_TR("Packed destination range is out-of-bounds."));
+		return false;
+	}
+
+	/* Accept any numeric value and convert it to the element type. */
+	if (!noct_get_value_type(env, &value, &value_type))
+		return false;
+	ival = 0;
+	dval = 0.0;
+	switch (value_type) {
+	case NOCT_VALUE_INT:
+		ival = value.val.i;
+		dval = (double)value.val.i;
+		break;
+	case NOCT_VALUE_LONG:
+		ival = value.val.l;
+		dval = (double)value.val.l;
+		break;
+	case NOCT_VALUE_FLOAT:
+		ival = (int64_t)value.val.f;
+		dval = (double)value.val.f;
+		break;
+	case NOCT_VALUE_DOUBLE:
+		ival = (int64_t)value.val.lf;
+		dval = value.val.lf;
+		break;
+	default:
+		noct_error(env, N_TR("Fill value is not a number."));
+		return false;
+	}
+
+	/* Fill. */
+	if (count_n > 0) {
+		if (!noct_get_packed_type(env, &dst, &dst_type))
+			return false;
+		if (!noct_get_packed_pointer(env, &dst, &dst_buf))
+			return false;
+
+		switch (dst_type) {
+		case NOCT_PACKED_INT8:
+		case NOCT_PACKED_UINT8:
+			memset((char *)dst_buf + index_n, (int)(uint8_t)ival, count_n);
+			break;
+		case NOCT_PACKED_INT16:
+		case NOCT_PACKED_UINT16:
+			for (i = 0; i < count_n; i++)
+				((uint16_t *)dst_buf)[index_n + i] = (uint16_t)ival;
+			break;
+		case NOCT_PACKED_INT32:
+		case NOCT_PACKED_UINT32:
+			for (i = 0; i < count_n; i++)
+				((uint32_t *)dst_buf)[index_n + i] = (uint32_t)ival;
+			break;
+		case NOCT_PACKED_FLOAT32:
+			for (i = 0; i < count_n; i++)
+				((float *)dst_buf)[index_n + i] = (float)dval;
+			break;
+		case NOCT_PACKED_FLOAT64:
+			for (i = 0; i < count_n; i++)
+				((double *)dst_buf)[index_n + i] = dval;
+			break;
+		default:
+			for (i = 0; i < count_n; i++)
+				((uint64_t *)dst_buf)[index_n + i] = (uint64_t)ival;
+			break;
+		}
+	}
+
+	/* Set the return value. */
+	if (!noct_set_return_make_int_long(env, &ret, count_n))
+		return false;
+
+	noct_unpin_local(env, 5, &dst, &index, &count, &value, &ret);
+
+	return true;
+}
+
 static bool
 rt_intrin_Packed_size(
 	struct rt_env *env)
