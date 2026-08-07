@@ -28,6 +28,7 @@ static bool rt_intrin_Double_from(NoctEnv *env);
 static bool rt_intrin_String_from(NoctEnv *env);
 static bool rt_intrin_String_charCount(NoctEnv *env);
 static bool rt_intrin_String_charAt(NoctEnv *env);
+static bool rt_intrin_String_charCodeAt(NoctEnv *env);
 static bool rt_intrin_String_substring(NoctEnv *env);
 static bool rt_intrin_String_indexOf(NoctEnv *env);
 static bool rt_intrin_Array_make(NoctEnv *env);
@@ -88,6 +89,7 @@ struct intrin_item {
 	{"String",	"from",		"String.from",		rt_intrin_String_from,		1, {"val"}},
 	{"String",	"charCount",	"String.charCount",	rt_intrin_String_charCount,	1, {"s"}},
 	{"String",	"charAt",	"String.charAt",	rt_intrin_String_charAt,	2, {"s", "index"}},
+	{"String",	"charCodeAt",	"String.charCodeAt",	rt_intrin_String_charCodeAt,	2, {"s", "index"}},
 	{"String",	"substring",	"String.substring",	rt_intrin_String_substring,	3, {"s", "start", "len"}},
 	{"String",	"indexOf",	"String.indexOf",	rt_intrin_String_indexOf,	2, {"s", "search"}},
 	{"String",	"byteLength",	"String.byteLength",	rt_intrin_String_byteLength,	1, {"s"}},
@@ -676,6 +678,58 @@ rt_intrin_String_charAt(
 
 	/* Set the string as a return value. */
 	if (!noct_set_return_make_string(env, &ret, d))
+		return false;
+
+	noct_unpin_local(env, 3, &str, &index, &ret);
+
+	return true;
+}
+
+/*
+ * String.charCodeAt(s, i)
+ *
+ * Returns the Unicode codepoint of the character at index i (in
+ * characters), or -1 if i is out of range.
+ */
+static bool
+rt_intrin_String_charCodeAt(
+	NoctEnv *env)
+{
+	NoctValue str, index, ret;
+	const char *str_s;
+	size_t index_i;
+	const char *s;
+	size_t i;
+	int mblen;
+
+	memset(&str, 0, sizeof(str));
+	memset(&index, 0, sizeof(index));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 3, &str, &index, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &index, &index_i))
+		return false;
+
+	s = str_s;
+	i = 0;
+	while (*s != '\0') {
+		uint32_t codepoint;
+		mblen = utf8_to_utf32(s, &codepoint);
+		if (mblen <= 0)
+			break;
+		if (i == index_i) {
+			if (!noct_set_return_make_int(env, &ret, (int)codepoint))
+				return false;
+			noct_unpin_local(env, 3, &str, &index, &ret);
+			return true;
+		}
+		s += mblen;
+		i++;
+	}
+
+	if (!noct_set_return_make_int(env, &ret, -1))
 		return false;
 
 	noct_unpin_local(env, 3, &str, &index, &ret);
