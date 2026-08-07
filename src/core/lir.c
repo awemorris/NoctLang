@@ -59,7 +59,7 @@ static uint32_t tmpvar_count;
 
 /* Relocation type */
 #define LOC_BLOCK_TOP		0
-#define LOC_BLOCK_INCREMENTER	1
+#define LOC_BLOCK_CONTINUE	1
 
 struct loc_entry {
 	/* Type. */
@@ -131,7 +131,7 @@ static bool lir_put_imm32(uint32_t imm);
 static bool lir_put_imm64(uint64_t imm);
 static bool lir_put_string(const char *data);
 static bool lir_put_branch_addr(struct hir_block *block);
-static bool lir_put_incrementer_addr(struct hir_block *block);
+static bool lir_put_continue_addr(struct hir_block *block);
 static bool lir_put_u8(uint8_t b);
 static bool lir_put_u16(uint16_t b);
 static bool lir_put_u32(uint32_t b);
@@ -347,32 +347,59 @@ lir_visit_basic_block(
 	}
 
 	/*
-	 * If the block is the tail of the siblings, and not the end of
-	 * loop or function, i.e., there is a break, continue, or return.
+	 * If the block is the tail of the siblings, it needs an explicit
+	 * jump unless its successor is the block control would reach by
+	 * falling through anyway.
+	 *
+	 * Falling through is correct only in two cases:
+	 *
+	 *  - The block ends a loop body and continues that same loop:
+	 *    the loop emitter appends the incrementer and the back edge
+	 *    right after this block.
+	 *
+	 *  - The block ends the function body and goes to the end block,
+	 *    which is emitted next.
+	 *
+	 * Everything else (a break, a return from inside a loop, or a
+	 * continue targeting an outer loop) has to jump. Treating those
+	 * as fall-through is what used to make a "return" at the tail of
+	 * a loop body run the rest of the loop instead of returning.
 	 */
-	if (block->stop &&
-	    (block->parent->type != HIR_BLOCK_FOR &&
-	     block->parent->type != HIR_BLOCK_WHILE &&
-	     block->parent->type != HIR_BLOCK_FUNC)) {
+	if (block->stop) {
 		struct hir_block *loop;
+		struct hir_block *parent;
+		bool falls_through;
 
-		/* Check if succ is a loop head. */
-		if (lir_check_succ_loop_head(block, &loop)) {
-			/* Put a safepoint. */
-			if (!lir_put_opcode(OP_SAFEPOINT))
-				return false;
+		parent = block->parent;
+		falls_through = false;
+		if (parent->type == HIR_BLOCK_FOR) {
+			falls_through = block->succ == parent->val.for_.inner;
+		} else if (parent->type == HIR_BLOCK_WHILE) {
+			falls_through = block->succ == parent->val.while_.inner;
+		} else if (parent->type == HIR_BLOCK_FUNC) {
+			falls_through = block->succ != NULL &&
+					block->succ->type == HIR_BLOCK_END;
+		}
 
-			/* Continue edge. */
-			if (!lir_put_opcode(OP_JMP))
-				return false;
-			if (!lir_put_incrementer_addr(loop))
-				return false;
-		} else {
-			/* Break or return edge. */
-			if (!lir_put_opcode(OP_JMP))
-				return false;
-			if (!lir_put_branch_addr(block->succ))
-				return false;
+		if (!falls_through) {
+			/* Check if succ is a loop head. */
+			if (lir_check_succ_loop_head(block, &loop)) {
+				/* Put a safepoint. */
+				if (!lir_put_opcode(OP_SAFEPOINT))
+					return false;
+
+				/* Continue edge. */
+				if (!lir_put_opcode(OP_JMP))
+					return false;
+				if (!lir_put_continue_addr(loop))
+					return false;
+			} else {
+				/* Break or return edge. */
+				if (!lir_put_opcode(OP_JMP))
+					return false;
+				if (!lir_put_branch_addr(block->succ))
+					return false;
+			}
 		}
 	}
 
@@ -601,8 +628,9 @@ lir_visit_for_range_block(
 		b = b->succ;
 	}
 
-	/* Store the incrementer address. */
+	/* Store the incrementer address. A "continue" jumps here. */
 	block->val.for_.inc_addr = (uint32_t)bytecode_top;
+	block->cont_addr = (uint32_t)bytecode_top;
 
 	/* Increment the loop variable. */
 	if (!lir_put_opcode(OP_INC))
@@ -718,6 +746,12 @@ lir_visit_for_kv_block(
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
 
+	/*
+	 * A "continue" jumps to the loop head: the cursor has already
+	 * been advanced above, before the body runs.
+	 */
+	block->cont_addr = loop_addr;
+
 	/* Visit an inner block. */
 	b = block->val.for_.inner;
 	while (b != NULL) {
@@ -827,6 +861,12 @@ lir_visit_for_v_block(
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
 		return false;
 
+	/*
+	 * A "continue" jumps to the loop head: the cursor has already
+	 * been advanced above, before the body runs.
+	 */
+	block->cont_addr = loop_addr;
+
 	/* Visit an inner block. */
 	b = block->val.for_.inner;
 	while (b != NULL) {
@@ -912,6 +952,9 @@ lir_visit_while_block(
 	if (!lir_put_branch_addr(block->succ))
 		return false;
 	lir_decrement_tmpvar(cmp_tmpvar);
+
+	/* A "continue" jumps to the loop head, re-testing the condition. */
+	block->cont_addr = loop_addr;
 
 	/* Visit an inner block. */
 	b = block->val.while_.inner;
@@ -1971,18 +2014,18 @@ static bool lir_put_branch_addr(
 	return true;
 }
 
-static bool lir_put_incrementer_addr(
+static bool lir_put_continue_addr(
 	struct hir_block *block)
 {
 	assert(block != NULL);
-	assert(block->type == HIR_BLOCK_FOR);
+	assert(block->type == HIR_BLOCK_FOR || block->type == HIR_BLOCK_WHILE);
 
 	if (loc_count >= LOC_MAX) {
 		lir_fatal(N_TR("Too many jumps."));
 		return false;
 	}
 
-	loc_tbl[loc_count].type = LOC_BLOCK_INCREMENTER;
+	loc_tbl[loc_count].type = LOC_BLOCK_CONTINUE;
 	loc_tbl[loc_count].offset = (uint32_t)bytecode_top;
 	loc_tbl[loc_count].block = block;
 	loc_count++;
@@ -2107,9 +2150,9 @@ patch_block_address(void)
 			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
 			bytecode[offset + 3] = (uint8_t)(addr & 0xff);
 			break;
-		case LOC_BLOCK_INCREMENTER:
+		case LOC_BLOCK_CONTINUE:
 			offset = loc_tbl[i].offset;
-			addr = loc_tbl[i].block->val.for_.inc_addr;
+			addr = loc_tbl[i].block->cont_addr;
 			bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
 			bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
 			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);

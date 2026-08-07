@@ -67,6 +67,16 @@ static bool run_repl(void)
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
+#if defined(NOCT_USE_MULTITHREAD)
+	if (!noct_register_api_thread(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+#endif
+	if (!noct_register_api_httpserver(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
 
 	/* Register FFI functions. */
 	if (!register_cli_cfunc(env)) {

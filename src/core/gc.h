@@ -91,6 +91,7 @@ enum rt_gc_object_type {
 enum gt_gc_level {
 	RT_GC_LEVEL_0,
 	RT_GC_LEVEL_1,
+	RT_GC_LEVEL_2,
 };
 
 /*

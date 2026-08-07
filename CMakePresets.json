@@ -87,6 +87,29 @@
             }
         },
         {
+            "name":           "mt-tsan",
+            "displayName":    "multithread ThreadSanitizer build",
+            "generator":      "Unix Makefiles",
+            "binaryDir":      "${sourceDir}/build-mt-tsan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE":         "Debug",
+                "CMAKE_C_FLAGS":            "-g -fsanitize=thread -fno-omit-frame-pointer",
+                "CMAKE_EXE_LINKER_FLAGS":   "-fsanitize=thread",
+                "NOCT_ENABLE_STATIC":       "ON",
+                "NOCT_ENABLE_CLI":          "ON",
+                "NOCT_ENABLE_JIT":          "OFF",
+                "NOCT_ENABLE_I18N":         "ON",
+                "NOCT_ENABLE_API":          "ON",
+                "NOCT_ENABLE_INSTALL":      "ON",
+                "NOCT_ENABLE_BCBACKEND":    "ON",
+                "NOCT_ENABLE_CBACKEND":     "ON",
+                "NOCT_ENABLE_ELBACKEND":    "ON",
+                "NOCT_ENABLE_SCMBACKEND":   "ON",
+                "NOCT_ENABLE_REPL":         "ON",
+                "NOCT_ENABLE_MULTITHREAD":  "ON"
+            }
+        },
+        {
             "name":           "windows-vs2026-x86",
             "displayName":    "VS2026 MSVC x86",
             "generator":      "Visual Studio 18 2026",

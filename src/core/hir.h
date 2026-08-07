@@ -97,6 +97,15 @@ struct hir_block {
 	/* Bytecode address. */
 	uint32_t addr;
 
+	/*
+	 * Bytecode address a "continue" jumps to. (loop blocks only)
+	 *
+	 * For a ranged for loop this is the loop-variable incrementer;
+	 * for a for-each or a while loop it is the loop head, because
+	 * those advance their cursor before running the body.
+	 */
+	uint32_t cont_addr;
+
 	/* Block Values */
 	union {
 		/* Function Header */

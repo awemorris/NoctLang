@@ -61,6 +61,7 @@ static bool rt_intrin_Math_cos(NoctEnv *env);
 static bool rt_intrin_Math_tan(NoctEnv *env);
 static bool rt_intrin_Math_random(NoctEnv *env);
 static bool rt_intrin_Global_hasVariable(NoctEnv *env);
+static bool rt_intrin_Type_of(NoctEnv *env);
 static bool rt_intrin_GC_youngGC(NoctEnv *env);
 static bool rt_intrin_GC_oldGC(NoctEnv *env);
 static bool rt_intrin_GC_compactGC(NoctEnv *env);
@@ -113,6 +114,7 @@ struct intrin_item {
 	{"Math",	"tan",		"Math.tan",		rt_intrin_Math_tan,		1, {"x"}},
 	{"Math",	"random",	"Math.random",		rt_intrin_Math_random,		0, {NULL}},
 	{"Global",	"isSet",	"Global.isSet",		rt_intrin_Global_hasVariable,	1, {"name"}},
+	{"Type",	"of",		"Type.of",		rt_intrin_Type_of,		1, {"val"}},
 	{"GC",		"youngGC",	"GC.youngGC",		rt_intrin_GC_youngGC,		0, {NULL}},
 	{"GC",		"oldGC",	"GC.oldGC",		rt_intrin_GC_oldGC,		0, {NULL}},
 	{"GC",		"compactGC",	"GC.compactGC",		rt_intrin_GC_compactGC,		0, {NULL}},
@@ -778,8 +780,12 @@ rt_intrin_String_indexOf(
 	len_substr = strlen(substr_s);
 	result = -1;
 	if (len_str >= len_substr) {
+		/*
+		 * The last candidate starts at len_str - len_substr, so the
+		 * bound is inclusive: a match at the very end must be found.
+		 */
 		range_max = len_str - len_substr;
-		for (i = 0; i < range_max; i++) {
+		for (i = 0; i <= range_max; i++) {
 			if (strncmp(str_s + i, substr_s, len_substr) == 0) {
 				result = (int)i;
 				break;
@@ -1888,6 +1894,56 @@ rt_intrin_Math_random(
 /*
  * Global.hasVariable(name)
  */
+/*
+ * Type.of()
+ *
+ * Returns the type of a value as a string: "int", "long", "float",
+ * "double", "string", "array", "dict", "packed" or "func".
+ */
+static bool
+rt_intrin_Type_of(
+	NoctEnv *env)
+{
+	NoctValue val, ret;
+	const char *name;
+	int type;
+
+	memset(&val, 0, sizeof(NoctValue));
+	memset(&ret, 0, sizeof(NoctValue));
+	noct_pin_local(env, 2, &val, &ret);
+
+	/* Retrieve the argument "val" at the index 0. */
+	if (!noct_get_arg(env, 0, &val))
+		return false;
+
+	/* Get the type tag. */
+	if (!noct_get_value_type(env, &val, &type))
+		return false;
+
+	switch (type) {
+	case NOCT_VALUE_INT:	name = "int";		break;
+	case NOCT_VALUE_LONG:	name = "long";		break;
+	case NOCT_VALUE_FLOAT:	name = "float";		break;
+	case NOCT_VALUE_DOUBLE:	name = "double";	break;
+	case NOCT_VALUE_STRING:	name = "string";	break;
+	case NOCT_VALUE_ARRAY:	name = "array";		break;
+	case NOCT_VALUE_DICT:	name = "dict";		break;
+	case NOCT_VALUE_PACKED:	name = "packed";	break;
+	case NOCT_VALUE_FUNC:	name = "func";		break;
+	default:
+		name = "unknown";
+		break;
+	}
+
+	/* Set the return value. */
+	if (!noct_set_return_make_string(env, &ret, name))
+		return false;
+
+	noct_unpin_local(env, 2, &val, &ret);
+
+	return true;
+}
+
 static bool
 rt_intrin_Global_hasVariable(
 	NoctEnv *env)

@@ -19,6 +19,7 @@
 #include "jit.h"
 #include "gc.h"
 #include "objectmodel.h"
+#include "atomic.h"
 
 #if defined(NOCT_USE_MULTITHREAD)
 #include "atomic.h"
@@ -193,37 +194,138 @@ rt_free_func(
 
 #if defined(NOCT_USE_MULTITHREAD)
 /*
- * Create an environment for the current thread.
+ * Create an environment for another thread.
+ *
+ * A detached env is reused if available. Must be called from a thread
+ * that is currently in-flight, which guarantees that no stop-the-world
+ * section is running and therefore that nobody is scanning env_list.
+ * The returned env is parked; the thread that adopts it must call
+ * rt_attach_thread_env() before running VM code.
  */
 bool
 rt_create_thread_env(
 	struct rt_env *prev_env,
 	struct rt_env **new_env)
 {
+	struct rt_vm *vm;
 	struct rt_env *env;
 
-	/* Allocate a struct rt_env. */
-	env = noct_malloc(sizeof(struct rt_env));
+	vm = prev_env->vm;
+
+	/* Try to reuse a detached env. */
+	atomic_spin_lock(&vm->env_free_lock);
+	env = vm->env_free_list;
+	if (env != NULL)
+		vm->env_free_list = env->free_next;
+	atomic_spin_unlock(&vm->env_free_lock);
+
 	if (env == NULL) {
-		rt_out_of_memory(prev_env);
-		return false;
+		/* Allocate a struct rt_env. */
+		env = noct_malloc(sizeof(struct rt_env));
+		if (env == NULL) {
+			rt_out_of_memory(prev_env);
+			return false;
+		}
+		memset(env, 0, sizeof(struct rt_env));
+		env->vm = vm;
+
+		/* Enter the initial stack frame. */
+		env->cur_frame_index = 0;
+		env->frame = &env->frame_alloc[0];
+		env->frame->tmpvar = &env->frame->tmpvar_alloc[0];
+		env->frame->tmpvar_size = RT_TMPVAR_MAX;
+
+		/*
+		 * Link.
+		 *
+		 * The caller is in-flight, so no stop-the-world section can
+		 * be running and no GC is scanning env_list. Other creators
+		 * are excluded by env_free_lock.
+		 */
+		atomic_spin_lock(&vm->env_free_lock);
+		env->next = vm->env_list;
+		vm->env_list = env;
+		atomic_spin_unlock(&vm->env_free_lock);
+	} else {
+		/* Reused env: reset the error state. */
+		env->file_name[0] = '\0';
+		env->error_message[0] = '\0';
+		env->free_next = NULL;
 	}
-	memset(env, 0, sizeof(struct rt_env));
-	env->vm = prev_env->vm;
 
-	/* Link. */
-	env->next = prev_env->vm->env_list;
-	prev_env->vm->env_list = env;
+	/* Succeeded. The env is parked until rt_attach_thread_env(). */
+	*new_env = env;
+	return true;
+}
 
-	/* Enter the initial stack frame. */
+/*
+ * Adopt an environment in the current thread.
+ *
+ * Makes the calling thread in-flight. Parks first if a stop-the-world
+ * section is in progress.
+ */
+void
+rt_attach_thread_env(
+	struct rt_env *env)
+{
+	om_init_env(env);
+}
+
+/*
+ * Release an environment that was created but never adopted.
+ *
+ * The env is already parked, so only the free-list bookkeeping is
+ * needed here.
+ */
+void
+rt_release_thread_env(
+	struct rt_env *env)
+{
+	struct rt_vm *vm;
+
+	vm = env->vm;
+
+	atomic_spin_lock(&vm->env_free_lock);
+	env->free_next = vm->env_free_list;
+	vm->env_free_list = env;
+	atomic_spin_unlock(&vm->env_free_lock);
+}
+
+/*
+ * Detach the environment of the current thread for later reuse.
+ *
+ * Must be called on the current thread's own env while the thread is
+ * in-flight and all VM frames have been popped. After this call, the
+ * env must not be used by the calling thread.
+ */
+void
+rt_detach_thread_env(
+	struct rt_env *env)
+{
+	struct rt_vm *vm;
+
+	vm = env->vm;
+
+	/*
+	 * Reset the stack so that this env contributes no stale GC roots.
+	 * The thread is in-flight here, so no GC can be scanning the
+	 * frames concurrently.
+	 */
 	env->cur_frame_index = 0;
 	env->frame = &env->frame_alloc[0];
 	env->frame->tmpvar = &env->frame->tmpvar_alloc[0];
 	env->frame->tmpvar_size = RT_TMPVAR_MAX;
+	env->frame->pinned_count = 0;
+	memset(env->frame->tmpvar_alloc, 0, sizeof(env->frame->tmpvar_alloc));
 
-	/* Succeeded. */
-	*new_env = env;
-	return true;
+	/* Park forever. The STW machinery no longer waits for this env. */
+	om_enter_blocking(env);
+
+	/* Chain to the free list. */
+	atomic_spin_lock(&vm->env_free_lock);
+	env->free_next = vm->env_free_list;
+	vm->env_free_list = env;
+	atomic_spin_unlock(&vm->env_free_lock);
 }
 #endif
 
@@ -715,9 +817,17 @@ rt_call(
 	if (!rt_enter_frame(env, func))
 		return false;
 
+	/*
+	 * Every exit below must pop the frame. Leaving it behind would
+	 * keep its slots alive as GC roots after the values they refer
+	 * to are gone, and would leave the frame index out of step with
+	 * the real call depth.
+	 */
+
 	/* Pass args. */
 	if (arg_count != func->param_count) {
 		noct_error(env, N_TR("%s(): Function arguments not match."), func->name);
+		rt_leave_frame(env);
 		return false;
 	}
 	for (i = 0; i < arg_count; i++)
@@ -726,8 +836,10 @@ rt_call(
 	/* Run. */
 	if (func->cfunc != NULL) {
 		/* Call an intrinsic or an FFI function implemented in C. */
-		if (!func->cfunc(env))
+		if (!func->cfunc(env)) {
+			rt_leave_frame(env);
 			return false;
+		}
 	} else {
 		/* Backup the old file name. */
 		strncpy(old_file_name, env->file_name, sizeof(old_file_name) - 1);
@@ -738,15 +850,17 @@ rt_call(
 		if (func->jit_code != NULL) {
 			/* Call a JIT-generated code. */
 			if (!func->jit_code(env)) {
-				/*printf("Returned from JIT code (false).\n");*/
+				strncpy(env->file_name, old_file_name, sizeof(env->file_name) - 1);
+				rt_leave_frame(env);
 				return false;
 			}
-			/*printf("Returned from JIT code (true).\n");*/
-			/*printf("%d: %d\n", env->frame->tmpvar[0].type, env->frame->tmpvar[0].val.i);*/
 		} else {
 			/* Call the bytecode interpreter. */
-			if (!rt_visit_bytecode(env, func))
+			if (!rt_visit_bytecode(env, func)) {
+				strncpy(env->file_name, old_file_name, sizeof(env->file_name) - 1);
+				rt_leave_frame(env);
 				return false;
+			}
 		}
 
 		/* Restore the old file name. */

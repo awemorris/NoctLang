@@ -76,6 +76,16 @@ int command_run(int argc, char *argv[])
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
+#if defined(NOCT_USE_MULTITHREAD)
+	if (!noct_register_api_thread(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+#endif
+	if (!noct_register_api_httpserver(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
 
 	/* Register native functions. */
 	if (!register_cli_cfunc(env)) {

@@ -638,6 +638,19 @@ Gets a tan(x) value.
 var y = tan(x);
 ```
 
+### Type.of(value)
+
+Gets the type of a value as a string. The result is one of `"int"`,
+`"long"`, `"float"`, `"double"`, `"string"`, `"array"`, `"dict"`,
+`"packed"` or `"func"`.
+
+```
+print(Type.of(1));         // int
+print(Type.of("s"));       // string
+print(Type.of([1, 2]));    // array
+print(Type.of({a: 1}));    // dict
+```
+
 ### Global.hasVariable(name)
 
 Checks whether a global variable exists.

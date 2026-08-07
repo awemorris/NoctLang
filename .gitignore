@@ -1,0 +1,8 @@
+# CMake build directories.
+build/
+build-*/
+out/
+
+# Test scratch output.
+tests/out
+tests/webapp/build/

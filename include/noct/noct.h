@@ -182,7 +182,12 @@ noct_destroy_vm(
 	NoctVM *vm);
 
 /*
- * Creates a thread-local environment (=context) for the current thread.
+ * Creates a thread-local environment (=context) for another thread.
+ *
+ * Must be called from a thread that is currently running VM code, i.e.
+ * from inside a native API function. The new environment is parked: the
+ * thread that will use it must call noct_attach_thread_env() first. A
+ * previously detached environment may be reused.
  */
 #if defined(NOCT_USE_MULTITHREAD)
 NOCT_DLL
@@ -190,7 +195,68 @@ bool
 noct_create_thread_env(
 	NoctEnv *prev_env,
 	NoctEnv **new_env);
+
+/*
+ * Adopts an environment in the current thread.
+ *
+ * After this call, the calling thread may run VM code with the given
+ * environment. If a garbage collection is in progress, this call waits
+ * for it to complete before returning.
+ */
+NOCT_DLL
+void
+noct_attach_thread_env(
+	NoctEnv *env);
+
+/*
+ * Releases an environment that was created but never adopted.
+ *
+ * Use this when thread creation fails after noct_create_thread_env()
+ * has already succeeded.
+ */
+NOCT_DLL
+void
+noct_release_thread_env(
+	NoctEnv *env);
+
+/*
+ * Detaches the current thread's environment for later reuse.
+ *
+ * Must be called on the calling thread's own environment after all VM
+ * calls have returned. The environment must not be used afterwards.
+ */
+NOCT_DLL
+void
+noct_detach_thread_env(
+	NoctEnv *env);
 #endif
+
+/*
+ * Enters a blocking native region.
+ *
+ * Call this before a potentially long blocking operation (e.g. waiting
+ * on a lock, joining a thread, or a blocking syscall) inside a native
+ * function. While inside the region, the calling thread is treated as
+ * stopped for the garbage collector, so it must not touch any NoctValue
+ * or call any other noct_*() function.
+ *
+ * In the single-threaded build, this is a no-op.
+ */
+NOCT_DLL
+void
+noct_enter_blocking(
+	NoctEnv *env);
+
+/*
+ * Leaves a blocking native region.
+ *
+ * If a garbage collection is in progress, this call waits for it to
+ * complete before returning.
+ */
+NOCT_DLL
+void
+noct_leave_blocking(
+	NoctEnv *env);
 
 /*
  * Registers functions from a source code text.
@@ -1920,6 +1986,20 @@ noct_register_api_console(
 NOCT_DLL
 bool
 noct_register_api_file(
+	NoctEnv *env);
+
+/* Register the "Thread.*" APIs. (Multithread build only) */
+#if defined(NOCT_USE_MULTITHREAD)
+NOCT_DLL
+bool
+noct_register_api_thread(
+	NoctEnv *env);
+#endif
+
+/* Register the "HttpServer.*" APIs. */
+NOCT_DLL
+bool
+noct_register_api_httpserver(
 	NoctEnv *env);
 
 /*

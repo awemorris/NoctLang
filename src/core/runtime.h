@@ -286,6 +286,11 @@ struct rt_env {
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/*
+	 * Detached env free list link.
+	 */
+	struct rt_env *free_next;
+
+	/*
 	 * Is this thread in-flight?
 	 */
 	bool is_in_flight;
@@ -361,6 +366,27 @@ struct rt_vm {
 	 * Lock for global variables.
 	 */
 	int global_var_counter;
+
+	/*
+	 * Detached thread env free list.
+	 *  - Envs stay linked in env_list forever; detached ones are
+	 *    additionally chained here (via free_next) for reuse.
+	 */
+	struct rt_env *env_free_list;
+
+	/*
+	 * Spin lock for env_free_list.
+	 */
+	int env_free_lock;
+
+	/*
+	 * Spin lock for the heap allocator and the GC object lists.
+	 *  - Guards the nursery arena, the tenure freelist, and the
+	 *    nursery/tenure/remember-set lists against concurrent
+	 *    mutator allocations.
+	 *  - Never held across a GC or a safepoint park.
+	 */
+	int heap_lock;
 #endif
 };
 
@@ -380,11 +406,26 @@ bool
 rt_destroy_vm(
 	struct rt_vm *vm);
 
-/* Create an environment for the current thread. */
+/* Create an environment for another thread. (Call while in-flight.) */
 bool
 rt_create_thread_env(
 	struct rt_env *prev_env,
 	struct rt_env **new_env);
+
+/* Adopt an environment in the current thread. */
+void
+rt_attach_thread_env(
+	struct rt_env *env);
+
+/* Release an environment that was created but never adopted. */
+void
+rt_release_thread_env(
+	struct rt_env *env);
+
+/* Detach the environment of the current thread for later reuse. */
+void
+rt_detach_thread_env(
+	struct rt_env *env);
 
 /*
  * Compilation

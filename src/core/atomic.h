@@ -70,6 +70,25 @@ static INLINE int atomic_fetch_sub_release_int(int *v, int sub)
 	return old;
 }
 
+static INLINE bool atomic_compare_exchange_ptr(void **pp, void **expected, void *desired)
+{
+	return __atomic_compare_exchange_n(pp, expected, desired, false,
+					   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+static INLINE void atomic_spin_lock(int *lock)
+{
+	while (__atomic_exchange_n(lock, 1, __ATOMIC_ACQUIRE) != 0) {
+		while (__atomic_load_n(lock, __ATOMIC_RELAXED) != 0)
+			;
+	}
+}
+
+static INLINE void atomic_spin_unlock(int *lock)
+{
+	__atomic_store_n(lock, 0, __ATOMIC_RELEASE);
+}
+
 static INLINE void cpu_relax(uint64_t *t)
 {
 	UNUSED_PARAMETER(t);
@@ -172,6 +191,29 @@ static INLINE int atomic_fetch_sub_acquire_int(int* v, int sub)
 static INLINE int atomic_fetch_sub_release_int(int* v, int sub)
 {
 	return _InterlockedExchangeAdd((volatile long*)v, -sub);
+}
+
+static INLINE bool atomic_compare_exchange_ptr(void** pp, void** expected, void* desired)
+{
+	void* old = _InterlockedCompareExchangePointer((void* volatile*)pp, desired, *expected);
+	if (old == *expected)
+		return true;
+	*expected = old;
+	return false;
+}
+
+static INLINE void atomic_spin_lock(int* lock)
+{
+	while (_InterlockedExchange((volatile long*)lock, 1) != 0) {
+		while (*(volatile int*)lock != 0)
+			;
+	}
+}
+
+static INLINE void atomic_spin_unlock(int* lock)
+{
+	_ReadWriteBarrier();
+	*(volatile int*)lock = 0;
 }
 
 static INLINE void cpu_relax(uint64_t* t)

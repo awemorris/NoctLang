@@ -819,6 +819,7 @@
 #include "gc.h"
 #include "atomic.h"
 
+#include <stdio.h>
 #include <assert.h>
 
 /* False Assertion */
@@ -1858,15 +1859,14 @@ expand_array(
 			 */
 			return true;
 		}
-
-		/*
-		 * We don't need a lock because the array is thread-local.
-		 */
-		goto do_expand;
 	}
 
 	/*
-	 * The array is shared. Try the array-level lock.
+	 * Take the array-level lock, even for a thread-local array: the
+	 * allocation below may park this thread at a safepoint, during
+	 * which another thread can promote the array to shared and then
+	 * write to it. Holding the lock across the whole expansion keeps
+	 * such writers out.
 	 */
 	if (!add_try_array_write_lock(env, arr)) {
 		/*
@@ -1876,16 +1876,12 @@ expand_array(
 		 */
 		return true;
 	}
-	
+
 	/*
 	 * Succesfully locked.
 	 */
 	locked = true;
 
-	/*
-	 * Do expand.
-	 */
-do_expand:
 	/*
 	 * Allocate the new array. Multiple GCs may occur in this call(). Each
 	 * GC is embraced by om_enter_gc() and om_leave_gc().
@@ -1895,6 +1891,10 @@ do_expand:
 		/*
 		 * Error: out-of-memory.
 		 */
+		if (locked) {
+			arr = follow_array_pointer(env, arr_val);
+			sub_array_write_unlock(env, arr);
+		}
 		return false;
 	}
 
@@ -1905,12 +1905,14 @@ do_expand:
 	arr = follow_array_pointer(env, arr_val);
 
 	/*
-	 * Do copy.
+	 * Do copy. The element count is preserved (bounded by the new
+	 * capacity); slots beyond it stay zero and are not scanned by
+	 * the GC.
 	 */
 	old_size = arr->size;
-	new_arr->size = size;
 	if (old_size >= size)
 		old_size = size;
+	new_arr->size = old_size;
 	for (i = 0; i < old_size; i++) {
 		/*
 		 * Copy an entry.
@@ -1986,15 +1988,14 @@ expand_dict(
 			 */
 			return true;
 		}
-
-		/*
-		 * We don't need a lock because the dictionary is thread-local.
-		 */
-		goto do_expand;
 	}
 
 	/*
-	 * The dictionary is shared. Try the dictionary-level lock.
+	 * Take the dictionary-level lock, even for a thread-local
+	 * dictionary: the allocation below may park this thread at a
+	 * safepoint, during which another thread can promote the
+	 * dictionary to shared and then write to it. Holding the lock
+	 * across the whole expansion keeps such writers out.
 	 */
 	if (!add_try_dict_write_lock(env, dict)) {
 		/*
@@ -2004,16 +2005,11 @@ expand_dict(
 		 */
 		return true;
 	}
-	
+
 	/*
 	 * Succesfully locked.
 	 */
 	locked = true;
-
-	/*
-	 * Do expand.
-	 */
-do_expand:
 	/*
 	 * Allocate the new dictionary. Multiple GCs may occur in this call(). Each
 	 * GC is embraced by om_enter_gc() and om_leave_gc().
@@ -2023,6 +2019,10 @@ do_expand:
 		/*
 		 * Error: out-of-memory.
 		 */
+		if (locked) {
+			dict = follow_dict_pointer(env, dict_val);
+			sub_dict_write_unlock(env, dict);
+		}
 		return false;
 	}
 
@@ -2077,6 +2077,13 @@ do_expand:
 		}
 	}
 	new_dict->size = dict->size;
+
+	/*
+	 * Carry over the native pointer: a handle dictionary must keep
+	 * its control block across an expansion.
+	 */
+	new_dict->native_pointer = dict->native_pointer;
+	new_dict->native_finalizer = dict->native_finalizer;
 
 	/*
 	 * If we used a write lock, make the new dict locked initially to
@@ -2394,6 +2401,12 @@ om_resize_array(
 	}
 
 	/*
+	 * Set the requested element count on the newest generation.
+	 */
+	arr = follow_array_pointer(env, arr_val);
+	arr->size = req_size;
+
+	/*
 	 * Succeeded to expand.
 	 */
 	return true;
@@ -2602,22 +2615,28 @@ om_check_dict_key(
 	bool *ret)
 {
 	struct rt_dict *dict;
-	size_t size, index, i;
+	size_t size, index, i, n;
 
 	/*
 	 * Start a dictionary read.
 	 */
+	/*
+	 * Make sure the key has a cached hash. (A string made by the C API
+	 * has a lazy, uncomputed hash.)
+	 */
+	rt_cache_string_hash(key->val.str);
+
 	dict = start_dict_read(env, dict_val);
 
 	size = dict->alloc_size;
 
 	/*
-	 * Search for the key.
+	 * Search for the key. Probe every slot at most once.
 	 */
-	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
-	for (i = index;
-	     i != ((index - 1 + size) & (size - 1));
-	     i = (i + 1) & ((uint32_t)size - 1)) {
+	index = key->val.str->hash & (uint32_t)(size - 1);
+	*ret = false;
+	i = index;
+	for (n = 0; n < size; n++, i = (i + 1) & ((uint32_t)size - 1)) {
 		int type;
 		struct rt_string *rts;
 
@@ -2647,7 +2666,6 @@ om_check_dict_key(
 			/*
 			 * Failed: Key not found.
 			 */
-			*ret = false;
 			break;
 		}
 
@@ -2670,7 +2688,7 @@ om_check_dict_key(
 		}
 	}
 
-	return ret;
+	return true;
 }
 
 /*
@@ -2683,6 +2701,9 @@ om_read_dict(
 	struct rt_value *key,
 	struct rt_value *val)
 {
+	/* Make sure the key has a cached hash. */
+	rt_cache_string_hash(key->val.str);
+
 	if (!om_read_dict_with_hash(env,
 				    dict_val,
 				    key->val.str->data,
@@ -2707,8 +2728,9 @@ om_read_dict_with_hash(
 	struct rt_value *val)
 {
 	struct rt_dict *dict;
-	size_t index, i;
+	size_t index, i, n;
 	int seq1, seq2;
+	bool found;
 
 	/*
 	 * Start a dictionary read.
@@ -2716,12 +2738,14 @@ om_read_dict_with_hash(
 	dict = start_dict_read(env, dict_val);
 
 	/*
-	 * Search for the key.
+	 * Search for the key. Probe every slot at most once.
 	 */
 	index = key_hash & (uint32_t)(dict->alloc_size - 1);
-	for (i = index;
-	     i != ((index - 1 + dict->alloc_size) & (dict->alloc_size - 1));
-	     i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
+	found = false;
+	i = index;
+	for (n = 0;
+	     n < dict->alloc_size;
+	     n++, i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
 		int type;
 		struct rt_string *rts;
 
@@ -2759,9 +2783,9 @@ om_read_dict_with_hash(
 		 */
 		if (type == NOCT_VALUE_INT) {
 			/*
-			 * Failed: Key not found.
+			 * Key not found.
 			 */
-			return false;
+			break;
 		}
 
 		/*
@@ -2778,6 +2802,7 @@ om_read_dict_with_hash(
 			/*
 			 * Found the key.
 			 */
+			found = true;
 
 			/*
 			 * Check whether the dictionary is shared or not.
@@ -2809,6 +2834,14 @@ om_read_dict_with_hash(
 		}
 	}
 
+	if (!found) {
+		/*
+		 * Failed: Key not found.
+		 */
+		rt_error(env, N_TR("Dictionary key \"%s\" not found."), key);
+		return false;
+	}
+
 	/*
 	 * Succeeded.
 	 */
@@ -2838,10 +2871,11 @@ om_read_dict_index(
 	/*
 	 * Check for the size.
 	 */
-	if (index >= dict->alloc_size) {
+	if (index >= dict->size) {
 		/*
 		 * Index is out-of-bound.
 		 */
+		rt_error(env, N_TR("Dictionary index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -2874,15 +2908,22 @@ om_read_dict_index(
 			int type;
 
 			/*
-			 * Skip if a removed or emtpty slot.
+			 * Skip if a removed or empty slot.
 			 */
-			type = atomic_load_acquire_int(&dict->key[index].type);
+			type = atomic_load_acquire_int(&dict->key[i].type);
 			if (type != NOCT_VALUE_STRING)
 				continue;
 
 			if (count++ == index) {
 				/*
-				 * Get the key string pointer at the second word.
+				 * Get the key. The string pointer is stable
+				 * once the type is published.
+				 */
+				key->type = NOCT_VALUE_STRING;
+				key->val.str = atomic_load_acquire_ptr((void **)&dict->key[i].val.str);
+
+				/*
+				 * Read the value with SeqLock.
 				 */
 				do {
 					seq1 = get_dict_seqlock(env, dict);
@@ -2920,11 +2961,15 @@ om_write_dict(
 {
 	struct rt_dict *dict;
 	size_t new_size;
-	size_t index, i;
+	size_t index, i, n;
 	bool is_insertion;
 	bool found_tombstone;
+	bool found_slot;
 	bool locked;
 	size_t first_tombstone_index;
+
+	/* Make sure the key has a cached hash. */
+	rt_cache_string_hash(key->val.str);
 
 retry:
 	/*
@@ -3009,13 +3054,16 @@ in_place_write_phase:
 	}
 
 	/*
-	 * Search an index for in-place write.
+	 * Search an index for in-place write. Probe every slot at most once.
 	 */
 	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
 	found_tombstone = false;
-	for (i = index;
-	     i != ((index - 1 + dict->alloc_size) & (dict->alloc_size - 1));
-	     i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
+	found_slot = false;
+	is_insertion = false;
+	i = index;
+	for (n = 0;
+	     n < dict->alloc_size;
+	     n++, i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
 		/*
 		 * Found a tombstone for a removed slot, skip for now with a
 		 * mark.
@@ -3029,14 +3077,14 @@ in_place_write_phase:
 		}
 
 		/*
-		 * Found an empty slot. Proceed to the expand phase if 75% of
-		 * the space is used.
+		 * Found an empty slot. Proceed to write.
 		 */
 		if (dict->key[i].type == NOCT_VALUE_INT) {
 			/*
 			 *  Proceed to write. (insertion)
 			 */
 			is_insertion = true;
+			found_slot = true;
 			break;
 		}
 
@@ -3050,12 +3098,31 @@ in_place_write_phase:
 			 * Proceed to write. (non-insertion)
 			 */
 			is_insertion = false;
+			found_slot = true;
 			break;
 		}
 	}
-	if (found_tombstone) {
+	if (found_slot && is_insertion && found_tombstone) {
+		/*
+		 * Insert into the first tombstone slot instead of the empty
+		 * slot. (An update of an existing key must not be redirected
+		 * to a tombstone; that would duplicate the key.)
+		 */
 		i = first_tombstone_index;
-		is_insertion = true;
+	} else if (!found_slot) {
+		if (found_tombstone) {
+			/*
+			 * No empty slot and no existing key, but a tombstone
+			 * is reusable for insertion.
+			 */
+			i = first_tombstone_index;
+			is_insertion = true;
+		} else {
+			/*
+			 * The table is completely full. Expand and retry.
+			 */
+			goto expand_phase;
+		}
 	}
 
 	/*
@@ -3141,6 +3208,16 @@ expand_phase:
 	new_size = dict->alloc_size * 2;
 
 	/*
+	 * Release our lock first: expand_dict() takes the dictionary
+	 * write lock itself, and it may also run a GC that moves the
+	 * dictionary, which would invalidate our raw pointer.
+	 */
+	if (locked) {
+		sub_dict_write_unlock(env, dict);
+		locked = false;
+	}
+
+	/*
 	 * Try expanding.
 	 */
 	if (!expand_dict(env, dict_val, dict, new_size)) {
@@ -3148,14 +3225,6 @@ expand_phase:
 		 * Out-of-memory error.
 		 */
 		return false;
-	}
-
-	/*
-	 * Unlock.
-	 */
-	if (locked) {
-		sub_dict_write_unlock(env, dict);
-		locked = false;
 	}
 
 	/*
@@ -3205,9 +3274,12 @@ om_erase_dict_entry(
 	struct rt_value *key)
 {
 	struct rt_dict *dict;
-	size_t index, i;
+	size_t index, i, n;
 	bool is_not_found;
 	bool locked;
+
+	/* Make sure the key has a cached hash. */
+	rt_cache_string_hash(key->val.str);
 
 retry:
 	/*
@@ -3267,18 +3339,26 @@ retry:
 	 */
 in_place_write_phase:
 	/*
-	 * Search an index for in-place write.
+	 * Search an index for in-place write. Probe every slot at most once.
 	 */
 	index = key->val.str->hash & (uint32_t)(dict->alloc_size - 1);
-	for (i = index;
-	     i != ((index - 1 + dict->alloc_size) & (dict->alloc_size - 1));
-	     i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
+	is_not_found = true;
+	i = index;
+	for (n = 0;
+	     n < dict->alloc_size;
+	     n++, i = (i + 1) & ((uint32_t)dict->alloc_size - 1)) {
 		/*
 		 * Found a tombstone for a removed slot, skip for now with a
 		 * mark.
 		 */
 		if (dict->key[i].type == NOCT_VALUE_FLOAT)
 			continue;
+
+		/*
+		 * Stop if an empty slot.
+		 */
+		if (dict->key[i].type == NOCT_VALUE_INT)
+			break;
 
 		/*
 		 * Found the same key. Proceed to write.
@@ -3318,6 +3398,7 @@ in_place_write_phase:
 		dict->key[i].val.f = 0.0f;
 		dict->value[i].type = NOCT_VALUE_INT;
 		dict->value[i].val.i = 0;
+		dict->size--;
 	} else {
 		/*
 		 * Shared.
@@ -3337,6 +3418,7 @@ in_place_write_phase:
 		 * marker.
 		 */
 		atomic_store_release_int(&dict->key[i].type, NOCT_VALUE_FLOAT);
+		dict->size--;
 
 		/*
 		 * Unlock.
@@ -3449,6 +3531,7 @@ om_merge_dict(
 	struct rt_dict *d, *s1, *s2;
 	size_t src1_size, src2_size, dst_size;
 	size_t i, j, k, index;
+	bool is_insert;
 
 	/*
 	 * Start a source dictionary read.
@@ -3464,10 +3547,17 @@ om_merge_dict(
 
 	/*
 	 * Determine the destination size;
+	 * All entries may be distinct, so reserve for src1_size + src2_size
+	 * entries and keep the load factor under 75%.
 	 */
 	dst_size = 1;
-	while (dst_size < src1_size || dst_size < src2_size)
+	while (dst_size - dst_size / 4 < src1_size + src2_size) {
+		if (dst_size > SIZE_MAX / 2) {
+			rt_out_of_memory(env);
+			return false;
+		}
 		dst_size *= 2;
+	}
 
 	/*
 	 * Make a dictionary.
@@ -3515,7 +3605,7 @@ om_merge_dict(
 		else
 			sn = s2;
 			
-		for (j = 0; j < s1->alloc_size; j++) {
+		for (j = 0; j < sn->alloc_size; j++) {
 			/*
 			 * Skip an empty or removed entry.
 			 */
@@ -3525,6 +3615,7 @@ om_merge_dict(
 			/*
 			 * In-place write.
 			 */
+			is_insert = true;
 			index = sn->key[j].val.str->hash & (uint32_t)(d->alloc_size - 1);
 			for (k = index;
 			     k != ((index - 1 + d->alloc_size) & (d->alloc_size - 1));
@@ -3540,16 +3631,20 @@ om_merge_dict(
 				 */
 				if (d->key[k].val.str->len == sn->key[j].val.str->len &&
 				    d->key[k].val.str->hash == sn->key[j].val.str->hash &&
-				    strcmp(d->key[k].val.str->data, sn->key[j].val.str->data) == 0)
+				    strcmp(d->key[k].val.str->data, sn->key[j].val.str->data) == 0) {
+					is_insert = false;
 					break;
+				}
 			}
 
 			/*
 			 * Copy an item.
 			 */
-			d->key[k] = sn->key[j];
 			d->value[k] = sn->value[j];
-			d->size++;
+			if (is_insert) {
+				d->key[k] = sn->key[j];
+				d->size++;
+			}
 
 			/*
 			 * Write barrier.
@@ -3617,6 +3712,12 @@ om_enter_gc(
 	}
 
 	/*
+	 * Remember the level so that a nested collection of the same or
+	 * a lower level is recognized as redundant.
+	 */
+	env->vm->gc_level = gc_level;
+
+	/*
 	 * Count-up for nesting.
 	 */
 	increment_gc_in_progress_count(env);
@@ -3643,6 +3744,12 @@ om_leave_gc(
 	 * Check if this call is the toplevel of the nesting.
 	 */
 	if (!check_if_nested_gc(env)) {
+		/*
+		 * Clear the level so the next collection is not mistaken
+		 * for a redundant nested one.
+		 */
+		env->vm->gc_level = 0;
+
 		/*
 		 * Demote from the STW-executor.
 		 */
@@ -3687,6 +3794,27 @@ om_safepoint(
  */
 void
 om_init_env(
+	struct rt_env *env)
+{
+	leave_safepoint(env);
+	synchronize_safepoints(env);
+}
+
+/*
+ * Enter a blocking native region.
+ */
+void
+om_enter_blocking(
+	struct rt_env *env)
+{
+	enter_safepoint(env);
+}
+
+/*
+ * Leave a blocking native region.
+ */
+void
+om_leave_blocking(
 	struct rt_env *env)
 {
 	leave_safepoint(env);

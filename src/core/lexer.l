@@ -26,6 +26,53 @@ char *ast_strdup(const char *s);
 void ast_free(void *p);
 
 extern YYLTYPE yylloc;
+
+/*
+ * Decode the escape sequences of a string literal in place.
+ *
+ * "s" holds the literal body without the surrounding quotes. The
+ * decoded text is never longer than the source, so decoding in place
+ * is safe. An unknown escape yields the escaped character itself.
+ */
+static void
+lexer_unescape(char *s)
+{
+	char *r, *w;
+
+	r = s;
+	w = s;
+	while (*r != '\0') {
+		if (*r != '\\') {
+			*w++ = *r++;
+			continue;
+		}
+
+		r++;
+		switch (*r) {
+		case '\0':
+			/* A trailing backslash. Keep it verbatim. */
+			*w++ = '\\';
+			continue;
+		case 'n':	*w++ = '\n'; r++; break;
+		case 'r':	*w++ = '\r'; r++; break;
+		case 't':	*w++ = '\t'; r++; break;
+		case 'b':	*w++ = '\b'; r++; break;
+		case 'f':	*w++ = '\f'; r++; break;
+		case 'v':	*w++ = '\v'; r++; break;
+		case 'a':	*w++ = '\a'; r++; break;
+		case '0':	*w++ = '\0'; r++; break;
+		case '\n':
+			/* A line continuation produces nothing. */
+			r++;
+			break;
+		default:
+			/* Covers \\ , \" and any other escaped character. */
+			*w++ = *r++;
+			break;
+		}
+	}
+	*w = '\0';
+}
 %}
 
 %option reentrant
@@ -95,6 +142,7 @@ extern YYLTYPE yylloc;
 ["]([^"\\\n]|\\(.|\n))*["] {
 			ast_yylval.sval = ast_strdup(yytext + 1);
 			ast_yylval.sval[yyleng - 2] = '\0';
+			lexer_unescape(ast_yylval.sval);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
