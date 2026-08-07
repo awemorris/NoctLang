@@ -86,6 +86,10 @@ int command_run(int argc, char *argv[])
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
+	if (!noct_register_api_term(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
 
 	/* Register native functions. */
 	if (!register_cli_cfunc(env)) {

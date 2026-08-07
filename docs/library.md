@@ -373,3 +373,60 @@ for (r in ready) {
 ### HttpServer.countPoller(poller)
 
 Returns the number of registered sockets.
+
+---
+
+## Term
+
+`Term.*` is a non-standard API: a full-screen terminal abstraction for
+console programs such as editors. The POSIX backend speaks ANSI/VT100
+directly with no curses dependency; other backends (Win32 console, DOS
+text mode) can replace it without changing callers. On platforms
+without a backend, `Term.open()` reports failure.
+
+### Session
+
+```
+Term.isTTY()                1 if stdin/stdout are a terminal
+Term.open()                 raw mode + alternate screen; 1 on success
+Term.close()                restore the terminal
+Term.size()                 -> {rows: n, cols: n}
+Term.resized()              1 if the window was resized since the last call
+```
+
+### Output
+
+Output is buffered; `Term.flush()` writes the whole frame in one
+write. Build a frame, then flush once.
+
+```
+Term.moveTo(row, col)       1-based
+Term.write(text)
+Term.clear()
+Term.clearToEol()
+Term.setStyle(style)        {fg: n, bg: n, bold: 0/1, reverse: 0/1,
+                             underline: 0/1}; n: -1=default or 0-255
+Term.showCursor(visible)
+Term.flush()
+```
+
+### Input
+
+```
+Term.readKey(timeoutMs)     -> key event int, or -1 on timeout
+Term.pendingInput()         -> 1 if input is waiting
+```
+
+A key event is an integer: the Unicode codepoint (or a special-key
+constant), OR-ed with modifier bits `Term.META`, `Term.CTRL` and
+`Term.SHIFT`. Special keys: `Term.KEY_UP`, `KEY_DOWN`, `KEY_RIGHT`,
+`KEY_LEFT`, `KEY_HOME`, `KEY_END`, `KEY_PGUP`, `KEY_PGDN`,
+`KEY_INSERT`, `KEY_DELETE`, `KEY_F1` (+n for Fn), `KEY_TAB`,
+`KEY_RET`, `KEY_ESC`, `KEY_BS`.
+
+```
+var key = Term.readKey(1000);
+if (key == (Term.CTRL | 0x71)) {   // C-q
+    Term.close();
+}
+```

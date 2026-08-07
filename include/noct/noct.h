@@ -2003,6 +2003,17 @@ noct_register_api_httpserver(
 	NoctEnv *env);
 
 /*
+ * Register the "Term.*" APIs. (non-standard API)
+ *
+ * A full-screen terminal abstraction. On platforms without a backend,
+ * registration succeeds but Term.open() reports failure.
+ */
+NOCT_DLL
+bool
+noct_register_api_term(
+	NoctEnv *env);
+
+/*
  * Custom Allocators
  *  - Override the macros and build a custom library.
  *  - We don't use indirect calls for allocation because it's slow on

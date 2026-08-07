@@ -56,6 +56,10 @@ static bool rt_intrin_Packed_size(NoctEnv *env);
 static bool rt_intrin_Packed_type(NoctEnv *env);
 static bool rt_intrin_Packed_copy(NoctEnv *env);
 static bool rt_intrin_Packed_fill(NoctEnv *env);
+static bool rt_intrin_Packed_toString(NoctEnv *env);
+static bool rt_intrin_Packed_fromString(NoctEnv *env);
+static bool rt_intrin_String_byteLength(NoctEnv *env);
+static bool rt_intrin_String_chr(NoctEnv *env);
 static size_t packed_elem_bytes(int type);
 static bool rt_intrin_Math_abs(NoctEnv *env);
 static bool rt_intrin_Math_sqrt(NoctEnv *env);
@@ -86,6 +90,8 @@ struct intrin_item {
 	{"String",	"charAt",	"String.charAt",	rt_intrin_String_charAt,	2, {"s", "index"}},
 	{"String",	"substring",	"String.substring",	rt_intrin_String_substring,	3, {"s", "start", "len"}},
 	{"String",	"indexOf",	"String.indexOf",	rt_intrin_String_indexOf,	2, {"s", "search"}},
+	{"String",	"byteLength",	"String.byteLength",	rt_intrin_String_byteLength,	1, {"s"}},
+	{"String",	"chr",		"String.chr",		rt_intrin_String_chr,		1, {"codepoint"}},
 	{"Array",	"make",		"Array.make",		rt_intrin_Array_make,		1, {"size"}},
 	{"Array",	"size",		"Array.size",		rt_intrin_Array_size,		1, {"arr"}},
 	{"Array",	"push",		"Array.push",		rt_intrin_Array_push,		2, {"arr", "val"}},
@@ -112,6 +118,8 @@ struct intrin_item {
 	{"Packed",	"type",		"Packed.type",		rt_intrin_Packed_type,		1, {"packed"}},
 	{"Packed",	"copy",		"Packed.copy",		rt_intrin_Packed_copy,		5, {"dst", "dstIndex", "src", "srcIndex", "count"}},
 	{"Packed",	"fill",		"Packed.fill",		rt_intrin_Packed_fill,		4, {"dst", "index", "count", "value"}},
+	{"Packed",	"toString",	"Packed.toString",	rt_intrin_Packed_toString,	3, {"src", "offset", "length"}},
+	{"Packed",	"fromString",	"Packed.fromString",	rt_intrin_Packed_fromString,	3, {"dst", "offset", "s"}},
 	{"Math",	"abs",		"Math.abs",		rt_intrin_Math_abs,		1, {"x"}},
 	{"Math",	"sqrt",		"Math.sqrt",		rt_intrin_Math_sqrt,		1, {"x"}},
 	{"Math",	"sin",		"Math.sin",		rt_intrin_Math_sin,		1, {"x"}},
@@ -1851,6 +1859,210 @@ rt_intrin_Packed_fill(
 		return false;
 
 	noct_unpin_local(env, 5, &dst, &index, &count, &value, &ret);
+
+	return true;
+}
+
+/*
+ * Packed.toString()
+ *
+ * Interprets "length" bytes of a uint8/int8 packed array, starting at
+ * "offset", as UTF-8 text and returns it as a string.
+ *
+ * Note: strings are NUL-terminated internally, so a NUL byte inside
+ * the range truncates the result.
+ */
+static bool
+rt_intrin_Packed_toString(
+	NoctEnv *env)
+{
+	NoctValue src, offset, length, ret;
+	size_t offset_n, length_n, size;
+	int type;
+	void *buf;
+	char *tmp;
+
+	memset(&src, 0, sizeof(src));
+	memset(&offset, 0, sizeof(offset));
+	memset(&length, 0, sizeof(length));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 4, &src, &offset, &length, &ret);
+
+	if (!noct_get_arg_check_packed(env, 0, &src, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &offset, &offset_n))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 2, &length, &length_n))
+		return false;
+
+	if (!noct_get_packed_type(env, &src, &type))
+		return false;
+	if (type != NOCT_PACKED_UINT8 && type != NOCT_PACKED_INT8) {
+		noct_error(env, N_TR("Packed element type must be a byte."));
+		return false;
+	}
+	if (!noct_get_packed_size(env, &src, &size))
+		return false;
+	if (offset_n > size || length_n > size - offset_n) {
+		noct_error(env, N_TR("Packed source range is out-of-bounds."));
+		return false;
+	}
+	if (!noct_get_packed_pointer(env, &src, &buf))
+		return false;
+
+	tmp = noct_malloc(length_n + 1);
+	if (tmp == NULL) {
+		noct_out_of_memory(env);
+		return false;
+	}
+	memcpy(tmp, (char *)buf + offset_n, length_n);
+	tmp[length_n] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, tmp)) {
+		noct_free(tmp);
+		return false;
+	}
+	noct_free(tmp);
+
+	noct_unpin_local(env, 4, &src, &offset, &length, &ret);
+
+	return true;
+}
+
+/*
+ * Packed.fromString()
+ *
+ * Writes the UTF-8 bytes of a string into a uint8/int8 packed array at
+ * "offset" and returns the number of bytes written.
+ */
+static bool
+rt_intrin_Packed_fromString(
+	NoctEnv *env)
+{
+	NoctValue dst, offset, str, ret;
+	size_t offset_n, size, len;
+	const char *str_s;
+	int type;
+	void *buf;
+
+	memset(&dst, 0, sizeof(dst));
+	memset(&offset, 0, sizeof(offset));
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 4, &dst, &offset, &str, &ret);
+
+	if (!noct_get_arg_check_packed(env, 0, &dst, NOCT_PACKED_ANY))
+		return false;
+	if (!noct_get_arg_check_int_long(env, 1, &offset, &offset_n))
+		return false;
+	if (!noct_get_arg_check_string(env, 2, &str, &str_s))
+		return false;
+
+	if (!noct_get_packed_type(env, &dst, &type))
+		return false;
+	if (type != NOCT_PACKED_UINT8 && type != NOCT_PACKED_INT8) {
+		noct_error(env, N_TR("Packed element type must be a byte."));
+		return false;
+	}
+	if (!noct_get_packed_size(env, &dst, &size))
+		return false;
+	len = strlen(str_s);
+	if (offset_n > size || len > size - offset_n) {
+		noct_error(env, N_TR("Packed destination range is out-of-bounds."));
+		return false;
+	}
+	if (!noct_get_packed_pointer(env, &dst, &buf))
+		return false;
+
+	memcpy((char *)buf + offset_n, str_s, len);
+
+	if (!noct_set_return_make_int_long(env, &ret, len))
+		return false;
+
+	noct_unpin_local(env, 4, &dst, &offset, &str, &ret);
+
+	return true;
+}
+
+/*
+ * String.byteLength()
+ *
+ * Returns the UTF-8 byte length of a string, excluding the NUL.
+ */
+static bool
+rt_intrin_String_byteLength(
+	NoctEnv *env)
+{
+	NoctValue str, ret;
+	const char *str_s;
+
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &str, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+
+	if (!noct_set_return_make_int_long(env, &ret, strlen(str_s)))
+		return false;
+
+	noct_unpin_local(env, 2, &str, &ret);
+
+	return true;
+}
+
+/*
+ * String.chr()
+ *
+ * Returns a one-character string for a Unicode codepoint.
+ */
+static bool
+rt_intrin_String_chr(
+	NoctEnv *env)
+{
+	NoctValue cp_v, ret;
+	size_t cp_n;
+	int64_t cp;
+	char tmp[8];
+	size_t len;
+
+	memset(&cp_v, 0, sizeof(cp_v));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &cp_v, &ret);
+
+	if (!noct_get_arg_check_int_long(env, 0, &cp_v, &cp_n))
+		return false;
+	cp = (int64_t)cp_n;
+	if (cp <= 0 || cp > 0x10FFFF) {
+		noct_error(env, N_TR("Invalid codepoint."));
+		return false;
+	}
+
+	if (cp < 0x80) {
+		tmp[0] = (char)cp;
+		len = 1;
+	} else if (cp < 0x800) {
+		tmp[0] = (char)(0xC0 | (cp >> 6));
+		tmp[1] = (char)(0x80 | (cp & 0x3F));
+		len = 2;
+	} else if (cp < 0x10000) {
+		tmp[0] = (char)(0xE0 | (cp >> 12));
+		tmp[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+		tmp[2] = (char)(0x80 | (cp & 0x3F));
+		len = 3;
+	} else {
+		tmp[0] = (char)(0xF0 | (cp >> 18));
+		tmp[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+		tmp[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+		tmp[3] = (char)(0x80 | (cp & 0x3F));
+		len = 4;
+	}
+	tmp[len] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, tmp))
+		return false;
+
+	noct_unpin_local(env, 2, &cp_v, &ret);
 
 	return true;
 }
