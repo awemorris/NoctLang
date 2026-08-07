@@ -788,7 +788,10 @@ decode_event(
 		/* NUL is C-SPC (typed as Ctrl+Space or Ctrl+@). */
 		if (c0 == 0x00)
 			return MOD_CTRL | 0x20;
-		return MOD_CTRL | (c0 + 0x60);
+		/* 0x01..0x1A are C-a..C-z; 0x1B..0x1F are C-[ .. C-_. */
+		if (c0 <= 0x1A)
+			return MOD_CTRL | (c0 + 0x60);
+		return MOD_CTRL | (c0 + 0x40);
 	}
 	if (c0 == 0x7F) {
 		in_consume(1);
