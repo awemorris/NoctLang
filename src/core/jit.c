@@ -57,6 +57,8 @@
 #elif defined(NOCT_TARGET_DOS4G)
 #include <dos.h>
 #include <i86.h>
+#elif defined(NOCT_TARGET_PC98BE)
+/* Freestanding: allocation and cache/protection policy are supplied below. */
 #else
 #include <sys/mman.h>		/* mmap(), mprotect(), munmap() */
 #endif
@@ -82,7 +84,7 @@ jit_map_memory_region(
 	/* Use PROT_MPROTECT() to avoid W^X. */
 	*region = mmap(NULL, size, PROT_READ | PROT_WRITE | PROT_MPROTECT(PROT_READ | PROT_EXEC), MAP_ANON | MAP_PRIVATE, -1, 0);
 #elif defined(NOCT_TARGET_DOS4G)
-	*region = malloc(size);
+	*region = noct_malloc(size);
 	{
 		union REGS regs;
 		unsigned short current_cs = 0;
@@ -97,6 +99,9 @@ jit_map_memory_region(
 			return false;
 		}
 	}
+#elif defined(NOCT_TARGET_PC98BE)
+	/* The i386 bootstrap environment has one flat executable address space. */
+	*region = noct_malloc(size);
 #else
 	/* Assume no W^X. */
 	*region = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -121,6 +126,9 @@ jit_unmap_memory_region(
 	VirtualFree(region, size, MEM_RELEASE);
 #elif defined(NOCT_TARGET_DOS4G)
 	/* Do nothing. */
+#elif defined(NOCT_TARGET_PC98BE)
+	UNUSED_PARAMETER(size);
+	noct_free(region);
 #else
 	munmap(region, size);
 #endif
@@ -137,8 +145,9 @@ jit_map_writable(
 #if defined(_WIN32)
 	DWORD dwOldProt;
 	VirtualProtect(region, size, PAGE_READWRITE, &dwOldProt);
-#elif defined(NOCT_TARGET_DOS4G)
-	/* Do nothing. */
+#elif defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
+	UNUSED_PARAMETER(region);
+	UNUSED_PARAMETER(size);
 #else
 	mprotect(region, size, PROT_READ | PROT_WRITE);
 #endif
@@ -156,8 +165,9 @@ jit_map_executable(
 	DWORD dwOldProt;
 	VirtualProtect(region, size, PAGE_EXECUTE_READ, &dwOldProt);
 	FlushInstructionCache(GetCurrentProcess(), region, size);
-#elif defined(NOCT_TARGET_DOS4G)
-	/* Do nothing. */
+#elif defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
+	UNUSED_PARAMETER(region);
+	UNUSED_PARAMETER(size);
 #else
 	mprotect(region, size, PROT_EXEC | PROT_READ);
 	__builtin___clear_cache((char *)region, (char *)region + size);

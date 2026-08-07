@@ -317,14 +317,14 @@ rt_register_lir(
 	}
 	memset(func, 0, sizeof(struct rt_func));
 
-	func->name = strdup(lir->func_name);
+	func->name = noct_strdup(lir->func_name);
 	if (func->name == NULL) {
 		rt_out_of_memory(env);
 		return false;
 	}
 	func->param_count = lir->param_count;
 	for (i = 0; i < lir->param_count; i++) {
-		func->param_name[i] = strdup(lir->param_name[i]);
+		func->param_name[i] = noct_strdup(lir->param_name[i]);
 		if (func->param_name[i] == NULL) {
 			rt_out_of_memory(env);
 			return false;
@@ -340,7 +340,7 @@ rt_register_lir(
 		memcpy(func->bytecode, lir->bytecode, (size_t)lir->bytecode_size);
 	}
 	func->tmpvar_size = lir->tmpvar_size;
-	func->file_name = strdup(lir->file_name);
+	func->file_name = noct_strdup(lir->file_name);
 	if (func->file_name == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -405,7 +405,7 @@ rt_register_bytecode(
 		line = rt_read_bytecode_line(data, size, &pos);
 		if (line == NULL)
 			break;
-		file_name = strdup(line);
+		file_name = noct_strdup(line);
 		if (file_name == NULL)
 			break;
 
@@ -473,7 +473,7 @@ rt_register_bytecode_function(
 		line = rt_read_bytecode_line(data, size, pos);
 		if (line == NULL)
 			break;
-		lfunc.func_name = strdup(line);
+		lfunc.func_name = noct_strdup(line);
 		if (lfunc.func_name == NULL)
 			break;
 
@@ -493,7 +493,7 @@ rt_register_bytecode_function(
 			line = rt_read_bytecode_line(data, size, pos);
 			if (line == NULL)
 				break;
-			lfunc.param_name[i] = strdup(line);
+			lfunc.param_name[i] = noct_strdup(line);
 			if (lfunc.param_name[i] == NULL)
 				break;
 		}
@@ -600,14 +600,14 @@ rt_register_cfunc(
 	}
 	memset(func, 0, sizeof(struct rt_func));
 
-	func->name = strdup(name);
+	func->name = noct_strdup(name);
 	if (func->name == NULL) {
 		rt_out_of_memory(env);
 		return false;
 	}
 	func->param_count = param_count;
 	for (i = 0; i < param_count; i++) {
-		func->param_name[i] = strdup(param_name[i]);
+		func->param_name[i] = noct_strdup(param_name[i]);
 		if (func->param_name[i] == NULL) {
 			rt_out_of_memory(env);
 			return false;
@@ -1883,11 +1883,11 @@ rt_cleanup_global(
 
 	for (i = 0; i < env->vm->global_alloc_size; i++) {
 		if (env->vm->global[i].name != NULL) {
-			free(env->vm->global[i].name);
+			noct_free(env->vm->global[i].name);
 			env->vm->global[i].name = NULL;
 		}
 	}
-	free(env->vm->global);
+	noct_free(env->vm->global);
 	env->vm->global = NULL;
 }
 
@@ -2047,7 +2047,7 @@ rt_set_global_with_hash(
 		if (env->vm->global[i].is_removed ||
 		    env->vm->global[i].name == NULL) {
 			/* Insert a new entry. */
-			env->vm->global[i].name = strdup(name);
+			env->vm->global[i].name = noct_strdup(name);
 			if (env->vm->global[i].name == NULL) {
 				RELEASE_GLOBAL();
 				rt_out_of_memory(env);
@@ -2116,7 +2116,7 @@ rt_expand_global(
 		}
 	}
 
-	free(old_tbl);
+	noct_free(old_tbl);
 	env->vm->global = new_tbl;
 	env->vm->global_alloc_size = new_size;
 

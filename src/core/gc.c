@@ -1272,7 +1272,7 @@ rt_gc_young_gc_body(
 	 */
 
 	if (finalize_size > 0) {
-		finalize_table = malloc(sizeof(struct finalize_table) * finalize_size);
+		finalize_table = noct_malloc(sizeof(struct finalize_table) * finalize_size);
 		if (finalize_table == NULL)
 			return;
 
@@ -1320,6 +1320,7 @@ rt_gc_young_gc_body(
 
 	for (i = 0; i < finalize_count; i++)
 		finalize_table[i].native_finalizer(finalize_table[i].native_pointer);
+	noct_free(finalize_table);
 }
 
 /* Marks-and-copies objects recursively. */

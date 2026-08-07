@@ -245,7 +245,7 @@ cfunc_System_runCommand(
 			}
 
 			/* Parse the command line arguments. TODO: support quotation */
-			cmd_copy = strdup(command);
+			cmd_copy = noct_strdup(command);
 			i = 0;
 			token = strtok(cmd_copy, " ");
 			while (token != NULL && i < 63) {
@@ -258,7 +258,7 @@ cfunc_System_runCommand(
 			execvp(argv[0], argv);
 
 			printf("execvp() failed for %s.\n", argv[0]);
-			free(cmd_copy);
+			noct_free(cmd_copy);
 			return EXIT_FAILURE;
 		} else {
 			if (wait_for_finish)
@@ -385,7 +385,7 @@ static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_
 	fseek(fp, 0, SEEK_SET);
 
 	/* Allocate a buffer. */
-	*data = malloc(*size + 1);
+	*data = noct_malloc(*size + 1);
 	if (*data == NULL) {
 		noct_out_of_memory(env);
 		return false;

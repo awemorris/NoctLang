@@ -1929,12 +1929,52 @@ noct_register_api_file(
  *    Linux due to Spectre mitigation.
  */
 
+/*
+ * [For PC-98 BE]
+ * The PC-98 Bootstrap Environment supplies these functions from its
+ * freestanding C runtime.  Keeping the declarations here lets the
+ * selected Noct core compile without pretending that the target is
+ * DOS or POSIX.
+ */
+#if defined(NOCT_TARGET_PC98BE)
+void *noct_pc98be_malloc(size_t size);
+void *noct_pc98be_calloc(size_t nmemb, size_t size);
+void *noct_pc98be_realloc(void *ptr, size_t size);
+char *noct_pc98be_strdup(const char *s);
+void noct_pc98be_free(void *ptr);
+
+#ifndef noct_malloc
+#define noct_malloc	noct_pc98be_malloc
+#endif
+#ifndef noct_calloc
+#define noct_calloc	noct_pc98be_calloc
+#endif
+#ifndef noct_realloc
+#define noct_realloc	noct_pc98be_realloc
+#endif
+#ifndef noct_strdup
+#define noct_strdup	noct_pc98be_strdup
+#endif
+#ifndef noct_free
+#define noct_free	noct_pc98be_free
+#endif
+
+#endif /* defined(NOCT_TARGET_PC98BE) */
+
+/*
+ * Default allocators.
+ */
+
 #ifndef noct_malloc
 #define noct_malloc	malloc
 #endif
 
 #ifndef noct_calloc
 #define noct_calloc	calloc
+#endif
+
+#ifndef noct_realloc
+#define noct_realloc	realloc
 #endif
 
 #ifndef noct_strdup

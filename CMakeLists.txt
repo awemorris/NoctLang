@@ -17,6 +17,9 @@ option(NOCT_ENABLE_MULTITHREAD  "Enable multithread support"       OFF)
 option(NOCT_ENABLE_I18N         "Enable translation (built-in)"    OFF)
 option(NOCT_ENABLE_I18N_LIBINTL "Enable translation (gettext)"     OFF)
 option(NOCT_ENABLE_API          "Enable standard API"              OFF)
+option(NOCT_ENABLE_API_SYSTEM   "Enable the System standard API"   ON)
+option(NOCT_ENABLE_API_CONSOLE  "Enable the Console standard API"  ON)
+option(NOCT_ENABLE_API_FILE     "Enable the File standard API"     ON)
 option(NOCT_ENABLE_INSTALL      "Enable installation"              OFF)
 option(NOCT_ENABLE_BCBACKEND    "Enable bytecode backend"          OFF)
 option(NOCT_ENABLE_CBACKEND     "Enable C backend"                 OFF)
@@ -33,6 +36,11 @@ option(NOCT_TARGET_UNITY        "Build for Unity"                  OFF)
 option(NOCT_TARGET_OPENHARMONY  "Build for OpenHarmony"            OFF)
 option(NOCT_TARGET_MACOS7       "Build for MacOS 7"                OFF)
 option(NOCT_TARGET_DOS4G        "Build for DOS4G"                  OFF)
+option(NOCT_TARGET_PC98BE       "Build for PC-98 Bootstrap Environment" OFF)
+
+if(NOCT_TARGET_PC98BE AND NOCT_ENABLE_MULTITHREAD)
+  message(FATAL_ERROR "NOCT_TARGET_PC98BE currently supports only the single-threaded object model")
+endif()
 
 # ---
 
@@ -243,16 +251,27 @@ if(NOCT_ENABLE_SHARED)
   )
 endif()
 
+# Determine the optional standard API files.
+set(NOCT_API_SOURCE)
+if(NOCT_ENABLE_API_SYSTEM)
+  list(APPEND NOCT_API_SOURCE src/api/api-system.c)
+endif()
+if(NOCT_ENABLE_API_CONSOLE)
+  list(APPEND NOCT_API_SOURCE src/api/api-console.c)
+endif()
+if(NOCT_ENABLE_API_FILE)
+  list(APPEND NOCT_API_SOURCE src/api/api-file.c)
+endif()
+
 # Add the target "libnoctapi", the standard library.
 if(NOCT_ENABLE_API)
+  if(NOT NOCT_API_SOURCE)
+    message(FATAL_ERROR "NOCT_ENABLE_API requires at least one NOCT_ENABLE_API_* component")
+  endif()
   add_library(
     noctapi
     ${NOCT_LIB_TYPE}
-
-    # Optional libraries here.
-    src/api/api-system.c
-    src/api/api-console.c
-    src/api/api-file.c
+    ${NOCT_API_SOURCE}
   )
   if(NOCT_ENABLE_SHARED)
     set_target_properties(noctapi PROPERTIES 
@@ -341,6 +360,11 @@ endif()
 # DOS4G Target
 if(NOCT_TARGET_DOS4G)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_DOS4G NOCT_MEMORY_SMALL)
+endif()
+
+# PC-98 Bootstrap Environment Target
+if(NOCT_TARGET_PC98BE)
+  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_PC98BE NOCT_MEMORY_SMALL)
 endif()
 
 # _CRT_SECURE_NO_WARNINGS

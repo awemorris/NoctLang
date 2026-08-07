@@ -662,6 +662,29 @@
                 "NOCT_ENABLE_SCMBACKEND": "OFF",
                 "NOCT_ENABLE_REPL":       "ON"
             }
+        },
+        {
+            "name":           "pc98be-i386",
+            "displayName":    "PC-98 Bootstrap Environment i386 objects",
+            "generator":      "Ninja",
+            "binaryDir":      "${sourceDir}/build-pc98be-i386",
+            "toolchainFile":  "${sourceDir}/cmake/toolchains/pc98be-i386.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE":         "Release",
+                "NOCT_TARGET_PC98BE":       "ON",
+                "NOCT_ENABLE_OBJECT":       "ON",
+                "NOCT_ENABLE_CLI":          "OFF",
+                "NOCT_ENABLE_JIT":          "ON",
+                "NOCT_ENABLE_MULTITHREAD":  "OFF",
+                "NOCT_ENABLE_I18N":         "OFF",
+                "NOCT_ENABLE_API":          "OFF",
+                "NOCT_ENABLE_INSTALL":      "OFF",
+                "NOCT_ENABLE_BCBACKEND":    "OFF",
+                "NOCT_ENABLE_CBACKEND":     "OFF",
+                "NOCT_ENABLE_ELBACKEND":    "OFF",
+                "NOCT_ENABLE_SCMBACKEND":   "OFF",
+                "NOCT_ENABLE_REPL":         "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -789,6 +812,10 @@
         {
             "name": "msdos",
             "configurePreset": "msdos"
+        },
+        {
+            "name": "pc98be-i386",
+            "configurePreset": "pc98be-i386"
         }
     ]
 }

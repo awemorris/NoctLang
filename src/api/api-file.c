@@ -296,24 +296,24 @@ cfunc_File_read(
 		return false;
 
 	/* Read. */
-	buf = malloc(len_n);
+	buf = noct_malloc(len_n);
 	if (buf == NULL) {
 		noct_error(env, N_TR("Out of memory."));
 		return false;
 	}
 	if (fread(buf, len_n, 1, fp) != 1) {
-		free(buf);
+		noct_free(buf);
 		noct_error(env, N_TR("File read error."));
 		return false;
 	}
 
 	/* Make a return value. */
 	if (!noct_make_packed(env, &ret, NOCT_PACKED_UINT8, len_n, len_n, buf)) {
-		free(buf);
+		noct_free(buf);
 		return false;
 	}
 	if (!noct_set_return(env, &ret)) {
-		free(buf);
+		noct_free(buf);
 		return false;
 	}
 
@@ -472,7 +472,7 @@ cfunc_FileUtil_readText(
 	fseek(fp, 0, SEEK_SET);
 
 	/* Allocate a buffer. */
-	data = malloc(size + 1);
+	data = noct_malloc(size + 1);
 	if (data == NULL) {
 		noct_error(env, N_TR("Out of memory.\n"));
 		return false;
@@ -491,10 +491,10 @@ cfunc_FileUtil_readText(
 	
 	/* Make a return value. */
 	if (!noct_set_return_make_string(env, &ret, data)) {
-		free(data);
+		noct_free(data);
 		return false;
 	}
-	free(data);
+	noct_free(data);
 
 	noct_unpin_local(env, 2, &file, &ret);
 

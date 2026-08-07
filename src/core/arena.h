@@ -49,7 +49,7 @@ static INLINE void
 arena_cleanup(
 	struct arena_info *arena)
 {
-	free(arena->top);
+	noct_free(arena->top);
 }
 
 /*

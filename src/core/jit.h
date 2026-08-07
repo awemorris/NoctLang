@@ -79,7 +79,9 @@ jit_free(
 #define BROKEN_BYTECODE		N_TR("Broken bytecode.")
 
 /* Code size. */
-#if !defined(NOCT_TARGET_DOS4G)
+#if defined(NOCT_JIT_CODE_MAX)
+#define JIT_CODE_MAX		NOCT_JIT_CODE_MAX
+#elif !defined(NOCT_TARGET_DOS4G) && !defined(NOCT_TARGET_PC98BE)
 #define JIT_CODE_MAX		(16 * 1024 * 1024)
 #else
 #define JIT_CODE_MAX		(1 * 1024 * 1024)

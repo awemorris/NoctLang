@@ -163,13 +163,13 @@ lir_build(
 
 	/* Initialize the bytecode buffer. */
 	if (bytecode != NULL) {
-		free(bytecode);
+		noct_free(bytecode);
 		bytecode = NULL;
 	}
 	bytecode = noct_calloc(BYTECODE_BUF_SIZE, 1);
 	if (bytecode == NULL) {
 		lir_out_of_memory();
-		free(bytecode);
+		noct_free(bytecode);
 		bytecode = NULL;
 		return false;
 	}
@@ -240,7 +240,7 @@ lir_build(
 		(*lir_func)->bytecode = NULL;
 	}
 	(*lir_func)->bytecode_size = bytecode_top;
-	free(bytecode);
+	noct_free(bytecode);
 	bytecode = NULL;
 
 	/* Copy the file name. */
