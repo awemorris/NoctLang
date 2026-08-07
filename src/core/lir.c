@@ -1615,6 +1615,7 @@ lir_visit_array_expr(
 	struct hir_block *block)
 {
 	size_t elem_count, i;
+	int build_tmpvar;
 	int elem_tmpvar;
 	int index_tmpvar;
 
@@ -1623,11 +1624,15 @@ lir_visit_array_expr(
 	assert(expr->val.array.elem_count > 0);
 
 	elem_count = expr->val.array.elem_count;
-	
+
+	/* Build in a scratch tmpvar; see lir_visit_dict_expr. */
+	if (!lir_increment_tmpvar(&build_tmpvar))
+		return false;
+
 	/* Create an array. */
 	if (!lir_put_opcode(OP_ACONST))
 		return false;
-	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 		return false;
 
 	/* Push the elements. */
@@ -1649,7 +1654,7 @@ lir_visit_array_expr(
 			return false;
 		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
-		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)index_tmpvar))
 			return false;
@@ -1657,8 +1662,17 @@ lir_visit_array_expr(
 			return false;
 	}
 
+	/* Move the finished array into dst. */
+	if (!lir_put_opcode(OP_ASSIGN))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
+		return false;
+
 	lir_decrement_tmpvar(index_tmpvar);
 	lir_decrement_tmpvar(elem_tmpvar);
+	lir_decrement_tmpvar(build_tmpvar);
 
 	return true;
 }
@@ -1670,6 +1684,7 @@ lir_visit_dict_expr(
 	struct hir_block *block)
 {
 	size_t kv_count, i;
+	int build_tmpvar;
 	int key_tmpvar;
 	int value_tmpvar;
 	int index_tmpvar;
@@ -1678,11 +1693,18 @@ lir_visit_dict_expr(
 	assert(expr->type == HIR_EXPR_DICT);
 
 	kv_count = expr->val.dict.kv_count;
-	
-	/* Create a dictionary. */
+
+	/*
+	 * Build the dictionary in a scratch tmpvar, not in dst: dst may
+	 * alias a slot the value expressions still read (the $return
+	 * slot is parameter 0's slot, so "return {k: param};" would
+	 * otherwise store the dictionary into itself).
+	 */
+	if (!lir_increment_tmpvar(&build_tmpvar))
+		return false;
 	if (!lir_put_opcode(OP_DCONST))
 		return false;
-	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 		return false;
 
 	/* Push the elements. */
@@ -1706,7 +1728,7 @@ lir_visit_dict_expr(
 			return false;
 		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
-		if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		if (!lir_put_tmpvar((uint16_t)build_tmpvar))
 			return false;
 		if (!lir_put_tmpvar((uint16_t)key_tmpvar))
 			return false;
@@ -1714,9 +1736,18 @@ lir_visit_dict_expr(
 			return false;
 	}
 
+	/* Move the finished dictionary into dst. */
+	if (!lir_put_opcode(OP_ASSIGN))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
+		return false;
+
 	lir_decrement_tmpvar(index_tmpvar);
 	lir_decrement_tmpvar(value_tmpvar);
 	lir_decrement_tmpvar(key_tmpvar);
+	lir_decrement_tmpvar(build_tmpvar);
 
 	return true;
 }
