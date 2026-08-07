@@ -1183,6 +1183,8 @@ scmback_visit_expr(
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
 	case HIR_EXPR_OR:
+	case HIR_EXPR_LAND:
+	case HIR_EXPR_LOR:
 	case HIR_EXPR_XOR:
 	case HIR_EXPR_SUBSCR:
 		/* For the binary operators. */
@@ -1319,9 +1321,15 @@ scmback_visit_binary_expr(
 		PUT("(modulo ");
 		break;
 	case HIR_EXPR_AND:
-		PUT("(noct-and ");
+		PUT("(logand ");
 		break;
 	case HIR_EXPR_OR:
+		PUT("(logior ");
+		break;
+	case HIR_EXPR_LAND:
+		PUT("(noct-and ");
+		break;
+	case HIR_EXPR_LOR:
 		PUT("(noct-or ");
 		break;
 	case HIR_EXPR_XOR:

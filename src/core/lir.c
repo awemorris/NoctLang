@@ -107,6 +107,7 @@ static bool lir_check_lhs_local(struct hir_block *block, struct hir_expr *lhs, i
 static bool lir_visit_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_binary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
+static bool lir_visit_logical_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_dot_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_call_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_thiscall_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
@@ -1175,6 +1176,12 @@ lir_visit_expr(
 		if (!lir_visit_binary_expr(dst_tmpvar, expr, block))
 			return false;
 		break;
+	case HIR_EXPR_LAND:
+	case HIR_EXPR_LOR:
+		/* For the short-circuiting logical operators. */
+		if (!lir_visit_logical_expr(dst_tmpvar, expr, block))
+			return false;
+		break;
 	case HIR_EXPR_DOT:
 		/* For the dot operator. */
 		if (!lir_visit_dot_expr(dst_tmpvar, expr, block))
@@ -1255,6 +1262,109 @@ lir_visit_unary_expr(
 	}
 
 	lir_decrement_tmpvar(opr_tmpvar);
+
+	return true;
+}
+
+/*
+ * Lower a short-circuiting logical operator (&& or ||).
+ *
+ * The result is a boolean 1 or 0, and the second operand is evaluated
+ * only when the first has not already decided the result. Jump targets
+ * inside the expression are backpatched here, because the block-level
+ * patch table only handles jumps to whole HIR blocks.
+ *
+ *   &&:  eval a; if false -> Lzero
+ *        eval b; if false -> Lzero
+ *        dst = 1; jmp Lend
+ *   Lzero: dst = 0
+ *   Lend:
+ *
+ *   ||:  eval a; if true -> Lone
+ *        eval b; if true -> Lone
+ *        dst = 0; jmp Lend
+ *   Lone: dst = 1
+ *   Lend:
+ */
+static void
+lir_patch_u32(uint32_t at, uint32_t value)
+{
+	bytecode[at]     = (uint8_t)((value >> 24) & 0xff);
+	bytecode[at + 1] = (uint8_t)((value >> 16) & 0xff);
+	bytecode[at + 2] = (uint8_t)((value >> 8) & 0xff);
+	bytecode[at + 3] = (uint8_t)(value & 0xff);
+}
+
+static bool
+lir_visit_logical_expr(
+	int dst_tmpvar,
+	struct hir_expr *expr,
+	struct hir_block *block)
+{
+	int cond_tmpvar;
+	bool is_and;
+	uint8_t short_op;
+	uint32_t patch0, patch1, patch_skip, decided_addr, end_addr;
+
+	is_and = (expr->type == HIR_EXPR_LAND);
+	/* && short-circuits on a false operand, || on a true one. */
+	short_op = is_and ? OP_JMPIFFALSE : OP_JMPIFTRUE;
+
+	if (!lir_increment_tmpvar(&cond_tmpvar))
+		return false;
+
+	/* Operand 0. */
+	if (!lir_visit_expr(cond_tmpvar, expr->val.binary.expr[0], block))
+		return false;
+	if (!lir_put_opcode(short_op))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)cond_tmpvar))
+		return false;
+	patch0 = bytecode_top;
+	if (!lir_put_u32(0))
+		return false;
+
+	/* Operand 1. */
+	if (!lir_visit_expr(cond_tmpvar, expr->val.binary.expr[1], block))
+		return false;
+	if (!lir_put_opcode(short_op))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)cond_tmpvar))
+		return false;
+	patch1 = bytecode_top;
+	if (!lir_put_u32(0))
+		return false;
+
+	/* Neither operand triggered the short circuit: the "not decided"
+	 * result (0 for &&, 1 for ||). */
+	if (!lir_put_opcode(OP_ICONST))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_imm32(is_and ? 1u : 0u))
+		return false;
+	if (!lir_put_opcode(OP_JMP))
+		return false;
+	patch_skip = bytecode_top;
+	if (!lir_put_u32(0))
+		return false;
+
+	/* The short-circuit target: the decided result. */
+	decided_addr = bytecode_top;
+	if (!lir_put_opcode(OP_ICONST))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_imm32(is_and ? 0u : 1u))
+		return false;
+
+	end_addr = bytecode_top;
+
+	lir_patch_u32(patch0, decided_addr);
+	lir_patch_u32(patch1, decided_addr);
+	lir_patch_u32(patch_skip, end_addr);
+
+	lir_decrement_tmpvar(cond_tmpvar);
 
 	return true;
 }

@@ -156,6 +156,8 @@ struct ast_expr *ast_accept_mul_expr(struct ast_expr *expr1, struct ast_expr *ex
 struct ast_expr *ast_accept_div_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_mod_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_and_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_land_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_lor_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_or_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_xor_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_shl_expr(struct ast_expr *expr1, struct ast_expr *expr2);
@@ -183,11 +185,11 @@ struct ast_term *ast_accept_empty_array_term(void);
 struct ast_term *ast_accept_empty_dict_term(void);
 struct ast_arg_list *ast_accept_arg_list(struct ast_arg_list *arg_list, struct ast_expr *expr);
 
-#line 110 "parser.y"
+#line 112 "parser.y"
 
 extern void ast_yyerror(void *scanner, char *s);
 
-#line 191 "parser.tab.c"
+#line 193 "parser.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -717,18 +719,18 @@ static const yytype_int8 yytranslate[] =
 /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_int16 yyrline[] =
 {
-       0,   223,   223,   228,   234,   239,   245,   250,   257,   261,
-     267,   271,   275,   279,   283,   287,   291,   295,   299,   303,
-     307,   311,   315,   319,   323,   327,   331,   335,   339,   343,
-     347,   352,   358,   363,   369,   375,   381,   387,   393,   399,
-     405,   411,   417,   423,   429,   435,   440,   446,   451,   457,
-     462,   468,   473,   479,   484,   489,   494,   499,   504,   510,
-     515,   520,   526,   532,   537,   542,   547,   552,   557,   562,
-     567,   572,   577,   582,   587,   592,   597,   602,   607,   612,
-     617,   622,   627,   632,   637,   642,   647,   652,   656,   660,
-     665,   670,   676,   682,   686,   691,   697,   702,   708,   713,
-     719,   724,   730,   735,   741,   746,   752,   757,   763,   768,
-     773,   778,   783,   788,   793,   798
+       0,   225,   225,   230,   236,   241,   247,   252,   259,   263,
+     269,   273,   277,   281,   285,   289,   293,   297,   301,   305,
+     309,   313,   317,   321,   325,   329,   333,   337,   341,   345,
+     349,   354,   360,   365,   371,   377,   383,   389,   395,   401,
+     407,   413,   419,   425,   431,   437,   442,   448,   453,   459,
+     464,   470,   475,   481,   486,   491,   496,   501,   506,   512,
+     517,   522,   528,   534,   539,   544,   549,   554,   559,   564,
+     569,   574,   579,   584,   589,   594,   599,   604,   609,   614,
+     619,   624,   629,   634,   639,   644,   649,   654,   658,   662,
+     667,   672,   678,   684,   688,   693,   699,   704,   710,   715,
+     721,   726,   732,   737,   743,   748,   754,   759,   765,   770,
+     775,   780,   785,   790,   795,   800
 };
 #endif
 
@@ -1802,13 +1804,13 @@ yyparse (void *scanner)
 
 
 /* User initialization code.  */
-#line 217 "parser.y"
+#line 219 "parser.y"
 {
 	ast_yylloc.last_line = yylloc.first_line = 0;
 	ast_yylloc.last_column = yylloc.first_column = 0;
 }
 
-#line 1812 "parser.tab.c"
+#line 1814 "parser.tab.c"
 
   yylsp[0] = yylloc;
   goto yysetstate;
@@ -2019,1011 +2021,1011 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* func_list: func  */
-#line 224 "parser.y"
+#line 226 "parser.y"
                 {
 			(yyval.func_list) = ast_accept_func_list(NULL, (yyvsp[0].func));
 			debug("func_list: class");
 		}
-#line 2028 "parser.tab.c"
+#line 2030 "parser.tab.c"
     break;
 
   case 3: /* func_list: func_list func  */
-#line 229 "parser.y"
+#line 231 "parser.y"
                 {
 			(yyval.func_list) = ast_accept_func_list((yyvsp[-1].func_list), (yyvsp[0].func));
 			debug("func_list: func_list func");
 		}
-#line 2037 "parser.tab.c"
+#line 2039 "parser.tab.c"
     break;
 
   case 4: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 235 "parser.y"
+#line 237 "parser.y"
                 {
 			(yyval.func) = ast_accept_func((yyvsp[-5].sval), (yyvsp[-3].param_list), (yyvsp[-1].stmt_list));
 			debug("func: func name(param_list) { stmt_list }");
 		}
-#line 2046 "parser.tab.c"
+#line 2048 "parser.tab.c"
     break;
 
   case 5: /* func: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 240 "parser.y"
+#line 242 "parser.y"
                 {
 			(yyval.func) = ast_accept_func((yyvsp[-4].sval), NULL, (yyvsp[-1].stmt_list));
 			debug("func: func name() { stmt_list }");
 		}
-#line 2055 "parser.tab.c"
+#line 2057 "parser.tab.c"
     break;
 
   case 6: /* param_list: TOKEN_SYMBOL  */
-#line 246 "parser.y"
+#line 248 "parser.y"
                 {
 			(yyval.param_list) = ast_accept_param_list(NULL, (yyvsp[0].sval));
 			debug("param_list: symbol");
 		}
-#line 2064 "parser.tab.c"
+#line 2066 "parser.tab.c"
     break;
 
   case 7: /* param_list: param_list TOKEN_COMMA TOKEN_SYMBOL  */
-#line 251 "parser.y"
+#line 253 "parser.y"
                 {
 			(yyval.param_list) = ast_accept_param_list((yyvsp[-2].param_list), (yyvsp[0].sval));
 			debug("param_list: param_list symbol");
 		}
-#line 2073 "parser.tab.c"
+#line 2075 "parser.tab.c"
     break;
 
   case 8: /* stmt_list: %empty  */
-#line 257 "parser.y"
+#line 259 "parser.y"
                 {
 			(yyval.stmt_list) = ast_accept_stmt_list(NULL, NULL);
 			debug("stmt_list: empty");
 		}
-#line 2082 "parser.tab.c"
+#line 2084 "parser.tab.c"
     break;
 
   case 9: /* stmt_list: stmt_list stmt  */
-#line 262 "parser.y"
+#line 264 "parser.y"
                 {
 			(yyval.stmt_list) = ast_accept_stmt_list((yyvsp[-1].stmt_list), (yyvsp[0].stmt));
 			debug("stmt_list: stmt_list stmt");
 		}
-#line 2091 "parser.tab.c"
+#line 2093 "parser.tab.c"
     break;
 
   case 10: /* stmt: expr_stmt  */
-#line 268 "parser.y"
+#line 270 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2099 "parser.tab.c"
+#line 2101 "parser.tab.c"
     break;
 
   case 11: /* stmt: assign_stmt  */
-#line 272 "parser.y"
+#line 274 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2107 "parser.tab.c"
+#line 2109 "parser.tab.c"
     break;
 
   case 12: /* stmt: plusassign_stmt  */
-#line 276 "parser.y"
+#line 278 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2115 "parser.tab.c"
+#line 2117 "parser.tab.c"
     break;
 
   case 13: /* stmt: minusassign_stmt  */
-#line 280 "parser.y"
+#line 282 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2123 "parser.tab.c"
+#line 2125 "parser.tab.c"
     break;
 
   case 14: /* stmt: mulassign_stmt  */
-#line 284 "parser.y"
+#line 286 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2131 "parser.tab.c"
+#line 2133 "parser.tab.c"
     break;
 
   case 15: /* stmt: divassign_stmt  */
-#line 288 "parser.y"
+#line 290 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2139 "parser.tab.c"
+#line 2141 "parser.tab.c"
     break;
 
   case 16: /* stmt: modassign_stmt  */
-#line 292 "parser.y"
+#line 294 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2147 "parser.tab.c"
+#line 2149 "parser.tab.c"
     break;
 
   case 17: /* stmt: andassign_stmt  */
-#line 296 "parser.y"
+#line 298 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2155 "parser.tab.c"
+#line 2157 "parser.tab.c"
     break;
 
   case 18: /* stmt: orassign_stmt  */
-#line 300 "parser.y"
+#line 302 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2163 "parser.tab.c"
+#line 2165 "parser.tab.c"
     break;
 
   case 19: /* stmt: shlassign_stmt  */
-#line 304 "parser.y"
+#line 306 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2171 "parser.tab.c"
+#line 2173 "parser.tab.c"
     break;
 
   case 20: /* stmt: shrassign_stmt  */
-#line 308 "parser.y"
+#line 310 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2179 "parser.tab.c"
+#line 2181 "parser.tab.c"
     break;
 
   case 21: /* stmt: plusplus_stmt  */
-#line 312 "parser.y"
+#line 314 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2187 "parser.tab.c"
+#line 2189 "parser.tab.c"
     break;
 
   case 22: /* stmt: minusminus_stmt  */
-#line 316 "parser.y"
+#line 318 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2195 "parser.tab.c"
+#line 2197 "parser.tab.c"
     break;
 
   case 23: /* stmt: if_stmt  */
-#line 320 "parser.y"
+#line 322 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2203 "parser.tab.c"
+#line 2205 "parser.tab.c"
     break;
 
   case 24: /* stmt: elif_stmt  */
-#line 324 "parser.y"
+#line 326 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2211 "parser.tab.c"
+#line 2213 "parser.tab.c"
     break;
 
   case 25: /* stmt: else_stmt  */
-#line 328 "parser.y"
+#line 330 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2219 "parser.tab.c"
+#line 2221 "parser.tab.c"
     break;
 
   case 26: /* stmt: while_stmt  */
-#line 332 "parser.y"
+#line 334 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2227 "parser.tab.c"
+#line 2229 "parser.tab.c"
     break;
 
   case 27: /* stmt: for_stmt  */
-#line 336 "parser.y"
+#line 338 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2235 "parser.tab.c"
+#line 2237 "parser.tab.c"
     break;
 
   case 28: /* stmt: return_stmt  */
-#line 340 "parser.y"
+#line 342 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2243 "parser.tab.c"
+#line 2245 "parser.tab.c"
     break;
 
   case 29: /* stmt: break_stmt  */
-#line 344 "parser.y"
+#line 346 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2251 "parser.tab.c"
+#line 2253 "parser.tab.c"
     break;
 
   case 30: /* stmt: continue_stmt  */
-#line 348 "parser.y"
+#line 350 "parser.y"
                 {
 			(yyval.stmt) = (yyvsp[0].stmt);
 		}
-#line 2259 "parser.tab.c"
+#line 2261 "parser.tab.c"
     break;
 
   case 31: /* expr_stmt: expr TOKEN_SEMICOLON  */
-#line 353 "parser.y"
+#line 355 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_expr_stmt((yylsp[-1]).first_line + 1, (yyvsp[-1].expr));
 			debug("expr_stmt");
 		}
-#line 2268 "parser.tab.c"
+#line 2270 "parser.tab.c"
     break;
 
   case 32: /* assign_stmt: expr TOKEN_ASSIGN expr TOKEN_SEMICOLON  */
-#line 359 "parser.y"
+#line 361 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_assign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr), false);
 			debug("assign_stmt");
 		}
-#line 2277 "parser.tab.c"
+#line 2279 "parser.tab.c"
     break;
 
   case 33: /* assign_stmt: TOKEN_VAR expr TOKEN_ASSIGN expr TOKEN_SEMICOLON  */
-#line 364 "parser.y"
+#line 366 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_assign_stmt((yylsp[-4]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr), true);
 			debug("var assign_stmt");
 		}
-#line 2286 "parser.tab.c"
+#line 2288 "parser.tab.c"
     break;
 
   case 34: /* plusassign_stmt: expr TOKEN_PLUSASSIGN expr TOKEN_SEMICOLON  */
-#line 370 "parser.y"
+#line 372 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_plusassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("plusassign_stmt");
 		}
-#line 2295 "parser.tab.c"
+#line 2297 "parser.tab.c"
     break;
 
   case 35: /* minusassign_stmt: expr TOKEN_MINUSASSIGN expr TOKEN_SEMICOLON  */
-#line 376 "parser.y"
+#line 378 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_minusassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("minusassign_stmt");
 		}
-#line 2304 "parser.tab.c"
+#line 2306 "parser.tab.c"
     break;
 
   case 36: /* mulassign_stmt: expr TOKEN_MULASSIGN expr TOKEN_SEMICOLON  */
-#line 382 "parser.y"
+#line 384 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_mulassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("mulassign_stmt");
 		}
-#line 2313 "parser.tab.c"
+#line 2315 "parser.tab.c"
     break;
 
   case 37: /* divassign_stmt: expr TOKEN_DIVASSIGN expr TOKEN_SEMICOLON  */
-#line 388 "parser.y"
+#line 390 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_divassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("divassign_stmt");
 		}
-#line 2322 "parser.tab.c"
+#line 2324 "parser.tab.c"
     break;
 
   case 38: /* modassign_stmt: expr TOKEN_MODASSIGN expr TOKEN_SEMICOLON  */
-#line 394 "parser.y"
+#line 396 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_modassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("modassign_stmt");
 		}
-#line 2331 "parser.tab.c"
+#line 2333 "parser.tab.c"
     break;
 
   case 39: /* andassign_stmt: expr TOKEN_ANDASSIGN expr TOKEN_SEMICOLON  */
-#line 400 "parser.y"
+#line 402 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_andassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("andassign_stmt");
 		}
-#line 2340 "parser.tab.c"
+#line 2342 "parser.tab.c"
     break;
 
   case 40: /* orassign_stmt: expr TOKEN_ORASSIGN expr TOKEN_SEMICOLON  */
-#line 406 "parser.y"
+#line 408 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_orassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("orassign_stmt");
 		}
-#line 2349 "parser.tab.c"
+#line 2351 "parser.tab.c"
     break;
 
   case 41: /* shlassign_stmt: expr TOKEN_SHLASSIGN expr TOKEN_SEMICOLON  */
-#line 412 "parser.y"
+#line 414 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_shlassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("shlassign_stmt");
 		}
-#line 2358 "parser.tab.c"
+#line 2360 "parser.tab.c"
     break;
 
   case 42: /* shrassign_stmt: expr TOKEN_SHRASSIGN expr TOKEN_SEMICOLON  */
-#line 418 "parser.y"
+#line 420 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_shrassign_stmt((yylsp[-3]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("shrassign_stmt");
 		}
-#line 2367 "parser.tab.c"
+#line 2369 "parser.tab.c"
     break;
 
   case 43: /* plusplus_stmt: expr TOKEN_PLUSPLUS TOKEN_SEMICOLON  */
-#line 424 "parser.y"
+#line 426 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_plusplus_stmt((yylsp[-2]).first_line + 1, (yyvsp[-2].expr));
 			debug("plusplus_stmt");
 		}
-#line 2376 "parser.tab.c"
+#line 2378 "parser.tab.c"
     break;
 
   case 44: /* minusminus_stmt: expr TOKEN_MINUSMINUS TOKEN_SEMICOLON  */
-#line 430 "parser.y"
+#line 432 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_minusminus_stmt((yylsp[-2]).first_line + 1, (yyvsp[-2].expr));
 			debug("plusplus_stmt");
 		}
-#line 2385 "parser.tab.c"
+#line 2387 "parser.tab.c"
     break;
 
   case 45: /* if_stmt: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 436 "parser.y"
+#line 438 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_if_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("if_stmt: stmt_list");
 		}
-#line 2394 "parser.tab.c"
+#line 2396 "parser.tab.c"
     break;
 
   case 46: /* if_stmt: TOKEN_IF TOKEN_LPAR expr TOKEN_RPAR stmt  */
-#line 441 "parser.y"
+#line 443 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_if_stmt_single((yylsp[-4]).first_line + 1, (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("if_stmt: stmt_list");
 		}
-#line 2403 "parser.tab.c"
+#line 2405 "parser.tab.c"
     break;
 
   case 47: /* elif_stmt: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 447 "parser.y"
+#line 449 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_elif_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("elif_stmt: stmt_list");
 		}
-#line 2412 "parser.tab.c"
+#line 2414 "parser.tab.c"
     break;
 
   case 48: /* elif_stmt: TOKEN_ELSEIF TOKEN_LPAR expr TOKEN_RPAR stmt  */
-#line 452 "parser.y"
+#line 454 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_elif_stmt_single((yylsp[-4]).first_line + 1, (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("elif_stmt: stmt_list");
 		}
-#line 2421 "parser.tab.c"
+#line 2423 "parser.tab.c"
     break;
 
   case 49: /* else_stmt: TOKEN_ELSE_LBLK stmt_list TOKEN_RBLK  */
-#line 458 "parser.y"
+#line 460 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_else_stmt((yylsp[-2]).first_line + 1, (yyvsp[-1].stmt_list));
 			debug("else_stmt: stmt_list");
 		}
-#line 2430 "parser.tab.c"
+#line 2432 "parser.tab.c"
     break;
 
   case 50: /* else_stmt: TOKEN_ELSE stmt  */
-#line 463 "parser.y"
+#line 465 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_else_stmt_single((yylsp[-1]).first_line + 1, (yyvsp[0].stmt));
 			debug("else_stmt: stmt_list");
 		}
-#line 2439 "parser.tab.c"
+#line 2441 "parser.tab.c"
     break;
 
   case 51: /* while_stmt: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 469 "parser.y"
+#line 471 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_while_stmt((yylsp[-5]).first_line + 1, (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("while_stmt: stmt_list");
 		}
-#line 2448 "parser.tab.c"
+#line 2450 "parser.tab.c"
     break;
 
   case 52: /* while_stmt: TOKEN_WHILE TOKEN_LPAR expr TOKEN_RPAR stmt  */
-#line 474 "parser.y"
+#line 476 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_while_stmt_single((yylsp[-4]).first_line + 1, (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("while_stmt: stmt_list");
 		}
-#line 2457 "parser.tab.c"
+#line 2459 "parser.tab.c"
     break;
 
   case 53: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 480 "parser.y"
+#line 482 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_kv_stmt((yylsp[-9]).first_line + 1, (yyvsp[-7].sval), (yyvsp[-5].sval), (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(k, v in array) { stmt_list }");
 		}
-#line 2466 "parser.tab.c"
+#line 2468 "parser.tab.c"
     break;
 
   case 54: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_COMMA TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt  */
-#line 485 "parser.y"
+#line 487 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_kv_stmt_single((yylsp[-8]).first_line + 1, (yyvsp[-6].sval), (yyvsp[-4].sval), (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("for_stmt: for(k, v in array) stmt");
 		}
-#line 2475 "parser.tab.c"
+#line 2477 "parser.tab.c"
     break;
 
   case 55: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 490 "parser.y"
+#line 492 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_v_stmt((yylsp[-7]).first_line + 1, (yyvsp[-5].sval), (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(v in array) { stmt_list }");
 		}
-#line 2484 "parser.tab.c"
+#line 2486 "parser.tab.c"
     break;
 
   case 56: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_RPAR stmt  */
-#line 495 "parser.y"
+#line 497 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_v_stmt_single((yylsp[-6]).first_line + 1, (yyvsp[-4].sval), (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("for_stmt: for(v in array) stmt_list");
 		}
-#line 2493 "parser.tab.c"
+#line 2495 "parser.tab.c"
     break;
 
   case 57: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK  */
-#line 500 "parser.y"
+#line 502 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_range_stmt((yylsp[-9]).first_line + 1, (yyvsp[-7].sval), (yyvsp[-5].expr), (yyvsp[-3].expr), (yyvsp[-1].stmt_list));
 			debug("for_stmt: for(i in x..y) { stmt_list }");
 		}
-#line 2502 "parser.tab.c"
+#line 2504 "parser.tab.c"
     break;
 
   case 58: /* for_stmt: TOKEN_FOR TOKEN_LPAR TOKEN_SYMBOL TOKEN_IN expr TOKEN_DOTDOT expr TOKEN_RPAR stmt  */
-#line 505 "parser.y"
+#line 507 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_for_range_stmt_single((yylsp[-8]).first_line + 1, (yyvsp[-6].sval), (yyvsp[-4].expr), (yyvsp[-2].expr), (yyvsp[0].stmt));
 			debug("for_stmt: for(i in x..y) stmt");
 		}
-#line 2511 "parser.tab.c"
+#line 2513 "parser.tab.c"
     break;
 
   case 59: /* return_stmt: TOKEN_RETURN expr TOKEN_SEMICOLON  */
-#line 511 "parser.y"
+#line 513 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_return_stmt((yylsp[-2]).first_line + 1, (yyvsp[-1].expr));
 			debug("rerurn_stmt:");
 		}
-#line 2520 "parser.tab.c"
+#line 2522 "parser.tab.c"
     break;
 
   case 60: /* return_stmt: TOKEN_RETURN TOKEN_SEMICOLON  */
-#line 516 "parser.y"
+#line 518 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_return_stmt((yylsp[-1]).first_line + 1, NULL);
 			debug("rerurn_stmt NULL:");
 		}
-#line 2529 "parser.tab.c"
+#line 2531 "parser.tab.c"
     break;
 
   case 61: /* break_stmt: TOKEN_BREAK TOKEN_SEMICOLON  */
-#line 521 "parser.y"
+#line 523 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_break_stmt((yylsp[-1]).first_line + 1);
 			debug("break_stmt:");
 		}
-#line 2538 "parser.tab.c"
+#line 2540 "parser.tab.c"
     break;
 
   case 62: /* continue_stmt: TOKEN_CONTINUE TOKEN_SEMICOLON  */
-#line 527 "parser.y"
+#line 529 "parser.y"
                 {
 			(yyval.stmt) = ast_accept_continue_stmt((yylsp[-1]).first_line + 1);
 			debug("continue_stmt");
 		}
-#line 2547 "parser.tab.c"
+#line 2549 "parser.tab.c"
     break;
 
   case 63: /* expr: term  */
-#line 533 "parser.y"
+#line 535 "parser.y"
                 {
 			(yyval.expr) = ast_accept_term_expr((yyvsp[0].term));
 			debug("expr: term");
 		}
-#line 2556 "parser.tab.c"
+#line 2558 "parser.tab.c"
     break;
 
   case 64: /* expr: TOKEN_LPAR expr TOKEN_RPAR  */
-#line 538 "parser.y"
+#line 540 "parser.y"
                 {
 			(yyval.expr) = (yyvsp[-1].expr);
 			debug("expr: (expr)");
 		}
-#line 2565 "parser.tab.c"
+#line 2567 "parser.tab.c"
     break;
 
   case 65: /* expr: expr TOKEN_LARR expr TOKEN_RARR  */
-#line 543 "parser.y"
+#line 545 "parser.y"
                 {
 			(yyval.expr) = ast_accept_subscr_expr((yyvsp[-3].expr), (yyvsp[-1].expr));
 			debug("expr: array[subscript]");
 		}
-#line 2574 "parser.tab.c"
+#line 2576 "parser.tab.c"
     break;
 
   case 66: /* expr: expr TOKEN_OR expr  */
-#line 548 "parser.y"
+#line 550 "parser.y"
                 {
 			(yyval.expr) = ast_accept_or_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr or expr");
 		}
-#line 2583 "parser.tab.c"
+#line 2585 "parser.tab.c"
     break;
 
   case 67: /* expr: expr TOKEN_AND expr  */
-#line 553 "parser.y"
+#line 555 "parser.y"
                 {
 			(yyval.expr) = ast_accept_and_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr and expr");
 		}
-#line 2592 "parser.tab.c"
+#line 2594 "parser.tab.c"
     break;
 
   case 68: /* expr: expr TOKEN_XOR expr  */
-#line 558 "parser.y"
+#line 560 "parser.y"
                 {
 			(yyval.expr) = ast_accept_xor_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr xor expr");
 		}
-#line 2601 "parser.tab.c"
+#line 2603 "parser.tab.c"
     break;
 
   case 69: /* expr: expr TOKEN_OROR expr  */
-#line 563 "parser.y"
+#line 565 "parser.y"
                 {
-			(yyval.expr) = ast_accept_or_expr((yyvsp[-2].expr), (yyvsp[0].expr));
-			debug("expr: expr or expr");
+			(yyval.expr) = ast_accept_lor_expr((yyvsp[-2].expr), (yyvsp[0].expr));
+			debug("expr: expr || expr");
 		}
-#line 2610 "parser.tab.c"
+#line 2612 "parser.tab.c"
     break;
 
   case 70: /* expr: expr TOKEN_ANDAND expr  */
-#line 568 "parser.y"
+#line 570 "parser.y"
                 {
-			(yyval.expr) = ast_accept_and_expr((yyvsp[-2].expr), (yyvsp[0].expr));
-			debug("expr: expr and expr");
+			(yyval.expr) = ast_accept_land_expr((yyvsp[-2].expr), (yyvsp[0].expr));
+			debug("expr: expr && expr");
 		}
-#line 2619 "parser.tab.c"
+#line 2621 "parser.tab.c"
     break;
 
   case 71: /* expr: expr TOKEN_LT expr  */
-#line 573 "parser.y"
+#line 575 "parser.y"
                 {
 			(yyval.expr) = ast_accept_lt_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr lt expr");
 		}
-#line 2628 "parser.tab.c"
+#line 2630 "parser.tab.c"
     break;
 
   case 72: /* expr: expr TOKEN_LTE expr  */
-#line 578 "parser.y"
+#line 580 "parser.y"
                 {
 			(yyval.expr) = ast_accept_lte_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr lte expr");
 		}
-#line 2637 "parser.tab.c"
+#line 2639 "parser.tab.c"
     break;
 
   case 73: /* expr: expr TOKEN_GT expr  */
-#line 583 "parser.y"
+#line 585 "parser.y"
                 {
 			(yyval.expr) = ast_accept_gt_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr gt expr");
 		}
-#line 2646 "parser.tab.c"
+#line 2648 "parser.tab.c"
     break;
 
   case 74: /* expr: expr TOKEN_GTE expr  */
-#line 588 "parser.y"
+#line 590 "parser.y"
                 {
 			(yyval.expr) = ast_accept_gte_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr gte expr");
 		}
-#line 2655 "parser.tab.c"
+#line 2657 "parser.tab.c"
     break;
 
   case 75: /* expr: expr TOKEN_EQ expr  */
-#line 593 "parser.y"
+#line 595 "parser.y"
                 {
 			(yyval.expr) = ast_accept_eq_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr eq expr");
 		}
-#line 2664 "parser.tab.c"
+#line 2666 "parser.tab.c"
     break;
 
   case 76: /* expr: expr TOKEN_NEQ expr  */
-#line 598 "parser.y"
+#line 600 "parser.y"
                 {
 			(yyval.expr) = ast_accept_neq_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr neq expr");
 		}
-#line 2673 "parser.tab.c"
+#line 2675 "parser.tab.c"
     break;
 
   case 77: /* expr: expr TOKEN_PLUS expr  */
-#line 603 "parser.y"
+#line 605 "parser.y"
                 {
 			(yyval.expr) = ast_accept_plus_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr plus expr");
 		}
-#line 2682 "parser.tab.c"
+#line 2684 "parser.tab.c"
     break;
 
   case 78: /* expr: expr TOKEN_MINUS expr  */
-#line 608 "parser.y"
+#line 610 "parser.y"
                 {
 			(yyval.expr) = ast_accept_minus_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr sub expr");
 		}
-#line 2691 "parser.tab.c"
+#line 2693 "parser.tab.c"
     break;
 
   case 79: /* expr: expr TOKEN_MUL expr  */
-#line 613 "parser.y"
+#line 615 "parser.y"
                 {
 			(yyval.expr) = ast_accept_mul_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr mul expr");
 		}
-#line 2700 "parser.tab.c"
+#line 2702 "parser.tab.c"
     break;
 
   case 80: /* expr: expr TOKEN_DIV expr  */
-#line 618 "parser.y"
+#line 620 "parser.y"
                 {
 			(yyval.expr) = ast_accept_div_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr div expr");
 		}
-#line 2709 "parser.tab.c"
+#line 2711 "parser.tab.c"
     break;
 
   case 81: /* expr: expr TOKEN_MOD expr  */
-#line 623 "parser.y"
+#line 625 "parser.y"
                 {
 			(yyval.expr) = ast_accept_mod_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr div expr");
 		}
-#line 2718 "parser.tab.c"
+#line 2720 "parser.tab.c"
     break;
 
   case 82: /* expr: expr TOKEN_SHL expr  */
-#line 628 "parser.y"
+#line 630 "parser.y"
                 {
 			(yyval.expr) = ast_accept_shl_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr shl expr");
 		}
-#line 2727 "parser.tab.c"
+#line 2729 "parser.tab.c"
     break;
 
   case 83: /* expr: expr TOKEN_SHR expr  */
-#line 633 "parser.y"
+#line 635 "parser.y"
                 {
 			(yyval.expr) = ast_accept_shr_expr((yyvsp[-2].expr), (yyvsp[0].expr));
 			debug("expr: expr shr expr");
 		}
-#line 2736 "parser.tab.c"
+#line 2738 "parser.tab.c"
     break;
 
   case 84: /* expr: TOKEN_MINUS expr  */
-#line 638 "parser.y"
+#line 640 "parser.y"
                 {
 			(yyval.expr) = ast_accept_neg_expr((yyvsp[0].expr));
 			debug("expr: neg expr");
 		}
-#line 2745 "parser.tab.c"
+#line 2747 "parser.tab.c"
     break;
 
   case 85: /* expr: TOKEN_NOT expr  */
-#line 643 "parser.y"
+#line 645 "parser.y"
                 {
 			(yyval.expr) = ast_accept_not_expr((yyvsp[0].expr));
 			debug("expr: not expr");
 		}
-#line 2754 "parser.tab.c"
+#line 2756 "parser.tab.c"
     break;
 
   case 86: /* expr: expr TOKEN_DOT TOKEN_SYMBOL  */
-#line 648 "parser.y"
+#line 650 "parser.y"
                 {
 			(yyval.expr) = ast_accept_dot_expr((yyvsp[-2].expr), (yyvsp[0].sval));
 			debug("expr: expr.symbol");
 		}
-#line 2763 "parser.tab.c"
+#line 2765 "parser.tab.c"
     break;
 
   case 87: /* expr: call_expr  */
-#line 653 "parser.y"
+#line 655 "parser.y"
                 {
 			(yyval.expr) = (yyvsp[0].expr);
 		}
-#line 2771 "parser.tab.c"
+#line 2773 "parser.tab.c"
     break;
 
   case 88: /* expr: thiscall_expr  */
-#line 657 "parser.y"
+#line 659 "parser.y"
                 {
 			(yyval.expr) = (yyvsp[0].expr);
 		}
-#line 2779 "parser.tab.c"
+#line 2781 "parser.tab.c"
     break;
 
   case 89: /* expr: TOKEN_LARR arg_list TOKEN_RARR  */
-#line 661 "parser.y"
+#line 663 "parser.y"
                 {
 			(yyval.expr) = ast_accept_array_expr((yyvsp[-1].arg_list));
 			debug("expr: array");
 		}
-#line 2788 "parser.tab.c"
+#line 2790 "parser.tab.c"
     break;
 
   case 90: /* expr: TOKEN_LBLK kv_list TOKEN_RBLK  */
-#line 666 "parser.y"
+#line 668 "parser.y"
                 {
 			(yyval.expr) = ast_accept_dict_expr((yyvsp[-1].kv_list));
 			debug("expr: dict");
 		}
-#line 2797 "parser.tab.c"
+#line 2799 "parser.tab.c"
     break;
 
   case 91: /* expr: TOKEN_CLASS TOKEN_LBLK kv_list TOKEN_RBLK  */
-#line 671 "parser.y"
+#line 673 "parser.y"
                 {
 			/* class is equal to dict. */
 			(yyval.expr) = ast_accept_dict_expr((yyvsp[-1].kv_list));
 			debug("expr: dict");
 		}
-#line 2807 "parser.tab.c"
+#line 2809 "parser.tab.c"
     break;
 
   case 92: /* expr: TOKEN_CLASS TOKEN_LBLK TOKEN_RBLK  */
-#line 677 "parser.y"
+#line 679 "parser.y"
                 {
 			/* class is equal to dict. */
 			(yyval.expr) = ast_accept_dict_expr(NULL);
 			debug("expr: dict");
 		}
-#line 2817 "parser.tab.c"
+#line 2819 "parser.tab.c"
     break;
 
   case 93: /* expr: lambda_expr  */
-#line 683 "parser.y"
+#line 685 "parser.y"
                 {
 			(yyval.expr) = (yyvsp[0].expr);
 		}
-#line 2825 "parser.tab.c"
+#line 2827 "parser.tab.c"
     break;
 
   case 94: /* expr: TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK  */
-#line 687 "parser.y"
+#line 689 "parser.y"
                 {
 			(yyval.expr) = ast_accept_new_expr((yyvsp[-3].sval), (yyvsp[-1].kv_list));
 			debug("expr: new");
 		}
-#line 2834 "parser.tab.c"
+#line 2836 "parser.tab.c"
     break;
 
   case 95: /* expr: TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK TOKEN_RBLK  */
-#line 692 "parser.y"
+#line 694 "parser.y"
                 {
 			(yyval.expr) = ast_accept_new_expr((yyvsp[-2].sval), NULL);
 			debug("expr: new");
 		}
-#line 2843 "parser.tab.c"
+#line 2845 "parser.tab.c"
     break;
 
   case 96: /* call_expr: expr TOKEN_LPAR arg_list TOKEN_RPAR  */
-#line 698 "parser.y"
+#line 700 "parser.y"
                 {
 			(yyval.expr) = ast_accept_call_expr((yyvsp[-3].expr), (yyvsp[-1].arg_list));
 			debug("expr: call(param_list)");
 		}
-#line 2852 "parser.tab.c"
+#line 2854 "parser.tab.c"
     break;
 
   case 97: /* call_expr: expr TOKEN_LPAR TOKEN_RPAR  */
-#line 703 "parser.y"
+#line 705 "parser.y"
                 {
 			(yyval.expr) = ast_accept_call_expr((yyvsp[-2].expr), NULL);
 			debug("expr: call()");
 		}
-#line 2861 "parser.tab.c"
+#line 2863 "parser.tab.c"
     break;
 
   case 98: /* thiscall_expr: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR arg_list TOKEN_RPAR  */
-#line 709 "parser.y"
+#line 711 "parser.y"
                 {
 			(yyval.expr) = ast_accept_thiscall_expr((yyvsp[-5].expr), (yyvsp[-3].sval), (yyvsp[-1].arg_list));
 			debug("expr: thiscall(param_list)");
 		}
-#line 2870 "parser.tab.c"
+#line 2872 "parser.tab.c"
     break;
 
   case 99: /* thiscall_expr: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR  */
-#line 714 "parser.y"
+#line 716 "parser.y"
                 {
 			(yyval.expr) = ast_accept_thiscall_expr((yyvsp[-4].expr), (yyvsp[-2].sval), NULL);
 			debug("expr: thiscall(param_list)");
 		}
-#line 2879 "parser.tab.c"
+#line 2881 "parser.tab.c"
     break;
 
   case 100: /* lambda_expr: TOKEN_LPAR param_list TOKEN_RPAR_DARROW_LBLK stmt_list TOKEN_RBLK  */
-#line 720 "parser.y"
+#line 722 "parser.y"
                 {
 			(yyval.expr) = ast_accept_func_expr((yyvsp[-3].param_list), (yyvsp[-1].stmt_list));
 			debug("expr: func param_list stmt_list");
 		}
-#line 2888 "parser.tab.c"
+#line 2890 "parser.tab.c"
     break;
 
   case 101: /* lambda_expr: TOKEN_LPAR TOKEN_RPAR_DARROW_LBLK stmt_list TOKEN_RBLK  */
-#line 725 "parser.y"
+#line 727 "parser.y"
                 {
 			(yyval.expr) = ast_accept_func_expr(NULL, (yyvsp[-1].stmt_list));
 			debug("expr: func stmt_list");
 		}
-#line 2897 "parser.tab.c"
+#line 2899 "parser.tab.c"
     break;
 
   case 102: /* arg_list: expr  */
-#line 731 "parser.y"
+#line 733 "parser.y"
                 {
 			(yyval.arg_list) = ast_accept_arg_list(NULL, (yyvsp[0].expr));
 			debug("arg_list: expr");
 		}
-#line 2906 "parser.tab.c"
+#line 2908 "parser.tab.c"
     break;
 
   case 103: /* arg_list: arg_list TOKEN_COMMA expr  */
-#line 736 "parser.y"
+#line 738 "parser.y"
                 {
 			(yyval.arg_list) = ast_accept_arg_list((yyvsp[-2].arg_list), (yyvsp[0].expr));
 			debug("arg_list: arg_list arg");
 		}
-#line 2915 "parser.tab.c"
+#line 2917 "parser.tab.c"
     break;
 
   case 104: /* kv_list: kv  */
-#line 742 "parser.y"
+#line 744 "parser.y"
                 {
 			(yyval.kv_list) = ast_accept_kv_list(NULL, (yyvsp[0].kv));
 			debug("kv_list: kv");
 		}
-#line 2924 "parser.tab.c"
+#line 2926 "parser.tab.c"
     break;
 
   case 105: /* kv_list: kv_list TOKEN_COMMA kv  */
-#line 747 "parser.y"
+#line 749 "parser.y"
                 {
 			(yyval.kv_list) = ast_accept_kv_list((yyvsp[-2].kv_list), (yyvsp[0].kv));
 			debug("kv_list: kv_list kv");
 		}
-#line 2933 "parser.tab.c"
+#line 2935 "parser.tab.c"
     break;
 
   case 106: /* kv: TOKEN_STR TOKEN_COLON expr  */
-#line 753 "parser.y"
+#line 755 "parser.y"
                 {
 			(yyval.kv) = ast_accept_kv((yyvsp[-2].sval), (yyvsp[0].expr));
 			debug("kv");
 		}
-#line 2942 "parser.tab.c"
+#line 2944 "parser.tab.c"
     break;
 
   case 107: /* kv: TOKEN_SYMBOL TOKEN_COLON expr  */
-#line 758 "parser.y"
+#line 760 "parser.y"
                 {
 			(yyval.kv) = ast_accept_kv((yyvsp[-2].sval), (yyvsp[0].expr));
 			debug("kv");
 		}
-#line 2951 "parser.tab.c"
+#line 2953 "parser.tab.c"
     break;
 
   case 108: /* term: TOKEN_INT  */
-#line 764 "parser.y"
+#line 766 "parser.y"
                 {
 			(yyval.term) = ast_accept_int_term((yyvsp[0].ival));
 			debug("term: int");
 		}
-#line 2960 "parser.tab.c"
+#line 2962 "parser.tab.c"
     break;
 
   case 109: /* term: TOKEN_LONG  */
-#line 769 "parser.y"
+#line 771 "parser.y"
                 {
 			(yyval.term) = ast_accept_long_term((yyvsp[0].lval));
 			debug("term: long");
 		}
-#line 2969 "parser.tab.c"
+#line 2971 "parser.tab.c"
     break;
 
   case 110: /* term: TOKEN_FLOAT  */
-#line 774 "parser.y"
+#line 776 "parser.y"
                 {
 			(yyval.term) = ast_accept_float_term((yyvsp[0].fval));
 			debug("term: float");
 		}
-#line 2978 "parser.tab.c"
+#line 2980 "parser.tab.c"
     break;
 
   case 111: /* term: TOKEN_DOUBLE  */
-#line 779 "parser.y"
+#line 781 "parser.y"
                 {
 			(yyval.term) = ast_accept_double_term((yyvsp[0].lfval));
 			debug("term: double");
 		}
-#line 2987 "parser.tab.c"
+#line 2989 "parser.tab.c"
     break;
 
   case 112: /* term: TOKEN_STR  */
-#line 784 "parser.y"
+#line 786 "parser.y"
                 {
 			(yyval.term) = ast_accept_str_term((yyvsp[0].sval));
 			debug("term: string");
 		}
-#line 2996 "parser.tab.c"
+#line 2998 "parser.tab.c"
     break;
 
   case 113: /* term: TOKEN_SYMBOL  */
-#line 789 "parser.y"
+#line 791 "parser.y"
                 {
 			(yyval.term) = ast_accept_symbol_term((yyvsp[0].sval));
 			debug("term: symbol");
 		}
-#line 3005 "parser.tab.c"
+#line 3007 "parser.tab.c"
     break;
 
   case 114: /* term: TOKEN_LARR TOKEN_RARR  */
-#line 794 "parser.y"
+#line 796 "parser.y"
                 {
 			(yyval.term) = ast_accept_empty_array_term();
 			debug("term: empty array symbol");
 		}
-#line 3014 "parser.tab.c"
+#line 3016 "parser.tab.c"
     break;
 
   case 115: /* term: TOKEN_LBLK TOKEN_RBLK  */
-#line 799 "parser.y"
+#line 801 "parser.y"
                 {
 			(yyval.term) = ast_accept_empty_dict_term();
 			debug("term: empty dict symbol");
 		}
-#line 3023 "parser.tab.c"
+#line 3025 "parser.tab.c"
     break;
 
 
-#line 3027 "parser.tab.c"
+#line 3029 "parser.tab.c"
 
       default: break;
     }
@@ -3221,7 +3223,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 804 "parser.y"
+#line 806 "parser.y"
 
 
 #ifdef DEBUG

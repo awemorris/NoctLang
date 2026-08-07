@@ -1400,6 +1400,12 @@ hir_visit_expr(
 	case AST_EXPR_OR:
 		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_OR);
 		break;
+	case AST_EXPR_LAND:
+		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_LAND);
+		break;
+	case AST_EXPR_LOR:
+		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_LOR);
+		break;
 	case AST_EXPR_XOR:
 		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_XOR);
 		break;
@@ -2224,6 +2230,8 @@ hir_free_expr(
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
 	case HIR_EXPR_OR:
+	case HIR_EXPR_LAND:
+	case HIR_EXPR_LOR:
 	case HIR_EXPR_XOR:
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:

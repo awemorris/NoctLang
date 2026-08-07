@@ -78,6 +78,8 @@ struct ast_expr *ast_accept_mul_expr(struct ast_expr *expr1, struct ast_expr *ex
 struct ast_expr *ast_accept_div_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_mod_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_and_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_land_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+struct ast_expr *ast_accept_lor_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_or_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_xor_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_shl_expr(struct ast_expr *expr1, struct ast_expr *expr2);
@@ -561,13 +563,13 @@ expr		: term
 		}
 		| expr TOKEN_OROR expr
 		{
-			$$ = ast_accept_or_expr($1, $3);
-			debug("expr: expr or expr");
+			$$ = ast_accept_lor_expr($1, $3);
+			debug("expr: expr || expr");
 		}
 		| expr TOKEN_ANDAND expr
 		{
-			$$ = ast_accept_and_expr($1, $3);
-			debug("expr: expr and expr");
+			$$ = ast_accept_land_expr($1, $3);
+			debug("expr: expr && expr");
 		}
 		| expr TOKEN_LT expr
 		{

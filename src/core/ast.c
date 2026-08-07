@@ -1176,6 +1176,22 @@ ast_accept_and_expr(
 	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_AND);
 }
 
+struct ast_expr *
+ast_accept_land_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_LAND);
+}
+
+struct ast_expr *
+ast_accept_lor_expr(
+	struct ast_expr *expr1,
+	struct ast_expr *expr2)
+{
+	return ast_accept_binary_expr(expr1, expr2, AST_EXPR_LOR);
+}
+
 /* Called from the parser when it accepted a expr with a | or || operator. */
 struct ast_expr *
 ast_accept_or_expr(
