@@ -954,7 +954,7 @@ elback_visit_binary_expr(
 		PUT("(/ ");
 		break;
 	case HIR_EXPR_MOD:
-		PUT("(% ");
+		PUT("(%% ");
 		break;
 	case HIR_EXPR_AND:
 		PUT("(logand ");

@@ -504,7 +504,7 @@ scmback_translate_func(
 	PUT("(call/cc\n");
 	indent++;
 	PUT_INDENT();
-	PUT("(lambda (%return)\n");
+	PUT("(lambda (%%return)\n");
 
 	indent++;
 	cur_block = func->val.func.inner;
@@ -1070,7 +1070,7 @@ scmback_visit_stmt(
 			assert(stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL);
 			PUT_INDENT();
 			if (strcmp(stmt->lhs->val.term.term->val.symbol, "$return") == 0) {
-				PUT("(%return ");
+				PUT("(%%return ");
 				if (!scmback_visit_expr(stmt->rhs))
 					return false;
 				PUT(")\n");
