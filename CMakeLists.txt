@@ -462,6 +462,12 @@ if(NOCT_ENABLE_SHARED)
   endif()
 endif()
 
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
+  if(WIN32)
+    target_link_libraries(noctapi PUBLIC wsock32 ws2_32)
+  endif()
+endif()
+
 # ---
 
 #
