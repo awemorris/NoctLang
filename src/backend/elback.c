@@ -1101,8 +1101,9 @@ elback_visit_array_expr(
 	assert(expr->val.array.elem_count > 0);
 
 	elem_count = expr->val.array.elem_count;
-	
-	PUT("\'(");
+
+	/* Build a fresh list so the elements evaluate. */
+	PUT("(list ");
 
 	/* Put the elements. */
 	for (i = 0; i < elem_count; i++) {
