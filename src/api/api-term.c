@@ -785,6 +785,9 @@ decode_event(
 		/* TAB and RET keep their traditional identities. */
 		if (c0 == '\t' || c0 == '\r' || c0 == '\n')
 			return c0 == '\n' ? '\r' : c0;
+		/* NUL is C-SPC (typed as Ctrl+Space or Ctrl+@). */
+		if (c0 == 0x00)
+			return MOD_CTRL | 0x20;
 		return MOD_CTRL | (c0 + 0x60);
 	}
 	if (c0 == 0x7F) {
