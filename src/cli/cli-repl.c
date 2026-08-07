@@ -99,10 +99,6 @@ static bool run_repl(void)
 		wide_printf(N_TR("Cannot install the REPL interrupt handler.\n"));
 		goto cleanup;
 	}
-	if (!noct_register_api_term(env)) {
-		wide_printf(N_TR("Out of memory.\n"));
-		return false;
-	}
 
 	for (;;) {
 		char line[REPL_LINE_SIZE];
@@ -178,8 +174,16 @@ static bool register_repl_libraries(NoctEnv *env)
 	if (!noct_register_api_thread(env))
 		return false;
 #endif
+#if defined(NOCT_USE_HTTPSERVER)
 	if (!noct_register_api_httpserver(env))
 		return false;
+#endif
+#if defined(NOCT_USE_TERM)
+	if (!noct_register_api_term(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+#endif
 	return register_cli_cfunc(env);
 }
 

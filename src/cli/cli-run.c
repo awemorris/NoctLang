@@ -82,14 +82,18 @@ int command_run(int argc, char *argv[])
 		return false;
 	}
 #endif
+#if defined(NOCT_USE_HTTPSERVER)
 	if (!noct_register_api_httpserver(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
+#endif
+#if defined(NOCT_USE_TERM)
 	if (!noct_register_api_term(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
+#endif
 
 	/* Register native functions. */
 	if (!register_cli_cfunc(env)) {
