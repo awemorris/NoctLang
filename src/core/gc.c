@@ -1930,9 +1930,15 @@ rt_gc_copy_dict_to_graduate(
 	memcpy(new_obj->key, old_obj->key, old_obj->alloc_size * sizeof(struct rt_value));
 	memcpy(new_obj->value, old_obj->value, old_obj->alloc_size * sizeof(struct rt_value));
 
-	/* Check for cross-generation references. */
+	/*
+	 * Check for cross-generation references. The key table is an
+	 * open-addressing hash table: iterate the slots, not the entry
+	 * count, and skip the empty ones.
+	 */
 	if (new_obj->head.region == RT_GC_REGION_TENURE) {
-		for (i = 0; i < (uint32_t)new_obj->size; i++) {
+		for (i = 0; i < (uint32_t)new_obj->alloc_size; i++) {
+			if (new_obj->key[i].type != NOCT_VALUE_STRING)
+				continue;
 			if (IS_YOUNG_OBJ(new_obj->key[i].val.obj)) {
 				new_obj->head.rem_flg = true;
 				INSERT_TO_LIST(&new_obj->head, env->vm->gc.remember_set,rem_prev, rem_next);
