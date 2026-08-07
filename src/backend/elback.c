@@ -367,12 +367,10 @@ elback_translate_func(
 	PUT(")\n");
 	indent--;	
 
-	/* Close the local variable list.*/
-	if (func->val.func.local != NULL) {
-		PUT_INDENT();
-		PUT(")\n");
-		indent--;
-	}
+	/* Close the local variable list. (The let is always opened.) */
+	PUT_INDENT();
+	PUT(")\n");
+	indent--;
 
 	/* Close defun. */
 	elback_put(")\n");
