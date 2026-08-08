@@ -422,6 +422,80 @@ noct_ex_pstore8_helper(
 	int ofs,
 	int src);
 
+/* ABCE width-parameterized ops (docs/design/01-abce.md) */
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload8s_helper(
+	NoctEnv *rt,
+	int dst,
+	int base,
+	int ofs);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload16u_helper(
+	NoctEnv *rt,
+	int dst,
+	int base,
+	int ofs);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload16s_helper(
+	NoctEnv *rt,
+	int dst,
+	int base,
+	int ofs);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload32_helper(
+	NoctEnv *rt,
+	int dst,
+	int base,
+	int ofs);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload64_helper(
+	NoctEnv *rt,
+	int dst,
+	int base,
+	int ofs);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstore16_helper(
+	NoctEnv *rt,
+	int base,
+	int ofs,
+	int src);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstore32_helper(
+	NoctEnv *rt,
+	int base,
+	int ofs,
+	int src);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstore64_helper(
+	NoctEnv *rt,
+	int base,
+	int ofs,
+	int src);
+
 /* Type annotation entry check (docs/design/02-typing.md) */
 
 NOCT_DLL

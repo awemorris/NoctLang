@@ -67,6 +67,14 @@ enum hir_expr_type {
 	HIR_EXPR_TYPEIS,	/* binary: value, type const     -> 0/1           */
 	HIR_EXPR_PLOAD8U,	/* binary: base(long), offset    -> int (0..255)  */
 	HIR_EXPR_PSTORE8,	/* as LHS only: base(long), offset; RHS = value   */
+	HIR_EXPR_PLOAD8S,	/* binary: sign-extended int8 load                */
+	HIR_EXPR_PLOAD16U,	/* binary: zero-extended uint16 load              */
+	HIR_EXPR_PLOAD16S,	/* binary: sign-extended int16 load               */
+	HIR_EXPR_PLOAD32,	/* binary: int32 load (uint32 wraps)              */
+	HIR_EXPR_PLOAD64,	/* binary: int64/uint64 load -> long              */
+	HIR_EXPR_PSTORE16,	/* as LHS only                                    */
+	HIR_EXPR_PSTORE32,	/* as LHS only                                    */
+	HIR_EXPR_PSTORE64,	/* as LHS only                                    */
 };
 
 /* HIR Term Type */

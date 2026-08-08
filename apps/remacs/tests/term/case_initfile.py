@@ -3,7 +3,7 @@
 import pathlib
 home = pathlib.Path('/tmp/remacs-init-home')
 home.mkdir(exist_ok=True)
-(home / '.remacs').write_text('''
+(home / '.remacs.noct').write_text('''
 func remacsInit(ed) {
     defineCommand("init-stamp", (_) => {
         Editor.insert("INIT-OK");

@@ -311,7 +311,8 @@ jit_visit_lineinfo_op(
 
                 /* rt->line = line; */
                 /* li r0, line */       IW(0x00000038 | lo16(line));
-                /* stw r0, 8(r14) */    IW(0x08000e90);
+                /* env->line is at offset 4 on 32-bit targets. */
+                /* stw r0, 4(r14) */    IW(0x04000e90);
         }
 
         return true;
@@ -1755,19 +1756,38 @@ jit_visit_safepoint_op(
         return true;
 }
 
-/* Visit a OP_PBASE instruction. (ABCE; helper-call implementation.) */
+/* Visit a OP_PBASE instruction. (ABCE; inline machine code, ppc32 BE.)
+ * Pointer member at +8; the long stores it BE: high(0) at +8,
+ * low(ptr) at +12. */
 static INLINE bool
 jit_visit_pbase_op(
         struct jit_context *ctx)
 {
         int dst;
         int src;
+        uint32_t buf_ofs;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!ex_pbase_helper(env, dst, src)) return false; */
-        ASM_UNARY_OP(ex_pbase_helper);
+        dst *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+        buf_ofs = (uint32_t)offsetof(struct rt_packed, packed_buffer);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* lwz r3, src+8(r15)  (packed pointer member) */
+                IW(0x00006f80 | lo16((uint32_t)(src + 8)));
+                IW(0x00006380 | lo16(buf_ofs));
+                IW(0x0000a038 | lo16((uint32_t)NOCT_VALUE_LONG));
+                IW(0x0000af90 | lo16((uint32_t)dst));
+                /* high word = 0 */
+                IW(0x00008038);
+                IW(0x00008f90 | lo16((uint32_t)(dst + 8)));
+                /* low word = pointer */
+                IW(0x00006f90 | lo16((uint32_t)(dst + 12)));
+        }
 
         return true;
 }
@@ -1827,40 +1847,67 @@ jit_visit_typeis_op(
         return true;
 }
 
-/* Visit a OP_PLOAD8U instruction. (ABCE; helper-call implementation.) */
+/* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code, ppc32 BE.) */
 static INLINE bool
 jit_visit_pload8u_op(
         struct jit_context *ctx)
 {
         int dst;
-        int src1;
-        int src2;
+        int base;
+        int ofs;
 
         CONSUME_TMPVAR(dst);
-        CONSUME_TMPVAR(src1);
-        CONSUME_TMPVAR(src2);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
 
-        /* if (!ex_pload8u_helper(env, dst, base, ofs)) return false; */
-        ASM_BINARY_OP(ex_pload8u_helper);
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* lwz r3, base+12(r15)  (BE-32: low word of the long) */
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                /* lwz r4, ofs+8(r15) */
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422637c);
+                /* load element -> r4 */
+                IW(0x00008388);
+                IW(0x0000a038 | lo16((uint32_t)NOCT_VALUE_INT));
+                IW(0x0000af90 | lo16((uint32_t)dst));
+                IW(0x00008f90 | lo16((uint32_t)(dst + 8)));
+        }
 
         return true;
 }
 
-/* Visit a OP_PSTORE8 instruction. (ABCE; operand order: base, ofs, src.) */
+/* Visit a OP_PSTORE8 instruction. (ABCE; inline, ppc32 BE. Int source.) */
 static INLINE bool
 jit_visit_pstore8_op(
         struct jit_context *ctx)
 {
-        int dst;
-        int src1;
-        int src2;
+        int base;
+        int ofs;
+        int src;
 
-        CONSUME_TMPVAR(dst);
-        CONSUME_TMPVAR(src1);
-        CONSUME_TMPVAR(src2);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
 
-        /* if (!ex_pstore8_helper(env, base, ofs, src)) return false; */
-        ASM_BINARY_OP(ex_pstore8_helper);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422637c);
+                IW(0x00008f80 | lo16((uint32_t)(src + 8)));
+                IW(0x00008398);
+        }
 
         return true;
 }
@@ -1878,6 +1925,252 @@ jit_visit_checktype_op(
 
         /* if (!ex_checktype_helper(env, slot, type)) return false; */
         ASM_UNARY_OP(ex_checktype_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8S instruction. (ABCE; inline machine code, ppc32 BE.) */
+static INLINE bool
+jit_visit_pload8s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* lwz r3, base+12(r15)  (BE-32: low word of the long) */
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                /* lwz r4, ofs+8(r15) */
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422637c);
+                /* load element -> r4 */
+                IW(0x00008388);
+                IW(0x7407847c);
+                IW(0x0000a038 | lo16((uint32_t)NOCT_VALUE_INT));
+                IW(0x0000af90 | lo16((uint32_t)dst));
+                IW(0x00008f90 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16U instruction. (ABCE; inline machine code, ppc32 BE.) */
+static INLINE bool
+jit_visit_pload16u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* lwz r3, base+12(r15)  (BE-32: low word of the long) */
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                /* lwz r4, ofs+8(r15) */
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422847c);
+                IW(0x1422637c);
+                /* load element -> r4 */
+                IW(0x000083a0);
+                IW(0x0000a038 | lo16((uint32_t)NOCT_VALUE_INT));
+                IW(0x0000af90 | lo16((uint32_t)dst));
+                IW(0x00008f90 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16S instruction. (ABCE; inline machine code, ppc32 BE.) */
+static INLINE bool
+jit_visit_pload16s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* lwz r3, base+12(r15)  (BE-32: low word of the long) */
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                /* lwz r4, ofs+8(r15) */
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422847c);
+                IW(0x1422637c);
+                /* load element -> r4 */
+                IW(0x000083a8);
+                IW(0x0000a038 | lo16((uint32_t)NOCT_VALUE_INT));
+                IW(0x0000af90 | lo16((uint32_t)dst));
+                IW(0x00008f90 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD32 instruction. (ABCE; inline machine code, ppc32 BE.) */
+static INLINE bool
+jit_visit_pload32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* lwz r3, base+12(r15)  (BE-32: low word of the long) */
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                /* lwz r4, ofs+8(r15) */
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422847c);
+                IW(0x1422847c);
+                IW(0x1422637c);
+                /* load element -> r4 */
+                IW(0x00008380);
+                IW(0x0000a038 | lo16((uint32_t)NOCT_VALUE_INT));
+                IW(0x0000af90 | lo16((uint32_t)dst));
+                IW(0x00008f90 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD64 instruction. (ABCE width op; helper-call.) */
+static INLINE bool
+jit_visit_pload64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pload64_helper(env, a, b, c)) return false; */
+        ASM_BINARY_OP(ex_pload64_helper);
+
+        return true;
+}
+
+/* Visit a OP_PSTORE16 instruction. (ABCE; inline, ppc32 BE. Int source.) */
+static INLINE bool
+jit_visit_pstore16_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422847c);
+                IW(0x1422637c);
+                IW(0x00008f80 | lo16((uint32_t)(src + 8)));
+                IW(0x000083b0);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE32 instruction. (ABCE; inline, ppc32 BE. Int source.) */
+static INLINE bool
+jit_visit_pstore32_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                IW(0x00006f80 | lo16((uint32_t)(base + 12)));
+                IW(0x00008f80 | lo16((uint32_t)(ofs + 8)));
+                IW(0x1422847c);
+                IW(0x1422847c);
+                IW(0x1422637c);
+                IW(0x00008f80 | lo16((uint32_t)(src + 8)));
+                IW(0x00008390);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE64 instruction. (ABCE width op; helper-call.) */
+static INLINE bool
+jit_visit_pstore64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pstore64_helper(env, a, b, c)) return false; */
+        ASM_BINARY_OP(ex_pstore64_helper);
 
         return true;
 }
@@ -2146,6 +2439,38 @@ jit_visit_bytecode(
                         break;
                 case OP_CHECKTYPE:
                         if (!jit_visit_checktype_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8S:
+                        if (!jit_visit_pload8s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16U:
+                        if (!jit_visit_pload16u_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16S:
+                        if (!jit_visit_pload16s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD32:
+                        if (!jit_visit_pload32_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD64:
+                        if (!jit_visit_pload64_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE16:
+                        if (!jit_visit_pstore16_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE32:
+                        if (!jit_visit_pstore32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE64:
+                        if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
                 default:

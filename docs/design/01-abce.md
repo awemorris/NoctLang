@@ -1,6 +1,57 @@
 # 01 — Array Boundary Check Elimination (ABCE) for Packed
 
-Status: **implemented** (2026-08-09; suites: tests/run-abce.sh, run-scoping.sh, run-class.sh, run-typing.sh — all green).
+Status: **implemented** (2026-08-09; suites: tests/run-abce.sh,
+run-scoping.sh, run-class.sh, run-typing.sh — all green).
+
+**v2 addendum (overnight run, 2026-08-09):**
+- **Width family**: `OP_PLOAD{8S,16U,16S,32,64}` / `OP_PSTORE{16,32,64}`
+  added (element-indexed; semantics mirror `rt_get/set_packed_elem`,
+  incl. uint32→int32 wrap and int64/uint64→long). `PSTORE8/16/32`
+  assume an int-tagged source — guaranteed by rejecting long constants
+  in the safe-expression rules plus the one-packed-per-loop rule;
+  `PSTORE64` dispatches on int/long and stays a helper call.
+- **Element-type constant propagation** (speculation seeding): a
+  flow-insensitive scan collects `p = Packed.uint16(...)` creation
+  facts with one-level copy propagation; the loop bets on the fact
+  (float facts leave the loop unversioned), else defaults to uint8.
+  Soundness rests entirely on the runtime `PCHECK` guard, not the
+  analysis. Verified by tests/abce/width*.noct incl. a
+  creation-invisible case that must take the slow path.
+- **Guard is evaluated exactly once** into `$abceN_g`: the fast body
+  may change the runtime type of a TYPEIS-guarded local (int
+  accumulator turning long via 64-bit loads), so re-evaluating the
+  guard for the else-branch would run BOTH versions (caught by
+  tests/abce/width64.noct as a doubled sum).
+- **Inline machine code on all 10 JIT backends** (x86_64, x86, arm64,
+  arm32, riscv64, riscv32, mips32, mips64, ppc32, ppc64el), validated
+  per-arch under qemu-user with run-abce + the 3-pattern run-syntax.
+  32-bit backends keep PLOAD64/PSTORE64 as helper calls. Big-endian
+  targets (mips32/ppc32) read the base long's low word at +12 and the
+  packed pointer member at +8; BE-64 (mips64) stores int results as
+  32-bit words at +8.
+- **Soundness audit fixes (post-implementation review)**: (1) the
+  bounds guard now checks BOTH endpoints against BOTH bounds — with
+  int32 wrapping, checking only `f(lo) >= 0 && f(hi-1) < len` is
+  unsound (a large invariant addend wraps `f(hi-1)` negative, passing
+  `< len` while the loop reads out of bounds; caught by
+  tests/abce/wrap_delta.noct).  With four checks a passing guard
+  provably keeps every wrapped iteration index in `[0, len)`.
+  (2) float/double constants are now rejected by the safe-expression
+  rules alongside long constants: a float flowing into `PSTORE8/16/32`
+  would write raw bits where the slow path converts
+  (tests/abce/float_store.noct).  `ABCE_MAX_GUARDS` raised 4 → 8.
+- **remacs is now "aware"**: `bufCharToByte` and `lineEndPosition`
+  (editor/buffer.noct) were rewritten from data-dependent while-loops
+  into byte-wise ranged-for scans — both version at level 2 (sites=2,
+  bet=uint8).  Editor-level benchmark (multibyte random `gotoChar` +
+  line movement, dev launcher with `REMACS_OPT_LEVEL=2`): **~1.33-1.37x**
+  end-to-end, oracle-identical results.  Synthetic benches
+  (tests/bench/run-bench.sh): interpreter 1.1-1.3x, JIT 1.2-1.6x.
+- **Pre-existing arch bugs found & fixed in passing**: `env->line`
+  written at offset 8 instead of 4 by the x86/arm32/riscv32/mips32/
+  ppc32 JIT LINEINFO emitters (error line numbers were lost on all
+  32-bit JITs). Pre-existing and NOT fixed (chipped): mips32/mips64/
+  ppc32 JIT long-comparison bug (tests/syntax/48-numeric-cond).
 Decisions herein are backed by the Decision Log in [00-overview.md](00-overview.md) (D1–D7).
 
 ## 1. Goal

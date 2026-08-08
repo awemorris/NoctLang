@@ -2,7 +2,7 @@
 import pathlib, subprocess
 home = pathlib.Path('/tmp/remacs-skk-rule-home')
 home.mkdir(exist_ok=True)
-(home / '.remacs').write_text('''
+(home / '.remacs.noct').write_text('''
 func remacsInit(ed) {
     Editor.skkSetRomKanaRule({ "!": "！", "@": "＠" });
 }

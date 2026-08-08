@@ -1753,9 +1753,16 @@ rt_gc_promote_array(
 	obj->forward = &new_arr->head;
 
 #if defined(NOCT_USE_MULTITHREAD)
-	/* Keep the ownership state (shared/creator) across the move. */
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
 	new_arr->shared = old_arr->shared;
 	new_arr->creator = old_arr->creator;
+	new_arr->write_lock = old_arr->write_lock;
+	new_arr->seqlock = old_arr->seqlock;
 #endif
 
 	return &new_arr->head;
@@ -1811,9 +1818,16 @@ rt_gc_promote_dict(
 	new_dict->is_frozen = old_dict->is_frozen;
 
 #if defined(NOCT_USE_MULTITHREAD)
-	/* Keep the ownership state (shared/creator) across the move. */
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
 	new_dict->shared = old_dict->shared;
 	new_dict->creator = old_dict->creator;
+	new_dict->write_lock = old_dict->write_lock;
+	new_dict->seqlock = old_dict->seqlock;
 #endif
 
 	return &new_dict->head;
@@ -1915,9 +1929,16 @@ rt_gc_copy_array_to_graduate(
 	}
 
 #if defined(NOCT_USE_MULTITHREAD)
-	/* Keep the ownership state (shared/creator) across the move. */
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
 	new_obj->shared = old_obj->shared;
 	new_obj->creator = old_obj->creator;
+	new_obj->write_lock = old_obj->write_lock;
+	new_obj->seqlock = old_obj->seqlock;
 #endif
 
 	return &new_obj->head;
@@ -1983,9 +2004,16 @@ rt_gc_copy_dict_to_graduate(
 	new_obj->is_frozen = old_obj->is_frozen;
 
 #if defined(NOCT_USE_MULTITHREAD)
-	/* Keep the ownership state (shared/creator) across the move. */
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
 	new_obj->shared = old_obj->shared;
 	new_obj->creator = old_obj->creator;
+	new_obj->write_lock = old_obj->write_lock;
+	new_obj->seqlock = old_obj->seqlock;
 #endif
 
 	/* Succeeded. */

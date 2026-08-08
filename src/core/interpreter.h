@@ -53,6 +53,14 @@
 #define ex_pload8u_helper noct_ex_pload8u_helper
 #define ex_pstore8_helper noct_ex_pstore8_helper
 #define ex_checktype_helper noct_ex_checktype_helper
+#define ex_pload8s_helper noct_ex_pload8s_helper
+#define ex_pload16u_helper noct_ex_pload16u_helper
+#define ex_pload16s_helper noct_ex_pload16s_helper
+#define ex_pload32_helper noct_ex_pload32_helper
+#define ex_pload64_helper noct_ex_pload64_helper
+#define ex_pstore16_helper noct_ex_pstore16_helper
+#define ex_pstore32_helper noct_ex_pstore32_helper
+#define ex_pstore64_helper noct_ex_pstore64_helper
 
 /* Visit bytecode. */
 bool

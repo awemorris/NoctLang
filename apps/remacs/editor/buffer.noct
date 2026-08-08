@@ -174,23 +174,32 @@ func bufCharToByte(ci) {
     var data = Buf.data;
     var gs = Buf.gapStart;
     var delta = Buf.gapEnd - gs;
-    while (c < ci) {
-        var lead = 0;
-        if (b < gs) {
-            lead = data[b];
+    // Byte-wise ranged-for over the remaining logical bytes, counting
+    // UTF-8 lead bytes.  This shape is ABCE-eligible (see
+    // docs/design/01-abce.md): at optimize level 2 the loop body runs
+    // without per-access bounds checks.
+    var used = bufUsedBytes();
+    var found = 0;
+    for (bb in b..used) {
+        var v = 0;
+        if (bb < gs) {
+            v = data[bb];
         } else {
-            lead = data[b + delta];
+            v = data[bb + delta];
         }
-        if (lead < 0xC0) {
-            b = b + 1;
-        } else if (lead < 0xE0) {
-            b = b + 2;
-        } else if (lead < 0xF0) {
-            b = b + 3;
-        } else {
-            b = b + 4;
+        if (v < 0x80 || v >= 0xC0) {
+            // bb is a character boundary with c characters before it.
+            if (c == ci) {
+                b = bb;
+                found = 1;
+                break;
+            }
+            c = c + 1;
         }
-        c = c + 1;
+    }
+    if (found == 0) {
+        // The target lies at the end of the buffer.
+        b = used;
     }
     Buf.cacheChar = ci;
     Buf.cacheByte = b;
@@ -363,26 +372,34 @@ func lineEndPosition() {
     var gs = Buf.gapStart;
     var delta = Buf.gapEnd - gs;
     var chars = Buf.chars;
-    while (pos <= chars) {
-        var lead = 0;
-        if (b < gs) {
-            lead = data[b];
+    // Byte-wise ranged-for to the end of the buffer, stopping at the
+    // first newline lead byte.  ABCE-eligible (docs/design/01-abce.md):
+    // no per-access bounds checks at optimize level 2.
+    var used = bufUsedBytes();
+    var found = 0;
+    for (bb in b..used) {
+        var v = 0;
+        if (bb < gs) {
+            v = data[bb];
         } else {
-            lead = data[b + delta];
+            v = data[bb + delta];
         }
-        if (lead == 0x0A) {
-            break;
+        if (v < 0x80 || v >= 0xC0) {
+            if (bb > b) {
+                // Finished the previous character.
+                pos = pos + 1;
+                b = bb;
+            }
+            if (v == 0x0A) {
+                found = 1;
+                break;
+            }
         }
-        if (lead < 0xC0) {
-            b = b + 1;
-        } else if (lead < 0xE0) {
-            b = b + 2;
-        } else if (lead < 0xF0) {
-            b = b + 3;
-        } else {
-            b = b + 4;
-        }
+    }
+    if (found == 0 && used > b) {
+        // No newline: point moves past the final character.
         pos = pos + 1;
+        b = used;
     }
     Buf.cacheChar = pos - 1;
     Buf.cacheByte = b;

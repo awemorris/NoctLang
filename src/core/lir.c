@@ -1079,7 +1079,10 @@ lir_visit_stmt(
 
 			lir_decrement_tmpvar(access_tmpvar);
 			lir_decrement_tmpvar(obj_tmpvar);
-		} else if (stmt->lhs->type == HIR_EXPR_PSTORE8) {
+		} else if (stmt->lhs->type == HIR_EXPR_PSTORE8 ||
+			   stmt->lhs->type == HIR_EXPR_PSTORE16 ||
+			   stmt->lhs->type == HIR_EXPR_PSTORE32 ||
+			   stmt->lhs->type == HIR_EXPR_PSTORE64) {
 			assert(stmt->lhs->val.binary.expr[0] != NULL);
 			assert(stmt->lhs->val.binary.expr[1] != NULL);
 
@@ -1096,8 +1099,17 @@ lir_visit_stmt(
 				return false;
 
 			/* Put a raw store. */
-			if (!lir_put_opcode(OP_PSTORE8))
-				return false;
+			{
+				int pst;
+				switch (stmt->lhs->type) {
+				case HIR_EXPR_PSTORE16: pst = OP_PSTORE16; break;
+				case HIR_EXPR_PSTORE32: pst = OP_PSTORE32; break;
+				case HIR_EXPR_PSTORE64: pst = OP_PSTORE64; break;
+				default:                pst = OP_PSTORE8;  break;
+				}
+				if (!lir_put_opcode((uint8_t)pst))
+					return false;
+			}
 			if (!lir_put_tmpvar((uint16_t)obj_tmpvar))
 				return false;
 			if (!lir_put_tmpvar((uint16_t)access_tmpvar))
@@ -1232,6 +1244,11 @@ lir_visit_expr(
 	case HIR_EXPR_SHR:
 	case HIR_EXPR_SUBSCR:
 	case HIR_EXPR_PLOAD8U:
+	case HIR_EXPR_PLOAD8S:
+	case HIR_EXPR_PLOAD16U:
+	case HIR_EXPR_PLOAD16S:
+	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PLOAD64:
 		/* For the binary operators. */
 		if (!lir_visit_binary_expr(dst_tmpvar, expr, block))
 			return false;
@@ -1589,6 +1606,21 @@ lir_visit_binary_expr(
 		break;
 	case HIR_EXPR_PLOAD8U:
 		opcode = OP_PLOAD8U;
+		break;
+	case HIR_EXPR_PLOAD8S:
+		opcode = OP_PLOAD8S;
+		break;
+	case HIR_EXPR_PLOAD16U:
+		opcode = OP_PLOAD16U;
+		break;
+	case HIR_EXPR_PLOAD16S:
+		opcode = OP_PLOAD16S;
+		break;
+	case HIR_EXPR_PLOAD32:
+		opcode = OP_PLOAD32;
+		break;
+	case HIR_EXPR_PLOAD64:
+		opcode = OP_PLOAD64;
 		break;
 	default:
 		opcode = -1;
@@ -2905,6 +2937,94 @@ lir_dump(
 			IMM2(o);
 			IMM2(src);
 			printf("%04d: PSTORE8(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
+			break;
+		}
+		case OP_PLOAD8S:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD8S(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD16U:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD16U(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD16S:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD16S(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD32:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD32(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD64:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD64(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PSTORE16:
+		{
+			uint16_t base;
+			uint16_t o;
+			uint16_t src;
+			IMM2(base);
+			IMM2(o);
+			IMM2(src);
+			printf("%04d: PSTORE16(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
+			break;
+		}
+		case OP_PSTORE32:
+		{
+			uint16_t base;
+			uint16_t o;
+			uint16_t src;
+			IMM2(base);
+			IMM2(o);
+			IMM2(src);
+			printf("%04d: PSTORE32(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
+			break;
+		}
+		case OP_PSTORE64:
+		{
+			uint16_t base;
+			uint16_t o;
+			uint16_t src;
+			IMM2(base);
+			IMM2(o);
+			IMM2(src);
+			printf("%04d: PSTORE64(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
 			break;
 		}
 		case OP_CHECKTYPE:

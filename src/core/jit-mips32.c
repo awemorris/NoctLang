@@ -294,7 +294,8 @@ jit_visit_lineinfo_op(
 
                 /* env->line = line; */
                 /* li $t0, line */      IW(0x24080000 | lo16(line));
-                /* sw $t0, 8($s0) */    IW(0xae080008);
+                /* env->line is at offset 4 on 32-bit targets. */
+                /* sw $t0, 4($s0) */    IW(0xae080004);
         }
 
         return true;
@@ -1775,19 +1776,35 @@ jit_visit_safepoint_op(
         return true;
 }
 
-/* Visit a OP_PBASE instruction. (ABCE; helper-call implementation.) */
+/* Visit a OP_PBASE instruction. (ABCE; inline machine code, mips32 BE.)
+ * The pointer union member sits in the FIRST word (+8); the 64-bit
+ * long stores it BE: high(0) at +8, low(ptr) at +12. */
 static INLINE bool
 jit_visit_pbase_op(
         struct jit_context *ctx)
 {
         int dst;
         int src;
+        uint32_t buf_ofs;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
 
-        /* if (!ex_pbase_helper(env, dst, src)) return false; */
-        ASM_UNARY_OP(ex_pbase_helper);
+        dst *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+        buf_ofs = (uint32_t)offsetof(struct rt_packed, packed_buffer);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, src+8($s1)  (packed pointer member) */
+                IW(0x8E280000 | lo16((uint32_t)(src + 8)));
+                /* lw $t0, buf_ofs($t0) */      IW(0x8D080000 | lo16(buf_ofs));
+                /* li $t2, LONG */              IW(0x240a0000 | lo16((uint32_t)NOCT_VALUE_LONG));
+                /* sw $t2, dst($s1) */          IW(0xAE2A0000 | lo16((uint32_t)dst));
+                /* sw $zero, dst+8($s1) */      IW(0xAE200000 | lo16((uint32_t)(dst + 8)));
+                /* sw $t0, dst+12($s1) */       IW(0xAE280000 | lo16((uint32_t)(dst + 12)));
+        }
 
         return true;
 }
@@ -1847,40 +1864,66 @@ jit_visit_typeis_op(
         return true;
 }
 
-/* Visit a OP_PLOAD8U instruction. (ABCE; helper-call implementation.) */
+/* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code, mips32 BE.) */
 static INLINE bool
 jit_visit_pload8u_op(
         struct jit_context *ctx)
 {
         int dst;
-        int src1;
-        int src2;
+        int base;
+        int ofs;
 
         CONSUME_TMPVAR(dst);
-        CONSUME_TMPVAR(src1);
-        CONSUME_TMPVAR(src2);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
 
-        /* if (!ex_pload8u_helper(env, dst, base, ofs)) return false; */
-        ASM_BINARY_OP(ex_pload8u_helper);
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* load elem -> $t1 */          IW(0x90000000 | (8 << 21) | (9 << 16));
+                /* li $t2, INT */               IW(0x240a0000 | lo16((uint32_t)NOCT_VALUE_INT));
+                /* sw $t2, dst($s1) */          IW(0xAE2A0000 | lo16((uint32_t)dst));
+                /* sw $t1, dst+8($s1) */        IW(0xAE290000 | lo16((uint32_t)(dst + 8)));
+        }
 
         return true;
 }
 
-/* Visit a OP_PSTORE8 instruction. (ABCE; operand order: base, ofs, src.) */
+/* Visit a OP_PSTORE8 instruction. (ABCE; inline, mips32 BE. Int source.) */
 static INLINE bool
 jit_visit_pstore8_op(
         struct jit_context *ctx)
 {
-        int dst;
-        int src1;
-        int src2;
+        int base;
+        int ofs;
+        int src;
 
-        CONSUME_TMPVAR(dst);
-        CONSUME_TMPVAR(src1);
-        CONSUME_TMPVAR(src2);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
 
-        /* if (!ex_pstore8_helper(env, base, ofs, src)) return false; */
-        ASM_BINARY_OP(ex_pstore8_helper);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* lw $t2, src+8($s1) */        IW(0x8E2A0000 | lo16((uint32_t)(src + 8)));
+                /* store elem */                IW(0xa0000000 | (8 << 21) | (10 << 16));
+        }
 
         return true;
 }
@@ -1898,6 +1941,243 @@ jit_visit_checktype_op(
 
         /* if (!ex_checktype_helper(env, slot, type)) return false; */
         ASM_UNARY_OP(ex_checktype_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8S instruction. (ABCE; inline machine code, mips32 BE.) */
+static INLINE bool
+jit_visit_pload8s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* load elem -> $t1 */          IW(0x80000000 | (8 << 21) | (9 << 16));
+                /* li $t2, INT */               IW(0x240a0000 | lo16((uint32_t)NOCT_VALUE_INT));
+                /* sw $t2, dst($s1) */          IW(0xAE2A0000 | lo16((uint32_t)dst));
+                /* sw $t1, dst+8($s1) */        IW(0xAE290000 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16U instruction. (ABCE; inline machine code, mips32 BE.) */
+static INLINE bool
+jit_visit_pload16u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* sll $t1,$t1,1 */       IW(0x00094800 | (1 << 6));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* load elem -> $t1 */          IW(0x94000000 | (8 << 21) | (9 << 16));
+                /* li $t2, INT */               IW(0x240a0000 | lo16((uint32_t)NOCT_VALUE_INT));
+                /* sw $t2, dst($s1) */          IW(0xAE2A0000 | lo16((uint32_t)dst));
+                /* sw $t1, dst+8($s1) */        IW(0xAE290000 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16S instruction. (ABCE; inline machine code, mips32 BE.) */
+static INLINE bool
+jit_visit_pload16s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* sll $t1,$t1,1 */       IW(0x00094800 | (1 << 6));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* load elem -> $t1 */          IW(0x84000000 | (8 << 21) | (9 << 16));
+                /* li $t2, INT */               IW(0x240a0000 | lo16((uint32_t)NOCT_VALUE_INT));
+                /* sw $t2, dst($s1) */          IW(0xAE2A0000 | lo16((uint32_t)dst));
+                /* sw $t1, dst+8($s1) */        IW(0xAE290000 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD32 instruction. (ABCE; inline machine code, mips32 BE.) */
+static INLINE bool
+jit_visit_pload32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* sll $t1,$t1,2 */       IW(0x00094800 | (2 << 6));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* load elem -> $t1 */          IW(0x8c000000 | (8 << 21) | (9 << 16));
+                /* li $t2, INT */               IW(0x240a0000 | lo16((uint32_t)NOCT_VALUE_INT));
+                /* sw $t2, dst($s1) */          IW(0xAE2A0000 | lo16((uint32_t)dst));
+                /* sw $t1, dst+8($s1) */        IW(0xAE290000 | lo16((uint32_t)(dst + 8)));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD64 instruction. (ABCE width op; helper-call.) */
+static INLINE bool
+jit_visit_pload64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pload64_helper(env, a, b, c)) return false; */
+        ASM_BINARY_OP(ex_pload64_helper);
+
+        return true;
+}
+
+/* Visit a OP_PSTORE16 instruction. (ABCE; inline, mips32 BE. Int source.) */
+static INLINE bool
+jit_visit_pstore16_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* sll $t1,$t1,1 */       IW(0x00094800 | (1 << 6));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* lw $t2, src+8($s1) */        IW(0x8E2A0000 | lo16((uint32_t)(src + 8)));
+                /* store elem */                IW(0xa4000000 | (8 << 21) | (10 << 16));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE32 instruction. (ABCE; inline, mips32 BE. Int source.) */
+static INLINE bool
+jit_visit_pstore32_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* $s1: &env->frame->tmpvar[0] */
+
+                /* lw $t0, base+12($s1)  (BE: low word of the long) */
+                IW(0x8E280000 | lo16((uint32_t)(base + 12)));
+                /* lw $t1, ofs+8($s1) */        IW(0x8E290000 | lo16((uint32_t)(ofs + 8)));
+                /* sll $t1,$t1,2 */       IW(0x00094800 | (2 << 6));
+                /* addu $t0,$t0,$t1 */        IW(0x01094021);
+                /* lw $t2, src+8($s1) */        IW(0x8E2A0000 | lo16((uint32_t)(src + 8)));
+                /* store elem */                IW(0xac000000 | (8 << 21) | (10 << 16));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE64 instruction. (ABCE width op; helper-call.) */
+static INLINE bool
+jit_visit_pstore64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pstore64_helper(env, a, b, c)) return false; */
+        ASM_BINARY_OP(ex_pstore64_helper);
 
         return true;
 }
@@ -2179,6 +2459,38 @@ jit_visit_bytecode(
                         break;
                 case OP_CHECKTYPE:
                         if (!jit_visit_checktype_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8S:
+                        if (!jit_visit_pload8s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16U:
+                        if (!jit_visit_pload16u_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16S:
+                        if (!jit_visit_pload16s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD32:
+                        if (!jit_visit_pload32_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD64:
+                        if (!jit_visit_pload64_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE16:
+                        if (!jit_visit_pstore16_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE32:
+                        if (!jit_visit_pstore32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE64:
+                        if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
                 default:

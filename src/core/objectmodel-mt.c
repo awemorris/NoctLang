@@ -1883,6 +1883,18 @@ expand_array(
 	locked = true;
 
 	/*
+	 * The array may have been superseded by a copy-publish between the
+	 * caller's follow and the lock above: an expander releases the old
+	 * generation's lock only after linking newer, so we may have locked
+	 * a stale generation. Expanding it would publish newer on storage
+	 * no reader follows anymore. Restart instead.
+	 */
+	if (atomic_load_acquire_ptr((void **)&arr->newer) != NULL) {
+		sub_array_write_unlock(env, arr);
+		return true;
+	}
+
+	/*
 	 * Allocate the new array. Multiple GCs may occur in this call(). Each
 	 * GC is embraced by om_enter_gc() and om_leave_gc().
 	 */
@@ -2020,6 +2032,19 @@ expand_dict(
 	 * Succesfully locked.
 	 */
 	locked = true;
+
+	/*
+	 * The dictionary may have been superseded by a copy-publish between
+	 * the caller's follow and the lock above: an expander releases the
+	 * old generation's lock only after linking newer, so we may have
+	 * locked a stale generation. Expanding it would publish newer on
+	 * storage no reader follows anymore. Restart instead.
+	 */
+	if (atomic_load_acquire_ptr((void **)&dict->newer) != NULL) {
+		sub_dict_write_unlock(env, dict);
+		return true;
+	}
+
 	/*
 	 * Allocate the new dictionary. Multiple GCs may occur in this call(). Each
 	 * GC is embraced by om_enter_gc() and om_leave_gc().
@@ -2361,6 +2386,16 @@ retry:
 		/*
 		 * Failed to lock the array. Go back to the beginning.
 		 */
+		goto retry;
+	}
+
+	/*
+	 * The array may have been superseded by a copy-publish between the
+	 * follow in start_array_read() and the lock above. A write to a
+	 * stale generation would be invisible to readers. Restart instead.
+	 */
+	if (atomic_load_acquire_ptr((void **)&arr->newer) != NULL) {
+		sub_array_write_unlock(env, arr);
 		goto retry;
 	}
 
@@ -2993,9 +3028,10 @@ om_write_dict(
 	   compiler-emitted freeze happens before sharing; a scripted
 	   freeze of a shared dict may be observed late by design.) */
 	{
-		struct rt_dict *frz = dict_val->val.dict;
-		while (frz->newer != NULL)
-			frz = frz->newer;
+		struct rt_dict *frz, *frz_next;
+		frz = atomic_load_acquire_ptr((void **)&dict_val->val.dict);
+		while ((frz_next = atomic_load_acquire_ptr((void **)&frz->newer)) != NULL)
+			frz = frz_next;
 		if (frz->is_frozen) {
 			rt_error(env, N_TR("Dictionary is frozen."));
 			return false;
@@ -3051,6 +3087,18 @@ retry:
 		goto retry;
 	}
 	locked = true;
+
+	/*
+	 * The dictionary may have been superseded by a copy-publish between
+	 * the follow in start_dict_read() and the lock above: an expander
+	 * releases the old generation's lock only after linking newer. A
+	 * write to a stale generation would be invisible to readers.
+	 * Restart instead.
+	 */
+	if (atomic_load_acquire_ptr((void **)&dict->newer) != NULL) {
+		sub_dict_write_unlock(env, dict);
+		goto retry;
+	}
 
 	/*
 	 * In-place write phase.
@@ -3316,9 +3364,10 @@ om_erase_dict_entry(
 
 	/* Reject removal from a frozen dictionary. */
 	{
-		struct rt_dict *frz = dict_val->val.dict;
-		while (frz->newer != NULL)
-			frz = frz->newer;
+		struct rt_dict *frz, *frz_next;
+		frz = atomic_load_acquire_ptr((void **)&dict_val->val.dict);
+		while ((frz_next = atomic_load_acquire_ptr((void **)&frz->newer)) != NULL)
+			frz = frz_next;
 		if (frz->is_frozen) {
 			rt_error(env, N_TR("Dictionary is frozen."));
 			return false;
@@ -3374,6 +3423,16 @@ retry:
 		goto retry;
 	}
 	locked = true;
+
+	/*
+	 * The dictionary may have been superseded by a copy-publish between
+	 * the follow in start_dict_read() and the lock above. A removal on
+	 * a stale generation would be invisible to readers. Restart instead.
+	 */
+	if (atomic_load_acquire_ptr((void **)&dict->newer) != NULL) {
+		sub_dict_write_unlock(env, dict);
+		goto retry;
+	}
 
 	/*
 	 * We first try the in-place write phase, then move to the expand phase
@@ -3915,18 +3974,34 @@ om_freeze_dict(
 	struct rt_env *env,
 	struct rt_value *dict_val)
 {
-	struct rt_dict *dict;
+	struct rt_dict *dict, *next;
 
-	dict = dict_val->val.dict;
-	while (dict->newer != NULL)
-		dict = dict->newer;
+	dict = atomic_load_acquire_ptr((void **)&dict_val->val.dict);
+	while ((next = atomic_load_acquire_ptr((void **)&dict->newer)) != NULL)
+		dict = next;
 
 	if (dict->shared) {
 		uint64_t cpu_relax_base = CPU_RELAX_BASE_INITIALIZER;
 
 		/* Serialize with concurrent writers. */
-		while (!add_try_dict_write_lock(env, dict))
-			cpu_relax(&cpu_relax_base);
+		for (;;) {
+			if (!add_try_dict_write_lock(env, dict)) {
+				cpu_relax(&cpu_relax_base);
+				continue;
+			}
+
+			/*
+			 * The dictionary may have been superseded by a
+			 * copy-publish before the lock. Freezing a stale
+			 * generation would be invisible to readers, so
+			 * re-follow and retry.
+			 */
+			if (atomic_load_acquire_ptr((void **)&dict->newer) == NULL)
+				break;
+			sub_dict_write_unlock(env, dict);
+			while ((next = atomic_load_acquire_ptr((void **)&dict->newer)) != NULL)
+				dict = next;
+		}
 		dict->is_frozen = true;
 		sub_dict_write_unlock(env, dict);
 	} else {

@@ -1,0 +1,16 @@
+#!/bin/sh
+# ABCE synthetic benchmarks: optimize-level 0 vs 2, interpreter and JIT.
+NOCT=${NOCT:-../../build-static/noct}
+for tc in b*.noct; do
+    printf "%-22s" "$tc"
+    for mode in "--disable-jit" "--force-jit"; do
+        for lvl in "" "--optimize-level=2"; do
+            t0=$(date +%s.%N)
+            $NOCT $mode $lvl "$tc" > /dev/null 2>&1
+            t1=$(date +%s.%N)
+            printf " %8.3f" "$(echo "$t1 - $t0" | bc)"
+        done
+    done
+    echo
+done
+echo "columns: interp-L0 interp-L2 jit-L0 jit-L2 (seconds)"

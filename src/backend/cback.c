@@ -1168,6 +1168,154 @@ cback_visit_pstore8_op(
 	return true;
 }
 
+/* Visit a LOP_PLOAD8S instruction. (ABCE raw load.) */
+static INLINE bool
+cback_visit_pload8s_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, base, ofs;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i = (int)*((const int8_t *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i);\n",
+		dst, base, ofs);
+
+	return true;
+}
+
+/* Visit a LOP_PLOAD16U instruction. (ABCE raw load.) */
+static INLINE bool
+cback_visit_pload16u_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, base, ofs;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i = (int)*((const uint16_t *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i);\n",
+		dst, base, ofs);
+
+	return true;
+}
+
+/* Visit a LOP_PLOAD16S instruction. (ABCE raw load.) */
+static INLINE bool
+cback_visit_pload16s_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, base, ofs;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i = (int)*((const int16_t *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i);\n",
+		dst, base, ofs);
+
+	return true;
+}
+
+/* Visit a LOP_PLOAD32 instruction. (ABCE raw load.) */
+static INLINE bool
+cback_visit_pload32_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, base, ofs;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i = (int)*((const int32_t *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i);\n",
+		dst, base, ofs);
+
+	return true;
+}
+
+/* Visit a LOP_PLOAD64 instruction. (ABCE raw load.) */
+static INLINE bool
+cback_visit_pload64_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, base, ofs;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_LONG;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.l = *((const int64_t *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i);\n",
+		dst, base, ofs);
+
+	return true;
+}
+
+/* Visit a LOP_PSTORE16 instruction. (ABCE raw store; int source.) */
+static INLINE bool
+cback_visit_pstore16_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int base, ofs, src;
+
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+	GET_TMPVAR(&src);
+
+	fprintf(fp, "    *((uint16_t *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i) = (uint16_t)env->frame->tmpvar[%d].val.i;\n",
+		base, ofs, src);
+
+	return true;
+}
+
+/* Visit a LOP_PSTORE32 instruction. (ABCE raw store; int source.) */
+static INLINE bool
+cback_visit_pstore32_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int base, ofs, src;
+
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+	GET_TMPVAR(&src);
+
+	fprintf(fp, "    *((uint32_t *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i) = (uint32_t)env->frame->tmpvar[%d].val.i;\n",
+		base, ofs, src);
+
+	return true;
+}
+
+/* Visit a LOP_PSTORE64 instruction. (ABCE raw store; int/long source.) */
+static INLINE bool
+cback_visit_pstore64_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int base, ofs, src;
+
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+	GET_TMPVAR(&src);
+
+	fprintf(fp, "    if (!noct_ex_pstore64_helper(env, %d, %d, %d)) return false;\n", base, ofs, src);
+
+	return true;
+}
+
 /* Visit a LOP_CHECKTYPE instruction. */
 static INLINE bool
 cback_visit_checktype_op(
@@ -1408,6 +1556,38 @@ cback_visit_op(
 		break;
 	case OP_CHECKTYPE:
 		if (!cback_visit_checktype_op(func, pc))
+			return false;
+		break;
+	case OP_PLOAD8S:
+		if (!cback_visit_pload8s_op(func, pc))
+			return false;
+		break;
+	case OP_PLOAD16U:
+		if (!cback_visit_pload16u_op(func, pc))
+			return false;
+		break;
+	case OP_PLOAD16S:
+		if (!cback_visit_pload16s_op(func, pc))
+			return false;
+		break;
+	case OP_PLOAD32:
+		if (!cback_visit_pload32_op(func, pc))
+			return false;
+		break;
+	case OP_PLOAD64:
+		if (!cback_visit_pload64_op(func, pc))
+			return false;
+		break;
+	case OP_PSTORE16:
+		if (!cback_visit_pstore16_op(func, pc))
+			return false;
+		break;
+	case OP_PSTORE32:
+		if (!cback_visit_pstore32_op(func, pc))
+			return false;
+		break;
+	case OP_PSTORE64:
+		if (!cback_visit_pstore64_op(func, pc))
 			return false;
 		break;
 	default:

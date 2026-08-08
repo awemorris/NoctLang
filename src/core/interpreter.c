@@ -1068,6 +1068,102 @@ rt_visit_pstore8_op(
         BINARY_OP(ex_pstore8_helper);
 }
 
+/* Visit a OP_PLOAD8S instruction. */
+static INLINE bool
+rt_visit_pload8s_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLOAD8S");
+
+        BINARY_OP(ex_pload8s_helper);
+}
+
+/* Visit a OP_PLOAD16U instruction. */
+static INLINE bool
+rt_visit_pload16u_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLOAD16U");
+
+        BINARY_OP(ex_pload16u_helper);
+}
+
+/* Visit a OP_PLOAD16S instruction. */
+static INLINE bool
+rt_visit_pload16s_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLOAD16S");
+
+        BINARY_OP(ex_pload16s_helper);
+}
+
+/* Visit a OP_PLOAD32 instruction. */
+static INLINE bool
+rt_visit_pload32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLOAD32");
+
+        BINARY_OP(ex_pload32_helper);
+}
+
+/* Visit a OP_PLOAD64 instruction. */
+static INLINE bool
+rt_visit_pload64_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLOAD64");
+
+        BINARY_OP(ex_pload64_helper);
+}
+
+/* Visit a OP_PSTORE16 instruction. (Operand order: base, ofs, src.) */
+static INLINE bool
+rt_visit_pstore16_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PSTORE16");
+
+        BINARY_OP(ex_pstore16_helper);
+}
+
+/* Visit a OP_PSTORE32 instruction. (Operand order: base, ofs, src.) */
+static INLINE bool
+rt_visit_pstore32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PSTORE32");
+
+        BINARY_OP(ex_pstore32_helper);
+}
+
+/* Visit a OP_PSTORE64 instruction. (Operand order: base, ofs, src.) */
+static INLINE bool
+rt_visit_pstore64_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PSTORE64");
+
+        BINARY_OP(ex_pstore64_helper);
+}
+
 /* Visit a OP_CHECKTYPE instruction. */
 static INLINE bool
 rt_visit_checktype_op(
@@ -1311,6 +1407,38 @@ rt_visit_op(
                 break;
         case OP_CHECKTYPE:
                 if (!rt_visit_checktype_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLOAD8S:
+                if (!rt_visit_pload8s_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLOAD16U:
+                if (!rt_visit_pload16u_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLOAD16S:
+                if (!rt_visit_pload16s_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLOAD32:
+                if (!rt_visit_pload32_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLOAD64:
+                if (!rt_visit_pload64_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PSTORE16:
+                if (!rt_visit_pstore16_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PSTORE32:
+                if (!rt_visit_pstore32_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PSTORE64:
+                if (!rt_visit_pstore64_op(env, func, pc))
                         return false;
                 break;
         default:
