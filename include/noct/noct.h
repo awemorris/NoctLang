@@ -2016,6 +2016,10 @@ bool
 noct_register_api_term(
 	NoctEnv *env);
 
+NOCT_DLL
+bool
+noct_register_api_process(NoctEnv *env);
+
 /*
  * Custom Allocators
  *  - Override the macros and build a custom library.

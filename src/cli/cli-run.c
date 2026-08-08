@@ -94,6 +94,12 @@ int command_run(int argc, char *argv[])
 		return false;
 	}
 #endif
+#if defined(NOCT_USE_PROCESS)
+	if (!noct_register_api_process(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+#endif
 
 	/* Register native functions. */
 	if (!register_cli_cfunc(env)) {
