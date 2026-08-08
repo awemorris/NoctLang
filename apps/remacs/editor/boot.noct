@@ -1,0 +1,354 @@
+//
+// remacs startup and command loop.
+//
+
+func remacsVersion() {
+    return "0.0.1";
+}
+
+func main(arg) {
+    // Build the Editor namespace; under the remacs launcher this ran
+    // already, and running it again on a fresh VM is harmless.
+    remacsInitCore();
+    // Under the remacs launcher the argument is the file name string;
+    // under a plain noct run it is the argument array.
+    var file = "";
+    if (Type.of(arg) == "string") {
+        file = arg;
+    } else if (Type.of(arg) == "array") {
+        if (Array.size(arg) > 0) {
+            file = arg[0];
+        }
+    }
+    if (Term.isTTY() == 0) {
+        // Not a terminal: report and exit. The test harness uses
+        // remacs --script instead of this path.
+        print("remacs " + remacsVersion() + " (no tty)");
+        return 0;
+    }
+
+    // The editor environment dictionary, passed to every command.
+    var ed = {
+        running: 1,
+        echoMessage: "remacs " + remacsVersion() + "  C-x C-c to quit",
+        windowStartLine: 0,
+        prefixArg: 0,      // numeric prefix argument for the next command
+        hasPrefix: 0,      // 1 when prefixArg is meaningful
+        lastCommand: "",
+        lastWasKill: 0,
+        thisKill: 0,
+        amalgam: 0,
+        file: file
+    };
+
+    initKeymapModule();
+    windowInit();
+    skkInit();
+    shellInit();
+    gudInit();
+    compileInit();
+    redisplayInit();
+
+    if (file != "") {
+        var bufName = Editor.fileNameNondirectory(file);
+        Editor.getBufferCreate(bufName);
+        Editor.setBuffer(bufName);
+        windowNoteBuffer();
+        Buf.fileName = Editor.expandFileName(file, "");
+        Buf.defaultDir = Editor.fileNameDirectory(Buf.fileName);
+        if (FileUtil.checkFileExists(Buf.fileName) == 1) {
+            Editor.insertFileContents(Buf.fileName);
+            Editor.gotoChar(Editor.pointMin());
+            Editor.setBufferModifiedP(0);
+        }
+        ed.echoMessage = Editor.abbreviateFileName(Buf.fileName);
+    }
+
+    loadInitFiles(ed);
+
+    Term.open();
+    redisplay(ed);
+
+    while (ed.running == 1) {
+        var timeout = 1000;
+        if (shellHasLive() == 1) {
+            timeout = 50;
+        }
+        var key = Term.readKey(timeout);
+        if (key < 0) {
+            var got = shellPump(ed);
+            if (Term.resized() == 1 || got == 1) {
+                redisplay(ed);
+            }
+            continue;
+        }
+
+        dispatchKey(ed, key);
+        // The prefix argument only reaches the command it precedes.
+        ed.hasPrefix = 0;
+        ed.prefixArg = 0;
+
+        if (Term.pendingInput() == 0) {
+            redisplay(ed);
+        }
+    }
+
+    // Clear the screen on the way out, like Emacs.
+    Term.clear();
+    Term.flush();
+    Term.close();
+    return 0;
+}
+
+// Resolve one (possibly multi-key) sequence starting at "key" and run
+// the command it names, or self-insert. This is also the reentry point
+// for universal-argument, which dispatches its terminating key here.
+func dispatchKey(ed, key) {
+    // M-digit starts a numeric argument directly.
+    if (key >= (Term.META | 0x30) && key <= (Term.META | 0x39)) {
+        readPrefixArg(ed, (key & 0xFF) - 0x30, 0);
+        return 0;
+    }
+    // The SKK input method sees keys first while it is on.
+    if (skkHandleKey(ed, key) == 1) {
+        ed.lastCommand = "skk";
+        return 0;
+    }
+    // Walk the buffer-local and global keymaps in parallel; a local
+    // binding wins, a dead track drops out.
+    var nodeL = Buf.localMap;
+    var nodeG = GlobalMap;
+    var prefix = "";
+    var firstKey = key;
+    var commandName = 0;
+    var commandClosure = 0;
+    var undefined = 0;
+    // The prefix echo is transient; the previous message returns
+    // once the chord resolves.
+    var savedEcho = ed.echoMessage;
+    while (true) {
+        var kstr = "" + key;
+        if (prefix != "") {
+            prefix = prefix + " ";
+        }
+        prefix = prefix + describeKey(key);
+
+        var vL = 0;
+        var vG = 0;
+        if (Type.of(nodeL) == "dict" && Dict.hasKey(nodeL, kstr)) {
+            vL = nodeL[kstr];
+        }
+        if (Type.of(nodeG) == "dict" && Dict.hasKey(nodeG, kstr)) {
+            vG = nodeG[kstr];
+        }
+        // A bound Lisp closure (a dict carrying lparams) resolves the
+        // sequence; a plain dict is a prefix map that continues.
+        if (Type.of(vL) == "string") {
+            commandName = vL;
+            break;
+        }
+        if (Type.of(vL) == "dict" && Dict.hasKey(vL, "lparams")) {
+            commandClosure = vL;
+            break;
+        }
+        var vLprefix = (Type.of(vL) == "dict" && !Dict.hasKey(vL, "lparams"));
+        if (!vLprefix && Type.of(vG) == "string") {
+            commandName = vG;
+            break;
+        }
+        if (!vLprefix && Type.of(vG) == "dict" && Dict.hasKey(vG, "lparams")) {
+            commandClosure = vG;
+            break;
+        }
+        var vGprefix = (Type.of(vG) == "dict" && !Dict.hasKey(vG, "lparams"));
+        if (!vLprefix && !vGprefix) {
+            undefined = 1;
+            break;
+        }
+        // At least one prefix track continues.
+        ed.echoMessage = prefix + "-";
+        redisplay(ed);
+        nodeL = vL;
+        nodeG = vG;
+        var nk = Term.readKey(30000);
+        if (nk < 0) {
+            undefined = 1;
+            break;
+        }
+        key = nk;
+    }
+
+    ed.echoMessage = savedEcho;
+    if (commandClosure != 0) {
+        // A Lisp lambda bound to a key. Editor commands it calls reach
+        // the editor state through the global Ed reference.
+        Editor.undoBoundary();
+        Ed = ed;
+        ed.thisKill = 0;
+        LispErr = 0;
+        lispApply(commandClosure, []);
+        if (LispErr == 1) {
+            ed.echoMessage = LispErrMsg;
+        }
+        ed.lastWasKill = ed.thisKill;
+        ed.lastCommand = "lisp-lambda";
+        clearLastYank();
+    } else if (commandName != 0) {
+        var fn = commandByName(commandName);
+        if (Type.of(fn) == "func") {
+            if (commandName != "undo") {
+                Editor.undoBoundary();
+            }
+            Ed = ed;
+            ed.amalgam = 0;
+            ed.thisKill = 0;
+            fn(ed);
+            ed.lastWasKill = ed.thisKill;
+            ed.lastCommand = commandName;
+            if (commandName != "yank" && commandName != "yank-pop") {
+                clearLastYank();
+            }
+        } else if (lispIsCommand(commandName) == 1) {
+            // A key bound to a Lisp function (a defun or a Lisp
+            // command) named as a symbol.
+            Editor.undoBoundary();
+            Ed = ed;
+            ed.thisKill = 0;
+            LispErr = 0;
+            lispApplyNamed(commandName, []);
+            if (LispErr == 1) {
+                ed.echoMessage = LispErrMsg;
+            }
+            ed.lastWasKill = ed.thisKill;
+            ed.lastCommand = commandName;
+            clearLastYank();
+        } else {
+            ed.echoMessage = commandName + " is not a command";
+        }
+    } else if (undefined == 1 && prefix != describeKey(firstKey)) {
+        // A multi-key sequence that ran off the map.
+        ed.echoMessage = prefix + " is undefined";
+    } else if (firstKey >= 0x20 && firstKey < 0x110000 && firstKey != 0x7F) {
+        // Self-insert for plain graphic characters. Consecutive
+        // self-inserts amalgamate into one undo group of up to 20
+        // characters, like Emacs. A prefix argument repeats the char.
+        if (ed.lastCommand != "self-insert-command" || ed.amalgam >= 20) {
+            Editor.undoBoundary();
+            ed.amalgam = 0;
+        }
+        ed.amalgam = ed.amalgam + 1;
+        var reps = prefixNum(ed, 1);
+        for (i in 0..reps) {
+            Editor.insert(keyToString(firstKey));
+        }
+        ed.lastWasKill = 0;
+        ed.lastCommand = "self-insert-command";
+        clearLastYank();
+    }
+    // A single unknown chord is ignored silently.
+    return 0;
+}
+
+// The numeric prefix argument, or def when none was given.
+func prefixNum(ed, def) {
+    if (ed.hasPrefix == 1) {
+        return ed.prefixArg;
+    }
+    return def;
+}
+
+// The C-u / M-digit / M-- argument reader. Accumulates until a
+// non-argument key arrives, then dispatches that key with the prefix
+// set. seedDigit >= 0 starts with that digit (M-5); seedNeg starts
+// negative (M--); otherwise C-u semantics (4, 16, 64...).
+func readPrefixArg(ed, seedDigit, seedNeg) {
+    var arg = 4;
+    var digits = 0;
+    var neg = 0;
+    if (seedDigit >= 0) {
+        arg = seedDigit;
+        digits = 1;
+    }
+    if (seedNeg == 1) {
+        neg = 1;
+    }
+
+    while (true) {
+        var disp = "C-u";
+        if (neg == 1) {
+            disp = disp + " -";
+        }
+        if (digits == 1) {
+            disp = disp + " " + arg;
+        }
+        ed.echoMessage = disp + "-";
+        redisplay(ed);
+        var k = Term.readKey(30000);
+        if (k < 0) {
+            continue;
+        }
+        if (k == (Term.CTRL | 0x75)) {           // C-u again
+            if (digits == 0 && neg == 0) {
+                arg = arg * 4;
+            }
+            continue;
+        }
+        if (k >= 0x30 && k <= 0x39) {            // digit
+            var d = k - 0x30;
+            if (digits == 1) {
+                arg = arg * 10 + d;
+            } else {
+                arg = d;
+                digits = 1;
+            }
+            continue;
+        }
+        if (k == 0x2D && digits == 0 && neg == 0) {  // leading -
+            neg = 1;
+            continue;
+        }
+
+        // A terminating key: fix the argument and dispatch.
+        var value = arg;
+        if (neg == 1) {
+            if (digits == 1) {
+                value = 0 - arg;
+            } else {
+                value = 0 - 1;
+            }
+        }
+        ed.prefixArg = value;
+        ed.hasPrefix = 1;
+        ed.echoMessage = "";
+        dispatchKey(ed, k);
+        ed.hasPrefix = 0;
+        ed.prefixArg = 0;
+        return 0;
+    }
+}
+
+// Load the startup files: ~/.remacs (Noct; must define remacsInit(ed),
+// which is called after loading) and later ~/.emacs (Lisp).
+func loadInitFiles(ed) {
+    var home = FileUtil.getHomeDirectory();
+    if (home == "") {
+        return 0;
+    }
+    var noctInit = home + "/.remacs";
+    if (FileUtil.checkFileExists(noctInit) == 1) {
+        System.import(noctInit);
+        remacsInit(ed);
+    }
+    var lispInitFile = home + "/.emacs";
+    if (FileUtil.checkFileExists(lispInitFile) == 1) {
+        if (lispLoadFile(lispInitFile) == 0) {
+            ed.echoMessage = "Error in ~/.emacs: " + LispErrMsg;
+        }
+    }
+    return 0;
+}
+
+// Convert a plain (unmodified) key event to a UTF-8 string.
+func keyToString(key) {
+    return Editor.charToString(key);
+}
