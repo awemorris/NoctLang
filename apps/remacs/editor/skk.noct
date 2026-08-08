@@ -28,7 +28,15 @@ func skkInit() {
         start: 0,        // marker before the composition mark
         reading: "",
         cands: [],
-        idx: 0
+        idx: 0,
+        // Okuri-ari (送りあり) sub-state, active while composing an
+        // inflected word like KaKeru -> 書ける.
+        okuri: 0,            // 1 while okurigana is being entered
+        stem: "",            // the reading before the okurigana
+        okuriConsonant: "",  // the okurigana's leading consonant (dict key tail)
+        okuriKana: "",       // the composed okurigana so far
+        okuriPending: "",    // okurigana romaji not yet composed
+        okuriShown: 0        // chars after the stem currently in the buffer
     };
     skkInitRomaji();
     return 0;
@@ -75,6 +83,12 @@ func skkResetComposition() {
     Skk.pending = "";
     Skk.pendingShown = 0;
     Skk.conv = 0;
+    Skk.okuri = 0;
+    Skk.stem = "";
+    Skk.okuriConsonant = "";
+    Skk.okuriKana = "";
+    Skk.okuriPending = "";
+    Skk.okuriShown = 0;
     Skk.reading = "";
     Skk.cands = [];
     Skk.idx = 0;
@@ -357,6 +371,15 @@ func skkHandleKey(ed, key) {
         return 0;
     }
 
+    // While entering okurigana, letters build it (in both the
+    // pre-conversion reading state and the candidate state).
+    if (Skk.okuri == 1 && key >= 0x61 && key <= 0x7A) {
+        return skkOkuriInput(ed, String.chr(key));
+    }
+    if (Skk.okuri == 1 && key >= 0x41 && key <= 0x5A) {
+        return skkOkuriInput(ed, String.toLowerCase(String.chr(key)));
+    }
+
     // Candidate selection state.
     if (Skk.conv == 2) {
         return skkCandidateKey(ed, key);
@@ -409,6 +432,22 @@ func skkHandleKey(ed, key) {
             return 1;
         }
         // Letters keep composing below.
+    }
+
+    // Uppercase inside a non-empty reading starts the okurigana.
+    if (key >= 0x41 && key <= 0x5A && Skk.conv == 1 && Skk.okuri == 0) {
+        skkClearPending();
+        var mk = Editor.markerPosition(Skk.start);
+        Skk.stem = Editor.bufferSubstring(mk + 1, Editor.point());
+        if (Skk.stem != "") {
+            Skk.okuri = 1;
+            Skk.okuriConsonant = String.toLowerCase(String.chr(key));
+            Skk.okuriPending = Skk.okuriConsonant;
+            Skk.okuriKana = "";
+            Editor.insert(Skk.okuriPending);
+            Skk.okuriShown = String.charCount(Skk.okuriPending);
+            return 1;
+        }
     }
 
     // Plain and reading states share the composing keys.
@@ -477,6 +516,79 @@ func skkHandleKey(ed, key) {
     return 0;
 }
 
+// Feed one romaji letter into the okurigana. The first completed
+// okurigana kana triggers conversion with the key stem+consonant.
+func skkOkuriInput(ed, ch) {
+    // Remove the currently shown okuri suffix (kana + pending romaji).
+    if (Skk.okuriShown > 0) {
+        deleteChar(0 - Skk.okuriShown);
+        Skk.okuriShown = 0;
+    }
+    // Compose into okuriKana using a local state.
+    var st = { pending: Skk.okuriPending + ch, out: Skk.okuriKana, mode: Buf.skkMode };
+    skkComposeChar(st, "");   // no-op flush of existing pending
+    // Re-run composition on the full pending by feeding one char.
+    st = { pending: Skk.okuriPending, out: Skk.okuriKana, mode: Buf.skkMode };
+    skkComposeChar(st, ch);
+    Skk.okuriKana = st.out;
+    Skk.okuriPending = st.pending;
+
+    // The first okurigana kana triggers the lookup.
+    if (Skk.conv == 1 && Skk.okuriKana != "") {
+        return skkOkuriConvert(ed);
+    }
+    skkRenderOkuri();
+    return 1;
+}
+
+// Convert using the okuri-ari key: stem + leading consonant.
+func skkOkuriConvert(ed) {
+    var key = Skk.stem + Skk.okuriConsonant;
+    Skk.reading = Skk.stem;
+    Skk.cands = skkLookup(key);
+    if (Array.size(Skk.cands) == 0) {
+        return skkOkuriRegister(ed);
+    }
+    Skk.idx = 0;
+    Skk.conv = 2;
+    skkRenderOkuri();
+    return 1;
+}
+
+// Redraw the composition region for the okuri states.
+//   reading:   ▽ stem okuriKana pending
+//   candidate: ▼ candidate okuriKana pending
+func skkRenderOkuri() {
+    var mk = Editor.markerPosition(Skk.start);
+    Editor.deleteRegion(mk, Editor.point());
+    var body = "";
+    if (Skk.conv == 2) {
+        body = "▼" + Skk.cands[Skk.idx] + Skk.okuriKana + Skk.okuriPending;
+    } else {
+        body = "▽" + Skk.stem + Skk.okuriKana + Skk.okuriPending;
+    }
+    Editor.gotoChar(mk);
+    Editor.insert(body);
+    Skk.okuriShown = String.charCount(Skk.okuriKana) + String.charCount(Skk.okuriPending);
+    return 0;
+}
+
+// No candidate for an okuri word: ask, then insert with the okurigana.
+func skkOkuriRegister(ed) {
+    var word = readFromMinibuffer(ed, Skk.stem + Skk.okuriConsonant + " (登録): ", 0);
+    var mk = Editor.markerPosition(Skk.start);
+    Editor.deleteRegion(mk, Editor.point());
+    Editor.gotoChar(mk);
+    if (Type.of(word) != "string" || word == "") {
+        Editor.insert(Skk.stem + Skk.okuriKana);
+    } else {
+        skkRegister(Skk.stem + Skk.okuriConsonant, word);
+        Editor.insert(word + Skk.okuriKana);
+    }
+    skkResetComposition();
+    return 1;
+}
+
 // SPC in the reading state: look up and show the first candidate.
 func skkStartConversion(ed) {
     var mk = Editor.markerPosition(Skk.start);
@@ -513,24 +625,40 @@ func skkShowNth(i) {
 func skkCandidateKey(ed, key) {
     if (key == 0x20) {                            // SPC: next candidate
         if (Skk.idx + 1 >= Array.size(Skk.cands)) {
+            if (Skk.okuri == 1) {
+                return skkOkuriRegister(ed);
+            }
             return skkRegisterFlow(ed);
         }
         Skk.idx = Skk.idx + 1;
-        skkShowNth(Skk.idx);
+        if (Skk.okuri == 1) {
+            skkRenderOkuri();
+        } else {
+            skkShowNth(Skk.idx);
+        }
         skkShowCandidate(ed);
         return 1;
     }
     if (key == 0x78) {                            // x: previous
         if (Skk.idx > 0) {
             Skk.idx = Skk.idx - 1;
-            skkShowNth(Skk.idx);
+            if (Skk.okuri == 1) {
+                skkRenderOkuri();
+            } else {
+                skkShowNth(Skk.idx);
+            }
             skkShowCandidate(ed);
         } else {
             // Back to the reading state.
             var mk = Editor.markerPosition(Skk.start);
             Editor.deleteRegion(mk, Editor.point());
-            Editor.insert("▽" + Skk.reading);
-            Skk.conv = 1;
+            if (Skk.okuri == 1) {
+                Skk.conv = 1;
+                skkRenderOkuri();
+            } else {
+                Editor.insert("▽" + Skk.reading);
+                Skk.conv = 1;
+            }
             ed.echoMessage = "";
         }
         return 1;

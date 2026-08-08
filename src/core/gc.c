@@ -2554,6 +2554,17 @@ rt_gc_pin_local(
 		return false;
 	}
 
+	/*
+	 * Zero-clear the slot so it holds a GC-safe integer 0 until the
+	 * caller fills in the real value.  Pinning makes this slot a GC
+	 * root immediately, so an uninitialized NoctValue whose garbage
+	 * type byte happens to pass IS_REF_VAL would be scanned as a wild
+	 * pointer (heap corruption).  The intrinsic convention is
+	 * pin-first, fill-after, so clearing here is always safe.
+	 */
+	val->type = NOCT_VALUE_INT;
+	val->val.l = 0;
+
 	env->frame->pinned[env->frame->pinned_count++] = val;
 
 	return true;

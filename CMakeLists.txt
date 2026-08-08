@@ -165,7 +165,7 @@ set(
   src/core/execution.c     # Runtime execution helper part
   src/core/gc.c            # Runtime GC part
   src/core/intrinsics.c    # Intrinsics
-  src/core/regex.c         # Regex engine
+  src/api/regex.c          # Regex engine (used by the Regex.* intrinsics)
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
 )
@@ -327,6 +327,7 @@ set(NOCT_PRIVATE_CPPFLAGS)
 target_include_directories(noct PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/api
 )
 if(NOCT_ENABLE_API)
   target_include_directories(noctapi PUBLIC
