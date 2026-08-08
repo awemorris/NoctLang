@@ -9,7 +9,8 @@
 //    dictionaries and cycles candidates, x steps back, C-j commits,
 //    C-g cancels, q commits the reading as katakana.
 //  - When no candidate remains, the minibuffer asks for a new word,
-//    which is saved to the personal dictionary (~/.skk-jisyo).
+//    which is saved to the personal dictionary (~/.SKK-JISYO,
+//    or ~/SKKUSER.DIC on filesystems that reject the name).
 //
 // The main dictionary is ~/SKK-JISYO.L (EUC-JP), read through
 // FileUtil.readTextEucJp and searched on demand.
@@ -18,7 +19,10 @@
 func skkInit() {
     SkkDict = 0;         // main dictionary text, loaded lazily
     SkkPersonal = 0;     // personal dictionary text
-    SkkPersonalPath = System.getEnv("HOME") + "/.skk-jisyo";
+    // Personal dictionary: ~/.SKK-JISYO, falling back to SKKUSER.DIC
+    // for filesystems that reject leading-dot names (FAT16).
+    SkkPersonalPath = System.getEnv("HOME") + "/.SKK-JISYO";
+    SkkPersonalFallback = System.getEnv("HOME") + "/SKKUSER.DIC";
     SkkDictPath = System.getEnv("HOME") + "/SKK-JISYO.L";
     // Bundled, clean-room, UTF-8 fallback dictionary shipped with remacs.
     // Used when the user has not installed the full SKK-JISYO.L (EUC-JP).
@@ -302,8 +306,21 @@ func skkLoadDicts() {
         }
     }
     if (Type.of(SkkPersonal) != "string") {
-        if (FileUtil.checkFileExists(SkkPersonalPath) == 1) {
-            SkkPersonal = FileUtil.readText(SkkPersonalPath);
+        // Non-throwing reads: a missing/unreadable path (or a stray
+        // directory of the same name) just moves to the next choice.
+        var text = FileUtil.tryReadText(SkkPersonalPath);
+        if (Type.of(text) != "string") {
+            // The FAT16-safe name may have been used previously.
+            text = FileUtil.tryReadText(SkkPersonalFallback);
+            if (Type.of(text) == "string") {
+                SkkPersonalPath = SkkPersonalFallback;
+            } else {
+                // Legacy location from older remacs versions.
+                text = FileUtil.tryReadText(System.getEnv("HOME") + "/.skk-jisyo");
+            }
+        }
+        if (Type.of(text) == "string") {
+            SkkPersonal = text;
         } else {
             SkkPersonal = "";
         }
@@ -363,7 +380,12 @@ func skkLookupIn(text, reading, out) {
 func skkRegister(reading, word) {
     skkLoadDicts();
     SkkPersonal = reading + " /" + word + "/\n" + SkkPersonal;
-    FileUtil.writeText(SkkPersonalPath, SkkPersonal);
+    if (FileUtil.tryWriteText(SkkPersonalPath, SkkPersonal) == 0) {
+        // Leading-dot names are invalid on FAT16: fall back and stick
+        // to the fallback for the rest of the session.
+        SkkPersonalPath = SkkPersonalFallback;
+        FileUtil.tryWriteText(SkkPersonalPath, SkkPersonal);
+    }
     return 0;
 }
 

@@ -51,6 +51,8 @@ static bool cfunc_FileUtil_getHomeDirectory(NoctEnv *env);
 static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
 static bool cfunc_FileUtil_readText(NoctEnv *env);
 static bool cfunc_FileUtil_writeText(NoctEnv *env);
+static bool cfunc_FileUtil_tryWriteText(NoctEnv *env);
+static bool cfunc_FileUtil_tryReadText(NoctEnv *env);
 static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
 static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
 
@@ -65,6 +67,103 @@ noct_set_directory_backend(const struct NoctDirectoryBackend *backend,
 {
 	directory_backend.operations = backend;
 	directory_backend.context = context;
+}
+
+/*
+ * FileUtil.tryReadText(path)
+ *
+ * Like readText, but returns the integer 0 instead of raising an
+ * error when the path cannot be read as a regular file (missing,
+ * unreadable, or a directory).
+ */
+static bool
+cfunc_FileUtil_tryReadText(NoctEnv *env)
+{
+	NoctValue path, ret;
+	const char *path_s;
+	FILE *file = NULL;
+	char *buf = NULL;
+	long size;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+
+	file = fopen(path_s, "rb");
+	if (file == NULL)
+		goto fail_soft;
+	if (fseek(file, 0, SEEK_END) != 0)
+		goto fail_soft;
+	size = ftell(file);
+	if (size < 0)
+		goto fail_soft;
+	if (fseek(file, 0, SEEK_SET) != 0)
+		goto fail_soft;
+	buf = noct_malloc((size_t)size + 1);
+	if (buf == NULL)
+		goto fail_soft;
+	if (size > 0 && fread(buf, 1, (size_t)size, file) != (size_t)size)
+		goto fail_soft;
+	buf[size] = '\0';
+	if (!noct_set_return_make_string(env, &ret, buf))
+		goto cleanup;
+	ok = true;
+	goto cleanup;
+
+fail_soft:
+	if (!noct_set_return_make_int(env, &ret, 0))
+		goto cleanup;
+	ok = true;
+
+cleanup:
+	if (buf != NULL)
+		noct_free(buf);
+	if (file != NULL)
+		fclose(file);
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
+}
+
+/*
+ * FileUtil.tryWriteText(path, text)
+ *
+ * Like writeText, but returns 0 instead of raising an error when the
+ * file cannot be created or written (e.g. a filesystem that rejects
+ * the name, like a leading dot on FAT16).  Returns 1 on success.
+ */
+static bool
+cfunc_FileUtil_tryWriteText(NoctEnv *env)
+{
+	NoctValue path, text, ret;
+	const char *path_s, *text_s;
+	FILE *file = NULL;
+	size_t length;
+	int result = 0;
+
+	if (!noct_pin_local(env, 3, &path, &text, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
+	    !noct_get_arg_check_string(env, 1, &text, &text_s)) {
+		(void)noct_unpin_local(env, 3, &path, &text, &ret);
+		return false;
+	}
+	file = fopen(path_s, "wb");
+	if (file != NULL) {
+		length = strlen(text_s);
+		if (fwrite(text_s, 1, length, file) == length &&
+		    fflush(file) == 0)
+			result = 1;
+		if (fclose(file) != 0)
+			result = 0;
+	}
+	if (!noct_set_return_make_int(env, &ret, result)) {
+		(void)noct_unpin_local(env, 3, &path, &text, &ret);
+		return false;
+	}
+	(void)noct_unpin_local(env, 3, &path, &text, &ret);
+	return true;
 }
 
 struct ffi_item {
@@ -93,6 +192,8 @@ static struct ffi_item ffi_items[] = {
 	{"FileUtil.getFileSize",	"FileUtil", "getFileSize",	1, {"path"},		cfunc_FileUtil_getFileSize},
 	{"FileUtil.readText",		"FileUtil", "readText",		1, {"path"},		cfunc_FileUtil_readText},
 	{"FileUtil.writeText",		"FileUtil", "writeText",	2, {"path", "text"},	cfunc_FileUtil_writeText},
+	{"FileUtil.tryWriteText",	"FileUtil", "tryWriteText",	2, {"path", "text"},	cfunc_FileUtil_tryWriteText},
+	{"FileUtil.tryReadText",	"FileUtil", "tryReadText",	1, {"path"},		cfunc_FileUtil_tryReadText},
 	{"FileUtil.readForEachLine",	"FileUtil", "readForEachLine",	2, {"path", "func"},	cfunc_FileUtil_readForEachLine},
 	{"FileUtil.writeForEachLine",	"FileUtil", "writeForEachLine",	2, {"path", "lines"},	cfunc_FileUtil_writeForEachLine},
 };

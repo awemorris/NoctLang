@@ -131,8 +131,14 @@ func initKeymapModule() {
     defineCommand("save-buffer", (_) => {
         var file = Editor.bufferFileName();
         if (file == "") {
-            _.echoMessage = "No file name";
-            return 0;
+            // A file-less buffer (e.g. *scratch*): ask like Emacs does.
+            var name = readFromMinibuffer(_, "File to save in: ", fileCompleter);
+            if (Type.of(name) != "string" || name == "") {
+                _.echoMessage = "Save cancelled";
+                return 0;
+            }
+            file = Editor.expandFileName(name, "");
+            Buf.fileName = file;
         }
         Editor.writeRegion(Editor.pointMin(), Editor.pointMax(), file);
         Editor.setBufferModifiedP(0);

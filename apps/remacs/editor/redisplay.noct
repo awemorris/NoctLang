@@ -14,6 +14,10 @@
 // Display width of a codepoint (an East Asian Width subset).
 func charWidth(cp) {
     if (cp < 0x1100) { return 1; }
+    // SKK composition marks (ambiguous EAW; CJK terminals draw them
+    // double width -- counting them as 1 left the cursor on the right
+    // half of the last kanji during conversion).
+    if (cp == 0x25BC || cp == 0x25BD) { return 2; }  // ▼ ▽
     if (cp <= 0x115F) { return 2; }              // Hangul Jamo
     if (cp >= 0x2E80 && cp <= 0xA4CF) { return 2; }  // CJK radicals..Yi
     if (cp >= 0xAC00 && cp <= 0xD7A3) { return 2; }  // Hangul syllables

@@ -160,11 +160,23 @@ def run_case(remacs, case_path):
                 raw += chunk
         return True
 
+    # Optional mid-session cursor check: CURSOR_AFTER_KEY selects the
+    # 0-based key index after which the cursor cell is recorded (fed
+    # through the Screen), EXPECT_CURSOR = (row, col) 0-based.
+    cursor_after = ns.get('CURSOR_AFTER_KEY', None)
+    expect_cursor = ns.get('EXPECT_CURSOR', None)
+    captured_cursor = None
+
     ok = True
-    for delay, data in keys:
+    for ki, (delay, data) in enumerate(keys):
         if not pump(delay):
             break
         os.write(master, data)
+        if cursor_after is not None and ki == cursor_after:
+            pump(0.6)
+            snap = Screen(rows, cols)
+            snap.feed(raw.decode('utf-8', errors='replace'))
+            captured_cursor = (snap.row, snap.col)
     pump(0.5)
 
     # Wait for exit.
@@ -195,6 +207,10 @@ def run_case(remacs, case_path):
     for e in expect_not:
         if e in final:
             failures.append(f'unexpectedly on screen: {e!r}')
+    if expect_cursor is not None:
+        if captured_cursor != tuple(expect_cursor):
+            failures.append(
+                f'cursor at {captured_cursor}, expected {tuple(expect_cursor)}')
     for path, want in files:
         try:
             with open(path) as fh:

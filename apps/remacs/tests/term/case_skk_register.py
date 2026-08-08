@@ -7,9 +7,10 @@ jisyo = home / 'SKK-JISYO.L'
 subprocess.run(['sh', '-c',
     'printf ";; okuri-nasi\\nてすと /試/\\n" | iconv -f utf-8 -t euc-jp > %s' % jisyo],
     check=True)
-p = home / '.skk-jisyo'
-if p.exists():
-    p.unlink()
+for name in ('.SKK-JISYO', 'SKKUSER.DIC', '.skk-jisyo'):
+    p = home / name
+    if p.exists():
+        p.unlink()
 ENV = {'HOME': str(home)}
 KEYS = [
     (0.4, b"\x18\x0a"),                    # C-x C-j
@@ -19,4 +20,4 @@ KEYS = [
     (0.3, b"\x18\x03"),
 ]
 EXPECT = ["蜜柑です", "Registered:"]
-FILES = [(str(home / '.skk-jisyo'), "みかんです /蜜柑です/\n")]
+FILES = [(str(home / '.SKK-JISYO'), "みかんです /蜜柑です/\n")]
