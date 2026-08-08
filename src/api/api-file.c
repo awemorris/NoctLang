@@ -331,13 +331,19 @@ cfunc_FileUtil_checkFileExists(NoctEnv *env)
 {
 	NoctValue path, ret;
 	const char *path_s;
+	FILE *fp;
+	int exists;
 	bool ok = false;
 
 	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !noct_set_return_make_int(env, &ret,
-				      access(path_s, F_OK) == 0 ? 1 : 0))
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+	fp = fopen(path_s, "rb");
+	exists = fp != NULL;
+	if (fp != NULL)
+		(void)fclose(fp);
+	if (!noct_set_return_make_int(env, &ret, exists))
 		goto cleanup;
 	ok = true;
 cleanup:
