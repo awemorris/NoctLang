@@ -40,7 +40,7 @@ compile_source(
 	const char *file_name)
 {
 	char bc_fname[1024];
-	char *source_data, *dot;
+	char *source_data, *base, *dot, *slash, *backslash;
 	size_t source_length;
 
 	/* Load an argument source file. */
@@ -49,7 +49,14 @@ compile_source(
 
 	/* Make an output file name. (*.nb) */
 	strcpy(bc_fname, file_name);
-	dot = strstr(bc_fname, ".");
+	base = bc_fname;
+	slash = strrchr(bc_fname, '/');
+	backslash = strrchr(bc_fname, '\\');
+	if (slash != NULL)
+		base = slash + 1;
+	if (backslash != NULL && backslash >= base)
+		base = backslash + 1;
+	dot = strrchr(base, '.');
 	if (dot != NULL)
 		strcpy(dot, ".nb");
 	else
