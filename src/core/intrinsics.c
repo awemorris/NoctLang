@@ -1345,19 +1345,21 @@ get_string_length(
 /* Get a top character of a utf-8 string as a utf-32. */
 static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 {
-	size_t mbslen, octets, i;
+	size_t octets, i;
 	uint32_t ret;
 
 	assert(mbs != NULL);
 
-	/* If mbs is empty. */
-	mbslen = strlen(mbs);
-	if(mbslen == 0)
-		return 0;
+	/*
+	 * Never call strlen() here: this runs once per character in
+	 * every string scan, and taking the length of the remaining
+	 * string each time turns those scans quadratic. The
+	 * continuation-byte checks below catch truncated sequences.
+	 */
 
 	/* Check the first byte, get an octet count. */
 	if (mbs[0] == '\0')
-		octets = 0;
+		return 0;
 	else if ((mbs[0] & 0x80) == 0)
 		octets = 1;
 	else if ((mbs[0] & 0xe0) == 0xc0)
@@ -1367,11 +1369,7 @@ static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 	else if ((mbs[0] & 0xf8) == 0xf0)
 		octets = 4;
 	else
-		return -1;	/* Not suppoerted. */
-
-	/* Check the mbs length. */
-	if (mbslen < octets)
-		return -1;	/* mbs is too short. */
+		return -1;	/* Not supported. */
 
 	/* Check for 2-4 bytes. */
 	for (i = 1; i < octets; i++) {

@@ -33,6 +33,7 @@ static bool cfunc_File_write(NoctEnv *env);
 static void file_finalizer(void *native_pointer);
 static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
 static bool cfunc_FileUtil_listDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_readTextEucJp(NoctEnv *env);
 static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
 static bool cfunc_FileUtil_readText(NoctEnv *env);
 static bool cfunc_FileUtil_writeText(NoctEnv *env);
@@ -58,6 +59,7 @@ static struct ffi_item ffi_items[] = {
 
 	{"FileUtil.checkFileExists",	"FileUtil", "checkFileExists",	1, {"path"},		cfunc_FileUtil_checkFileExists},
 	{"FileUtil.listDirectory",	"FileUtil", "listDirectory",	1, {"path"},		cfunc_FileUtil_listDirectory},
+	{"FileUtil.readTextEucJp",	"FileUtil", "readTextEucJp",	1, {"path"},		cfunc_FileUtil_readTextEucJp},
 	{"FileUtil.getFileSize",	"FileUtil", "getFileSize",	1, {"path"},		cfunc_FileUtil_getFileSize},
 	{"FileUtil.readText",		"FileUtil", "readText",		1, {"path"},		cfunc_FileUtil_readText},
 	{"FileUtil.writeText",		"FileUtil", "writeText",	2, {"path", "text"},	cfunc_FileUtil_writeText},
@@ -457,6 +459,125 @@ cleanup:
 	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
 	return ok;
 #endif
+}
+
+/* JIS X 0208 to Unicode, generated in jisx0208.c. */
+extern const uint16_t noct_jisx0208_to_ucs[7896];
+
+/* Encode a codepoint as UTF-8; returns the byte count. */
+static int
+fileutil_utf8_encode(uint32_t cp, char *out)
+{
+	if (cp < 0x80) {
+		out[0] = (char)cp;
+		return 1;
+	}
+	if (cp < 0x800) {
+		out[0] = (char)(0xC0 | (cp >> 6));
+		out[1] = (char)(0x80 | (cp & 0x3F));
+		return 2;
+	}
+	out[0] = (char)(0xE0 | (cp >> 12));
+	out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+	out[2] = (char)(0x80 | (cp & 0x3F));
+	return 3;
+}
+
+/*
+ * FileUtil.readTextEucJp(path)
+ *
+ * Reads an EUC-JP encoded file and returns its content as a (UTF-8)
+ * string. Undecodable bytes become U+FFFD. Returns an empty string
+ * for a missing file.
+ */
+static bool
+cfunc_FileUtil_readTextEucJp(NoctEnv *env)
+{
+	NoctValue path, ret;
+	const char *path_s;
+	FILE *fp = NULL;
+	unsigned char *raw = NULL;
+	char *out = NULL;
+	long size;
+	size_t i, o;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+
+	fp = fopen(path_s, "rb");
+	if (fp == NULL) {
+		ok = noct_set_return_make_string(env, &ret, "");
+		goto cleanup;
+	}
+	fseek(fp, 0, SEEK_END);
+	size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	raw = malloc((size_t)size + 1);
+	if (raw == NULL)
+		goto cleanup;
+	if (fread(raw, 1, (size_t)size, fp) != (size_t)size)
+		goto cleanup;
+	fclose(fp);
+	fp = NULL;
+
+	/* Worst case each EUC byte pair becomes 3 UTF-8 bytes. */
+	out = malloc((size_t)size * 3 + 4);
+	if (out == NULL)
+		goto cleanup;
+
+	o = 0;
+	i = 0;
+	while (i < (size_t)size) {
+		unsigned char c = raw[i];
+		uint32_t cp;
+
+		if (c < 0x80) {
+			out[o++] = (char)c;
+			i++;
+			continue;
+		}
+		if (c == 0x8E && i + 1 < (size_t)size) {
+			/* Half-width katakana: 0x8E 0xA1-0xDF. */
+			unsigned char c2 = raw[i + 1];
+			if (c2 >= 0xA1 && c2 <= 0xDF) {
+				cp = 0xFF61 + (uint32_t)(c2 - 0xA1);
+				o += (size_t)fileutil_utf8_encode(cp, out + o);
+				i += 2;
+				continue;
+			}
+			i++;
+			continue;
+		}
+		if (c >= 0xA1 && c <= 0xF4 && i + 1 < (size_t)size) {
+			unsigned char c2 = raw[i + 1];
+			if (c2 >= 0xA1 && c2 <= 0xFE) {
+				size_t idx = (size_t)(c - 0xA1) * 94 + (size_t)(c2 - 0xA1);
+				cp = noct_jisx0208_to_ucs[idx];
+				if (cp == 0)
+					cp = 0xFFFD;
+				o += (size_t)fileutil_utf8_encode(cp, out + o);
+				i += 2;
+				continue;
+			}
+		}
+		/* Undecodable byte. */
+		o += (size_t)fileutil_utf8_encode(0xFFFD, out + o);
+		i++;
+	}
+	out[o] = '\0';
+
+	ok = noct_set_return_make_string(env, &ret, out);
+
+cleanup:
+	if (fp != NULL)
+		fclose(fp);
+	free(raw);
+	free(out);
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
 }
 
 static bool
