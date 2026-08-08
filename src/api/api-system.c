@@ -27,6 +27,7 @@
 
 /* Forward declaration. */
 static bool cfunc_System_import(NoctEnv *env);
+static bool cfunc_System_getEnv(NoctEnv *env);
 static bool cfunc_System_shell(NoctEnv *env);
 static bool cfunc_System_runCommand(NoctEnv *env);
 static bool cfunc_System_getOSName(NoctEnv *env);
@@ -48,6 +49,13 @@ static struct ffi_item ffi_items[] = {
 		1,
 		{"file"},
 		cfunc_System_import
+	},
+	{
+		"System.getEnv",
+		"getEnv",
+		1,
+		{"name"},
+		cfunc_System_getEnv
 	},
 	{
 		"System.shell",
@@ -127,6 +135,34 @@ noct_register_api_system(
 }
 
 /* Implementation of import() */
+/*
+ * System.getEnv(name)
+ *
+ * Returns the environment variable's value, or "" when unset.
+ */
+static bool
+cfunc_System_getEnv(NoctEnv *env)
+{
+	NoctValue name, ret;
+	const char *name_s;
+	const char *val;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &name, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &name, &name_s))
+		goto cleanup;
+	val = getenv(name_s);
+	if (val == NULL)
+		val = "";
+	if (!noct_set_return_make_string(env, &ret, val))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &name, &ret);
+	return ok;
+}
+
 static bool
 cfunc_System_import(
 	NoctEnv *env)
