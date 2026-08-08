@@ -427,10 +427,9 @@ rt_gc_alloc_array(
 	int retry;
 
 	assert(env != NULL);
-	assert(size > 0);
-
-	/* Minimum size. */
-	if (size == 1)
+	/* An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0. */
+	if (size < 2)
 		size = 2;
 
 	/* Check for overflow. */
@@ -507,10 +506,9 @@ rt_gc_alloc_array_graduate(
 	struct rt_value *table;
 
 	assert(env != NULL);
-	assert(size > 0);
-
-	/* Minimum size. */
-	if (size == 1)
+	/* An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0. */
+	if (size < 2)
 		size = 2;
 
 	/* Check for overflow. */
@@ -581,10 +579,9 @@ rt_gc_alloc_array_tenure(
 	int retry;
 
 	assert(env != NULL);
-	assert(size > 0);
-
-	/* Minimum size. */
-	if (size == 1)
+	/* An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0. */
+	if (size < 2)
 		size = 2;
 
 	/* Check for overflow. */
@@ -663,10 +660,9 @@ rt_gc_alloc_dict(
 	int retry;
 
 	assert(env != NULL);
-	assert(size > 0);
-
-	/* Minimum size. */
-	if (size == 1)
+	/* An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0. */
+	if (size < 2)
 		size = 2;
 
 	/* Check for overflow. */
@@ -749,10 +745,9 @@ rt_gc_alloc_dict_graduate(
 	struct rt_value *value_table;
 
 	assert(env != NULL);
-	assert(size > 0);
-
-	/* Minimum size. */
-	if (size == 1)
+	/* An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0. */
+	if (size < 2)
 		size = 2;
 
 	/* Check for overflow. */
@@ -830,10 +825,9 @@ rt_gc_alloc_dict_tenure(
 	int retry;
 
 	assert(env != NULL);
-	assert(size > 0);
-
-	/* Minimum size. */
-	if (size == 1)
+	/* An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0. */
+	if (size < 2)
 		size = 2;
 
 	/* Check for overflow. */
