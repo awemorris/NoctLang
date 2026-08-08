@@ -75,6 +75,7 @@ static bool rt_intrin_Math_cos(NoctEnv *env);
 static bool rt_intrin_Math_tan(NoctEnv *env);
 static bool rt_intrin_Math_random(NoctEnv *env);
 static bool rt_intrin_Global_hasVariable(NoctEnv *env);
+static bool rt_intrin_Global_get(NoctEnv *env);
 static bool rt_intrin_Type_of(NoctEnv *env);
 static bool rt_intrin_GC_youngGC(NoctEnv *env);
 static bool rt_intrin_GC_oldGC(NoctEnv *env);
@@ -140,6 +141,8 @@ struct intrin_item {
 	{"Math",	"tan",		"Math.tan",		rt_intrin_Math_tan,		1, {"x"}},
 	{"Math",	"random",	"Math.random",		rt_intrin_Math_random,		0, {NULL}},
 	{"Global",	"isSet",	"Global.isSet",		rt_intrin_Global_hasVariable,	1, {"name"}},
+	{"Global",	"hasVariable",	"Global.hasVariable",	rt_intrin_Global_hasVariable,	1, {"name"}},
+	{"Global",	"get",	"Global.get",		rt_intrin_Global_get,		1, {"name"}},
 	{"Type",	"of",		"Type.of",		rt_intrin_Type_of,		1, {"val"}},
 	{"GC",		"youngGC",	"GC.youngGC",		rt_intrin_GC_youngGC,		0, {NULL}},
 	{"GC",		"oldGC",	"GC.oldGC",		rt_intrin_GC_oldGC,		0, {NULL}},
@@ -2885,6 +2888,44 @@ rt_intrin_Type_of(
 
 	noct_unpin_local(env, 2, &val, &ret);
 
+	return true;
+}
+
+/*
+ * Global.get(name)
+ *
+ * Returns the value of a global variable (including a function) by
+ * name, or 0 when it is unset. Used by the Lisp compiler to grab a
+ * freshly registered function.
+ */
+static bool
+rt_intrin_Global_get(
+	NoctEnv *env)
+{
+	NoctValue name, ret;
+	const char *name_s;
+	bool has_var;
+
+	memset(&name, 0, sizeof(name));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &name, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &name, &name_s))
+		return false;
+	if (!noct_check_global(env, name_s, &has_var))
+		return false;
+	if (!has_var) {
+		if (!noct_set_return_make_int(env, &ret, 0))
+			return false;
+		noct_unpin_local(env, 2, &name, &ret);
+		return true;
+	}
+	if (!noct_get_global(env, name_s, &ret))
+		return false;
+	if (!noct_set_return(env, &ret))
+		return false;
+
+	noct_unpin_local(env, 2, &name, &ret);
 	return true;
 }
 
