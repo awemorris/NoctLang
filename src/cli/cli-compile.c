@@ -31,7 +31,7 @@ command_compile(
 			return 1;
 	}
 
-	return 1;
+	return 0;
 }
 
 /* Compile a source file. */
