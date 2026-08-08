@@ -40,6 +40,19 @@ static bool cfunc_FileUtil_writeText(NoctEnv *env);
 static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
 static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
 
+static struct {
+	const struct NoctDirectoryBackend *operations;
+	void *context;
+} directory_backend;
+
+NOCT_DLL void
+noct_set_directory_backend(const struct NoctDirectoryBackend *backend,
+			   void *context)
+{
+	directory_backend.operations = backend;
+	directory_backend.context = context;
+}
+
 struct ffi_item {
 	const char *global_name;
 	const char *package_name;
@@ -365,26 +378,12 @@ cfunc_FileUtil_listDirectory(NoctEnv *env)
 {
 	NoctValue path, ret, elem;
 	const char *path_s;
-	bool ok = false;
-#if !defined(NOCT_TARGET_POSIX)
-	/* Directory enumeration is not supported on non-POSIX targets yet. */
-	if (!noct_pin_local(env, 3, &path, &ret, &elem))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
-	if (!noct_make_empty_array(env, &ret))
-		goto cleanup;
-	if (!noct_set_return(env, &ret))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
-	return ok;
-#else
-	DIR *dir = NULL;
-	struct dirent *ent;
 	char **names = NULL;
 	size_t nnames = 0, alloc = 0, i, j;
+	bool ok = false;
+#if defined(NOCT_TARGET_POSIX)
+	DIR *dir = NULL;
+#endif
 
 	if (!noct_pin_local(env, 3, &path, &ret, &elem))
 		return false;
@@ -392,9 +391,52 @@ cleanup:
 		goto cleanup;
 	if (!noct_make_empty_array(env, &ret))
 		goto cleanup;
+	if (directory_backend.operations != NULL &&
+	    directory_backend.operations->read != NULL) {
+		for (i = 0; i < 65536; i++) {
+			char buffer[256];
+			char *name;
+			size_t length;
+			int is_directory = 0;
+			int result = directory_backend.operations->read(
+				directory_backend.context, path_s, i, buffer,
+				sizeof(buffer), &is_directory);
 
-	dir = opendir(path_s);
-	if (dir != NULL) {
+			if (result <= 0)
+				break;
+			buffer[sizeof(buffer) - 1] = '\0';
+			length = strlen(buffer);
+			if (length == 0 || !strcmp(buffer, ".") ||
+			    !strcmp(buffer, ".."))
+				continue;
+			name = noct_malloc(length + (is_directory ? 2 : 1));
+			if (name == NULL)
+				goto cleanup;
+			memcpy(name, buffer, length);
+			if (is_directory)
+				name[length++] = '/';
+			name[length] = '\0';
+			if (nnames == alloc) {
+				char **new_names;
+				size_t new_alloc = alloc == 0 ? 16 : alloc * 2;
+
+				new_names = noct_realloc(names,
+						 sizeof(*names) * new_alloc);
+				if (new_names == NULL) {
+					noct_free(name);
+					goto cleanup;
+				}
+				names = new_names;
+				alloc = new_alloc;
+			}
+			names[nnames++] = name;
+		}
+	} else {
+#if defined(NOCT_TARGET_POSIX)
+		struct dirent *ent;
+
+		dir = opendir(path_s);
+		if (dir != NULL) {
 		while ((ent = readdir(dir)) != NULL) {
 			char full[2048];
 			struct stat st;
@@ -407,7 +449,7 @@ cleanup:
 
 			snprintf(full, sizeof(full), "%s/%s", path_s, ent->d_name);
 			len = strlen(ent->d_name);
-			name = malloc(len + 2);
+			name = noct_malloc(len + 2);
 			if (name == NULL)
 				continue;
 			strcpy(name, ent->d_name);
@@ -417,9 +459,9 @@ cleanup:
 			if (nnames >= alloc) {
 				char **nn;
 				alloc = alloc == 0 ? 64 : alloc * 2;
-				nn = realloc(names, sizeof(char *) * alloc);
+				nn = noct_realloc(names, sizeof(char *) * alloc);
 				if (nn == NULL) {
-					free(name);
+					noct_free(name);
 					continue;
 				}
 				names = nn;
@@ -428,6 +470,8 @@ cleanup:
 		}
 		closedir(dir);
 		dir = NULL;
+		}
+#endif
 	}
 
 	/* Sort for deterministic completion. */
@@ -451,14 +495,15 @@ cleanup:
 		goto cleanup;
 	ok = true;
 cleanup:
+#if defined(NOCT_TARGET_POSIX)
 	if (dir != NULL)
 		closedir(dir);
+#endif
 	for (i = 0; i < nnames; i++)
-		free(names[i]);
-	free(names);
+		noct_free(names[i]);
+	noct_free(names);
 	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
 	return ok;
-#endif
 }
 
 /* JIS X 0208 to Unicode, generated in jisx0208.c. */
