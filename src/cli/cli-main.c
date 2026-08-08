@@ -125,7 +125,7 @@ void show_usage(void)
 	wide_printf(N_TR("  --disable-jit        ... disable JIT\n"));
 	wide_printf(N_TR("  --force-jit          ... equivalent to --jit-threshold=0\n"));
 	wide_printf(N_TR("  --jit-threshold=N    ... call-count threshold for compilation\n"));
-	wide_printf(N_TR("  --optimize-level=N   ... optimize level (0/1)\n"));
+	wide_printf(N_TR("  --optimize-level=N   ... optimize level (0/1/2)\n"));
 	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-graduate-size=N ... second GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-tenure-size=N   ... final GC space size in bytes\n"));

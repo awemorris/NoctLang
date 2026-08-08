@@ -1926,6 +1926,14 @@ expand_array(
 	}
 
 	/*
+	 * Carry over the ownership state. The newer generation supersedes
+	 * the old storage and must keep its shared/creator identity;
+	 * shared-to-thread-local demotion is not part of this model.
+	 */
+	new_arr->shared = arr->shared;
+	new_arr->creator = arr->creator;
+
+	/*
 	 * If we used a write lock, make the new array locked initially to
 	 * prevent it written by another thread after the publish and before the
 	 * unlock of the old array.
@@ -1934,9 +1942,11 @@ expand_array(
 		add_try_array_write_lock(env, new_arr);
 
 	/*
-	 * Link the new object, that is, do copy-publish.
+	 * Link the new object, that is, do copy-publish. The release store
+	 * pairs with the acquire load on newer in follow_array_pointer(),
+	 * so the fully initialized new storage is visible before the link.
 	 */
-	arr->newer = new_arr;
+	atomic_store_release_ptr((void **)&arr->newer, new_arr);
 
 	/*
 	 * Unlock if we used a lock.
@@ -2084,6 +2094,15 @@ expand_dict(
 	 */
 	new_dict->native_pointer = dict->native_pointer;
 	new_dict->native_finalizer = dict->native_finalizer;
+	new_dict->is_frozen = dict->is_frozen;
+
+	/*
+	 * Carry over the ownership state. The newer generation supersedes
+	 * the old storage and must keep its shared/creator identity;
+	 * shared-to-thread-local demotion is not part of this model.
+	 */
+	new_dict->shared = dict->shared;
+	new_dict->creator = dict->creator;
 
 	/*
 	 * If we used a write lock, make the new dict locked initially to
@@ -2094,9 +2113,11 @@ expand_dict(
 		add_try_dict_write_lock(env, new_dict);
 
 	/*
-	 * Link the new object, that is, do copy-publish.
+	 * Link the new object, that is, do copy-publish. The release store
+	 * pairs with the acquire load on newer in follow_dict_pointer(),
+	 * so the fully initialized new storage is visible before the link.
 	 */
-	dict->newer = new_dict;
+	atomic_store_release_ptr((void **)&dict->newer, new_dict);
 
 	/*
 	 * Unlock if we used a lock.
@@ -2968,6 +2989,19 @@ om_write_dict(
 	bool locked;
 	size_t first_tombstone_index;
 
+	/* Reject writes to a frozen dictionary. (Unlocked read: a
+	   compiler-emitted freeze happens before sharing; a scripted
+	   freeze of a shared dict may be observed late by design.) */
+	{
+		struct rt_dict *frz = dict_val->val.dict;
+		while (frz->newer != NULL)
+			frz = frz->newer;
+		if (frz->is_frozen) {
+			rt_error(env, N_TR("Dictionary is frozen."));
+			return false;
+		}
+	}
+
 	/* Make sure the key has a cached hash. */
 	rt_cache_string_hash(key->val.str);
 
@@ -3279,6 +3313,17 @@ om_erase_dict_entry(
 	size_t index, i, n;
 	bool is_not_found;
 	bool locked;
+
+	/* Reject removal from a frozen dictionary. */
+	{
+		struct rt_dict *frz = dict_val->val.dict;
+		while (frz->newer != NULL)
+			frz = frz->newer;
+		if (frz->is_frozen) {
+			rt_error(env, N_TR("Dictionary is frozen."));
+			return false;
+		}
+	}
 
 	/* Make sure the key has a cached hash. */
 	rt_cache_string_hash(key->val.str);
@@ -3861,3 +3906,32 @@ om_leave_blocking(
  *
  * ============================================================================
  */
+
+/*
+ * Freeze a dictionary (make it read-only).
+ */
+bool
+om_freeze_dict(
+	struct rt_env *env,
+	struct rt_value *dict_val)
+{
+	struct rt_dict *dict;
+
+	dict = dict_val->val.dict;
+	while (dict->newer != NULL)
+		dict = dict->newer;
+
+	if (dict->shared) {
+		uint64_t cpu_relax_base = CPU_RELAX_BASE_INITIALIZER;
+
+		/* Serialize with concurrent writers. */
+		while (!add_try_dict_write_lock(env, dict))
+			cpu_relax(&cpu_relax_base);
+		dict->is_frozen = true;
+		sub_dict_write_unlock(env, dict);
+	} else {
+		dict->is_frozen = true;
+	}
+
+	return true;
+}

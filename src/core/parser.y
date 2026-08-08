@@ -32,11 +32,18 @@ void ast_free(void *p);
 /* Internal: called back from the parser. */
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);
 struct ast_func *ast_accept_func(char *name, struct ast_param_list *param_list, struct ast_stmt_list *stmt_list);
+bool ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let);
+bool ast_accept_toplevel_class(int line, char *name, struct ast_kv_list *kv_list);
 struct ast_param_list *ast_accept_param_list(struct ast_param_list *param_list, char *name);
+struct ast_param_list *ast_accept_param_list_typed(struct ast_param_list *param_list, char *name, char *type_name);
 struct ast_stmt_list *ast_accept_stmt_list(struct ast_stmt_list *stmt_list, struct ast_stmt *stmt);
 void ast_accept_stmt(struct ast_stmt *stmt, int line);
 struct ast_stmt *ast_accept_expr_stmt(int line, struct ast_expr *expr);
-struct ast_stmt *ast_accept_assign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs, bool is_var);
+struct ast_stmt *ast_accept_assign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs, bool is_var, bool is_let);
+struct ast_stmt *ast_accept_assign_stmt_typed(int line, struct ast_expr *lhs, struct ast_expr *rhs, bool is_var, bool is_let, char *type_name);
+struct ast_expr *ast_accept_term_expr(struct ast_term *term);
+struct ast_term *ast_accept_int_term(int i);
+char *ast_strdup(const char *s);
 struct ast_stmt *ast_accept_plusassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
 struct ast_stmt *ast_accept_minusassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
 struct ast_stmt *ast_accept_mulassign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs);
@@ -93,8 +100,10 @@ struct ast_expr *ast_accept_call_expr(struct ast_expr *func, struct ast_arg_list
 struct ast_expr *ast_accept_thiscall_expr(struct ast_expr *obj, char *func, struct ast_arg_list *arg_list);
 struct ast_expr *ast_accept_array_expr(struct ast_arg_list *arg_list);
 struct ast_expr *ast_accept_dict_expr(struct ast_kv_list *kv_list);
+struct ast_expr *ast_accept_class_expr(struct ast_kv_list *kv_list);
 struct ast_expr *ast_accept_func_expr(struct ast_param_list *param_list, struct ast_stmt_list *stmt_list);
 struct ast_expr *ast_accept_new_expr(char *cls, struct ast_kv_list *kv_list);
+struct ast_expr *ast_accept_extend_expr(char *cls, struct ast_kv_list *kv_list);
 struct ast_kv_list *ast_accept_kv_list(struct ast_kv_list *kv_list, struct ast_kv *kv);
 struct ast_kv *ast_accept_kv(char *key, struct ast_expr *value);
 struct ast_term *ast_accept_int_term(int i);
@@ -140,6 +149,7 @@ extern void ast_yyerror(void *scanner, char *s);
 }
 
 %token <sval> TOKEN_SYMBOL TOKEN_STR
+%type <sval> type_name
 %token <ival> TOKEN_INT
 %token <lval> TOKEN_LONG
 %token <fval> TOKEN_FLOAT
@@ -151,7 +161,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_RPAR_LBLK TOKEN_LBLK TOKEN_LBLK_BLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
 %token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSE_LBLK TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
-%token TOKEN_CONTINUE TOKEN_ARROW TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR
+%token TOKEN_CONTINUE TOKEN_ARROW TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND
 
 %type <func_list> func_list;
 %type <func> func;
@@ -227,10 +237,41 @@ func_list	: func
 			$$ = ast_accept_func_list(NULL, $1);
 			debug("func_list: class");
 		}
+		| toplevel_decl
+		{
+			$$ = NULL;
+			debug("func_list: toplevel_decl");
+		}
 		| func_list func
 		{
 			$$ = ast_accept_func_list($1, $2);
 			debug("func_list: func_list func");
+		}
+		| func_list toplevel_decl
+		{
+			$$ = $1;
+			debug("func_list: func_list toplevel_decl");
+		}
+		;
+toplevel_decl	: TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			ast_accept_toplevel_var(@1.first_line + 1, $2, $4, false);
+			debug("toplevel_decl: var");
+		}
+		| TOKEN_LET TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			ast_accept_toplevel_var(@1.first_line + 1, $2, $4, true);
+			debug("toplevel_decl: let");
+		}
+		| TOKEN_CLASS TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK
+		{
+			ast_accept_toplevel_class(@1.first_line + 1, $2, $4);
+			debug("toplevel_decl: class");
+		}
+		| TOKEN_CLASS TOKEN_SYMBOL TOKEN_LBLK TOKEN_RBLK
+		{
+			ast_accept_toplevel_class(@1.first_line + 1, $2, NULL);
+			debug("toplevel_decl: class empty");
 		}
 		;
 func		: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
@@ -249,10 +290,29 @@ param_list	: TOKEN_SYMBOL
 			$$ = ast_accept_param_list(NULL, $1);
 			debug("param_list: symbol");
 		}
+		| TOKEN_SYMBOL TOKEN_COLON type_name
+		{
+			$$ = ast_accept_param_list_typed(NULL, $1, $3);
+			debug("param_list: symbol: type");
+		}
 		| param_list TOKEN_COMMA TOKEN_SYMBOL
 		{
 			$$ = ast_accept_param_list($1, $3);
 			debug("param_list: param_list symbol");
+		}
+		| param_list TOKEN_COMMA TOKEN_SYMBOL TOKEN_COLON type_name
+		{
+			$$ = ast_accept_param_list_typed($1, $3, $5);
+			debug("param_list: param_list symbol: type");
+		}
+		;
+type_name	: TOKEN_SYMBOL
+		{
+			$$ = $1;
+		}
+		| TOKEN_FUNC
+		{
+			$$ = ast_strdup("func");
 		}
 		;
 stmt_list	: /* empty */
@@ -359,13 +419,33 @@ expr_stmt	: expr TOKEN_SEMICOLON
 		;
 assign_stmt	: expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
-			$$ = ast_accept_assign_stmt(@1.first_line + 1, $1, $3, false);
+			$$ = ast_accept_assign_stmt(@1.first_line + 1, $1, $3, false, false);
 			debug("assign_stmt");
 		}
 		| TOKEN_VAR expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
-			$$ = ast_accept_assign_stmt(@1.first_line + 1, $2, $4, true);
+			$$ = ast_accept_assign_stmt(@1.first_line + 1, $2, $4, true, false);
 			debug("var assign_stmt");
+		}
+		| TOKEN_LET expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_assign_stmt(@1.first_line + 1, $2, $4, false, true);
+			debug("let assign_stmt");
+		}
+		| TOKEN_VAR expr TOKEN_COLON type_name TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_assign_stmt_typed(@1.first_line + 1, $2, $6, true, false, $4);
+			debug("var typed assign_stmt");
+		}
+		| TOKEN_VAR expr TOKEN_COLON type_name TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_assign_stmt_typed(@1.first_line + 1, $2, ast_accept_term_expr(ast_accept_int_term(0)), true, false, $4);
+			debug("var typed decl_stmt");
+		}
+		| TOKEN_LET expr TOKEN_COLON type_name TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			$$ = ast_accept_assign_stmt_typed(@1.first_line + 1, $2, $6, false, true, $4);
+			debug("let typed assign_stmt");
 		}
 		;
 plusassign_stmt	: expr TOKEN_PLUSASSIGN expr TOKEN_SEMICOLON
@@ -671,15 +751,15 @@ expr		: term
 		}
 		| TOKEN_CLASS TOKEN_LBLK kv_list TOKEN_RBLK
 		{
-			/* class is equal to dict. */
-			$$ = ast_accept_dict_expr($3);
-			debug("expr: dict");
+			/* class is a frozen dict. */
+			$$ = ast_accept_class_expr($3);
+			debug("expr: class");
 		}
 		| TOKEN_CLASS TOKEN_LBLK TOKEN_RBLK
 		{
-			/* class is equal to dict. */
-			$$ = ast_accept_dict_expr(NULL);
-			debug("expr: dict");
+			/* class is a frozen dict. */
+			$$ = ast_accept_class_expr(NULL);
+			debug("expr: class");
 		}
 		| lambda_expr
 		{
@@ -689,6 +769,16 @@ expr		: term
 		{
 			$$ = ast_accept_new_expr($2, $4);
 			debug("expr: new");
+		}
+		| TOKEN_EXTEND TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK
+		{
+			$$ = ast_accept_extend_expr($2, $4);
+			debug("expr: extend");
+		}
+		| TOKEN_EXTEND TOKEN_SYMBOL TOKEN_LBLK TOKEN_RBLK
+		{
+			$$ = ast_accept_extend_expr($2, NULL);
+			debug("expr: extend");
 		}
 		| TOKEN_NEW TOKEN_SYMBOL TOKEN_LBLK TOKEN_RBLK
 		{

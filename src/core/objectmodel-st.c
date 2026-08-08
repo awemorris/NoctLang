@@ -582,6 +582,17 @@ om_write_dict(
 	bool found_slot;
 	size_t first_tombstone_index;
 
+	/* Reject writes to a frozen dictionary. */
+	{
+		struct rt_dict *frz = dict_val->val.dict;
+		while (frz->newer != NULL)
+			frz = frz->newer;
+		if (frz->is_frozen) {
+			rt_error(env, N_TR("Dictionary is frozen."));
+			return false;
+		}
+	}
+
 	UNUSED_PARAMETER(env);
 
 	/* Make sure the key has a cached hash. */
@@ -760,6 +771,7 @@ expand_dict(
 	 */
 	new_dict->native_pointer = dict->native_pointer;
 	new_dict->native_finalizer = dict->native_finalizer;
+	new_dict->is_frozen = dict->is_frozen;
 
 	/* Link the new object, that is, do copy-publish. */
 	dict->newer = new_dict;
@@ -813,6 +825,17 @@ om_erase_dict_entry(
 	struct rt_dict *dict;
 	size_t index, i, n;
 	bool is_not_found;
+
+	/* Reject removal from a frozen dictionary. */
+	{
+		struct rt_dict *frz = dict_val->val.dict;
+		while (frz->newer != NULL)
+			frz = frz->newer;
+		if (frz->is_frozen) {
+			rt_error(env, N_TR("Dictionary is frozen."));
+			return false;
+		}
+	}
 
 	UNUSED_PARAMETER(env);
 
@@ -1114,4 +1137,24 @@ om_leave_blocking(
 	struct rt_env *env)
 {
 	UNUSED_PARAMETER(env);
+}
+
+/*
+ * Freeze a dictionary (make it read-only).
+ */
+bool
+om_freeze_dict(
+	struct rt_env *env,
+	struct rt_value *dict_val)
+{
+	struct rt_dict *dict;
+
+	UNUSED_PARAMETER(env);
+
+	dict = dict_val->val.dict;
+	while (dict->newer != NULL)
+		dict = dict->newer;
+	dict->is_frozen = true;
+
+	return true;
 }

@@ -11,6 +11,7 @@
 
 #include "runtime.h"
 #include "intrinsics.h"
+#include "objectmodel.h"
 #include "regex.h"
 
 #include <stdio.h>
@@ -45,6 +46,8 @@ static bool rt_intrin_Array_resize(NoctEnv *env);
 static bool rt_intrin_Array_copy(NoctEnv *env);
 static bool rt_intrin_Dict_make(NoctEnv *env);
 static bool rt_intrin_Dict_merge(NoctEnv *env);
+static bool rt_intrin_Dict_freeze(NoctEnv *env);
+static bool rt_intrin_Global_markConst(NoctEnv *env);
 static bool rt_intrin_Dict_size(NoctEnv *env);
 static bool rt_intrin_Dict_hasKey(NoctEnv *env);
 static bool rt_intrin_Dict_remove(NoctEnv *env);
@@ -114,6 +117,7 @@ struct intrin_item {
 	{"Array",	"copy",		"Array.copy",		rt_intrin_Array_copy,		1, {"arr"}},
 	{"Dict",	"make",		"Dict.make",		rt_intrin_Dict_make,		0, {NULL}},
 	{"Dict",	"merge",	"Dict.merge",		rt_intrin_Dict_merge,		2, {"src1", "src2"}},
+	{"Dict",	"freeze",	"Dict.freeze",		rt_intrin_Dict_freeze,		1, {"dict"}},
 	{"Dict",	"size",		"Dict.size",		rt_intrin_Dict_size,		1, {"dict"}},
 	{"Dict",	"hasKey",	"Dict.hasKey",		rt_intrin_Dict_hasKey,		2, {"dict", "key"}},
 	{"Dict",	"remove",	"Dict.remove",		rt_intrin_Dict_remove,		2, {"dict", "key"}},
@@ -143,6 +147,7 @@ struct intrin_item {
 	{"Global",	"isSet",	"Global.isSet",		rt_intrin_Global_hasVariable,	1, {"name"}},
 	{"Global",	"hasVariable",	"Global.hasVariable",	rt_intrin_Global_hasVariable,	1, {"name"}},
 	{"Global",	"get",	"Global.get",		rt_intrin_Global_get,		1, {"name"}},
+	{"Global",	"markConst",	"Global.markConst",	rt_intrin_Global_markConst,	1, {"name"}},
 	{"Type",	"of",		"Type.of",		rt_intrin_Type_of,		1, {"val"}},
 	{"GC",		"youngGC",	"GC.youngGC",		rt_intrin_GC_youngGC,		0, {NULL}},
 	{"GC",		"oldGC",	"GC.oldGC",		rt_intrin_GC_oldGC,		0, {NULL}},
@@ -1676,6 +1681,73 @@ rt_intrin_Dict_merge(
 }
 
 /*
+ * Dict.freeze(dict)
+ *
+ * Makes a dictionary read-only and returns it.  Compiler-emitted for
+ * class literals and "extend"; also public (docs/design/03-class.md).
+ */
+static bool
+rt_intrin_Dict_freeze(
+	NoctEnv *env)
+{
+	struct rt_value dict;
+
+	noct_pin_local(env, 1, &dict);
+
+	/* Retrieve the argument "dict" at the index 0. */
+	if (!noct_get_arg_check_dict(env, 0, &dict))
+		return false;
+
+	/* Set the frozen flag. */
+	if (!om_freeze_dict(env, &dict))
+		return false;
+
+	/* Return the same dictionary. */
+	if (!noct_set_return(env, &dict))
+		return false;
+
+	noct_unpin_local(env, 1, &dict);
+
+	return true;
+}
+
+/*
+ * Global.markConst(name)
+ *
+ * Marks a global binding constant.  Compiler-emitted for top-level
+ * "let" declarations; also public.
+ */
+static bool
+rt_intrin_Global_markConst(
+	NoctEnv *env)
+{
+	struct rt_value name;
+	const char *name_s;
+	uint32_t i;
+
+	noct_pin_local(env, 1, &name);
+
+	if (!noct_get_arg_check_string(env, 0, &name, &name_s))
+		return false;
+
+	for (i = 0; i < env->vm->global_alloc_size; i++) {
+		if (env->vm->global[i].name == NULL)
+			continue;
+		if (env->vm->global[i].is_removed)
+			continue;
+		if (strcmp(env->vm->global[i].name, name_s) == 0) {
+			env->vm->global[i].is_const = true;
+			noct_unpin_local(env, 1, &name);
+			return true;
+		}
+	}
+
+	noct_unpin_local(env, 1, &name);
+	rt_error(env, N_TR("Symbol \"%s\" not found."), name_s);
+	return false;
+}
+
+/*
  * Dict.size(dict)
  */
 static bool
@@ -2988,5 +3060,3 @@ rt_intrin_GC_compactGC(
 	noct_compact_gc(env);
 	return true;
 }
-
-

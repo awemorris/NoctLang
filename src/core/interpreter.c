@@ -982,6 +982,110 @@ rt_visit_safepoint_op(
         return true;
 }
 
+/* Visit a OP_PBASE instruction. */
+static INLINE bool
+rt_visit_pbase_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PBASE");
+
+        UNARY_OP(ex_pbase_helper);
+}
+
+/* Visit a OP_PLEN instruction. */
+static INLINE bool
+rt_visit_plen_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLEN");
+
+        UNARY_OP(ex_plen_helper);
+}
+
+/* Visit a OP_PCHECK instruction. */
+static INLINE bool
+rt_visit_pcheck_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst, src, type;
+
+        DEBUG_TRACE(*pc, "PCHECK");
+
+        GET_TMPVAR(&dst);
+        GET_TMPVAR(&src);
+        GET_U8(&type);
+        if (!ex_pcheck_helper(env, (int)dst, (int)src, (int)type))
+                return false;
+        return true;
+}
+
+/* Visit a OP_TYPEIS instruction. */
+static INLINE bool
+rt_visit_typeis_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst, src, type;
+
+        DEBUG_TRACE(*pc, "TYPEIS");
+
+        GET_TMPVAR(&dst);
+        GET_TMPVAR(&src);
+        GET_U8(&type);
+        if (!ex_typeis_helper(env, (int)dst, (int)src, (int)type))
+                return false;
+        return true;
+}
+
+/* Visit a OP_PLOAD8U instruction. */
+static INLINE bool
+rt_visit_pload8u_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLOAD8U");
+
+        BINARY_OP(ex_pload8u_helper);
+}
+
+/* Visit a OP_PSTORE8 instruction. (Operand order: base, ofs, src.) */
+static INLINE bool
+rt_visit_pstore8_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PSTORE8");
+
+        BINARY_OP(ex_pstore8_helper);
+}
+
+/* Visit a OP_CHECKTYPE instruction. */
+static INLINE bool
+rt_visit_checktype_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int slot, type;
+
+        DEBUG_TRACE(*pc, "CHECKTYPE");
+
+        GET_TMPVAR(&slot);
+        GET_U8(&type);
+        if (!ex_checktype_helper(env, (int)slot, (int)type))
+                return false;
+        return true;
+}
+
 /* Visit an instruction. */
 static bool
 rt_visit_op(
@@ -1180,6 +1284,34 @@ rt_visit_op(
                 if (!rt_visit_safepoint_op(env, func, pc))
                         return false;
 #endif
+                break;
+        case OP_PBASE:
+                if (!rt_visit_pbase_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLEN:
+                if (!rt_visit_plen_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PCHECK:
+                if (!rt_visit_pcheck_op(env, func, pc))
+                        return false;
+                break;
+        case OP_TYPEIS:
+                if (!rt_visit_typeis_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLOAD8U:
+                if (!rt_visit_pload8u_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PSTORE8:
+                if (!rt_visit_pstore8_op(env, func, pc))
+                        return false;
+                break;
+        case OP_CHECKTYPE:
+                if (!rt_visit_checktype_op(env, func, pc))
+                        return false;
                 break;
         default:
                 rt_error(env, "Unknown opcode %d at pc=%d.", func->bytecode[*pc], *pc);

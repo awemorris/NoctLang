@@ -35,12 +35,21 @@ command_transpile_c(
 	int argc,
 	char *argv[])
 {
-	if (argc < 4) {
+	int first;
+
+	/* Optional: --optimize-level=N before the output file. */
+	first = 2;
+	if (argc > 2 && strncmp(argv[2], "--optimize-level=", 17) == 0) {
+		noct_cback_set_optimize_level(atoi(argv[2] + 17));
+		first = 3;
+	}
+
+	if (argc < first + 2) {
 		show_usage();
 		return 1;
 	}
 
-	if (!do_transpile_c(argv[2], argc - 3, (const char **)&argv[3]))
+	if (!do_transpile_c(argv[first], argc - first - 1, (const char **)&argv[first + 1]))
 		return 1;
 
 	return 0;

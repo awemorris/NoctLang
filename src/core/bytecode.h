@@ -82,6 +82,23 @@ enum bytecode {
 
 	/* line number */
 	OP_LINEINFO,		/* 0x2d:  45: setDebugLine(src) */
+
+	/*
+	 * ABCE (bounds-check-eliminated Packed access).
+	 * Emitted only by the HIR optimizer (hiropt.c) at optimize
+	 * level >= 2.  See docs/design/01-abce.md.
+	 */
+	OP_PBASE,		/* 0x2e:  46: dst = payload address of packed src (long) */
+	OP_PCHECK,		/* 0x2f:  47: dst = (src is packed && elem type == imm8) */
+	OP_TYPEIS,		/* 0x30:  48: dst = (typeof(src) == imm8) */
+	OP_PLOAD8U,		/* 0x31:  49: dst = *(uint8 *)(src1 + src2), no checks */
+	OP_PSTORE8,		/* 0x32:  50: *(uint8 *)(opr1 + opr2) = opr3, no checks */
+
+	/* type annotation entry check (optimize level >= 2) */
+	OP_CHECKTYPE,		/* 0x33:  51: error unless typeof(tmpvar) == imm8 */
+
+	/* ABCE: guard-safe packed length */
+	OP_PLEN,		/* 0x34:  52: dst = elem count of packed src (0 if not packed) */
 };
 
 #endif

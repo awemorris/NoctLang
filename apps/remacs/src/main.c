@@ -21,6 +21,9 @@
 
 #include "remacs.h"
 
+/* VM configuration (REMACS_OPT_LEVEL selects the optimization level). */
+static NoctConfig vm_config;
+
 #ifndef REMACS_EDITOR_DIR
 #define REMACS_EDITOR_DIR "editor"
 #endif
@@ -184,7 +187,14 @@ main(
 		}
 	}
 
-	if (!noct_create_vm(&vm, &env, NULL)) {
+	{
+		const char *opt_env;
+		noct_set_default_config(&vm_config);
+		opt_env = getenv("REMACS_OPT_LEVEL");
+		if (opt_env != NULL)
+			vm_config.optimize_level = atoi(opt_env);
+	}
+	if (!noct_create_vm(&vm, &env, &vm_config)) {
 		fprintf(stderr, "remacs: out of memory\n");
 		return 1;
 	}

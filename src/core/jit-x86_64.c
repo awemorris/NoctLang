@@ -1786,6 +1786,174 @@ jit_visit_safepoint_op(
         return true;
 }
 
+/* Visit a OP_PBASE instruction. (ABCE; inline machine code.)
+ *
+ * The ABCE guard has already proven the operand is a packed, so this
+ * trusts the value and loads the payload pointer directly.
+ */
+static INLINE bool
+jit_visit_pbase_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+        uint32_t buf_ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        dst *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+        buf_ofs = (uint32_t)offsetof(struct rt_packed, packed_buffer);
+
+        /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG; */
+        /* env->frame->tmpvar[dst].val.l = (int64_t)packed->packed_buffer; */
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* movq src+8(%r15) -> %rax */   IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(src + 8));
+                /* movq buf_ofs(%rax) -> %rax */ IB(0x48); IB(0x8b); IB(0x80); ID(buf_ofs);
+                /* movl $LONG -> dst(%r15) */    IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_LONG);
+                /* movq %rax -> dst+8(%r15) */   IB(0x49); IB(0x89); IB(0x87); ID((uint32_t)(dst + 8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLEN instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_plen_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        /* if (!ex_plen_helper(env, dst, src)) return false; */
+        ASM_UNARY_OP(ex_plen_helper);
+
+        return true;
+}
+
+/* Visit a OP_PCHECK instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_pcheck_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_pcheck_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_pcheck_helper);
+
+        return true;
+}
+
+/* Visit a OP_TYPEIS instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_typeis_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_typeis_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_typeis_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code.) */
+static INLINE bool
+jit_visit_pload8u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        /* dst.val.i = *(uint8_t *)(base.val.l + ofs.val.i); dst.type = INT; */
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                /* movzbl (%rax,%rcx) -> %edx */   IB(0x0f); IB(0xb6); IB(0x14); IB(0x08);
+                /* movl $INT -> dst(%r15) */       IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl %edx -> dst+8(%r15) */     IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst + 8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE8 instruction. (ABCE; inline machine code.
+ * Operand order: base, ofs, src.) */
+static INLINE bool
+jit_visit_pstore8_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        /* *(uint8_t *)(base.val.l + ofs.val.i) = (uint8_t)src.val.i; */
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+
+                /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                /* movl src+8(%r15) -> %edx */     IB(0x41); IB(0x8b); IB(0x97); ID((uint32_t)(src + 8));
+                /* movb %dl -> (%rax,%rcx) */      IB(0x88); IB(0x14); IB(0x08);
+        }
+
+        return true;
+}
+
+/* Visit a OP_CHECKTYPE instruction. (Typed entry check.) */
+static INLINE bool
+jit_visit_checktype_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM8(src);
+
+        /* if (!ex_checktype_helper(env, slot, type)) return false; */
+        ASM_UNARY_OP(ex_checktype_helper);
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2088,6 +2256,34 @@ jit_visit_bytecode(
                         if (!jit_visit_safepoint_op(ctx))
                                 return false;
 #endif
+                        break;
+                case OP_PBASE:
+                        if (!jit_visit_pbase_op(ctx))
+                                return false;
+                        break;
+                case OP_PLEN:
+                        if (!jit_visit_plen_op(ctx))
+                                return false;
+                        break;
+                case OP_PCHECK:
+                        if (!jit_visit_pcheck_op(ctx))
+                                return false;
+                        break;
+                case OP_TYPEIS:
+                        if (!jit_visit_typeis_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8U:
+                        if (!jit_visit_pload8u_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE8:
+                        if (!jit_visit_pstore8_op(ctx))
+                                return false;
+                        break;
+                case OP_CHECKTYPE:
+                        if (!jit_visit_checktype_op(ctx))
+                                return false;
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

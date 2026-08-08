@@ -377,11 +377,11 @@ lexer_unescape(char *s)
 			return TOKEN_NEW;
 		}
 "extend"	{
-			/* extend is equal to new. */
+			/* extend: like new, but the result is frozen. */
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
-			return TOKEN_NEW;
+			return TOKEN_EXTEND;
 		}
 "class"		{
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -502,6 +502,12 @@ lexer_unescape(char *s)
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_CONTINUE;
+		}
+"let"		{
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_LET;
 		}
 "var"		{
 			ast_yylloc.first_line = ast_yylloc.last_line;

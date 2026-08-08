@@ -719,6 +719,7 @@ rt_gc_alloc_dict(
 		dict->newer = NULL;
 		dict->native_pointer = NULL;
 		dict->native_finalizer = NULL;
+		dict->is_frozen = false;
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
@@ -791,6 +792,7 @@ rt_gc_alloc_dict_graduate(
 		dict->newer = NULL;
 		dict->native_pointer = NULL;
 		dict->native_finalizer = NULL;
+		dict->is_frozen = false;
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
@@ -883,6 +885,7 @@ rt_gc_alloc_dict_tenure(
 		dict->newer = NULL;
 		dict->native_pointer = NULL;
 		dict->native_finalizer = NULL;
+		dict->is_frozen = false;
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
@@ -1749,6 +1752,12 @@ rt_gc_promote_array(
 	/* Set the forwarding pointer. */
 	obj->forward = &new_arr->head;
 
+#if defined(NOCT_USE_MULTITHREAD)
+	/* Keep the ownership state (shared/creator) across the move. */
+	new_arr->shared = old_arr->shared;
+	new_arr->creator = old_arr->creator;
+#endif
+
 	return &new_arr->head;
 }
 
@@ -1799,6 +1808,13 @@ rt_gc_promote_dict(
 
 	new_dict->native_pointer = old_dict->native_pointer;
 	new_dict->native_finalizer = old_dict->native_finalizer;
+	new_dict->is_frozen = old_dict->is_frozen;
+
+#if defined(NOCT_USE_MULTITHREAD)
+	/* Keep the ownership state (shared/creator) across the move. */
+	new_dict->shared = old_dict->shared;
+	new_dict->creator = old_dict->creator;
+#endif
 
 	return &new_dict->head;
 }
@@ -1898,6 +1914,12 @@ rt_gc_copy_array_to_graduate(
 		}
 	}
 
+#if defined(NOCT_USE_MULTITHREAD)
+	/* Keep the ownership state (shared/creator) across the move. */
+	new_obj->shared = old_obj->shared;
+	new_obj->creator = old_obj->creator;
+#endif
+
 	return &new_obj->head;
 }
 
@@ -1958,6 +1980,13 @@ rt_gc_copy_dict_to_graduate(
 
 	new_obj->native_pointer = old_obj->native_pointer;
 	new_obj->native_finalizer = old_obj->native_finalizer;
+	new_obj->is_frozen = old_obj->is_frozen;
+
+#if defined(NOCT_USE_MULTITHREAD)
+	/* Keep the ownership state (shared/creator) across the move. */
+	new_obj->shared = old_obj->shared;
+	new_obj->creator = old_obj->creator;
+#endif
 
 	/* Succeeded. */
 	return &new_obj->head;

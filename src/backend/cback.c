@@ -60,11 +60,24 @@ static uint32_t func_count;
 
 static FILE *fp;
 
+/* Optimization level for translated output. */
+static int cback_optimize_level = 0;
+
+/*
+ * Set the optimization level for subsequent translations.
+ */
+void
+noct_cback_set_optimize_level(int level)
+{
+	cback_optimize_level = level;
+}
+
 /*
  * Forward declaration
  */
 static bool cback_translate_func(struct lir_func *func);
 static bool cback_visit_bytecode(struct lir_func *func);
+
 static bool cback_visit_op(struct lir_func *func, uint32_t *pc);
 static bool cback_write_aot_init(void);
 
@@ -81,7 +94,9 @@ noct_cback_start(
 		return false;
 	}
 
-	fprintf(fp, "#include <noct/aot.h>\"\n");
+	/* NOCT_AOT_INTERNAL exposes the head layout of rt_env/rt_frame. */
+	fprintf(fp, "#define NOCT_AOT_INTERNAL\n");
+	fprintf(fp, "#include <noct/aot.h>\n");
 	fprintf(fp, "\n");
 
 	return true;
@@ -96,6 +111,9 @@ noct_cback_translate(
 	const char *data)
 {
 	uint32_t func_count, i;
+
+	/* Propagate the optimization level to the compiler. */
+	lir_set_optimize_level(cback_optimize_level);
 
 	/* Do parse, build AST. */
 	if (!ast_build(fname, data)) {
@@ -121,8 +139,14 @@ noct_cback_translate(
 		struct hir_block *hfunc;
 		struct lir_func *lfunc;
 
-		/* Transform HIR to LIR (bytecode). */
+		/* Run the HIR optimizer (ABCE; no-op below level 2). */
 		hfunc = hir_get_function(i);
+		if (!hir_optimize_func(hfunc, cback_optimize_level)) {
+			printf(N_TR("Error: %s\n"), hir_get_error_message());
+			return false;
+		}
+
+		/* Transform HIR to LIR (bytecode). */
 		if (!lir_build(hfunc, &lfunc)) {
 			printf(N_TR("Error: %s:%d: %s\n"),
 			       lir_get_file_name(),
@@ -307,6 +331,31 @@ static INLINE bool cback_get_u32(
 }
 
 /* Get a u32 address from bytecode. */
+#define GET_U64(v) if (!cback_get_u64(func, pc, v)) return false
+static INLINE bool
+cback_get_u64(
+	struct lir_func *func,
+	uint32_t *pc,
+	uint64_t *val)
+{
+	if (*pc + 8 > func->bytecode_size) {
+		puts(BROKEN_BYTECODE);
+		return false;
+	}
+
+	*val = (((uint64_t)func->bytecode[*pc]) << 56) |
+	       (((uint64_t)func->bytecode[*pc + 1]) << 48) |
+	       (((uint64_t)func->bytecode[*pc + 2]) << 40) |
+	       (((uint64_t)func->bytecode[*pc + 3]) << 32) |
+	       (((uint64_t)func->bytecode[*pc + 4]) << 24) |
+	       (((uint64_t)func->bytecode[*pc + 5]) << 16) |
+	       (((uint64_t)func->bytecode[*pc + 6]) << 8) |
+	       ((uint64_t)func->bytecode[*pc + 7]);
+	*pc += 8;
+
+	return true;
+}
+
 #define GET_ADDR(v) if (!cback_get_addr(func, pc, v)) return false
 static INLINE bool cback_get_addr(
         struct lir_func *func,
@@ -473,10 +522,8 @@ cback_visit_sconst_op(
 	GET_TMPVAR(&dst);
 	GET_STRING(&s, &len, &hash);
 
-	len = (uint32_t)strlen(s);
-	hash = noct_string_hash(s);
-
-	fprintf(fp, "    if (!ex_make_string_with_hash(env, &env->frame->tmpvar[%d], \"%s\", %uU, 0x%08x))\n", dst, s, len, hash);
+	/* len includes the tail NUL, same as the interpreter passes. */
+	fprintf(fp, "    if (!noct_ex_make_string_with_hash(env, &env->frame->tmpvar[%d], \"%s\", %uU, 0x%08x))\n", dst, s, len, hash);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -492,7 +539,7 @@ cback_visit_aconst_op(
 
 	GET_TMPVAR(&dst);
 
-	fprintf(fp, "    if (!ex_make_empty_array(env, &env->frame->tmpvar[%d]))\n", dst);
+	fprintf(fp, "    if (!noct_ex_make_empty_array(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -508,7 +555,7 @@ cback_visit_dconst_op(
 
 	GET_TMPVAR(&dst);
 
-	fprintf(fp, "    if (!ex_make_empty_dict(env, &env->frame->tmpvar[%d]))\n", dst);
+	fprintf(fp, "    if (!noct_ex_make_empty_dict(env, &env->frame->tmpvar[%d]))\n", dst);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -524,6 +571,10 @@ cback_visit_inc_op(
 
 	GET_TMPVAR(&dst);
 
+	/* In-place integer increment (same semantics as the interpreter). */
+	fprintf(fp, "    if (env->frame->tmpvar[%d].type != NOCT_VALUE_INT) return false;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i++;\n", dst);
+
 	return true;
 }
 
@@ -533,7 +584,7 @@ cback_visit_add_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_add_helper);
+	BINARY_OP(noct_ex_add_helper);
 	return true;
 }
 
@@ -543,7 +594,7 @@ cback_visit_sub_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_sub_helper);
+	BINARY_OP(noct_ex_sub_helper);
 	return true;
 }
 
@@ -553,7 +604,7 @@ cback_visit_mul_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_mul_helper);
+	BINARY_OP(noct_ex_mul_helper);
 	return true;
 }
 
@@ -563,7 +614,7 @@ cback_visit_div_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_div_helper);
+	BINARY_OP(noct_ex_div_helper);
 	return true;
 }
 
@@ -573,7 +624,7 @@ cback_visit_mod_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_mod_helper);
+	BINARY_OP(noct_ex_mod_helper);
 	return true;
 }
 
@@ -583,7 +634,7 @@ cback_visit_and_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_and_helper);
+	BINARY_OP(noct_ex_and_helper);
 	return true;
 }
 
@@ -593,7 +644,7 @@ cback_visit_or_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_or_helper);
+	BINARY_OP(noct_ex_or_helper);
 	return true;
 }
 
@@ -603,7 +654,7 @@ cback_visit_xor_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_xor_helper);
+	BINARY_OP(noct_ex_xor_helper);
 	return true;
 }
 
@@ -613,7 +664,7 @@ cback_visit_shl_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_shl_helper);
+	BINARY_OP(noct_ex_shl_helper);
 	return true;
 }
 
@@ -623,7 +674,7 @@ cback_visit_shr_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_shr_helper);
+	BINARY_OP(noct_ex_shr_helper);
 	return true;
 }
 
@@ -633,7 +684,7 @@ cback_visit_neg_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	UNARY_OP(ex_neg_helper);
+	UNARY_OP(noct_ex_neg_helper);
 	return true;
 }
 
@@ -643,7 +694,7 @@ cback_visit_not_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	UNARY_OP(ex_not_helper);
+	UNARY_OP(noct_ex_not_helper);
 	return true;
 }
 
@@ -653,7 +704,7 @@ cback_visit_lt_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_lt_helper);
+	BINARY_OP(noct_ex_lt_helper);
 	return true;
 }
 
@@ -663,7 +714,7 @@ cback_visit_lte_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_lte_helper);
+	BINARY_OP(noct_ex_lte_helper);
 	return true;
 }
 
@@ -673,7 +724,7 @@ cback_visit_gt_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_gt_helper);
+	BINARY_OP(noct_ex_gt_helper);
 	return true;
 }
 
@@ -683,7 +734,7 @@ cback_visit_gte_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_gte_helper);
+	BINARY_OP(noct_ex_gte_helper);
 	return true;
 }
 
@@ -693,7 +744,7 @@ cback_visit_eq_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_eq_helper);
+	BINARY_OP(noct_ex_eq_helper);
 	return true;
 }
 
@@ -703,7 +754,7 @@ cback_visit_neq_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_neq_helper);
+	BINARY_OP(noct_ex_neq_helper);
 	return true;
 }
 
@@ -713,7 +764,7 @@ cback_visit_storearray_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_storearray_helper);
+	BINARY_OP(noct_ex_storearray_helper);
 	return true;
 }
 
@@ -723,7 +774,7 @@ cback_visit_loadarray_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_loadarray_helper);
+	BINARY_OP(noct_ex_loadarray_helper);
 	return true;
 }
 
@@ -733,7 +784,7 @@ cback_visit_len_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	UNARY_OP(ex_len_helper);
+	UNARY_OP(noct_ex_len_helper);
 	return true;
 }
 
@@ -743,7 +794,7 @@ cback_visit_getdictkeybyindex_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_getdictkeybyindex_helper);
+	BINARY_OP(noct_ex_getdictkeybyindex_helper);
 	return true;
 }
 
@@ -753,7 +804,7 @@ cback_visit_getdictvalbyindex_op(
 	struct lir_func *func,
 	uint32_t *pc)
 {
-	BINARY_OP(ex_getdictvalbyindex_helper);
+	BINARY_OP(noct_ex_getdictvalbyindex_helper);
 	return true;
 }
 
@@ -771,7 +822,7 @@ cback_visit_loadsymbol_op(
 	GET_TMPVAR(&dst);
 	GET_STRING(&symbol, &len, &hash);
 
-	fprintf(fp, "    if (!ex_loadsymbol_helper(env, %d, \"%s\", %uu, %uu))\n", dst, symbol, len, hash);
+	fprintf(fp, "    if (!noct_ex_loadsymbol_helper(env, %d, \"%s\", %uu, %uu))\n", dst, symbol, len, hash);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -791,7 +842,7 @@ cback_visit_storesymbol_op(
 	GET_STRING(&symbol, &len, &hash);
 	GET_TMPVAR(&src);
 
-	fprintf(fp, "    if (!ex_storesymbol_helper(env, \"%s\", %uu, %uu, %d))\n", symbol, len, hash, src);
+	fprintf(fp, "    if (!noct_ex_storesymbol_helper(env, \"%s\", %uu, %uu, %d))\n", symbol, len, hash, src);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -812,7 +863,7 @@ cback_visit_loaddot_op(
 	GET_TMPVAR(&dict);
 	GET_STRING(&field, &len, &hash);
 
-	fprintf(fp, "    if (!ex_loaddot_helper(env, %d, %d, \"%s\", %uu, %uu))\n", dst, dict, field, len, hash);
+	fprintf(fp, "    if (!noct_ex_loaddot_helper(env, %d, %d, \"%s\", %uu, %uu))\n", dst, dict, field, len, hash);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -833,7 +884,7 @@ cback_visit_storedot_op(
 	GET_STRING(&field, &len, &hash);
 	GET_TMPVAR(&src);
 
-	fprintf(fp, "    if (!ex_storedot_helper(env, %d, \"%s\", %uu, %uu, %d))\n", dict, field, len, hash, src);
+	fprintf(fp, "    if (!noct_ex_storedot_helper(env, %d, \"%s\", %uu, %uu, %d))\n", dict, field, len, hash, src);
 	fprintf(fp, "        return false;\n");
 
 	return true;
@@ -866,7 +917,7 @@ cback_visit_call_op(
 	for (i = 0; i < arg_count; i++)
 		fprintf(fp, "%d,", arg[i]);
 	fprintf(fp, "};\n");
-	fprintf(fp, "        if (!ex_call_helper(env, %d, %d, %d, arg))\n", dst_tmpvar, func_tmpvar, arg_count);
+	fprintf(fp, "        if (!noct_ex_call_helper(env, %d, %d, %d, arg))\n", dst_tmpvar, func_tmpvar, arg_count);
 	fprintf(fp, "            return false;\n");
 	fprintf(fp, "    }\n");
 
@@ -902,7 +953,7 @@ cback_visit_thiscall_op(
 	for (i = 0; i < arg_count; i++)
 		fprintf(fp, "%d,", arg[i]);
 	fprintf(fp, "};\n");
-	fprintf(fp, "        if (!ex_thiscall_helper(env, %d, %d, \"%s\", %uu, %uu, %d, arg))\n", dst_tmpvar, obj_tmpvar, name, len, hash, arg_count);
+	fprintf(fp, "        if (!noct_ex_thiscall_helper(env, %d, %d, \"%s\", %uu, %uu, %d, arg))\n", dst_tmpvar, obj_tmpvar, name, len, hash, arg_count);
 	fprintf(fp, "            return false;\n");
 	fprintf(fp, "    }\n");
 
@@ -961,6 +1012,178 @@ cback_visit_jmpiffalse_op(
 }
 
 /* Visit an instruction. */
+/* Visit a LOP_LICONST instruction. */
+static INLINE bool
+cback_visit_liconst_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst;
+	uint64_t raw;
+
+	GET_TMPVAR(&dst);
+	GET_U64(&raw);
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_LONG;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.l = (int64_t)%lldLL;\n", dst, (long long)(int64_t)raw);
+
+	return true;
+}
+
+/* Visit a LOP_LFCONST instruction. */
+static INLINE bool
+cback_visit_lfconst_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst;
+	uint64_t raw;
+	double val;
+
+	GET_TMPVAR(&dst);
+	GET_U64(&raw);
+
+	memcpy(&val, &raw, sizeof(double));
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_DOUBLE;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.lf = %.17g;\n", dst, val);
+
+	return true;
+}
+
+/* Visit a LOP_SAFEPOINT instruction. */
+static INLINE bool
+cback_visit_safepoint_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	UNUSED_PARAMETER(func);
+	UNUSED_PARAMETER(pc);
+
+	fprintf(fp, "    if (!noct_ex_safepoint_helper(env)) return false;\n");
+
+	return true;
+}
+
+/* Visit a LOP_PBASE instruction. (ABCE) */
+static INLINE bool
+cback_visit_pbase_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, src;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src);
+
+	fprintf(fp, "    if (!noct_ex_pbase_helper(env, %d, %d)) return false;\n", dst, src);
+
+	return true;
+}
+
+/* Visit a LOP_PLEN instruction. (ABCE) */
+static INLINE bool
+cback_visit_plen_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, src;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src);
+
+	fprintf(fp, "    if (!noct_ex_plen_helper(env, %d, %d)) return false;\n", dst, src);
+
+	return true;
+}
+
+/* Visit a LOP_PCHECK instruction. (ABCE) */
+static INLINE bool
+cback_visit_pcheck_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, src, type;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src);
+	GET_U8(&type);
+
+	fprintf(fp, "    if (!noct_ex_pcheck_helper(env, %d, %d, %d)) return false;\n", dst, src, type);
+
+	return true;
+}
+
+/* Visit a LOP_TYPEIS instruction. (ABCE) */
+static INLINE bool
+cback_visit_typeis_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, src, type;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src);
+	GET_U8(&type);
+
+	fprintf(fp, "    if (!noct_ex_typeis_helper(env, %d, %d, %d)) return false;\n", dst, src, type);
+
+	return true;
+}
+
+/* Visit a LOP_PLOAD8U instruction. (ABCE: raw bounds-check-free load.) */
+static INLINE bool
+cback_visit_pload8u_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, base, ofs;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+
+	fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i = (int)*((const unsigned char *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i);\n",
+		dst, base, ofs);
+
+	return true;
+}
+
+/* Visit a LOP_PSTORE8 instruction. (ABCE: raw bounds-check-free store.) */
+static INLINE bool
+cback_visit_pstore8_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int base, ofs, src;
+
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+	GET_TMPVAR(&src);
+
+	fprintf(fp, "    *((unsigned char *)(intptr_t)env->frame->tmpvar[%d].val.l + env->frame->tmpvar[%d].val.i) = (unsigned char)env->frame->tmpvar[%d].val.i;\n",
+		base, ofs, src);
+
+	return true;
+}
+
+/* Visit a LOP_CHECKTYPE instruction. */
+static INLINE bool
+cback_visit_checktype_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int slot, type;
+
+	GET_TMPVAR(&slot);
+	GET_U8(&type);
+
+	fprintf(fp, "    if (!noct_ex_checktype_helper(env, %d, %d)) return false;\n", slot, type);
+
+	return true;
+}
+
 static bool
 cback_visit_op(
 	struct lir_func *func,
@@ -1147,6 +1370,46 @@ cback_visit_op(
 		if (!cback_visit_jmpiftrue_op(func, pc))
 			return false;
 		break;
+	case OP_LICONST:
+		if (!cback_visit_liconst_op(func, pc))
+			return false;
+		break;
+	case OP_LFCONST:
+		if (!cback_visit_lfconst_op(func, pc))
+			return false;
+		break;
+	case OP_SAFEPOINT:
+		if (!cback_visit_safepoint_op(func, pc))
+			return false;
+		break;
+	case OP_PBASE:
+		if (!cback_visit_pbase_op(func, pc))
+			return false;
+		break;
+	case OP_PLEN:
+		if (!cback_visit_plen_op(func, pc))
+			return false;
+		break;
+	case OP_PCHECK:
+		if (!cback_visit_pcheck_op(func, pc))
+			return false;
+		break;
+	case OP_TYPEIS:
+		if (!cback_visit_typeis_op(func, pc))
+			return false;
+		break;
+	case OP_PLOAD8U:
+		if (!cback_visit_pload8u_op(func, pc))
+			return false;
+		break;
+	case OP_PSTORE8:
+		if (!cback_visit_pstore8_op(func, pc))
+			return false;
+		break;
+	case OP_CHECKTYPE:
+		if (!cback_visit_checktype_op(func, pc))
+			return false;
+		break;
 	default:
 		printf("Unknown opcode.");
 		return false;
@@ -1167,7 +1430,7 @@ cback_write_aot_init(void)
 		if (func_table[i].param_count > 0) {
 			fprintf(fp, "        const char *params[] = {");
 			for (j = 0; j < func_table[i].param_count; j++)
-				fprintf(fp, "\"%s\",", func_table[i].param_name[i]);
+				fprintf(fp, "\"%s\",", func_table[i].param_name[j]);
 			fprintf(fp, "};\n");
 			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", %d, params, L_%s, NULL))\n",
 				func_table[i].name, func_table[i].param_count, func_table[i].name);

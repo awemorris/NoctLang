@@ -1775,6 +1775,133 @@ jit_visit_safepoint_op(
         return true;
 }
 
+/* Visit a OP_PBASE instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_pbase_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        /* if (!ex_pbase_helper(env, dst, src)) return false; */
+        ASM_UNARY_OP(ex_pbase_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLEN instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_plen_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        /* if (!ex_plen_helper(env, dst, src)) return false; */
+        ASM_UNARY_OP(ex_plen_helper);
+
+        return true;
+}
+
+/* Visit a OP_PCHECK instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_pcheck_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_pcheck_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_pcheck_helper);
+
+        return true;
+}
+
+/* Visit a OP_TYPEIS instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_typeis_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_typeis_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_typeis_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8U instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_pload8u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pload8u_helper(env, dst, base, ofs)) return false; */
+        ASM_BINARY_OP(ex_pload8u_helper);
+
+        return true;
+}
+
+/* Visit a OP_PSTORE8 instruction. (ABCE; operand order: base, ofs, src.) */
+static INLINE bool
+jit_visit_pstore8_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pstore8_helper(env, base, ofs, src)) return false; */
+        ASM_BINARY_OP(ex_pstore8_helper);
+
+        return true;
+}
+
+/* Visit a OP_CHECKTYPE instruction. (Typed entry check.) */
+static INLINE bool
+jit_visit_checktype_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM8(src);
+
+        /* if (!ex_checktype_helper(env, slot, type)) return false; */
+        ASM_UNARY_OP(ex_checktype_helper);
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2025,6 +2152,34 @@ jit_visit_bytecode(
                         if (!jit_visit_safepoint_op(ctx))
                                 return false;
 #endif
+                        break;
+                case OP_PBASE:
+                        if (!jit_visit_pbase_op(ctx))
+                                return false;
+                        break;
+                case OP_PLEN:
+                        if (!jit_visit_plen_op(ctx))
+                                return false;
+                        break;
+                case OP_PCHECK:
+                        if (!jit_visit_pcheck_op(ctx))
+                                return false;
+                        break;
+                case OP_TYPEIS:
+                        if (!jit_visit_typeis_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8U:
+                        if (!jit_visit_pload8u_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE8:
+                        if (!jit_visit_pstore8_op(ctx))
+                                return false;
+                        break;
+                case OP_CHECKTYPE:
+                        if (!jit_visit_checktype_op(ctx))
+                                return false;
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

@@ -46,6 +46,13 @@
 #define ex_storedot_helper noct_ex_storedot_helper
 #define ex_call_helper noct_ex_call_helper
 #define ex_thiscall_helper noct_ex_thiscall_helper
+#define ex_pbase_helper noct_ex_pbase_helper
+#define ex_pcheck_helper noct_ex_pcheck_helper
+#define ex_typeis_helper noct_ex_typeis_helper
+#define ex_plen_helper noct_ex_plen_helper
+#define ex_pload8u_helper noct_ex_pload8u_helper
+#define ex_pstore8_helper noct_ex_pstore8_helper
+#define ex_checktype_helper noct_ex_checktype_helper
 
 /* Visit bytecode. */
 bool

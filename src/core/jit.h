@@ -53,6 +53,13 @@
 #define ex_call_helper noct_ex_call_helper
 #define ex_thiscall_helper noct_ex_thiscall_helper
 #define ex_safepoint_helper noct_ex_safepoint_helper
+#define ex_pbase_helper noct_ex_pbase_helper
+#define ex_pcheck_helper noct_ex_pcheck_helper
+#define ex_typeis_helper noct_ex_typeis_helper
+#define ex_plen_helper noct_ex_plen_helper
+#define ex_pload8u_helper noct_ex_pload8u_helper
+#define ex_pstore8_helper noct_ex_pstore8_helper
+#define ex_checktype_helper noct_ex_checktype_helper
 
 /* Generate a JIT-compiled code for a function. */
 bool
