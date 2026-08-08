@@ -30,6 +30,8 @@ static bool rt_intrin_String_from(NoctEnv *env);
 static bool rt_intrin_String_charCount(NoctEnv *env);
 static bool rt_intrin_String_charAt(NoctEnv *env);
 static bool rt_intrin_String_charCodeAt(NoctEnv *env);
+static bool rt_intrin_String_toUpperCase(NoctEnv *env);
+static bool rt_intrin_String_toLowerCase(NoctEnv *env);
 static bool rt_intrin_Regex_search(NoctEnv *env);
 static bool rt_intrin_Regex_matches(NoctEnv *env);
 static bool rt_intrin_Regex_replaceAll(NoctEnv *env);
@@ -94,6 +96,8 @@ struct intrin_item {
 	{"String",	"charCount",	"String.charCount",	rt_intrin_String_charCount,	1, {"s"}},
 	{"String",	"charAt",	"String.charAt",	rt_intrin_String_charAt,	2, {"s", "index"}},
 	{"String",	"charCodeAt",	"String.charCodeAt",	rt_intrin_String_charCodeAt,	2, {"s", "index"}},
+	{"String",	"toUpperCase",	"String.toUpperCase",	rt_intrin_String_toUpperCase,	1, {"s"}},
+	{"String",	"toLowerCase",	"String.toLowerCase",	rt_intrin_String_toLowerCase,	1, {"s"}},
 	{"Regex",	"search",	"Regex.search",		rt_intrin_Regex_search,		3, {"pat", "s", "from"}},
 	{"Regex",	"matches",	"Regex.matches",	rt_intrin_Regex_matches,	2, {"pat", "s"}},
 	{"Regex",	"replaceAll",	"Regex.replaceAll",	rt_intrin_Regex_replaceAll,	3, {"pat", "s", "repl"}},
@@ -742,6 +746,69 @@ rt_intrin_String_charCodeAt(
 	noct_unpin_local(env, 3, &str, &index, &ret);
 
 	return true;
+}
+
+/*
+ * String.toUpperCase(s) / String.toLowerCase(s)
+ *
+ * ASCII-only case mapping; other characters pass through.
+ */
+static bool
+rt_intrin_String_case_common(
+	NoctEnv *env,
+	bool upper)
+{
+	NoctValue str, ret;
+	const char *str_s;
+	char *buf;
+	size_t len, i;
+
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &str, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &str, &str_s))
+		return false;
+
+	len = strlen(str_s);
+	buf = malloc(len + 1);
+	if (buf == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	for (i = 0; i < len; i++) {
+		char c = str_s[i];
+		if (upper && c >= 'a' && c <= 'z')
+			c = (char)(c - 0x20);
+		else if (!upper && c >= 'A' && c <= 'Z')
+			c = (char)(c + 0x20);
+		buf[i] = c;
+	}
+	buf[len] = '\0';
+
+	if (!noct_set_return_make_string(env, &ret, buf)) {
+		free(buf);
+		return false;
+	}
+	free(buf);
+
+	noct_unpin_local(env, 2, &str, &ret);
+
+	return true;
+}
+
+static bool
+rt_intrin_String_toUpperCase(
+	NoctEnv *env)
+{
+	return rt_intrin_String_case_common(env, true);
+}
+
+static bool
+rt_intrin_String_toLowerCase(
+	NoctEnv *env)
+{
+	return rt_intrin_String_case_common(env, false);
 }
 
 /*
