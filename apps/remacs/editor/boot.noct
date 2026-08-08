@@ -346,22 +346,22 @@ func readPrefixArg(ed, seedDigit, seedNeg) {
     }
 }
 
-// Load the startup files: ~/.remacs (Noct; must define remacsInit(ed),
-// which is called after loading) and later ~/.emacs (Lisp).
+// Load the startup files: ~/.remacs.noct (Noct; must define remacsInit(ed),
+// which is called after loading) and later ~/.remacs.el (Lisp).
 func loadInitFiles(ed) {
     var home = FileUtil.getHomeDirectory();
     if (home == "") {
         return 0;
     }
-    var noctInit = home + "/.remacs";
+    var noctInit = home + "/.remacs.noct";
     if (FileUtil.checkFileExists(noctInit) == 1) {
         System.import(noctInit);
         remacsInit(ed);
     }
-    var lispInitFile = home + "/.emacs";
+    var lispInitFile = home + "/.remacs.el";
     if (FileUtil.checkFileExists(lispInitFile) == 1) {
         if (lispLoadFile(lispInitFile) == 0) {
-            ed.echoMessage = "Error in ~/.emacs: " + LispErrMsg;
+            ed.echoMessage = "Error in ~/.remacs.el: " + LispErrMsg;
         }
     }
     return 0;
