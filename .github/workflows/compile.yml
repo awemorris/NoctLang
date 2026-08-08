@@ -195,6 +195,19 @@ jobs:
           name: linux
           path: noct-linux-x86_64.tar.gz
 
+      - name: Build tar.gz
+        run: |
+          cd apps/remacs/
+          make
+          mv build-nb/REMACS.NB ../../REmacs.nap
+          cd ../..
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: remacs
+          path: REmacs.nap
+
   build-macos:
     name: Build for macOS and iOS
     runs-on: macos-latest
@@ -566,6 +579,12 @@ jobs:
           name: pc98
           path: pc98
 
+      - name: Download REmacs artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: remacs
+          path: remacs
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         env:
@@ -603,6 +622,12 @@ jobs:
             | Wasm        | noct-wasm.tar.gz               | Emscripten       | Wasm                                         |
             | DOS         | noct-dos.exe                   | Executable       | DOS4GW: PC-9801, PC/AT, OS/2, Windows 3.1-XP |
 
+            Noct Apps:
+
+            | App Name    | File                 | Type             | Description                                                     |
+            |-------------|----------------------|------------------|-----------------------------------------------------------------|
+            | REmacs      | REmacs.nap           | Noct Bytecode    | GNU Emacs clone, implemented in Noct. Lisp can be JIT-compiled! |
+
           files: |
             windows/noct-win64.exe
             windows/Noct.1.0.0.nupkg
@@ -615,3 +640,4 @@ jobs:
             wasm/noct-wasm.tar.gz
             unity/noct-unity.tar.gz
             pc98/noct-dos.exe
+            remacs/REmacs.nap
