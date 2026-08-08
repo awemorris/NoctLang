@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 static bool cfunc_File_open(NoctEnv *env);
 static bool cfunc_File_close(NoctEnv *env);
@@ -21,6 +23,7 @@ static bool cfunc_File_read(NoctEnv *env);
 static bool cfunc_File_write(NoctEnv *env);
 static void file_finalizer(void *native_pointer);
 static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
+static bool cfunc_FileUtil_listDirectory(NoctEnv *env);
 static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
 static bool cfunc_FileUtil_readText(NoctEnv *env);
 static bool cfunc_FileUtil_writeText(NoctEnv *env);
@@ -46,6 +49,8 @@ static struct ffi_item ffi_items[] = {
 	 {"file", "data", "offset", "size"}, cfunc_File_write},
 	{"FileUtil.checkFileExists", "FileUtil", "checkFileExists", 1,
 	 {"path"}, cfunc_FileUtil_checkFileExists},
+	{"FileUtil.listDirectory", "FileUtil", "listDirectory", 1,
+	 {"path"}, cfunc_FileUtil_listDirectory},
 	{"FileUtil.getFileSize", "FileUtil", "getFileSize", 1,
 	 {"path"}, cfunc_FileUtil_getFileSize},
 	{"FileUtil.readText", "FileUtil", "readText", 1,
@@ -336,6 +341,114 @@ cfunc_FileUtil_checkFileExists(NoctEnv *env)
 cleanup:
 	(void)noct_unpin_local(env, 2, &path, &ret);
 	return ok;
+}
+
+/*
+ * FileUtil.listDirectory(path)
+ *
+ * Returns an array of entry names, sorted; directories carry a
+ * trailing "/". "." and ".." are omitted. A missing or unreadable
+ * directory yields an empty array.
+ */
+static bool
+cfunc_FileUtil_listDirectory(NoctEnv *env)
+{
+	NoctValue path, ret, elem;
+	const char *path_s;
+	bool ok = false;
+#if defined(_WIN32)
+	/* Not supported on this platform yet. */
+	if (!noct_pin_local(env, 3, &path, &ret, &elem))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+	if (!noct_make_empty_array(env, &ret))
+		goto cleanup;
+	if (!noct_set_return(env, &ret))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+	return ok;
+#else
+	DIR *dir = NULL;
+	struct dirent *ent;
+	char **names = NULL;
+	size_t nnames = 0, alloc = 0, i, j;
+
+	if (!noct_pin_local(env, 3, &path, &ret, &elem))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+	if (!noct_make_empty_array(env, &ret))
+		goto cleanup;
+
+	dir = opendir(path_s);
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			char full[2048];
+			struct stat st;
+			size_t len;
+			char *name;
+
+			if (strcmp(ent->d_name, ".") == 0 ||
+			    strcmp(ent->d_name, "..") == 0)
+				continue;
+
+			snprintf(full, sizeof(full), "%s/%s", path_s, ent->d_name);
+			len = strlen(ent->d_name);
+			name = malloc(len + 2);
+			if (name == NULL)
+				continue;
+			strcpy(name, ent->d_name);
+			if (stat(full, &st) == 0 && S_ISDIR(st.st_mode))
+				strcat(name, "/");
+
+			if (nnames >= alloc) {
+				char **nn;
+				alloc = alloc == 0 ? 64 : alloc * 2;
+				nn = realloc(names, sizeof(char *) * alloc);
+				if (nn == NULL) {
+					free(name);
+					continue;
+				}
+				names = nn;
+			}
+			names[nnames++] = name;
+		}
+		closedir(dir);
+		dir = NULL;
+	}
+
+	/* Sort for deterministic completion. */
+	for (i = 0; i + 1 < nnames; i++) {
+		for (j = i + 1; j < nnames; j++) {
+			if (strcmp(names[j], names[i]) < 0) {
+				char *t = names[i];
+				names[i] = names[j];
+				names[j] = t;
+			}
+		}
+	}
+
+	for (i = 0; i < nnames; i++) {
+		if (!noct_make_string(env, &elem, names[i]))
+			goto cleanup;
+		if (!noct_set_array_elem(env, &ret, i, &elem))
+			goto cleanup;
+	}
+	if (!noct_set_return(env, &ret))
+		goto cleanup;
+	ok = true;
+cleanup:
+	if (dir != NULL)
+		closedir(dir);
+	for (i = 0; i < nnames; i++)
+		free(names[i]);
+	free(names);
+	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+	return ok;
+#endif
 }
 
 static bool

@@ -11,6 +11,7 @@
 
 #include "runtime.h"
 #include "intrinsics.h"
+#include "regex.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,9 @@ static bool rt_intrin_String_from(NoctEnv *env);
 static bool rt_intrin_String_charCount(NoctEnv *env);
 static bool rt_intrin_String_charAt(NoctEnv *env);
 static bool rt_intrin_String_charCodeAt(NoctEnv *env);
+static bool rt_intrin_Regex_search(NoctEnv *env);
+static bool rt_intrin_Regex_matches(NoctEnv *env);
+static bool rt_intrin_Regex_replaceAll(NoctEnv *env);
 static bool rt_intrin_String_substring(NoctEnv *env);
 static bool rt_intrin_String_indexOf(NoctEnv *env);
 static bool rt_intrin_Array_make(NoctEnv *env);
@@ -90,6 +94,9 @@ struct intrin_item {
 	{"String",	"charCount",	"String.charCount",	rt_intrin_String_charCount,	1, {"s"}},
 	{"String",	"charAt",	"String.charAt",	rt_intrin_String_charAt,	2, {"s", "index"}},
 	{"String",	"charCodeAt",	"String.charCodeAt",	rt_intrin_String_charCodeAt,	2, {"s", "index"}},
+	{"Regex",	"search",	"Regex.search",		rt_intrin_Regex_search,		3, {"pat", "s", "from"}},
+	{"Regex",	"matches",	"Regex.matches",	rt_intrin_Regex_matches,	2, {"pat", "s"}},
+	{"Regex",	"replaceAll",	"Regex.replaceAll",	rt_intrin_Regex_replaceAll,	3, {"pat", "s", "repl"}},
 	{"String",	"substring",	"String.substring",	rt_intrin_String_substring,	3, {"s", "start", "len"}},
 	{"String",	"indexOf",	"String.indexOf",	rt_intrin_String_indexOf,	2, {"s", "search"}},
 	{"String",	"byteLength",	"String.byteLength",	rt_intrin_String_byteLength,	1, {"s"}},
@@ -733,6 +740,358 @@ rt_intrin_String_charCodeAt(
 		return false;
 
 	noct_unpin_local(env, 3, &str, &index, &ret);
+
+	return true;
+}
+
+/*
+ * Regex intrinsics
+ *
+ * Positions are character indices (0-based), consistent with the
+ * String.* functions. Regex.search returns 0 when there is no match,
+ * otherwise a dictionary:
+ *   { start, end, groups: [ {start, end} ... ] }
+ * with end exclusive and unmatched groups having start == end == -1.
+ */
+
+/* Decode both common string arguments and compile the pattern. */
+static bool
+rx_intrin_prepare(
+	NoctEnv *env,
+	const char *pat_s,
+	const char *str_s,
+	bool anchor_end,
+	struct rx_prog **pprog,
+	uint32_t **pstr,
+	int *pstrlen)
+{
+	char errbuf[128];
+	uint32_t *pat_cp;
+	int pat_len;
+
+	*pprog = malloc(noct_rx_prog_size());
+	if (*pprog == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	pat_len = noct_rx_utf8_len(pat_s);
+	pat_cp = malloc(sizeof(uint32_t) * (size_t)(pat_len + 1));
+	if (pat_cp == NULL) {
+		free(*pprog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	noct_rx_utf8_decode(pat_s, pat_cp);
+
+	if (noct_rx_compile(*pprog, pat_cp, pat_len, anchor_end,
+			    errbuf, sizeof(errbuf)) < 0) {
+		free(pat_cp);
+		free(*pprog);
+		rt_error(env, N_TR("Regex error: %s"), errbuf);
+		return false;
+	}
+	free(pat_cp);
+
+	*pstrlen = noct_rx_utf8_len(str_s);
+	*pstr = malloc(sizeof(uint32_t) * (size_t)(*pstrlen + 1));
+	if (*pstr == NULL) {
+		free(*pprog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	noct_rx_utf8_decode(str_s, *pstr);
+
+	return true;
+}
+
+/*
+ * Regex.search(pat, s, from)
+ */
+static bool
+rt_intrin_Regex_search(
+	NoctEnv *env)
+{
+	NoctValue pat, str, from, ret, groups, g, tmp;
+	const char *pat_s, *str_s;
+	int from_i;
+	struct rx_prog *prog;
+	uint32_t *cps;
+	int len, r, i;
+	struct rx_match m;
+
+	memset(&pat, 0, sizeof(pat));
+	memset(&str, 0, sizeof(str));
+	memset(&from, 0, sizeof(from));
+	memset(&ret, 0, sizeof(ret));
+	memset(&groups, 0, sizeof(groups));
+	memset(&g, 0, sizeof(g));
+	memset(&tmp, 0, sizeof(tmp));
+	noct_pin_local(env, 7, &pat, &str, &from, &ret, &groups, &g, &tmp);
+
+	if (!noct_get_arg_check_string(env, 0, &pat, &pat_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_int(env, 2, &from, &from_i))
+		return false;
+
+	if (!rx_intrin_prepare(env, pat_s, str_s, false, &prog, &cps, &len))
+		return false;
+
+	if (from_i < 0)
+		from_i = 0;
+	if (from_i > len)
+		from_i = len;
+
+	r = noct_rx_search(prog, cps, len, from_i, &m);
+	free(cps);
+	free(prog);
+	if (r < 0) {
+		rt_error(env, N_TR("Regex too complex."));
+		return false;
+	}
+	if (r == 0) {
+		if (!noct_set_return_make_int(env, &ret, 0))
+			return false;
+		noct_unpin_local(env, 7, &pat, &str, &from, &ret, &groups, &g, &tmp);
+		return true;
+	}
+
+	if (!noct_make_empty_dict(env, &ret))
+		return false;
+	if (!noct_set_dict_elem_make_int(env, &ret, "start", &tmp, m.start))
+		return false;
+	if (!noct_set_dict_elem_make_int(env, &ret, "end", &tmp, m.end))
+		return false;
+	if (!noct_make_empty_array(env, &groups))
+		return false;
+	for (i = 1; i <= m.ngroups; i++) {
+		if (!noct_make_empty_dict(env, &g))
+			return false;
+		if (!noct_set_dict_elem_make_int(env, &g, "start", &tmp, m.group_start[i]))
+			return false;
+		if (!noct_set_dict_elem_make_int(env, &g, "end", &tmp, m.group_end[i]))
+			return false;
+		if (!noct_set_array_elem(env, &groups, (size_t)(i - 1), &g))
+			return false;
+	}
+	if (!noct_set_dict_elem_cstr(env, &ret, "groups", &groups))
+		return false;
+	if (!noct_set_return(env, &ret))
+		return false;
+
+	noct_unpin_local(env, 7, &pat, &str, &from, &ret, &groups, &g, &tmp);
+
+	return true;
+}
+
+/*
+ * Regex.matches(pat, s)
+ *
+ * Whole-string match, like Java's String.matches().
+ */
+static bool
+rt_intrin_Regex_matches(
+	NoctEnv *env)
+{
+	NoctValue pat, str, ret;
+	const char *pat_s, *str_s;
+	struct rx_prog *prog;
+	uint32_t *cps;
+	int len, r;
+	struct rx_match m;
+
+	memset(&pat, 0, sizeof(pat));
+	memset(&str, 0, sizeof(str));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 3, &pat, &str, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &pat, &pat_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &str, &str_s))
+		return false;
+
+	if (!rx_intrin_prepare(env, pat_s, str_s, true, &prog, &cps, &len))
+		return false;
+
+	/* Anchored at both ends: try position 0 only. */
+	r = noct_rx_search(prog, cps, len, 0, &m);
+	free(cps);
+	free(prog);
+	if (r < 0) {
+		rt_error(env, N_TR("Regex too complex."));
+		return false;
+	}
+	if (r == 1 && m.start != 0)
+		r = 0;
+
+	if (!noct_set_return_make_int(env, &ret, r == 1 ? 1 : 0))
+		return false;
+
+	noct_unpin_local(env, 3, &pat, &str, &ret);
+
+	return true;
+}
+
+/*
+ * Regex.replaceAll(pat, s, repl)
+ *
+ * $0-$9 in the replacement refer to groups; $$ is a literal dollar.
+ */
+static bool
+rt_intrin_Regex_replaceAll(
+	NoctEnv *env)
+{
+	NoctValue pat, str, repl, ret;
+	const char *pat_s, *str_s, *repl_s;
+	struct rx_prog *prog;
+	uint32_t *cps, *rep_cp, *out;
+	int len, rep_len, out_len, out_alloc;
+	int from, i, r;
+	struct rx_match m;
+	char *out_utf8;
+	int utf8_len;
+
+	memset(&pat, 0, sizeof(pat));
+	memset(&str, 0, sizeof(str));
+	memset(&repl, 0, sizeof(repl));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 4, &pat, &str, &repl, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &pat, &pat_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 1, &str, &str_s))
+		return false;
+	if (!noct_get_arg_check_string(env, 2, &repl, &repl_s))
+		return false;
+
+	if (!rx_intrin_prepare(env, pat_s, str_s, false, &prog, &cps, &len))
+		return false;
+
+	rep_len = noct_rx_utf8_len(repl_s);
+	rep_cp = malloc(sizeof(uint32_t) * (size_t)(rep_len + 1));
+	if (rep_cp == NULL) {
+		free(cps);
+		free(prog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	noct_rx_utf8_decode(repl_s, rep_cp);
+
+	out_alloc = len + 64;
+	out_len = 0;
+	out = malloc(sizeof(uint32_t) * (size_t)out_alloc);
+	if (out == NULL) {
+		free(rep_cp);
+		free(cps);
+		free(prog);
+		rt_out_of_memory(env);
+		return false;
+	}
+
+#define RX_OUT(cp_)							\
+	do {								\
+		if (out_len >= out_alloc) {				\
+			uint32_t *nb;					\
+			out_alloc = out_alloc * 2;			\
+			nb = realloc(out, sizeof(uint32_t) * (size_t)out_alloc); \
+			if (nb == NULL) {				\
+				free(out);				\
+				free(rep_cp);				\
+				free(cps);				\
+				free(prog);				\
+				rt_out_of_memory(env);			\
+				return false;				\
+			}						\
+			out = nb;					\
+		}							\
+		out[out_len++] = (cp_);					\
+	} while (0)
+
+	from = 0;
+	while (from <= len) {
+		r = noct_rx_search(prog, cps, len, from, &m);
+		if (r < 0) {
+			free(out);
+			free(rep_cp);
+			free(cps);
+			free(prog);
+			rt_error(env, N_TR("Regex too complex."));
+			return false;
+		}
+		if (r == 0)
+			break;
+
+		/* Copy the text before the match. */
+		for (i = from; i < m.start; i++)
+			RX_OUT(cps[i]);
+
+		/* Expand the replacement. */
+		for (i = 0; i < rep_len; i++) {
+			if (rep_cp[i] == '$' && i + 1 < rep_len) {
+				uint32_t nc = rep_cp[i + 1];
+				if (nc == '$') {
+					RX_OUT('$');
+					i++;
+					continue;
+				}
+				if (nc >= '0' && nc <= '9') {
+					int gi = (int)(nc - '0');
+					int gs = m.group_start[gi];
+					int ge = m.group_end[gi];
+					int k;
+					if (gs >= 0) {
+						for (k = gs; k < ge; k++)
+							RX_OUT(cps[k]);
+					}
+					i++;
+					continue;
+				}
+			}
+			RX_OUT(rep_cp[i]);
+		}
+
+		if (m.end > m.start) {
+			from = m.end;
+		} else {
+			/* An empty match: emit one char and advance. */
+			if (m.end < len)
+				RX_OUT(cps[m.end]);
+			from = m.end + 1;
+		}
+	}
+	for (i = from; i < len; i++)
+		RX_OUT(cps[i]);
+#undef RX_OUT
+
+	/* Encode back to UTF-8. */
+	out_utf8 = malloc((size_t)(out_len * 4 + 1));
+	if (out_utf8 == NULL) {
+		free(out);
+		free(rep_cp);
+		free(cps);
+		free(prog);
+		rt_out_of_memory(env);
+		return false;
+	}
+	utf8_len = 0;
+	for (i = 0; i < out_len; i++)
+		utf8_len += noct_rx_utf8_encode(out[i], out_utf8 + utf8_len);
+	out_utf8[utf8_len] = '\0';
+
+	free(out);
+	free(rep_cp);
+	free(cps);
+	free(prog);
+
+	if (!noct_set_return_make_string(env, &ret, out_utf8)) {
+		free(out_utf8);
+		return false;
+	}
+	free(out_utf8);
+
+	noct_unpin_local(env, 4, &pat, &str, &repl, &ret);
 
 	return true;
 }

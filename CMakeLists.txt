@@ -164,6 +164,7 @@ set(
   src/core/execution.c     # Runtime execution helper part
   src/core/gc.c            # Runtime GC part
   src/core/intrinsics.c    # Intrinsics
+  src/core/regex.c         # Regex engine
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
 )
