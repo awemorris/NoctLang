@@ -33,6 +33,7 @@ static bool cfunc_System_shell(NoctEnv *env);
 static bool cfunc_System_runCommand(NoctEnv *env);
 static bool cfunc_System_getOSName(NoctEnv *env);
 static bool cfunc_System_checkFileExists(NoctEnv *env);
+static bool cfunc_System_pcall(NoctEnv *env);
 static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size);
 
 /* FFI table. */
@@ -92,6 +93,13 @@ static struct ffi_item ffi_items[] = {
 		1,
 		{"file"},
 		cfunc_System_checkFileExists
+	},
+	{
+		"System.pcall",
+		"pcall",
+		3,
+		{"f", "a", "b"},
+		cfunc_System_pcall
 	},
 };
 
@@ -475,4 +483,71 @@ static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_
 	fclose(fp);
 
 	return true;
+}
+
+/*
+ * System.pcall(f, a, b)
+ *
+ * Protected call, the recovery point for runtime errors: calls
+ * f(a, b) and returns {ok: 1, value: v}, or {ok: 0, message: msg}
+ * when a runtime error (error(), a failing native call) unwound the
+ * callee. Error propagation is the false-return chain, so swallowing
+ * it at this cfunc boundary lets the caller's VM frame continue
+ * normally. Callers with fewer arguments pass anything (e.g. 0) for
+ * the unused slots.
+ */
+static bool
+cfunc_System_pcall(
+	NoctEnv *env)
+{
+	NoctValue func_value, arg_a, arg_b, result, ret, tmp;
+	NoctFunc *func;
+	NoctValue args[2];
+	bool ok;
+
+	memset(&func_value, 0, sizeof(func_value));
+	memset(&arg_a, 0, sizeof(arg_a));
+	memset(&arg_b, 0, sizeof(arg_b));
+	memset(&result, 0, sizeof(result));
+	memset(&ret, 0, sizeof(ret));
+	memset(&tmp, 0, sizeof(tmp));
+	if (!noct_pin_local(env, 6, &func_value, &arg_a, &arg_b, &result,
+			    &ret, &tmp))
+		return false;
+	if (!noct_get_arg_check_func(env, 0, &func_value, &func))
+		goto fail;
+	if (!noct_get_arg(env, 1, &arg_a))
+		goto fail;
+	if (!noct_get_arg(env, 2, &arg_b))
+		goto fail;
+
+	args[0] = arg_a;
+	args[1] = arg_b;
+	ok = noct_call(env, func, 2, args, &ret);
+
+	if (!noct_make_empty_dict(env, &result))
+		goto fail;
+	if (!noct_set_dict_elem_make_int(env, &result, "ok", &tmp, ok ? 1 : 0))
+		goto fail;
+	if (ok) {
+		if (!noct_set_dict_elem_cstr(env, &result, "value", &ret))
+			goto fail;
+	} else {
+		const char *msg;
+
+		noct_get_error_message(env, &msg);
+		if (!noct_set_dict_elem_make_string(env, &result, "message",
+						    &tmp,
+						    msg != NULL ? msg : "?"))
+			goto fail;
+	}
+	if (!noct_set_return(env, &result))
+		goto fail;
+	noct_unpin_local(env, 6, &func_value, &arg_a, &arg_b, &result,
+			 &ret, &tmp);
+	return true;
+fail:
+	noct_unpin_local(env, 6, &func_value, &arg_a, &arg_b, &result,
+			 &ret, &tmp);
+	return false;
 }

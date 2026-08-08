@@ -282,7 +282,7 @@ func renderWindow(w, isSel) {
     // span several display rows, so this may take a few passes.)
     var st = { rows: [], pointRow: 0 - 1, pointCol: 0 };
     var guard = 0;
-    while (guard < 500) {
+    while (guard < 50) {
         guard = guard + 1;
         st.rows = [];
         st.pointRow = 0 - 1;
@@ -304,12 +304,29 @@ func renderWindow(w, isSel) {
         }
         if (st.pointRow < 0) {
             // Point is beyond the laid-out region: jump so its line
-            // lands near the bottom, then fine-tune.
-            w.startLine = pointLine - textRows + 1;
-            if (w.startLine < 0) {
-                w.startLine = 0;
+            // lands near the bottom, then fine-tune. The estimate
+            // assumes one display row per logical line; when wrapping
+            // stretches lines the same start would be recomputed
+            // forever, so always force progress toward the point's
+            // line (halving the remaining distance converges).
+            var jump = pointLine - textRows + 1;
+            if (jump < 0) {
+                jump = 0;
             }
+            if (jump <= w.startLine) {
+                jump = w.startLine + 1 + (pointLine - w.startLine) / 2;
+                if (jump > pointLine) {
+                    jump = pointLine;
+                }
+            }
+            w.startLine = jump;
             continue;
+        }
+        if (w.startLine >= pointLine && st.pointRow >= textRows) {
+            // One logical line wraps past the whole window even when
+            // it starts the frame; showing its head is the best this
+            // renderer can do. Stop rather than oscillate.
+            break;
         }
         w.startLine = w.startLine + (st.pointRow - textRows + 1);
         if (w.startLine > pointLine) {

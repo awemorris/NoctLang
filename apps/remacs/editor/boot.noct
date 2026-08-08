@@ -91,7 +91,16 @@ func main(arg) {
         // redisplay keeps a paste O(1) in redraws instead of O(chunks),
         // which otherwise makes a large paste crawl.
         while (true) {
-            dispatchKey(ed, key);
+            // The command loop's condition-case: a user error deep in
+            // a command ("End of buffer", "Kill ring is empty", ...)
+            // unwinds to here, lands in the echo area, and the editor
+            // carries on -- it must never take the session down.
+            var r = System.pcall(dispatchKey, ed, key);
+            if (r.ok == 0) {
+                ed.echoMessage = r.message;
+                ed.echoCursor = -1;
+                ed.echoHl = 0;
+            }
             // The prefix argument only reaches the command it precedes.
             ed.hasPrefix = 0;
             ed.prefixArg = 0;

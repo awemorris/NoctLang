@@ -193,6 +193,10 @@ main(
 		opt_env = getenv("REMACS_OPT_LEVEL");
 		if (opt_env != NULL)
 			vm_config.optimize_level = atoi(opt_env);
+		/* Debugging aid: interpreted frames are visible to gdb. */
+		opt_env = getenv("REMACS_NO_JIT");
+		if (opt_env != NULL && atoi(opt_env) != 0)
+			vm_config.jit_enable = false;
 	}
 	if (!noct_create_vm(&vm, &env, &vm_config)) {
 		fprintf(stderr, "remacs: out of memory\n");
