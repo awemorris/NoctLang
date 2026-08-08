@@ -29,6 +29,11 @@ noct_set_default_config(
 	config->jit_enable             = true;
 	config->jit_threshold          = JIT_DEFAULT_THRESHOLD;
 	config->optimize_level         = 0;
+#if defined(NOCT_USE_JIT)
+	config->jit_code_size          = JIT_CODE_MAX;
+#else
+	config->jit_code_size          = 0;
+#endif
 	config->gc_nursery_size        = RT_GC_DEFAULT_NURSERY_SIZE;
 	config->gc_graduate_size       = RT_GC_DEFAULT_GRADUATE_SIZE;
 	config->gc_tenure_size         = RT_GC_DEFAULT_TENURE_SIZE;

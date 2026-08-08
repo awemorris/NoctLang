@@ -163,6 +163,11 @@ parse_options(
 			file_arg++;
 			continue;
 		}
+		if (strncmp(argv[i], "--jit-code-size=", 16) == 0) {
+			config.jit_code_size = (size_t)atoi(argv[i] + 16);
+			file_arg++;
+			continue;
+		}
 		if (strncmp(argv[i], "--optimize-level=", 17) == 0) {
 			config.optimize_level = atoi(argv[i] + 17);
 			file_arg++;

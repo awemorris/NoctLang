@@ -87,6 +87,22 @@ jit_free(
 #define JIT_CODE_MAX		(1 * 1024 * 1024)
 #endif
 
+/*
+ * Return the per-VM JIT reservation, clamped to the target's compiled limit.
+ * A zero value keeps source compatibility with callers that zero-initialize
+ * NoctConfig instead of starting with noct_set_default_config().
+ */
+static INLINE size_t
+jit_get_code_size(
+	struct rt_env *env)
+{
+	size_t size = env->vm->config.jit_code_size;
+
+	if (size == 0 || size > JIT_CODE_MAX)
+		size = JIT_CODE_MAX;
+	return size;
+}
+
 /* PC entry size. */
 #define PC_ENTRY_MAX		2048
 

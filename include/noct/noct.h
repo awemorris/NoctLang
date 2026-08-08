@@ -121,6 +121,9 @@ struct rt_config {
 	/* Optimization level. */
 	int optimize_level;
 
+	/* Maximum bytes reserved for generated JIT code. */
+	size_t jit_code_size;
+
 	/* GC nursery region size. */
 	size_t gc_nursery_size;
 
@@ -136,7 +139,7 @@ struct rt_config {
 	/* GC tenure-promotion threshold. */
 	size_t gc_promotion_threshold;
 
-	uint64_t reserved[56];
+	uint64_t reserved[55];
 };
 typedef struct rt_config NoctConfig;
 

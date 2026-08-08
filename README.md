@@ -257,6 +257,7 @@ noct --elisp script.el script.noct
 
 ```
   --jit-threshold=N    ... call-count threshold for compilation
+  --jit-code-size=N    ... maximum generated-code reservation in bytes
 ```
 
 ### Garbage Collection Options
