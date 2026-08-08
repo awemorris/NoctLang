@@ -420,13 +420,15 @@ cleanup:
 
 			if (nnames >= alloc) {
 				char **nn;
-				alloc = alloc == 0 ? 64 : alloc * 2;
-				nn = realloc(names, sizeof(char *) * alloc);
+				size_t new_alloc;
+				new_alloc = alloc == 0 ? 64 : alloc * 2;
+				nn = realloc(names, sizeof(char *) * new_alloc);
 				if (nn == NULL) {
 					free(name);
 					continue;
 				}
 				names = nn;
+				alloc = new_alloc;
 			}
 			names[nnames++] = name;
 		} while (_dos_findnext(&find) == 0);
@@ -493,13 +495,15 @@ cleanup_dos:
 
 			if (nnames >= alloc) {
 				char **nn;
-				alloc = alloc == 0 ? 64 : alloc * 2;
-				nn = realloc(names, sizeof(char *) * alloc);
+				size_t new_alloc;
+				new_alloc = alloc == 0 ? 64 : alloc * 2;
+				nn = realloc(names, sizeof(char *) * new_alloc);
 				if (nn == NULL) {
 					free(name);
 					continue;
 				}
 				names = nn;
+				alloc = new_alloc;
 			}
 			names[nnames++] = name;
 		}
