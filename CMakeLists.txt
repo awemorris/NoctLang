@@ -597,9 +597,14 @@ if(NOCT_ENABLE_CLI)
   # Link libnoct and libnoctapi.
   target_link_libraries(noctcli PRIVATE noct noctapi)
 
-  # Add -m on UNIX.
+  # Add -lm on UNIX.
   if(UNIX)
     target_link_libraries(noctcli PRIVATE m)
+  endif()
+
+  # Add -lutil on Linux.
+  if(LINUX)
+    target_link_libraries(noctcli PRIVATE util)
   endif()
 
   # Win32 Unicode settings.
