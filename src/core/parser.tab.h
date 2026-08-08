@@ -120,9 +120,11 @@ extern int ast_yydebug;
     TOKEN_OR = 321,                /* TOKEN_OR  */
     TOKEN_XOR = 322,               /* TOKEN_XOR  */
     TOKEN_VAR = 323,               /* TOKEN_VAR  */
-    TOKEN_NOT = 324,               /* TOKEN_NOT  */
-    UNARYMINUS = 325,              /* UNARYMINUS  */
-    CALL = 326                     /* CALL  */
+    TOKEN_LET = 324,               /* TOKEN_LET  */
+    TOKEN_EXTEND = 325,            /* TOKEN_EXTEND  */
+    TOKEN_NOT = 326,               /* TOKEN_NOT  */
+    UNARYMINUS = 327,              /* UNARYMINUS  */
+    CALL = 328                     /* CALL  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -131,7 +133,7 @@ extern int ast_yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 123 "parser.y"
+#line 132 "parser.y"
 
 	int ival;
 	int64_t lval;
@@ -150,7 +152,7 @@ union YYSTYPE
 	struct ast_kv_list *kv_list;
 	struct ast_kv *kv;
 
-#line 154 "parser.tab.h"
+#line 156 "parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -179,10 +181,10 @@ extern YYLTYPE ast_yylloc;
 int ast_yyparse (void *scanner);
 
 /* "%code provides" blocks.  */
-#line 119 "parser.y"
+#line 128 "parser.y"
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 
-#line 187 "parser.tab.h"
+#line 189 "parser.tab.h"
 
 #endif /* !YY_AST_YY_PARSER_TAB_H_INCLUDED  */

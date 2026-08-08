@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if !defined(_WIN32)
+#if defined(NOCT_TARGET_POSIX)
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -350,7 +350,7 @@ cleanup:
 	return ok;
 }
 
-#else /* _WIN32 */
+#else /* non-POSIX: Windows, DOS, ... */
 
 static bool
 cfunc_Process_unsupported(NoctEnv *env)

@@ -295,7 +295,7 @@ jit_visit_lineinfo_op(
 
                 /* movl $line, %eax */          IB(0xb8); ID(line);
                 /* movl -8(%ebp), %ebx */       IB(0x8b); IB(0x5d); IB(0xf8);
-                /* movl %eax, 8(%ebx) */        IB(0x89); IB(0x43); IB(0x08);
+                /* movl %eax, 4(%ebx) */        IB(0x89); IB(0x43); IB(0x04);
         }
 
         return true;
@@ -1608,6 +1608,392 @@ jit_visit_safepoint_op(
         return true;
 }
 
+/* Visit a OP_PBASE instruction. (ABCE; inline machine code, i386.)
+ * The guard has proven the operand is a packed. */
+static INLINE bool
+jit_visit_pbase_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+        uint32_t buf_ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        dst *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+        buf_ofs = (uint32_t)offsetof(struct rt_packed, packed_buffer);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl src+8(%ebx) -> %eax */     IB(0x8b); IB(0x83); ID((uint32_t)(src + 8));
+                /* movl buf_ofs(%eax) -> %eax */   IB(0x8b); IB(0x80); ID(buf_ofs);
+                /* movl $LONG -> dst(%ebx) */      IB(0xc7); IB(0x83); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_LONG);
+                /* movl %eax -> dst+8(%ebx) */     IB(0x89); IB(0x83); ID((uint32_t)(dst + 8));
+                /* movl $0 -> dst+12(%ebx) */      IB(0xc7); IB(0x83); ID((uint32_t)(dst + 12)); ID(0);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLEN instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_plen_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        /* if (!ex_plen_helper(env, dst, src)) return false; */
+        ASM_UNARY_OP(ex_plen_helper);
+
+        return true;
+}
+
+/* Visit a OP_PCHECK instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_pcheck_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_pcheck_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_pcheck_helper);
+
+        return true;
+}
+
+/* Visit a OP_TYPEIS instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_typeis_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_typeis_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_typeis_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code, i386.) */
+static INLINE bool
+jit_visit_pload8u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* load scaled -> %edx */          IB(0x0f); IB(0xb6); IB(0x14); IB(0x08);
+                /* movl $INT -> dst(%ebx) */       IB(0xc7); IB(0x83); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl %edx -> dst+8(%ebx) */     IB(0x89); IB(0x93); ID((uint32_t)(dst + 8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE8 instruction. (ABCE; inline, i386. Int source per ABCE rules.) */
+static INLINE bool
+jit_visit_pstore8_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* movl src+8(%ebx) -> %edx */     IB(0x8b); IB(0x93); ID((uint32_t)(src + 8));
+                /* store scaled */                 IB(0x88); IB(0x14); IB(0x08);
+        }
+
+        return true;
+}
+
+/* Visit a OP_CHECKTYPE instruction. (Typed entry check.) */
+static INLINE bool
+jit_visit_checktype_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM8(src);
+
+        /* if (!ex_checktype_helper(env, slot, type)) return false; */
+        ASM_UNARY_OP(ex_checktype_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8S instruction. (ABCE; inline machine code, i386.) */
+static INLINE bool
+jit_visit_pload8s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* load scaled -> %edx */          IB(0x0f); IB(0xbe); IB(0x14); IB(0x08);
+                /* movl $INT -> dst(%ebx) */       IB(0xc7); IB(0x83); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl %edx -> dst+8(%ebx) */     IB(0x89); IB(0x93); ID((uint32_t)(dst + 8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16U instruction. (ABCE; inline machine code, i386.) */
+static INLINE bool
+jit_visit_pload16u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* load scaled -> %edx */          IB(0x0f); IB(0xb7); IB(0x14); IB(0x48);
+                /* movl $INT -> dst(%ebx) */       IB(0xc7); IB(0x83); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl %edx -> dst+8(%ebx) */     IB(0x89); IB(0x93); ID((uint32_t)(dst + 8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16S instruction. (ABCE; inline machine code, i386.) */
+static INLINE bool
+jit_visit_pload16s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* load scaled -> %edx */          IB(0x0f); IB(0xbf); IB(0x14); IB(0x48);
+                /* movl $INT -> dst(%ebx) */       IB(0xc7); IB(0x83); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl %edx -> dst+8(%ebx) */     IB(0x89); IB(0x93); ID((uint32_t)(dst + 8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD32 instruction. (ABCE; inline machine code, i386.) */
+static INLINE bool
+jit_visit_pload32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* load scaled -> %edx */          IB(0x8b); IB(0x14); IB(0x88);
+                /* movl $INT -> dst(%ebx) */       IB(0xc7); IB(0x83); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl %edx -> dst+8(%ebx) */     IB(0x89); IB(0x93); ID((uint32_t)(dst + 8));
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD64 instruction. (ABCE width op; helper-call.) */
+static INLINE bool
+jit_visit_pload64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pload64_helper(env, a, b, c)) return false; */
+        ASM_BINARY_OP(ex_pload64_helper);
+
+        return true;
+}
+
+/* Visit a OP_PSTORE16 instruction. (ABCE; inline, i386. Int source per ABCE rules.) */
+static INLINE bool
+jit_visit_pstore16_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* movl src+8(%ebx) -> %edx */     IB(0x8b); IB(0x93); ID((uint32_t)(src + 8));
+                /* store scaled */                 IB(0x66); IB(0x89); IB(0x14); IB(0x48);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE32 instruction. (ABCE; inline, i386. Int source per ABCE rules.) */
+static INLINE bool
+jit_visit_pstore32_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* ebp-4: &env->frame->tmpvar[0] */
+
+                /* movl -4(%ebp) -> %ebx */        IB(0x8b); IB(0x5d); IB(0xfc);
+                /* movl base+8(%ebx) -> %eax */    IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                /* movl ofs+8(%ebx) -> %ecx */     IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                /* movl src+8(%ebx) -> %edx */     IB(0x8b); IB(0x93); ID((uint32_t)(src + 8));
+                /* store scaled */                 IB(0x89); IB(0x14); IB(0x88);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE64 instruction. (ABCE width op; helper-call.) */
+static INLINE bool
+jit_visit_pstore64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pstore64_helper(env, a, b, c)) return false; */
+        ASM_BINARY_OP(ex_pstore64_helper);
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -1864,6 +2250,66 @@ jit_visit_bytecode(
                         if (!jit_visit_safepoint_op(ctx))
                                 return false;
 #endif
+                        break;
+                case OP_PBASE:
+                        if (!jit_visit_pbase_op(ctx))
+                                return false;
+                        break;
+                case OP_PLEN:
+                        if (!jit_visit_plen_op(ctx))
+                                return false;
+                        break;
+                case OP_PCHECK:
+                        if (!jit_visit_pcheck_op(ctx))
+                                return false;
+                        break;
+                case OP_TYPEIS:
+                        if (!jit_visit_typeis_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8U:
+                        if (!jit_visit_pload8u_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE8:
+                        if (!jit_visit_pstore8_op(ctx))
+                                return false;
+                        break;
+                case OP_CHECKTYPE:
+                        if (!jit_visit_checktype_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8S:
+                        if (!jit_visit_pload8s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16U:
+                        if (!jit_visit_pload16u_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16S:
+                        if (!jit_visit_pload16s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD32:
+                        if (!jit_visit_pload32_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD64:
+                        if (!jit_visit_pload64_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE16:
+                        if (!jit_visit_pstore16_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE32:
+                        if (!jit_visit_pstore32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE64:
+                        if (!jit_visit_pstore64_op(ctx))
+                                return false;
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

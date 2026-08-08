@@ -42,6 +42,10 @@ noct_bcback_finalize(void);
 
 /* Start the C backend. */
 NOCT_DLL
+void
+noct_cback_set_optimize_level(int level);
+
+NOCT_DLL
 bool
 noct_cback_start(
 	const char *fname);

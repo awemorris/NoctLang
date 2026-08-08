@@ -23,6 +23,9 @@ struct lir_func {
 	char *func_name;
 	uint32_t param_count;
 	char *param_name[LIR_PARAM_SIZE];
+
+	/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
+	int param_type[LIR_PARAM_SIZE];
 	uint32_t tmpvar_size;
 	uint32_t bytecode_size;
 	uint8_t *bytecode;
@@ -67,5 +70,8 @@ lir_get_error_message(void);
 void
 lir_dump(
 	struct lir_func *func);
+
+void
+lir_set_optimize_level(int level);
 
 #endif

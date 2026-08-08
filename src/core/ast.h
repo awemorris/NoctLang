@@ -114,6 +114,10 @@ struct ast_param_list {
 /* AST Parameter */
 struct ast_param {
 	char *name;
+
+	/* Type annotation, or NULL. (Optimization hint; docs/design/02-typing.md) */
+	char *type_name;
+
 	struct ast_param *next;
 };
 
@@ -140,6 +144,10 @@ struct ast_stmt {
 			struct ast_expr *lhs;
 			struct ast_expr *rhs;
 			bool is_var;
+			bool is_let;
+
+			/* Type annotation, or NULL. */
+			char *type_name;
 		} assign;
 
 		/* If Block */
@@ -283,6 +291,9 @@ struct ast_expr {
 		struct {
 			/* Element list. */
 			struct ast_kv_list *kv_list;
+
+			/* Is a class literal? (frozen at creation) */
+			bool is_class;
 		} dict;
 
 		/* Anonymous Function Literal Expression */
@@ -301,6 +312,9 @@ struct ast_expr {
 
 			/* Initializer. */
 			struct ast_expr *init;
+
+			/* Is an extend? (result frozen) */
+			bool is_extend;
 		} new_;
 	} val;
 

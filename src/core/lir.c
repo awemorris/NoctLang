@@ -89,6 +89,16 @@ static char lir_error_message[1024];
 int lir_optimize_level = 0;
 
 /*
+ * Set the optimization level. (Propagated from NoctConfig; see
+ * docs/design/01-abce.md section 3.7.)
+ */
+void
+lir_set_optimize_level(int level)
+{
+	lir_optimize_level = level;
+}
+
+/*
  * Forward declaration.
  */
 static uint32_t lir_count_local(struct hir_block *func);
@@ -105,6 +115,8 @@ static bool lir_visit_while_block(struct hir_block *block);
 static bool lir_visit_stmt(struct hir_block *block, struct hir_stmt *stmt);
 static bool lir_check_lhs_local(struct hir_block *block, struct hir_expr *lhs, int *rhs_tmpvar);
 static bool lir_visit_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
+static bool lir_visit_abce_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
+static bool lir_visit_abce_typetest_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_binary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_logical_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
@@ -187,6 +199,21 @@ lir_build(
 	/* Initialize the relocation table. */
 	loc_count = 0;
 
+	/* Typed entry checks (docs/design/02-typing.md; level >= 2). */
+	if (lir_optimize_level >= 2) {
+		uint32_t k;
+		for (k = 0; k < hir_func->val.func.param_count; k++) {
+			if (hir_func->val.func.param_type[k] < 0)
+				continue;
+			if (!lir_put_opcode(OP_CHECKTYPE))
+				return false;
+			if (!lir_put_tmpvar((uint16_t)k))
+				return false;
+			if (!lir_put_imm8((uint8_t)hir_func->val.func.param_type[k]))
+				return false;
+		}
+	}
+
 	/* Visit blocks. */
 	cur_block = hir_func->val.func.inner;
 	while (cur_block != NULL) {
@@ -221,6 +248,10 @@ lir_build(
 
 	/* Copy the parameter names.  */
 	(*lir_func)->param_count = hir_func->val.func.param_count;
+	for (i = 0; i < LIR_PARAM_SIZE; i++)
+		(*lir_func)->param_type[i] = -1;
+	for (i = 0; i < hir_func->val.func.param_count; i++)
+		(*lir_func)->param_type[i] = hir_func->val.func.param_type[i];
 	for (i = 0; i < hir_func->val.func.param_count; i++) {
 		(*lir_func)->param_name[i] = noct_strdup(hir_func->val.func.param_name[i]);
 		if ((*lir_func)->param_name[i] == NULL) {
@@ -1048,6 +1079,46 @@ lir_visit_stmt(
 
 			lir_decrement_tmpvar(access_tmpvar);
 			lir_decrement_tmpvar(obj_tmpvar);
+		} else if (stmt->lhs->type == HIR_EXPR_PSTORE8 ||
+			   stmt->lhs->type == HIR_EXPR_PSTORE16 ||
+			   stmt->lhs->type == HIR_EXPR_PSTORE32 ||
+			   stmt->lhs->type == HIR_EXPR_PSTORE64) {
+			assert(stmt->lhs->val.binary.expr[0] != NULL);
+			assert(stmt->lhs->val.binary.expr[1] != NULL);
+
+			/* Visit the base address. */
+			if (!lir_increment_tmpvar(&obj_tmpvar))
+				return false;
+			if (!lir_visit_expr(obj_tmpvar, stmt->lhs->val.binary.expr[0], parent))
+				return false;
+
+			/* Visit the offset. */
+			if (!lir_increment_tmpvar(&access_tmpvar))
+				return false;
+			if (!lir_visit_expr(access_tmpvar, stmt->lhs->val.binary.expr[1], parent))
+				return false;
+
+			/* Put a raw store. */
+			{
+				int pst;
+				switch (stmt->lhs->type) {
+				case HIR_EXPR_PSTORE16: pst = OP_PSTORE16; break;
+				case HIR_EXPR_PSTORE32: pst = OP_PSTORE32; break;
+				case HIR_EXPR_PSTORE64: pst = OP_PSTORE64; break;
+				default:                pst = OP_PSTORE8;  break;
+				}
+				if (!lir_put_opcode((uint8_t)pst))
+					return false;
+			}
+			if (!lir_put_tmpvar((uint16_t)obj_tmpvar))
+				return false;
+			if (!lir_put_tmpvar((uint16_t)access_tmpvar))
+				return false;
+			if (!lir_put_tmpvar((uint16_t)rhs_tmpvar))
+				return false;
+
+			lir_decrement_tmpvar(access_tmpvar);
+			lir_decrement_tmpvar(obj_tmpvar);
 		} else if (stmt->lhs->type == HIR_EXPR_DOT) {
 			assert(stmt->lhs->val.dot.obj != NULL);
 			assert(stmt->lhs->val.dot.symbol != NULL);
@@ -1172,8 +1243,26 @@ lir_visit_expr(
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:
 	case HIR_EXPR_SUBSCR:
+	case HIR_EXPR_PLOAD8U:
+	case HIR_EXPR_PLOAD8S:
+	case HIR_EXPR_PLOAD16U:
+	case HIR_EXPR_PLOAD16S:
+	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PLOAD64:
 		/* For the binary operators. */
 		if (!lir_visit_binary_expr(dst_tmpvar, expr, block))
+			return false;
+		break;
+	case HIR_EXPR_PBASE:
+	case HIR_EXPR_PLEN:
+		/* ABCE unary ops. */
+		if (!lir_visit_abce_unary_expr(dst_tmpvar, expr, block))
+			return false;
+		break;
+	case HIR_EXPR_PCHECK:
+	case HIR_EXPR_TYPEIS:
+		/* ABCE type-test ops. (Operand 2 is an int-constant imm8.) */
+		if (!lir_visit_abce_typetest_expr(dst_tmpvar, expr, block))
 			return false;
 		break;
 	case HIR_EXPR_LAND:
@@ -1369,6 +1458,76 @@ lir_visit_logical_expr(
 	return true;
 }
 
+/* Visit an ABCE unary expr (PBASE / PLEN). */
+static bool
+lir_visit_abce_unary_expr(
+	int dst_tmpvar,
+	struct hir_expr *expr,
+	struct hir_block *block)
+{
+	int opr_tmpvar;
+	int opcode;
+
+	assert(expr != NULL);
+
+	/* Visit the operand expr. */
+	if (!lir_increment_tmpvar(&opr_tmpvar))
+		return false;
+	if (!lir_visit_expr(opr_tmpvar, expr->val.unary.expr, block))
+		return false;
+
+	opcode = (expr->type == HIR_EXPR_PBASE) ? OP_PBASE : OP_PLEN;
+	if (!lir_put_opcode((uint8_t)opcode))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)opr_tmpvar))
+		return false;
+
+	lir_decrement_tmpvar(opr_tmpvar);
+
+	return true;
+}
+
+/* Visit an ABCE type-test expr (PCHECK / TYPEIS). */
+static bool
+lir_visit_abce_typetest_expr(
+	int dst_tmpvar,
+	struct hir_expr *expr,
+	struct hir_block *block)
+{
+	int opr_tmpvar;
+	int opcode;
+	int imm;
+
+	assert(expr != NULL);
+	assert(expr->val.binary.expr[1]->type == HIR_EXPR_TERM);
+	assert(expr->val.binary.expr[1]->val.term.term->type == HIR_TERM_INT);
+
+	/* Visit the value expr. */
+	if (!lir_increment_tmpvar(&opr_tmpvar))
+		return false;
+	if (!lir_visit_expr(opr_tmpvar, expr->val.binary.expr[0], block))
+		return false;
+
+	/* The type constant. */
+	imm = expr->val.binary.expr[1]->val.term.term->val.i;
+
+	opcode = (expr->type == HIR_EXPR_PCHECK) ? OP_PCHECK : OP_TYPEIS;
+	if (!lir_put_opcode((uint8_t)opcode))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)opr_tmpvar))
+		return false;
+	if (!lir_put_imm8((uint8_t)imm))
+		return false;
+
+	lir_decrement_tmpvar(opr_tmpvar);
+
+	return true;
+}
+
 static bool
 lir_visit_binary_expr(
 	int dst_tmpvar,
@@ -1444,6 +1603,24 @@ lir_visit_binary_expr(
 		break;
 	case HIR_EXPR_SUBSCR:
 		opcode = OP_LOADARRAY;
+		break;
+	case HIR_EXPR_PLOAD8U:
+		opcode = OP_PLOAD8U;
+		break;
+	case HIR_EXPR_PLOAD8S:
+		opcode = OP_PLOAD8S;
+		break;
+	case HIR_EXPR_PLOAD16U:
+		opcode = OP_PLOAD16U;
+		break;
+	case HIR_EXPR_PLOAD16S:
+		opcode = OP_PLOAD16S;
+		break;
+	case HIR_EXPR_PLOAD32:
+		opcode = OP_PLOAD32;
+		break;
+	case HIR_EXPR_PLOAD64:
+		opcode = OP_PLOAD64;
 		break;
 	default:
 		opcode = -1;
@@ -2676,6 +2853,187 @@ lir_dump(
 			IMM2(src1);
 			IMM2(src2);
 			printf("%04d: XOR(dst:%d, src1:%d, src2: %d)\n", ofs, dst, src1, src2);
+			break;
+		}
+		case OP_SHL:
+		{
+			uint16_t dst;
+			uint16_t src1;
+			uint16_t src2;
+			IMM2(dst);
+			IMM2(src1);
+			IMM2(src2);
+			printf("%04d: SHL(dst:%d, src1:%d, src2: %d)\n", ofs, dst, src1, src2);
+			break;
+		}
+		case OP_SHR:
+		{
+			uint16_t dst;
+			uint16_t src1;
+			uint16_t src2;
+			IMM2(dst);
+			IMM2(src1);
+			IMM2(src2);
+			printf("%04d: SHR(dst:%d, src1:%d, src2: %d)\n", ofs, dst, src1, src2);
+			break;
+		}
+		case OP_PBASE:
+		{
+			uint16_t dst;
+			uint16_t src;
+			IMM2(dst);
+			IMM2(src);
+			printf("%04d: PBASE(dst:%d, src:%d)\n", ofs, dst, src);
+			break;
+		}
+		case OP_PLEN:
+		{
+			uint16_t dst;
+			uint16_t src;
+			IMM2(dst);
+			IMM2(src);
+			printf("%04d: PLEN(dst:%d, src:%d)\n", ofs, dst, src);
+			break;
+		}
+		case OP_PCHECK:
+		{
+			uint16_t dst;
+			uint16_t src;
+			uint8_t type;
+			IMM2(dst);
+			IMM2(src);
+			IMM1(type);
+			printf("%04d: PCHECK(dst:%d, src:%d, type:%d)\n", ofs, dst, src, type);
+			break;
+		}
+		case OP_TYPEIS:
+		{
+			uint16_t dst;
+			uint16_t src;
+			uint8_t type;
+			IMM2(dst);
+			IMM2(src);
+			IMM1(type);
+			printf("%04d: TYPEIS(dst:%d, src:%d, type:%d)\n", ofs, dst, src, type);
+			break;
+		}
+		case OP_PLOAD8U:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD8U(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PSTORE8:
+		{
+			uint16_t base;
+			uint16_t o;
+			uint16_t src;
+			IMM2(base);
+			IMM2(o);
+			IMM2(src);
+			printf("%04d: PSTORE8(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
+			break;
+		}
+		case OP_PLOAD8S:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD8S(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD16U:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD16U(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD16S:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD16S(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD32:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD32(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PLOAD64:
+		{
+			uint16_t dst;
+			uint16_t base;
+			uint16_t o;
+			IMM2(dst);
+			IMM2(base);
+			IMM2(o);
+			printf("%04d: PLOAD64(dst:%d, base:%d, ofs:%d)\n", ofs, dst, base, o);
+			break;
+		}
+		case OP_PSTORE16:
+		{
+			uint16_t base;
+			uint16_t o;
+			uint16_t src;
+			IMM2(base);
+			IMM2(o);
+			IMM2(src);
+			printf("%04d: PSTORE16(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
+			break;
+		}
+		case OP_PSTORE32:
+		{
+			uint16_t base;
+			uint16_t o;
+			uint16_t src;
+			IMM2(base);
+			IMM2(o);
+			IMM2(src);
+			printf("%04d: PSTORE32(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
+			break;
+		}
+		case OP_PSTORE64:
+		{
+			uint16_t base;
+			uint16_t o;
+			uint16_t src;
+			IMM2(base);
+			IMM2(o);
+			IMM2(src);
+			printf("%04d: PSTORE64(base:%d, ofs:%d, src:%d)\n", ofs, base, o, src);
+			break;
+		}
+		case OP_CHECKTYPE:
+		{
+			uint16_t slot;
+			uint8_t type;
+			IMM2(slot);
+			IMM1(type);
+			printf("%04d: CHECKTYPE(slot:%d, type:%d)\n", ofs, slot, type);
 			break;
 		}
 		case OP_LT:

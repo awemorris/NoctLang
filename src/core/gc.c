@@ -719,6 +719,7 @@ rt_gc_alloc_dict(
 		dict->newer = NULL;
 		dict->native_pointer = NULL;
 		dict->native_finalizer = NULL;
+		dict->is_frozen = false;
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
@@ -791,6 +792,7 @@ rt_gc_alloc_dict_graduate(
 		dict->newer = NULL;
 		dict->native_pointer = NULL;
 		dict->native_finalizer = NULL;
+		dict->is_frozen = false;
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
@@ -883,6 +885,7 @@ rt_gc_alloc_dict_tenure(
 		dict->newer = NULL;
 		dict->native_pointer = NULL;
 		dict->native_finalizer = NULL;
+		dict->is_frozen = false;
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
@@ -1749,6 +1752,19 @@ rt_gc_promote_array(
 	/* Set the forwarding pointer. */
 	obj->forward = &new_arr->head;
 
+#if defined(NOCT_USE_MULTITHREAD)
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
+	new_arr->shared = old_arr->shared;
+	new_arr->creator = old_arr->creator;
+	new_arr->write_lock = old_arr->write_lock;
+	new_arr->seqlock = old_arr->seqlock;
+#endif
+
 	return &new_arr->head;
 }
 
@@ -1799,6 +1815,20 @@ rt_gc_promote_dict(
 
 	new_dict->native_pointer = old_dict->native_pointer;
 	new_dict->native_finalizer = old_dict->native_finalizer;
+	new_dict->is_frozen = old_dict->is_frozen;
+
+#if defined(NOCT_USE_MULTITHREAD)
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
+	new_dict->shared = old_dict->shared;
+	new_dict->creator = old_dict->creator;
+	new_dict->write_lock = old_dict->write_lock;
+	new_dict->seqlock = old_dict->seqlock;
+#endif
 
 	return &new_dict->head;
 }
@@ -1898,6 +1928,19 @@ rt_gc_copy_array_to_graduate(
 		}
 	}
 
+#if defined(NOCT_USE_MULTITHREAD)
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
+	new_obj->shared = old_obj->shared;
+	new_obj->creator = old_obj->creator;
+	new_obj->write_lock = old_obj->write_lock;
+	new_obj->seqlock = old_obj->seqlock;
+#endif
+
 	return &new_obj->head;
 }
 
@@ -1958,6 +2001,20 @@ rt_gc_copy_dict_to_graduate(
 
 	new_obj->native_pointer = old_obj->native_pointer;
 	new_obj->native_finalizer = old_obj->native_finalizer;
+	new_obj->is_frozen = old_obj->is_frozen;
+
+#if defined(NOCT_USE_MULTITHREAD)
+	/*
+	 * Keep the ownership and synchronization state across the move.
+	 * A mutator parked at this GC safepoint inside expand_array()/
+	 * expand_dict() still holds the write lock; the moved storage
+	 * must stay locked for it.
+	 */
+	new_obj->shared = old_obj->shared;
+	new_obj->creator = old_obj->creator;
+	new_obj->write_lock = old_obj->write_lock;
+	new_obj->seqlock = old_obj->seqlock;
+#endif
 
 	/* Succeeded. */
 	return &new_obj->head;
@@ -2553,6 +2610,17 @@ rt_gc_pin_local(
 		rt_error(env, N_TR("Too many pinned local variables."));
 		return false;
 	}
+
+	/*
+	 * Zero-clear the slot so it holds a GC-safe integer 0 until the
+	 * caller fills in the real value.  Pinning makes this slot a GC
+	 * root immediately, so an uninitialized NoctValue whose garbage
+	 * type byte happens to pass IS_REF_VAL would be scanned as a wild
+	 * pointer (heap corruption).  The intrinsic convention is
+	 * pin-first, fill-after, so clearing here is always safe.
+	 */
+	val->type = NOCT_VALUE_INT;
+	val->val.l = 0;
 
 	env->frame->pinned[env->frame->pinned_count++] = val;
 

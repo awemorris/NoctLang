@@ -40,7 +40,7 @@
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
-static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name);
+static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_leave_frame(struct rt_env *env);
@@ -346,8 +346,11 @@ rt_register_source(
 	struct lir_func *lfunc;
 	uint32_t i, func_count;
 	bool is_succeeded;
+	char init_func_name[256];
 
 	is_succeeded = false;
+	init_func_name[0] = '\0';
+
 	do {
 		/* Do parse and build AST. */
 		if (!ast_build(file_name, source_text)) {
@@ -365,11 +368,20 @@ rt_register_source(
 			break;
 		}
 
+		/* Propagate the optimization level to the compiler. */
+		lir_set_optimize_level(env->vm->config.optimize_level);
+
 		/* For each function. */
 		func_count = hir_get_function_count();
 		for (i = 0; i < func_count; i++) {
-			/* Transform HIR to LIR (bytecode). */
+			/* Run the HIR optimizer (ABCE; no-op below level 2). */
 			hfunc = hir_get_function(i);
+			if (!hir_optimize_func(hfunc, env->vm->config.optimize_level)) {
+				rt_error(env, "%s", hir_get_error_message());
+				break;
+			}
+
+			/* Transform HIR to LIR (bytecode). */
 			if (!lir_build(hfunc, &lfunc)) {
 				strncpy(env->file_name, lir_get_file_name(), sizeof(env->file_name) - 1);
 				env->line = lir_get_error_line();
@@ -380,6 +392,12 @@ rt_register_source(
 			/* Make a function object. */
 			if (!rt_register_lir(env, lfunc))
 				break;
+
+			/* Remember a load-time init function. */
+			if (strncmp(lfunc->func_name, "$init.", 6) == 0) {
+				strncpy(init_func_name, lfunc->func_name,
+					sizeof(init_func_name) - 1);
+			}
 
 			/* Free a LIR. */
 			lir_cleanup(lfunc);
@@ -397,6 +415,13 @@ rt_register_source(
 	/* If failed. */
 	if (!is_succeeded)
 		return false;
+
+	/* Auto-execute the load-time init function ($init section). */
+	if (init_func_name[0] != '\0') {
+		struct rt_value init_ret;
+		if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
+			return false;
+	}
 
 	/* Succeeded. */
 	return true;
@@ -425,6 +450,10 @@ rt_register_lir(
 		return false;
 	}
 	func->param_count = lir->param_count;
+	for (i = 0; i < NOCT_ARG_MAX; i++)
+		func->param_type[i] = -1;
+	for (i = 0; i < lir->param_count; i++)
+		func->param_type[i] = lir->param_type[i];
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_name[i] = noct_strdup(lir->param_name[i]);
 		if (func->param_name[i] == NULL) {
@@ -488,10 +517,12 @@ rt_register_bytecode(
 	const char *line;
 	uint32_t pos, func_count, i;
 	bool succeeded;
+	char init_func_name[256];
 
 	pos = 0;
 	file_name = NULL;
 	succeeded = false;
+	init_func_name[0] = '\0';
 	do {
 		/* Check "CScript Bytecode". */
 		line = rt_read_bytecode_line(data, size, &pos);
@@ -524,9 +555,13 @@ rt_register_bytecode(
 
 		/* Read functions. */
 		for (i = 0; i < func_count; i++) {
-			if (!rt_register_bytecode_function(env, data, size, &pos, file_name))
+			if (!rt_register_bytecode_function(env, data, size, &pos, file_name,
+							   init_func_name,
+							   sizeof(init_func_name)))
 				break;
 		}
+		if (i != func_count)
+			break;
 
 		succeeded = true;
 	} while (0);
@@ -539,6 +574,13 @@ rt_register_bytecode(
 		return false;
 	}
 
+	/* Auto-execute the load-time init function ($init section). */
+	if (init_func_name[0] != '\0') {
+		struct rt_value init_ret;
+		if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
+			return false;
+	}
+
 	return true;
 }
 
@@ -549,7 +591,9 @@ rt_register_bytecode_function(
 	uint8_t *data,
 	size_t size,
 	uint32_t *pos,
-	char *file_name)
+	char *file_name,
+	char *init_name_out,
+	size_t init_name_size)
 {
 	struct lir_func lfunc;
 	const char *line;
@@ -558,6 +602,8 @@ rt_register_bytecode_function(
 
 	memset(&lfunc, 0, sizeof(lfunc));
 	lfunc.file_name = file_name;
+	for (i = 0; i < LIR_PARAM_SIZE; i++)
+		lfunc.param_type[i] = -1;
 
 	succeeded = false;
 	do {
@@ -578,6 +624,12 @@ rt_register_bytecode_function(
 		lfunc.func_name = noct_strdup(line);
 		if (lfunc.func_name == NULL)
 			break;
+
+		/* Remember a load-time init function. */
+		if (strncmp(lfunc.func_name, "$init.", 6) == 0) {
+			strncpy(init_name_out, lfunc.func_name, init_name_size - 1);
+			init_name_out[init_name_size - 1] = '\0';
+		}
 
 		/* Check "Parameters". */
 		line = rt_read_bytecode_line(data, size, pos);
@@ -602,8 +654,23 @@ rt_register_bytecode_function(
 		if (i != lfunc.param_count)
 			break;
 
-		/* Check "Temporary Size". */
+		/* Optional "Parameter Types" line, then "Temporary Size".
+		   (The reader is a strict line-sequence parser; peek one
+		   line to keep old-format files loading.) */
 		line = rt_read_bytecode_line(data, size, pos);
+		if (line != NULL && strcmp(line, "Parameter Types") == 0) {
+			for (i = 0; i < lfunc.param_count; i++) {
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL)
+					break;
+				lfunc.param_type[i] = atoi(line);
+			}
+			if (i != lfunc.param_count)
+				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+
+		/* Check "Temporary Size". */
 		if (line == NULL || strcmp(line, "Temporary Size") != 0)
 			break;
 
@@ -2194,6 +2261,12 @@ rt_set_global_with_hash(
 		if (env->vm->global[i].name_hash != hash)
 			continue;
 		if (strcmp(env->vm->global[i].name, name) == 0) {
+			/* Reject assignment to a constant (let) binding. */
+			if (env->vm->global[i].is_const) {
+				RELEASE_GLOBAL();
+				rt_error(env, N_TR("Cannot assign to constant \"%s\"."), name);
+				return false;
+			}
 			/* Overwrite the existing entry value. */
 			env->vm->global[i].val = *val;
 			RELEASE_GLOBAL();
@@ -2238,6 +2311,7 @@ rt_expand_global(
 				new_tbl[j].name_len = old_tbl[i].name_len;
 				new_tbl[j].name_hash = old_tbl[i].name_hash;
 				new_tbl[j].val = old_tbl[i].val;
+				new_tbl[j].is_const = old_tbl[i].is_const;
 				break;
 			}
 		}

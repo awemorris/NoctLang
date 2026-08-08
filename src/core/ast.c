@@ -46,6 +46,19 @@
 /* Constructed AST. */
 static struct ast_func_list *ast_func_list;
 
+/* Early declarations (also declared in the parser prologue). */
+struct ast_func *ast_accept_func(char *name, struct ast_param_list *param_list, struct ast_stmt_list *stmt_list);
+struct ast_func_list *ast_accept_func_list(struct ast_func_list *func_list, struct ast_func *func);
+struct ast_expr *ast_accept_term_expr(struct ast_term *term);
+struct ast_term *ast_accept_symbol_term(char *symbol);
+struct ast_term *ast_accept_str_term(char *str);
+struct ast_expr *ast_accept_call_expr(struct ast_expr *expr1, struct ast_arg_list *arg_list);
+struct ast_stmt *ast_accept_assign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs, bool is_var, bool is_let);
+struct ast_expr *ast_accept_class_expr(struct ast_kv_list *kv_list);
+
+/* Top-level declarations, synthesized into $init.<file>. */
+static struct ast_stmt_list *ast_init_stmt_list;
+
 /* File name. */
 static char *ast_file_name;
 
@@ -117,7 +130,12 @@ ast_build(
 		return false;
 	}
 
+	/* Reset the per-compilation lists. */
+	ast_func_list = NULL;
+	ast_init_stmt_list = NULL;
+
 	/* Copy the file name. */
+
 	ast_file_name = ast_strdup(file_name);
 	if (ast_file_name == NULL)
 		return false;
@@ -130,6 +148,27 @@ ast_build(
 		return false;
 	}
 	ast_yylex_destroy(scanner);
+
+	/* Synthesize the $init.<file> function from top-level decls. */
+	if (ast_init_stmt_list != NULL) {
+		struct ast_func *init_func;
+		char *init_name;
+		size_t len;
+
+		len = strlen(ast_file_name) + 16;
+		init_name = ast_malloc(len);
+		if (init_name == NULL) {
+			ast_out_of_memory();
+			return false;
+		}
+		snprintf(init_name, len, "$init.%s", ast_file_name);
+		init_func = ast_accept_func(init_name, NULL, ast_init_stmt_list);
+		if (init_func == NULL)
+			return false;
+		if (ast_accept_func_list(ast_func_list, init_func) == NULL)
+			return false;
+		ast_init_stmt_list = NULL;
+	}
 
 	return true;
 }
@@ -193,6 +232,109 @@ ast_get_error_line(void)
 	return ast_error_line;
 }
 
+
+/* Append a statement to the synthesized $init statement list. */
+static bool
+ast_append_init_stmt(struct ast_stmt *stmt)
+{
+	if (stmt == NULL)
+		return false;
+	if (ast_init_stmt_list == NULL) {
+		ast_init_stmt_list = ast_malloc(sizeof(struct ast_stmt_list));
+		if (ast_init_stmt_list == NULL) {
+			ast_out_of_memory();
+			return false;
+		}
+		memset(ast_init_stmt_list, 0, sizeof(struct ast_stmt_list));
+		ast_init_stmt_list->list = stmt;
+	} else {
+		AST_ADD_TO_LAST(struct ast_stmt, ast_init_stmt_list->list, stmt);
+	}
+	return true;
+}
+
+/* Build a "Global.markConst(\"name\")" expression statement. */
+static struct ast_stmt *
+ast_make_mark_const_stmt(int line, const char *name)
+{
+	struct ast_expr *fn;
+	struct ast_expr *arg;
+	struct ast_expr *call;
+	struct ast_arg_list *args;
+	struct ast_stmt *stmt;
+	char *name_dup;
+
+	fn = ast_accept_term_expr(ast_accept_symbol_term(ast_strdup("Global.markConst")));
+	name_dup = ast_strdup(name);
+	if (fn == NULL || name_dup == NULL)
+		return NULL;
+	arg = ast_accept_term_expr(ast_accept_str_term(name_dup));
+	if (arg == NULL)
+		return NULL;
+	args = ast_malloc(sizeof(struct ast_arg_list));
+	if (args == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(args, 0, sizeof(struct ast_arg_list));
+	args->list = arg;
+	call = ast_accept_call_expr(fn, args);
+	if (call == NULL)
+		return NULL;
+	stmt = ast_malloc(sizeof(struct ast_stmt));
+	if (stmt == NULL) {
+		ast_out_of_memory();
+		return NULL;
+	}
+	memset(stmt, 0, sizeof(struct ast_stmt));
+	stmt->type = AST_STMT_EXPR;
+	stmt->val.expr.expr = call;
+	stmt->line = line;
+	return stmt;
+}
+
+/*
+ * Called from the parser for a top-level "var"/"let" declaration.
+ * Lowered as a PLAIN assignment (creates a global at load time) plus,
+ * for let, a Global.markConst call.  See docs/design/03-class.md.
+ */
+bool
+ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let)
+{
+	struct ast_expr *lhs;
+	struct ast_stmt *stmt;
+
+	lhs = ast_accept_term_expr(ast_accept_symbol_term(name));
+	if (lhs == NULL)
+		return false;
+	stmt = ast_accept_assign_stmt(line, lhs, rhs, false, false);
+	if (stmt == NULL)
+		return false;
+	if (!ast_append_init_stmt(stmt))
+		return false;
+	if (is_let) {
+		if (!ast_append_init_stmt(ast_make_mark_const_stmt(line, name)))
+			return false;
+	}
+	return true;
+}
+
+/*
+ * Called from the parser for a top-level "class Name { ... }".
+ * Lowered as: Name = class { ... }; Global.markConst("Name");
+ */
+bool
+ast_accept_toplevel_class(int line, char *name, struct ast_kv_list *kv_list)
+{
+	struct ast_expr *cls;
+
+	cls = ast_accept_class_expr(kv_list);
+	if (cls == NULL)
+		return false;
+	if (!ast_accept_toplevel_var(line, name, cls, true))
+		return false;
+	return true;
+}
 
 /* Called from the parser when it accepted a func_list. */
 struct ast_func_list *
@@ -285,6 +427,26 @@ ast_accept_param_list(
 	return param_list;
 }
 
+/* Called from the parser when it accepted an annotated parameter. */
+struct ast_param_list *
+ast_accept_param_list_typed(
+	struct ast_param_list *param_list,
+	char *name,
+	char *type_name)
+{
+	struct ast_param_list *l;
+	struct ast_param *p;
+
+	l = ast_accept_param_list(param_list, name);
+	if (l == NULL)
+		return NULL;
+	p = l->list;
+	while (p->next != NULL)
+		p = p->next;
+	p->type_name = type_name;
+	return l;
+}
+
 /* Called from the parser when it accepted a stmt_list. */
 struct ast_stmt_list *
 ast_accept_stmt_list(
@@ -337,7 +499,8 @@ ast_accept_assign_stmt(
 	int line,
 	struct ast_expr *lhs,
 	struct ast_expr *rhs,
-	bool is_var)
+	bool is_var,
+	bool is_let)
 {
 	struct ast_stmt *stmt;
 
@@ -351,8 +514,28 @@ ast_accept_assign_stmt(
 	stmt->val.assign.lhs = lhs;
 	stmt->val.assign.rhs = rhs;
 	stmt->val.assign.is_var = is_var;
+	stmt->val.assign.is_let = is_let;
 	stmt->line = line;
 
+	return stmt;
+}
+
+/* Called from the parser when it accepted a typed assign_stmt. */
+struct ast_stmt *
+ast_accept_assign_stmt_typed(
+	int line,
+	struct ast_expr *lhs,
+	struct ast_expr *rhs,
+	bool is_var,
+	bool is_let,
+	char *type_name)
+{
+	struct ast_stmt *stmt;
+
+	stmt = ast_accept_assign_stmt(line, lhs, rhs, is_var, is_let);
+	if (stmt == NULL)
+		return NULL;
+	stmt->val.assign.type_name = type_name;
 	return stmt;
 }
 
@@ -1415,6 +1598,21 @@ ast_accept_dict_expr(
 	return expr;
 }
 
+/* Called from the parser when it accepted a class literal. */
+struct ast_expr *
+ast_accept_class_expr(
+	struct ast_kv_list *kv_list)
+{
+	struct ast_expr *expr;
+
+	expr = ast_accept_dict_expr(kv_list);
+	if (expr == NULL)
+		return NULL;
+	expr->val.dict.is_class = true;
+
+	return expr;
+}
+
 /* Called from the parser when it accepted a expr with an anonymous function syntax. */
 struct ast_expr *
 ast_accept_func_expr(
@@ -1466,6 +1664,22 @@ ast_accept_new_expr(
 	expr->type = AST_EXPR_NEW;
 	expr->val.new_.cls = cls;
 	expr->val.new_.init = kvexpr;
+
+	return expr;
+}
+
+/* Called from the parser when it accepted an extend expression. */
+struct ast_expr *
+ast_accept_extend_expr(
+	char *cls,
+	struct ast_kv_list *kv_list)
+{
+	struct ast_expr *expr;
+
+	expr = ast_accept_new_expr(cls, kv_list);
+	if (expr == NULL)
+		return NULL;
+	expr->val.new_.is_extend = true;
 
 	return expr;
 }

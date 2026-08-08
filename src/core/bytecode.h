@@ -82,6 +82,40 @@ enum bytecode {
 
 	/* line number */
 	OP_LINEINFO,		/* 0x2d:  45: setDebugLine(src) */
+
+	/*
+	 * ABCE (bounds-check-eliminated Packed access).
+	 * Emitted only by the HIR optimizer (hiropt.c) at optimize
+	 * level >= 2.  See docs/design/01-abce.md.
+	 */
+	OP_PBASE,		/* 0x2e:  46: dst = payload address of packed src (long) */
+	OP_PCHECK,		/* 0x2f:  47: dst = (src is packed && elem type == imm8) */
+	OP_TYPEIS,		/* 0x30:  48: dst = (typeof(src) == imm8) */
+	OP_PLOAD8U,		/* 0x31:  49: dst = *(uint8 *)(src1 + src2), no checks */
+	OP_PSTORE8,		/* 0x32:  50: *(uint8 *)(opr1 + opr2) = opr3, no checks */
+
+	/* type annotation entry check (optimize level >= 2) */
+	OP_CHECKTYPE,		/* 0x33:  51: error unless typeof(tmpvar) == imm8 */
+
+	/* ABCE: guard-safe packed length */
+	OP_PLEN,		/* 0x34:  52: dst = elem count of packed src (0 if not packed) */
+
+	/*
+	 * ABCE: width-parameterized base-relative access.  Offsets are
+	 * ELEMENT indices (the address unit is the element size).  Load
+	 * semantics mirror rt_get_packed_elem: sign/zero extension per
+	 * element type; 64-bit loads produce a long.  PSTORE8/16/32
+	 * assume an int source (guaranteed by the ABCE eligibility
+	 * rules); PSTORE64 dispatches on int/long sources.
+	 */
+	OP_PLOAD8S,		/* 0x35:  53: dst = *(int8   *)base[ofs], sign-extended */
+	OP_PLOAD16U,		/* 0x36:  54: dst = *(uint16 *)base[ofs] */
+	OP_PLOAD16S,		/* 0x37:  55: dst = *(int16  *)base[ofs], sign-extended */
+	OP_PLOAD32,		/* 0x38:  56: dst = *(int32  *)base[ofs] (uint32 wraps) */
+	OP_PLOAD64,		/* 0x39:  57: dst = *(int64  *)base[ofs] as long */
+	OP_PSTORE16,		/* 0x3a:  58: *(uint16 *)base[ofs] = src */
+	OP_PSTORE32,		/* 0x3b:  59: *(uint32 *)base[ofs] = src */
+	OP_PSTORE64,		/* 0x3c:  60: *(uint64 *)base[ofs] = src (int or long) */
 };
 
 #endif

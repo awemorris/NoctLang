@@ -611,10 +611,10 @@ cfunc_Thread_createThread(
 	 * Hand over the arguments. Pinning them in the child's
 	 * environment makes them GC roots before the child runs.
 	 */
+	noct_pin_local(start->env, 3, &start->func_v, &start->param_v, &start->handle_v);
 	start->func_v = func;
 	start->param_v = param;
 	start->handle_v = handle;
-	noct_pin_local(start->env, 3, &start->func_v, &start->param_v, &start->handle_v);
 
 	/* Start the thread. */
 #if defined(NOCT_TARGET_WINDOWS)

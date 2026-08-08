@@ -100,6 +100,20 @@ noct_bcback_translate(
 		fprintf(fp, "%d\n", lfunc->param_count);
 		for (j = 0; j < lfunc->param_count; j++)
 			fprintf(fp, "%s\n", lfunc->param_name[j]);
+		{
+			/* Optional: emit type annotations only when any
+			   param has one (keeps old-format output stable). */
+			int has_types = 0;
+			for (j = 0; j < lfunc->param_count; j++) {
+				if (lfunc->param_type[j] >= 0)
+					has_types = 1;
+			}
+			if (has_types) {
+				fprintf(fp, "Parameter Types\n");
+				for (j = 0; j < lfunc->param_count; j++)
+					fprintf(fp, "%d\n", lfunc->param_type[j]);
+			}
+		}
 		fprintf(fp, "Temporary Size\n");
 		fprintf(fp, "%d\n", lfunc->tmpvar_size);
 		fprintf(fp, "Bytecode Size\n");

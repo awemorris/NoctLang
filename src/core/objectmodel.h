@@ -166,6 +166,11 @@ om_write_dict(
  * Write a dictionary element.
  */
 bool
+om_freeze_dict(
+	struct rt_env *env,
+	struct rt_value *dict_val);
+
+bool
 om_write_dict_with_hash(
 	struct rt_env *env,
 	struct rt_value *dict_val,

@@ -2523,3 +2523,389 @@ noct_ex_safepoint_helper(
 
 	return true;
 }
+
+/*
+ * PBASE helper. (ABCE: materialize a packed payload address.)
+ *
+ * The result is a long value holding the raw payload pointer.  It is
+ * only valid until the next safepoint source; the ABCE pass
+ * guarantees by construction that no such source exists between the
+ * PBASE and its last use.  See docs/design/01-abce.md.
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_pbase_helper(
+	NoctEnv *env,
+	int dst,
+	int src)
+{
+	struct rt_value *src_val;
+	struct rt_value *dst_val;
+
+	src_val = &env->frame->tmpvar[src];
+	dst_val = &env->frame->tmpvar[dst];
+
+	/* Belt and braces: the guard has already proven this. */
+	if (src_val->type != NOCT_VALUE_PACKED) {
+		rt_error(env, N_TR("Value is not a packed."));
+		return false;
+	}
+
+	dst_val->type = NOCT_VALUE_LONG;
+	dst_val->val.l = (int64_t)(intptr_t)src_val->val.packed->packed_buffer;
+
+	return true;
+}
+
+/*
+ * PCHECK helper. (ABCE guard: packed type test, never errors.)
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_pcheck_helper(
+	NoctEnv *env,
+	int dst,
+	int src,
+	int packed_type)
+{
+	struct rt_value *src_val;
+	struct rt_value *dst_val;
+	int result;
+
+	src_val = &env->frame->tmpvar[src];
+	dst_val = &env->frame->tmpvar[dst];
+
+	result = 0;
+	if (src_val->type == NOCT_VALUE_PACKED &&
+	    src_val->val.packed->type == packed_type)
+		result = 1;
+
+	dst_val->type = NOCT_VALUE_INT;
+	dst_val->val.i = result;
+
+	return true;
+}
+
+/*
+ * TYPEIS helper. (ABCE guard: value type test, never errors.)
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_typeis_helper(
+	NoctEnv *env,
+	int dst,
+	int src,
+	int value_type)
+{
+	struct rt_value *src_val;
+	struct rt_value *dst_val;
+	int result;
+
+	src_val = &env->frame->tmpvar[src];
+	dst_val = &env->frame->tmpvar[dst];
+
+	result = (src_val->type == value_type) ? 1 : 0;
+
+	dst_val->type = NOCT_VALUE_INT;
+	dst_val->val.i = result;
+
+	return true;
+}
+
+/*
+ * PLEN helper. (ABCE guard: packed element count, never errors.)
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_plen_helper(
+	NoctEnv *env,
+	int dst,
+	int src)
+{
+	struct rt_value *src_val;
+	struct rt_value *dst_val;
+
+	src_val = &env->frame->tmpvar[src];
+	dst_val = &env->frame->tmpvar[dst];
+
+	dst_val->type = NOCT_VALUE_INT;
+	if (src_val->type == NOCT_VALUE_PACKED)
+		dst_val->val.i = (int)src_val->val.packed->elem_size;
+	else
+		dst_val->val.i = 0;
+
+	return true;
+}
+
+/*
+ * PLOAD8U helper. (ABCE fast body: raw uint8 load, no checks.)
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload8u_helper(
+	NoctEnv *env,
+	int dst,
+	int base,
+	int ofs)
+{
+	struct rt_value *base_val;
+	struct rt_value *ofs_val;
+	struct rt_value *dst_val;
+	const uint8_t *p;
+
+	base_val = &env->frame->tmpvar[base];
+	ofs_val = &env->frame->tmpvar[ofs];
+	dst_val = &env->frame->tmpvar[dst];
+
+	p = (const uint8_t *)(intptr_t)base_val->val.l;
+	if (ofs_val->type == NOCT_VALUE_LONG)
+		dst_val->val.i = (int)p[(intptr_t)ofs_val->val.l];
+	else
+		dst_val->val.i = (int)p[ofs_val->val.i];
+	dst_val->type = NOCT_VALUE_INT;
+
+	return true;
+}
+
+/*
+ * PSTORE8 helper. (ABCE fast body: raw uint8 store, no checks.)
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstore8_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int src)
+{
+	struct rt_value *base_val;
+	struct rt_value *ofs_val;
+	struct rt_value *src_val;
+	uint8_t *p;
+
+	base_val = &env->frame->tmpvar[base];
+	ofs_val = &env->frame->tmpvar[ofs];
+	src_val = &env->frame->tmpvar[src];
+
+	p = (uint8_t *)(intptr_t)base_val->val.l;
+	if (ofs_val->type == NOCT_VALUE_LONG)
+		p[(intptr_t)ofs_val->val.l] = (uint8_t)src_val->val.i;
+	else
+		p[ofs_val->val.i] = (uint8_t)src_val->val.i;
+
+	return true;
+}
+
+/*
+ * Width-parameterized ABCE load/store helpers.  Offsets are ELEMENT
+ * indices; semantics mirror rt_get_packed_elem / rt_set_packed_elem.
+ */
+
+#define ABCE_OFS(v) (((v)->type == NOCT_VALUE_LONG) ? (intptr_t)(v)->val.l : (intptr_t)(v)->val.i)
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload8s_helper(
+	NoctEnv *env,
+	int dst,
+	int base,
+	int ofs)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *d = &env->frame->tmpvar[dst];
+
+	d->val.i = (int)*((const int8_t *)(intptr_t)b->val.l + ABCE_OFS(o));
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload16u_helper(
+	NoctEnv *env,
+	int dst,
+	int base,
+	int ofs)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *d = &env->frame->tmpvar[dst];
+
+	d->val.i = (int)*((const uint16_t *)(intptr_t)b->val.l + ABCE_OFS(o));
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload16s_helper(
+	NoctEnv *env,
+	int dst,
+	int base,
+	int ofs)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *d = &env->frame->tmpvar[dst];
+
+	d->val.i = (int)*((const int16_t *)(intptr_t)b->val.l + ABCE_OFS(o));
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload32_helper(
+	NoctEnv *env,
+	int dst,
+	int base,
+	int ofs)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *d = &env->frame->tmpvar[dst];
+
+	d->val.i = (int)*((const int32_t *)(intptr_t)b->val.l + ABCE_OFS(o));
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pload64_helper(
+	NoctEnv *env,
+	int dst,
+	int base,
+	int ofs)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *d = &env->frame->tmpvar[dst];
+
+	d->val.l = *((const int64_t *)(intptr_t)b->val.l + ABCE_OFS(o));
+	d->type = NOCT_VALUE_LONG;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstore16_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int src)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *s = &env->frame->tmpvar[src];
+	uint16_t v;
+
+	if (s->type == NOCT_VALUE_LONG)
+		v = (uint16_t)s->val.l;
+	else
+		v = (uint16_t)s->val.i;
+	*((uint16_t *)(intptr_t)b->val.l + ABCE_OFS(o)) = v;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstore32_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int src)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *s = &env->frame->tmpvar[src];
+	uint32_t v;
+
+	if (s->type == NOCT_VALUE_LONG)
+		v = (uint32_t)s->val.l;
+	else
+		v = (uint32_t)s->val.i;
+	*((uint32_t *)(intptr_t)b->val.l + ABCE_OFS(o)) = v;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstore64_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int src)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *s = &env->frame->tmpvar[src];
+	int64_t v;
+
+	if (s->type == NOCT_VALUE_LONG)
+		v = s->val.l;
+	else
+		v = (int64_t)s->val.i;
+	*((int64_t *)(intptr_t)b->val.l + ABCE_OFS(o)) = v;
+	return true;
+}
+
+/*
+ * CHECKTYPE helper. (Type annotation entry check.)
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_checktype_helper(
+	NoctEnv *env,
+	int slot,
+	int value_type)
+{
+	struct rt_value *val;
+	const char *type_name;
+
+	val = &env->frame->tmpvar[slot];
+	if (val->type == value_type)
+		return true;
+
+	/* Allow harmless widenings: int literals are int-tagged and
+	   floating literals are float-tagged, so a long/double annotation
+	   must accept them. */
+	if (value_type == NOCT_VALUE_LONG && val->type == NOCT_VALUE_INT)
+		return true;
+	if (value_type == NOCT_VALUE_DOUBLE && val->type == NOCT_VALUE_FLOAT)
+		return true;
+
+	switch (value_type) {
+	case NOCT_VALUE_INT:	type_name = "int";	break;
+	case NOCT_VALUE_LONG:	type_name = "long";	break;
+	case NOCT_VALUE_FLOAT:	type_name = "float";	break;
+	case NOCT_VALUE_DOUBLE:	type_name = "double";	break;
+	case NOCT_VALUE_STRING:	type_name = "string";	break;
+	case NOCT_VALUE_ARRAY:	type_name = "array";	break;
+	case NOCT_VALUE_DICT:	type_name = "dict";	break;
+	case NOCT_VALUE_PACKED:	type_name = "packed";	break;
+	case NOCT_VALUE_FUNC:	type_name = "func";	break;
+	default:		type_name = "unknown";	break;
+	}
+
+	rt_error(env, N_TR("%s(): argument type mismatch (expected %s)."),
+		 env->frame->func != NULL ? env->frame->func->name : "?",
+		 type_name);
+	return false;
+}

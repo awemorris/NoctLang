@@ -1,0 +1,335 @@
+//
+// Redisplay: full-redraw over the window tree, column-aware.
+//
+// A logical buffer line is expanded into display cells (tabs become
+// spaces up to 8-column tab stops, East Asian wide characters take
+// two columns), then wrapped into display rows of the window's text
+// width. A row that continues gets a '\' in its last column, tty
+// Emacs style. Cells are always overwritten to the full window
+// width, so no clearing is needed and side-by-side windows cannot
+// smear into each other; a window not reaching the right screen edge
+// gets a '|' divider column.
+//
+
+// Display width of a codepoint (an East Asian Width subset).
+func charWidth(cp) {
+    if (cp < 0x1100) { return 1; }
+    // SKK composition marks (ambiguous EAW; CJK terminals draw them
+    // double width -- counting them as 1 left the cursor on the right
+    // half of the last kanji during conversion).
+    if (cp == 0x25BC || cp == 0x25BD) { return 2; }  // ▼ ▽
+    if (cp <= 0x115F) { return 2; }              // Hangul Jamo
+    if (cp >= 0x2E80 && cp <= 0xA4CF) { return 2; }  // CJK radicals..Yi
+    if (cp >= 0xAC00 && cp <= 0xD7A3) { return 2; }  // Hangul syllables
+    if (cp >= 0xF900 && cp <= 0xFAFF) { return 2; }  // CJK compat
+    if (cp >= 0xFE30 && cp <= 0xFE4F) { return 2; }  // CJK compat forms
+    if (cp >= 0xFF00 && cp <= 0xFF60) { return 2; }  // Fullwidth forms
+    if (cp >= 0xFFE0 && cp <= 0xFFE6) { return 2; }
+    if (cp >= 0x20000 && cp <= 0x3FFFD) { return 2; }  // CJK ext B+
+    return 1;
+}
+
+// Display width of a whole string (no tabs).
+func stringWidth(s) {
+    var w = 0;
+    var n = String.charCount(s);
+    for (i in 0..n) {
+        w = w + charWidth(String.charCodeAt(s, i));
+    }
+    return w;
+}
+
+// Truncate a string to at most "width" columns.
+func truncateToWidth(s, width) {
+    var w = 0;
+    var n = String.charCount(s);
+    var i = 0;
+    while (i < n) {
+        var cw = charWidth(String.charCodeAt(s, i));
+        if (w + cw > width) {
+            break;
+        }
+        w = w + cw;
+        i = i + 1;
+    }
+    return String.substring(s, 0, i);
+}
+
+// Pad (or truncate) a string to exactly "width" columns.
+func padToWidth(s, width) {
+    s = truncateToWidth(s, width);
+    var w = stringWidth(s);
+    while (w < width) {
+        s = s + " ";
+        w = w + 1;
+    }
+    return s;
+}
+
+// The previous frame's rows, for damage tracking. Only rows that
+// changed since the last frame are rewritten, and the whole frame is
+// bracketed with synchronized-output marks, which removes flicker.
+func redisplayInit() {
+    PrevFrame = { rows: [], cols: 0, count: 0 };
+    return 0;
+}
+
+func redisplay(_) {
+    var size = Term.size();
+    var rows = size.rows;
+    var cols = size.cols;
+
+    layoutWindows(WinRoot, 1, 1, rows - 1, cols);
+    // The selected window always shows the current buffer.
+    SelWin.buf = Editor.bufferName();
+    SelWin.point = Editor.point();
+
+    // Compose the frame into row strings.
+    Frame = [];
+    for (i in 0..rows) {
+        Array.push(Frame, "");
+    }
+
+    var savedBuf = Editor.bufferName();
+    var savedPoint = Editor.point();
+    var cursorRow = 1;
+    var cursorCol = 1;
+    var leaves = [];
+    windowLeaves(WinRoot, leaves);
+    for (w in leaves) {
+        var isSel = (w == SelWin);
+        var cur = renderWindow(w, isSel);
+        if (isSel == 1) {
+            cursorRow = cur.row;
+            cursorCol = cur.col;
+        }
+    }
+    Editor.setBuffer(savedBuf);
+    Editor.gotoChar(savedPoint);
+
+    // Echo area.
+    Frame[rows - 1] = padToWidth(_.echoMessage, cols);
+
+    // A resize (or the first frame) invalidates the cache.
+    var full = 0;
+    if (PrevFrame.cols != cols || PrevFrame.count != rows) {
+        full = 1;
+        PrevFrame.rows = [];
+        for (i in 0..rows) {
+            Array.push(PrevFrame.rows, "\u0001");
+        }
+        PrevFrame.cols = cols;
+        PrevFrame.count = rows;
+    }
+
+    Term.syncBegin();
+    Term.showCursor(0);
+    for (i in 0..rows) {
+        if (full == 1 || Frame[i] != PrevFrame.rows[i]) {
+            Term.moveTo(i + 1, 1);
+            Term.write(Frame[i]);
+            PrevFrame.rows[i] = Frame[i];
+        }
+    }
+    Term.moveTo(cursorRow, cursorCol);
+    Term.showCursor(1);
+    Term.syncEnd();
+    Term.flush();
+    return 0;
+}
+
+// Expand the logical line starting at the current point into display
+// rows for a window of the given text width. Fills st.rows with row
+// strings and sets st.pointRow / st.pointCol (relative, 0-based) when
+// the position "target" falls in this line (target < 0 to skip).
+// Leaves point at the start of the next line, or at eob.
+func layoutLogicalLine(st, textWidth, target) {
+    var lineStart = Editor.point();
+    var lineEnd = Editor.lineEndPosition();
+    var text = Editor.bufferSubstring(lineStart, lineEnd);
+    var n = String.charCount(text);
+
+    var rowText = "";
+    var rowWidth = 0;
+    var col = 0;
+    var capacity = textWidth;
+
+    var i = 0;
+    while (i < n) {
+        var cp = String.charCodeAt(text, i);
+        var piece = "";
+        var pieceW = 0;
+        if (cp == 0x09) {
+            var k = 8 - (col % 8);
+            for (j in 0..k) {
+                piece = piece + " ";
+            }
+            pieceW = k;
+        } else {
+            piece = String.charAt(text, i);
+            pieceW = charWidth(cp);
+        }
+
+        // Continuation rows keep their last column for the backslash;
+        // the final cell of the line may still use the full width.
+        var limit = capacity - 1;
+        if (i == n - 1 && rowWidth + pieceW <= capacity) {
+            limit = capacity;
+        }
+        if (rowWidth + pieceW > limit && rowWidth > 0) {
+            Array.push(st.rows, padToWidth(rowText, capacity - 1) + "\\");
+            rowText = "";
+            rowWidth = 0;
+        }
+
+        if (target >= 0 && lineStart + i == target) {
+            st.pointRow = Array.size(st.rows);
+            st.pointCol = rowWidth;
+        }
+        rowText = rowText + piece;
+        rowWidth = rowWidth + pieceW;
+        col = col + pieceW;
+        i = i + 1;
+    }
+    // Point at the end of the line sits after the last cell.
+    if (target >= 0 && target == lineEnd) {
+        st.pointRow = Array.size(st.rows);
+        st.pointCol = rowWidth;
+    }
+    Array.push(st.rows, padToWidth(rowText, textWidth));
+
+    // Advance past this line.
+    Editor.gotoChar(lineEnd);
+    if (!Editor.eobp()) {
+        Editor.forwardChar(1);
+        return 1;
+    }
+    return 0;
+}
+
+// Render one window; returns {row, col} of its cursor cell.
+func renderWindow(w, isSel) {
+    Editor.setBuffer(w.buf);
+    var wpoint = w.point;
+    if (wpoint > Editor.pointMax()) {
+        wpoint = Editor.pointMax();
+    }
+    if (wpoint < 1) {
+        wpoint = 1;
+    }
+    w.point = wpoint;
+
+    var size = Term.size();
+    var hasDivider = 0;
+    if (w.left + w.cols - 1 < size.cols) {
+        hasDivider = 1;
+    }
+    var textWidth = w.cols - hasDivider;
+    var textRows = w.rows - 1;
+
+    // Clamp the window start to the point's logical line first.
+    var pointLine = countLinesBefore(wpoint);
+    if (pointLine < w.startLine) {
+        w.startLine = pointLine;
+    }
+
+    // Lay out rows from the window start; scroll down until the
+    // point's display row fits. (Wrapping means a logical line can
+    // span several display rows, so this may take a few passes.)
+    var st = { rows: [], pointRow: 0 - 1, pointCol: 0 };
+    var guard = 0;
+    while (guard < 500) {
+        guard = guard + 1;
+        st.rows = [];
+        st.pointRow = 0 - 1;
+        st.pointCol = 0;
+        Editor.gotoChar(Editor.pointMin());
+        Editor.forwardLine(w.startLine);
+        var more = 1;
+        while (more == 1 && Array.size(st.rows) < textRows + 8) {
+            var target = 0 - 1;
+            var ls = Editor.point();
+            var le = Editor.lineEndPosition();
+            if (wpoint >= ls && wpoint <= le) {
+                target = wpoint;
+            }
+            more = layoutLogicalLine(st, textWidth, target);
+        }
+        if (st.pointRow >= 0 && st.pointRow < textRows) {
+            break;
+        }
+        if (st.pointRow < 0) {
+            // Point is beyond the laid-out region: jump so its line
+            // lands near the bottom, then fine-tune.
+            w.startLine = pointLine - textRows + 1;
+            if (w.startLine < 0) {
+                w.startLine = 0;
+            }
+            continue;
+        }
+        w.startLine = w.startLine + (st.pointRow - textRows + 1);
+        if (w.startLine > pointLine) {
+            w.startLine = pointLine;
+        }
+    }
+
+    // Compose the rows into the frame buffer.
+    var row = 0;
+    while (row < textRows) {
+        var line = "";
+        if (row < Array.size(st.rows)) {
+            line = st.rows[row];
+        }
+        line = padToWidth(line, textWidth);
+        if (hasDivider == 1) {
+            line = line + "|";
+        }
+        Frame[w.top + row - 1] = Frame[w.top + row - 1] + line;
+        row = row + 1;
+    }
+
+    // The window's mode line.
+    var name = Editor.bufferName();
+    var flags = "--";
+    if (Editor.bufferModifiedP() == 1) {
+        flags = "**";
+    }
+    var lineNo = countLinesBefore(wpoint) + 1;
+    var modeLine = "-" + flags + "- remacs: " + name + "   (" + Buf.mode + ")" + skkIndicator() + " L" + lineNo + " ";
+    modeLine = truncateToWidth(modeLine, w.cols);
+    var mlLen = stringWidth(modeLine);
+    while (mlLen < w.cols) {
+        modeLine = modeLine + "-";
+        mlLen = mlLen + 1;
+    }
+    // Reverse video in-band so the row diffs as one string.
+    var esc = String.chr(27);
+    Frame[w.top + w.rows - 2] = Frame[w.top + w.rows - 2] +
+        esc + "[7m" + modeLine + esc + "[0m";
+
+    var cr = w.top;
+    var cc = w.left;
+    if (st.pointRow >= 0) {
+        cr = w.top + st.pointRow;
+        cc = w.left + st.pointCol;
+    }
+    return { row: cr, col: cc };
+}
+
+// Count the newlines before a position. (0-based line number)
+func countLinesBefore(pos) {
+    var saved = Editor.point();
+    Editor.gotoChar(Editor.pointMin());
+    var n = 0;
+    while (Editor.point() < pos) {
+        var e = Editor.lineEndPosition();
+        if (e >= pos) {
+            break;
+        }
+        Editor.gotoChar(e);
+        Editor.forwardChar(1);
+        n = n + 1;
+    }
+    Editor.gotoChar(saved);
+    return n;
+}

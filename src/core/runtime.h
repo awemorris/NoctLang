@@ -116,6 +116,9 @@ struct rt_dict {
 	/* Copy-On-Resize forwarding. (RCU-style) */
 	struct rt_dict *newer;
 
+	/* Frozen (read-only) flag; set by Dict.freeze / class literals. */
+	bool is_frozen;
+
 	/* Native object pointer. */
 	void *native_pointer;
 
@@ -169,6 +172,9 @@ struct rt_func {
 	size_t param_count;
 	char *param_name[NOCT_ARG_MAX];
 
+	/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
+	int param_type[NOCT_ARG_MAX];
+
 	char *file_name;
 
 	/* Bytecode for a function. (if not a cfunc) */
@@ -203,6 +209,9 @@ struct rt_bindglobal {
 
 	/* Removed flag for linear search. */
 	bool is_removed;
+
+	/* Constant (let) binding flag. */
+	bool is_const;
 };
 
 /*

@@ -20,4 +20,10 @@ for tc in syntax/*.noct; do
     $NOCT --force-jit $tc > out || true;
     diff $tc.out out;
 done
+echo "(JIT + optimize-level=2)";
+for tc in syntax/*.noct; do
+    echo "$tc";
+    $NOCT --force-jit --optimize-level=2 $tc > out || true;
+    diff $tc.out out;
+done
 echo 'All tests passed.'

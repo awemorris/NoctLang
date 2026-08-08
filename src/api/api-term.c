@@ -106,7 +106,7 @@ static struct {
 	size_t out_alloc;
 
 	/* Input ring. */
-	unsigned char in[256];
+	unsigned char in[8192];
 	size_t in_head;
 	size_t in_len;
 
@@ -629,7 +629,7 @@ in_fill(
 	struct pollfd pfd;
 	ssize_t n;
 	int poll_ret;
-	unsigned char buf[64];
+	unsigned char buf[4096];
 	size_t i;
 
 	if (term.in_len > 0)

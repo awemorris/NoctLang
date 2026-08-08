@@ -370,6 +370,122 @@ jit_put_ld(
         return true;
 }
 
+/* LB */
+#define LB(rd, imm, rs)	if (!jit_put_lb(ctx, rd, imm, rs)) return false
+static INLINE bool
+jit_put_lb(
+        struct jit_context *ctx,
+        uint32_t rd,
+        uint32_t imm,
+        uint32_t rs)
+{
+        if (!jit_put_word(ctx,
+                          ((imm & 0xfff) << 20) |       /* imm[11:0] */
+                          (rs << 15) |                  /* rs */
+                          (0 << 12) |                   /* funct3 */
+                          (rd << 7) |                   /* rd */
+                          0x03))                        /* opcode */
+                return false;
+        return true;
+}
+
+/* LH */
+#define LH(rd, imm, rs)	if (!jit_put_lh(ctx, rd, imm, rs)) return false
+static INLINE bool
+jit_put_lh(
+        struct jit_context *ctx,
+        uint32_t rd,
+        uint32_t imm,
+        uint32_t rs)
+{
+        if (!jit_put_word(ctx,
+                          ((imm & 0xfff) << 20) |       /* imm[11:0] */
+                          (rs << 15) |                  /* rs */
+                          (1 << 12) |                   /* funct3 */
+                          (rd << 7) |                   /* rd */
+                          0x03))                        /* opcode */
+                return false;
+        return true;
+}
+
+/* LBU */
+#define LBU(rd, imm, rs)	if (!jit_put_lbu(ctx, rd, imm, rs)) return false
+static INLINE bool
+jit_put_lbu(
+        struct jit_context *ctx,
+        uint32_t rd,
+        uint32_t imm,
+        uint32_t rs)
+{
+        if (!jit_put_word(ctx,
+                          ((imm & 0xfff) << 20) |       /* imm[11:0] */
+                          (rs << 15) |                  /* rs */
+                          (4 << 12) |                   /* funct3 */
+                          (rd << 7) |                   /* rd */
+                          0x03))                        /* opcode */
+                return false;
+        return true;
+}
+
+/* LHU */
+#define LHU(rd, imm, rs)	if (!jit_put_lhu(ctx, rd, imm, rs)) return false
+static INLINE bool
+jit_put_lhu(
+        struct jit_context *ctx,
+        uint32_t rd,
+        uint32_t imm,
+        uint32_t rs)
+{
+        if (!jit_put_word(ctx,
+                          ((imm & 0xfff) << 20) |       /* imm[11:0] */
+                          (rs << 15) |                  /* rs */
+                          (5 << 12) |                   /* funct3 */
+                          (rd << 7) |                   /* rd */
+                          0x03))                        /* opcode */
+                return false;
+        return true;
+}
+
+/* SB */
+#define SB(rs2, imm, rs1)	if (!jit_put_sb(ctx, rs2, imm, rs1)) return false
+static INLINE bool
+jit_put_sb(
+        struct jit_context *ctx,
+        uint32_t rs2,
+        uint32_t imm,
+        uint32_t rs1)
+{
+        if (!jit_put_word(ctx,
+                          (((imm & 0xfff) >> 5) << 25) |        /* imm[11:5] */
+                          (rs2 << 20) |                         /* rs2 */
+                          (rs1 << 15) |                         /* rs1 */
+                          (0 << 12) |                           /* funct3 */
+                          ((imm & 0x1f) << 7) |                 /* imm[4:0] */
+                          0x23))                                /* opcode */
+                return false;
+        return true;
+}
+
+/* SH */
+#define SH(rs2, imm, rs1)	if (!jit_put_sh(ctx, rs2, imm, rs1)) return false
+static INLINE bool
+jit_put_sh(
+        struct jit_context *ctx,
+        uint32_t rs2,
+        uint32_t imm,
+        uint32_t rs1)
+{
+        if (!jit_put_word(ctx,
+                          (((imm & 0xfff) >> 5) << 25) |        /* imm[11:5] */
+                          (rs2 << 20) |                         /* rs2 */
+                          (rs1 << 15) |                         /* rs1 */
+                          (1 << 12) |                           /* funct3 */
+                          ((imm & 0x1f) << 7) |                 /* imm[4:0] */
+                          0x23))                                /* opcode */
+                return false;
+        return true;
+}
+
 /* JAL */
 #define JAL(rd, imm)    if (!jit_put_jal(ctx, rd, imm)) return false
 static INLINE bool
@@ -1884,6 +2000,448 @@ jit_visit_safepoint_op(
         return true;
 }
 
+/* Visit a OP_PBASE instruction. (ABCE; inline machine code, rv64.)
+ * The guard has proven the operand is a packed. */
+static INLINE bool
+jit_visit_pbase_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+        uint32_t buf_ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        dst *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+        buf_ofs = (uint32_t)offsetof(struct rt_packed, packed_buffer);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                /* t1 = packed object pointer */
+                LD      (REG_T1, IMM12(src + 8), REG_S11);
+                /* t1 = payload pointer */
+                LD      (REG_T1, IMM12(buf_ofs), REG_T1);
+                /* tag = LONG */
+                ORI     (REG_T4, REG_ZERO, IMM12(NOCT_VALUE_LONG));
+                SW      (REG_T4, IMM12(dst), REG_S11);
+                SD      (REG_T1, IMM12(dst + 8), REG_S11);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLEN instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_plen_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src);
+
+        /* if (!ex_plen_helper(env, dst, src)) return false; */
+        ASM_UNARY_OP(ex_plen_helper);
+
+        return true;
+}
+
+/* Visit a OP_PCHECK instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_pcheck_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_pcheck_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_pcheck_helper);
+
+        return true;
+}
+
+/* Visit a OP_TYPEIS instruction. (ABCE; helper-call implementation.) */
+static INLINE bool
+jit_visit_typeis_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        /* if (!ex_typeis_helper(env, dst, src, type)) return false; */
+        ASM_BINARY_OP(ex_typeis_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code, rv64.) */
+static INLINE bool
+jit_visit_pload8u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                /* t1 = base pointer */
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                /* t2 = element index */
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                /* t3 = loaded element */
+                LBU     (REG_T3, 0, REG_T1);
+                /* tag */
+                ORI     (REG_T4, REG_ZERO, IMM12(NOCT_VALUE_INT));
+                SW      (REG_T4, IMM12(dst), REG_S11);
+                /* value */
+                SW      (REG_T3, IMM12(dst + 8), REG_S11);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE8 instruction. (ABCE; inline, rv64. Int source per ABCE rules.) */
+static INLINE bool
+jit_visit_pstore8_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                LW      (REG_T3, IMM12(src + 8), REG_S11);
+                SB      (REG_T3, 0, REG_T1);
+        }
+
+        return true;
+}
+
+/* Visit a OP_CHECKTYPE instruction. (Typed entry check.) */
+static INLINE bool
+jit_visit_checktype_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_IMM8(src);
+
+        /* if (!ex_checktype_helper(env, slot, type)) return false; */
+        ASM_UNARY_OP(ex_checktype_helper);
+
+        return true;
+}
+
+/* Visit a OP_PLOAD8S instruction. (ABCE; inline machine code, rv64.) */
+static INLINE bool
+jit_visit_pload8s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                /* t1 = base pointer */
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                /* t2 = element index */
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                /* t3 = loaded element */
+                LB     (REG_T3, 0, REG_T1);
+                /* tag */
+                ORI     (REG_T4, REG_ZERO, IMM12(NOCT_VALUE_INT));
+                SW      (REG_T4, IMM12(dst), REG_S11);
+                /* value */
+                SW      (REG_T3, IMM12(dst + 8), REG_S11);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16U instruction. (ABCE; inline machine code, rv64.) */
+static INLINE bool
+jit_visit_pload16u_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                /* t1 = base pointer */
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                /* t2 = element index */
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                SLLI    (REG_T2, REG_T2, 1);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                /* t3 = loaded element */
+                LHU     (REG_T3, 0, REG_T1);
+                /* tag */
+                ORI     (REG_T4, REG_ZERO, IMM12(NOCT_VALUE_INT));
+                SW      (REG_T4, IMM12(dst), REG_S11);
+                /* value */
+                SW      (REG_T3, IMM12(dst + 8), REG_S11);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD16S instruction. (ABCE; inline machine code, rv64.) */
+static INLINE bool
+jit_visit_pload16s_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                /* t1 = base pointer */
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                /* t2 = element index */
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                SLLI    (REG_T2, REG_T2, 1);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                /* t3 = loaded element */
+                LH     (REG_T3, 0, REG_T1);
+                /* tag */
+                ORI     (REG_T4, REG_ZERO, IMM12(NOCT_VALUE_INT));
+                SW      (REG_T4, IMM12(dst), REG_S11);
+                /* value */
+                SW      (REG_T3, IMM12(dst + 8), REG_S11);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD32 instruction. (ABCE; inline machine code, rv64.) */
+static INLINE bool
+jit_visit_pload32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                /* t1 = base pointer */
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                /* t2 = element index */
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                SLLI    (REG_T2, REG_T2, 2);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                /* t3 = loaded element */
+                LW     (REG_T3, 0, REG_T1);
+                /* tag */
+                ORI     (REG_T4, REG_ZERO, IMM12(NOCT_VALUE_INT));
+                SW      (REG_T4, IMM12(dst), REG_S11);
+                /* value */
+                SW      (REG_T3, IMM12(dst + 8), REG_S11);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PLOAD64 instruction. (ABCE; inline machine code, rv64.) */
+static INLINE bool
+jit_visit_pload64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+
+        dst *= (int)sizeof(struct rt_value);
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                /* t1 = base pointer */
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                /* t2 = element index */
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                SLLI    (REG_T2, REG_T2, 3);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                /* t3 = loaded element */
+                LD     (REG_T3, 0, REG_T1);
+                /* tag */
+                ORI     (REG_T4, REG_ZERO, IMM12(NOCT_VALUE_LONG));
+                SW      (REG_T4, IMM12(dst), REG_S11);
+                /* value */
+                SD      (REG_T3, IMM12(dst + 8), REG_S11);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE16 instruction. (ABCE; inline, rv64. Int source per ABCE rules.) */
+static INLINE bool
+jit_visit_pstore16_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                SLLI    (REG_T2, REG_T2, 1);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                LW      (REG_T3, IMM12(src + 8), REG_S11);
+                SH      (REG_T3, 0, REG_T1);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE32 instruction. (ABCE; inline, rv64. Int source per ABCE rules.) */
+static INLINE bool
+jit_visit_pstore32_op(
+        struct jit_context *ctx)
+{
+        int base;
+        int ofs;
+        int src;
+
+        CONSUME_TMPVAR(base);
+        CONSUME_TMPVAR(ofs);
+        CONSUME_TMPVAR(src);
+
+        base *= (int)sizeof(struct rt_value);
+        ofs *= (int)sizeof(struct rt_value);
+        src *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s11: &env->frame->tmpvar[0] */
+
+                LD      (REG_T1, IMM12(base + 8), REG_S11);
+                LW      (REG_T2, IMM12(ofs + 8), REG_S11);
+                SLLI    (REG_T2, REG_T2, 2);
+                ADD     (REG_T1, REG_T1, REG_T2);
+                LW      (REG_T3, IMM12(src + 8), REG_S11);
+                SW      (REG_T3, 0, REG_T1);
+        }
+
+        return true;
+}
+
+/* Visit a OP_PSTORE64 instruction. (ABCE width op; helper-call.) */
+static INLINE bool
+jit_visit_pstore64_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        /* if (!ex_pstore64_helper(env, a, b, c)) return false; */
+        ASM_BINARY_OP(ex_pstore64_helper);
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2117,6 +2675,66 @@ jit_visit_bytecode(
                         if (!jit_visit_safepoint_op(ctx))
                                 return false;
 #endif
+                        break;
+                case OP_PBASE:
+                        if (!jit_visit_pbase_op(ctx))
+                                return false;
+                        break;
+                case OP_PLEN:
+                        if (!jit_visit_plen_op(ctx))
+                                return false;
+                        break;
+                case OP_PCHECK:
+                        if (!jit_visit_pcheck_op(ctx))
+                                return false;
+                        break;
+                case OP_TYPEIS:
+                        if (!jit_visit_typeis_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8U:
+                        if (!jit_visit_pload8u_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE8:
+                        if (!jit_visit_pstore8_op(ctx))
+                                return false;
+                        break;
+                case OP_CHECKTYPE:
+                        if (!jit_visit_checktype_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD8S:
+                        if (!jit_visit_pload8s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16U:
+                        if (!jit_visit_pload16u_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD16S:
+                        if (!jit_visit_pload16s_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD32:
+                        if (!jit_visit_pload32_op(ctx))
+                                return false;
+                        break;
+                case OP_PLOAD64:
+                        if (!jit_visit_pload64_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE16:
+                        if (!jit_visit_pstore16_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE32:
+                        if (!jit_visit_pstore32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTORE64:
+                        if (!jit_visit_pstore64_op(ctx))
+                                return false;
                         break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);

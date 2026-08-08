@@ -55,6 +55,26 @@ enum hir_expr_type {
 	HIR_EXPR_ARRAY,
 	HIR_EXPR_DICT,
 	HIR_EXPR_NEW,
+
+	/*
+	 * ABCE (docs/design/01-abce.md).  These are created only by the
+	 * HIR optimizer (hir_optimize_func); the parser never produces
+	 * them, so the elback/scmback source backends never see them.
+	 */
+	HIR_EXPR_PBASE,		/* unary:  packed local -> payload address (long) */
+	HIR_EXPR_PLEN,		/* unary:  packed local -> element count (int)    */
+	HIR_EXPR_PCHECK,	/* binary: value, elemtype const -> 0/1           */
+	HIR_EXPR_TYPEIS,	/* binary: value, type const     -> 0/1           */
+	HIR_EXPR_PLOAD8U,	/* binary: base(long), offset    -> int (0..255)  */
+	HIR_EXPR_PSTORE8,	/* as LHS only: base(long), offset; RHS = value   */
+	HIR_EXPR_PLOAD8S,	/* binary: sign-extended int8 load                */
+	HIR_EXPR_PLOAD16U,	/* binary: zero-extended uint16 load              */
+	HIR_EXPR_PLOAD16S,	/* binary: sign-extended int16 load               */
+	HIR_EXPR_PLOAD32,	/* binary: int32 load (uint32 wraps)              */
+	HIR_EXPR_PLOAD64,	/* binary: int64/uint64 load -> long              */
+	HIR_EXPR_PSTORE16,	/* as LHS only                                    */
+	HIR_EXPR_PSTORE32,	/* as LHS only                                    */
+	HIR_EXPR_PSTORE64,	/* as LHS only                                    */
 };
 
 /* HIR Term Type */
@@ -118,6 +138,9 @@ struct hir_block {
 			/* Parameter names. */
 			uint32_t param_count;
 			char *param_name[HIR_PARAM_SIZE];
+
+			/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
+			int param_type[HIR_PARAM_SIZE];
 
 			/* File name. */
 			char *file_name;
@@ -384,5 +407,14 @@ hir_get_error_message(void);
 void
 hir_dump_block(
 	struct hir_block *block);
+
+/*
+ * Run the HIR optimizer on one function (ABCE loop versioning).
+ * A no-op below optimize level 2.  See docs/design/01-abce.md.
+ */
+bool
+hir_optimize_func(
+	struct hir_block *func_block,
+	int level);
 
 #endif

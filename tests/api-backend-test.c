@@ -123,7 +123,7 @@ int main(void)
 		"  if (s.rows != 25 || s.cols != 80) { return 2; }\n"
 		"  if (Term.moveTo(2, 3) != 1 || Term.write(\"hello\") != 1) { return 3; }\n"
 		"  if (Term.setStyle({reverse: 1}) != 1) { return 4; }\n"
-		"  if (Term.showCursor(1) != 1 || Term.readKey(10) != Term.KEY_LEFT) { return 5; }\n"
+		"  if (Term.showCursor(1) != 1 || Term.syncBegin() != 1 || Term.syncEnd() != 1 || Term.readKey(10) != Term.KEY_LEFT) { return 5; }\n"
 		"  var d = FileUtil.listDirectory(\"/\");\n"
 		"  if (Array.size(d) != 2 || d[0] != \"A/\" || d[1] != \"b.txt\") { return 6; }\n"
 		"  Term.close();\n"
