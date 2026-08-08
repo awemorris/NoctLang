@@ -172,5 +172,10 @@ func isearchEcho(ed, s, dir, success, wrapped) {
         msg = "Wrapped " + msg;
     }
     ed.echoMessage = msg;
+    // Cursor in the "minibuffer" (end of the search string); the
+    // buffer point keeps a reverse-video block so the match position
+    // stays visible.
+    ed.echoCursor = stringWidth(msg);
+    ed.echoHl = 1;
     return 0;
 }

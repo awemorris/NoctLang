@@ -17,6 +17,7 @@ func readFromMinibufferInit(ed, prompt, completer, initial) {
     var note = "";
     while (true) {
         ed.echoMessage = prompt + input + note;
+        ed.echoCursor = stringWidth(prompt + input);
         redisplay(ed);
         var k = Term.readKey(30000);
         if (k < 0) {
@@ -24,10 +25,12 @@ func readFromMinibufferInit(ed, prompt, completer, initial) {
         }
         note = "";
         if (k == 0x0D) {
+            ed.echoCursor = -1;
             return input;
         }
         if (k == (Term.CTRL | 0x67)) {
             ed.echoMessage = "Quit";
+            ed.echoCursor = -1;
             return 0;
         }
         if (k == 0x7F) {

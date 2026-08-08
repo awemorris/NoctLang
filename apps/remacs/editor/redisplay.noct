@@ -66,6 +66,34 @@ func padToWidth(s, width) {
     return s;
 }
 
+// Wrap the cell at display column col (0-based) in reverse video.
+// In-band like the mode line, so the row still diffs as one string.
+func overlayReverseCell(row, col) {
+    var esc = String.chr(27);
+    var n = String.charCount(row);
+    var w = 0;
+    var i = 0;
+    while (i < n && w < col) {
+        w = w + charWidth(String.charCodeAt(row, i));
+        i = i + 1;
+    }
+    if (i >= n) {
+        // Point past the drawn text (end of line): pad and mark a space.
+        while (w < col) {
+            row = row + " ";
+            w = w + 1;
+        }
+        return row + esc + "[7m " + esc + "[0m";
+    }
+    var head = String.substring(row, 0, i);
+    var cell = String.charAt(row, i);
+    var tail = "";
+    if (i + 1 < n) {
+        tail = String.substring(row, i + 1, -1);
+    }
+    return head + esc + "[7m" + cell + esc + "[0m" + tail;
+}
+
 // The previous frame's rows, for damage tracking. Only rows that
 // changed since the last frame are rewritten, and the whole frame is
 // bracketed with synchronized-output marks, which removes flicker.
@@ -109,6 +137,22 @@ func redisplay(_) {
 
     // Echo area.
     Frame[rows - 1] = padToWidth(_.echoMessage, cols);
+
+    // Minibuffer-style input: the terminal cursor sits on the echo
+    // line at the input position; the buffer point keeps a reverse-
+    // video pseudo cursor during isearch so the current match stays
+    // visible.
+    if (_.echoCursor >= 0) {
+        if (_.echoHl == 1 && cursorRow >= 1 && cursorRow < rows) {
+            Frame[cursorRow - 1] =
+                overlayReverseCell(Frame[cursorRow - 1], cursorCol - 1);
+        }
+        cursorRow = rows;
+        cursorCol = _.echoCursor + 1;
+        if (cursorCol > cols) {
+            cursorCol = cols;
+        }
+    }
 
     // A resize (or the first frame) invalidates the cache.
     var full = 0;

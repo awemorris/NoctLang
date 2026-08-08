@@ -34,6 +34,8 @@ func main(arg) {
         windowStartLine: 0,
         prefixArg: 0,      // numeric prefix argument for the next command
         hasPrefix: 0,      // 1 when prefixArg is meaningful
+        echoCursor: -1,    // >=0: display column of the cursor on the echo line
+        echoHl: 0,         // 1: reverse-video pseudo cursor at buffer point
         lastCommand: "",
         lastWasKill: 0,
         thisKill: 0,
@@ -109,6 +111,11 @@ func main(arg) {
             key = nk;
         }
 
+        // Echo-line cursor placement only lives inside the input loops
+        // (minibuffer, isearch) that set it; back in the main loop the
+        // cursor belongs to the buffer again.
+        ed.echoCursor = -1;
+        ed.echoHl = 0;
         redisplay(ed);
     }
 
