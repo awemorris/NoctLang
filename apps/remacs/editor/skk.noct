@@ -20,6 +20,12 @@ func skkInit() {
     SkkPersonal = 0;     // personal dictionary text
     SkkPersonalPath = System.getEnv("HOME") + "/.skk-jisyo";
     SkkDictPath = System.getEnv("HOME") + "/SKK-JISYO.L";
+    // Bundled, clean-room, UTF-8 fallback dictionary shipped with remacs.
+    // Used when the user has not installed the full SKK-JISYO.L (EUC-JP).
+    SkkBundledPath = System.getEnv("REMACS_SKK_DICT");
+    if (Type.of(SkkBundledPath) != "string" || SkkBundledPath == "") {
+        SkkBundledPath = "dict/SKK-JISYO.remacs";
+    }
     // Composition state (one segment at a time).
     Skk = {
         pending: "",     // romaji not yet composed
@@ -285,7 +291,15 @@ func skkEmit(kana) {
 
 func skkLoadDicts() {
     if (Type.of(SkkDict) != "string") {
-        SkkDict = FileUtil.readTextEucJp(SkkDictPath);
+        // Prefer the user-downloaded SKK-JISYO.L (EUC-JP); otherwise fall
+        // back to the bundled clean-room dictionary (UTF-8).
+        if (FileUtil.checkFileExists(SkkDictPath) == 1) {
+            SkkDict = FileUtil.readTextEucJp(SkkDictPath);
+        } else if (FileUtil.checkFileExists(SkkBundledPath) == 1) {
+            SkkDict = FileUtil.readText(SkkBundledPath);
+        } else {
+            SkkDict = "";
+        }
     }
     if (Type.of(SkkPersonal) != "string") {
         if (FileUtil.checkFileExists(SkkPersonalPath) == 1) {
