@@ -38,7 +38,7 @@
 #include <poll.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
-#if defined(__linux__)
+#if defined(NOCT_TARGET_LINUX)
 #include <pty.h>
 #else
 #include <util.h>
