@@ -1204,9 +1204,24 @@ elback_visit_term(
 			return false;
 		break;
 	case HIR_TERM_STRING:
-		if (!elback_put("\"%s\"", term->val.s))
-			return false;
+	{
+		/*
+		 * Emacs Lisp reads backslash escapes inside string
+		 * literals, so backslashes and quotes must be escaped
+		 * or patterns like \( would turn into a bare paren.
+		 */
+		const char *sp = term->val.s;
+		elback_put("\"");
+		while (*sp != '\0') {
+			if (*sp == '\\' || *sp == '\"')
+				elback_put("\\%c", *sp);
+			else
+				elback_put("%c", *sp);
+			sp++;
+		}
+		elback_put("\"");
 		break;
+	}
 	case HIR_TERM_EMPTY_ARRAY:
 		if (!elback_put("'()"))
 			return false;
