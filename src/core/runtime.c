@@ -891,10 +891,16 @@ rt_enter_frame(
 {
 	struct rt_frame *frame;
 
-	if (++env->cur_frame_index >= RT_FRAME_MAX) {
+	/*
+	 * Check before incrementing so the frame index stays valid when
+	 * the stack is full: the caller's error path still unwinds
+	 * against its own (unchanged) frame.
+	 */
+	if (env->cur_frame_index + 1 >= RT_FRAME_MAX) {
 		rt_error(env, N_TR("Stack overflow."));
 		return false;
 	}
+	env->cur_frame_index++;
 
 	frame = &env->frame_alloc[env->cur_frame_index];
 	env->frame = frame;
