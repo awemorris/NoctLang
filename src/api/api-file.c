@@ -20,8 +20,15 @@
 
 #if defined(NOCT_TARGET_WINDOWS)
 #include <io.h>
+#include <windows.h>
+#include <direct.h>
 #define access	_access
 #define F_OK	0
+#endif
+
+#if defined(NOCT_TARGET_DOS4G)
+/* OpenWatcom DOS: getcwd/chdir live in <direct.h>. */
+#include <direct.h>
 #endif
 
 static bool cfunc_File_open(NoctEnv *env);
@@ -643,8 +650,8 @@ cfunc_FileUtil_getCurrentDirectory(NoctEnv *env)
 
 	if (!noct_pin_local(env, 1, &ret))
 		return false;
-#if defined(_WIN32)
-	if (GetCurrentDirectoryA(sizeof(buf), buf) == 0)
+#if defined(NOCT_TARGET_WINDOWS)
+	if (GetCurrentDirectoryA((DWORD)sizeof(buf), buf) == 0)
 		buf[0] = '\0';
 #else
 	if (getcwd(buf, sizeof(buf)) == NULL)
@@ -670,7 +677,7 @@ cfunc_FileUtil_setCurrentDirectory(NoctEnv *env)
 		return false;
 	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
 		goto cleanup;
-#if defined(_WIN32)
+#if defined(NOCT_TARGET_WINDOWS)
 	r = SetCurrentDirectoryA(path_s) ? 0 : -1;
 #else
 	r = chdir(path_s);
@@ -696,7 +703,7 @@ cfunc_FileUtil_getHomeDirectory(NoctEnv *env)
 	if (!noct_pin_local(env, 1, &ret))
 		return false;
 	home = getenv("HOME");
-#if defined(_WIN32)
+#if defined(NOCT_TARGET_WINDOWS)
 	if (home == NULL || home[0] == '\0')
 		home = getenv("USERPROFILE");
 #endif

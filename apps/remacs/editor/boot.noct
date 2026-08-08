@@ -83,14 +83,33 @@ func main(arg) {
             continue;
         }
 
-        dispatchKey(ed, key);
-        // The prefix argument only reaches the command it precedes.
-        ed.hasPrefix = 0;
-        ed.prefixArg = 0;
+        // Process this key, then coalesce any burst that follows —
+        // a paste arrives as many characters, often split into chunks
+        // with millisecond gaps. Draining the whole burst before one
+        // redisplay keeps a paste O(1) in redraws instead of O(chunks),
+        // which otherwise makes a large paste crawl.
+        while (true) {
+            dispatchKey(ed, key);
+            // The prefix argument only reaches the command it precedes.
+            ed.hasPrefix = 0;
+            ed.prefixArg = 0;
 
-        if (Term.pendingInput() == 0) {
-            redisplay(ed);
+            // Drain everything already queued (the rest of this chunk),
+            // then wait briefly to bridge the gap to the next chunk of
+            // a paste. A paste keeps arriving within this window; a
+            // human keystroke does not, so typing still redraws
+            // promptly (within the grace).
+            var nk = Term.readKey(0);
+            if (nk < 0) {
+                nk = Term.readKey(20);
+                if (nk < 0) {
+                    break;
+                }
+            }
+            key = nk;
         }
+
+        redisplay(ed);
     }
 
     // Clear the screen on the way out, like Emacs.

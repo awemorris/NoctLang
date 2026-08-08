@@ -466,6 +466,7 @@ func initKeymapModule() {
     globalSetKey("C-d", "delete-char");
     globalSetKey("DEL", "delete-backward-char");
     globalSetKey("RET", "newline");
+    globalSetKey("C-j", "newline");
     globalSetKey("TAB", "indent-for-tab-command");
     globalSetKey("RIGHT", "forward-char");
     globalSetKey("LEFT", "backward-char");

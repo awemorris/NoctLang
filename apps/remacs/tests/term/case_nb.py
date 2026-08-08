@@ -1,7 +1,7 @@
 # The whole editor as one 8.3 bytecode file on an unmodified noct:
 #     noct REMACS.NB file
 import subprocess, pathlib
-root = pathlib.Path('/home/awe/NoctLang/samples/remacs')
+root = pathlib.Path('/home/awe/NoctLang/apps/remacs')
 subprocess.run(['sh', 'tools/build-nb.sh', 'build-debug/noctlang/noct',
                 'build-debug/generated', 'build-nb'],
                cwd=root, check=True, capture_output=True)

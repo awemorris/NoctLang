@@ -28,13 +28,11 @@
  * budget and a recursion depth cap.
  */
 
+#include "regex.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
-
-#include "regex.h"
 
 /* Compiled program limits. */
 #define RX_MAX_INSTS	8192
