@@ -43,7 +43,11 @@
 #include <sys/ioctl.h>
 #endif
 
-#if !defined(NOCT_TARGET_POSIX)
+#if defined(NOCT_TARGET_WINDOWS)
+
+/* The Win32 console backend lives in api-term-win32.c. */
+
+#elif !defined(NOCT_TARGET_POSIX)
 
 /*
  * Stub for platforms without a Term backend yet.
