@@ -1518,6 +1518,15 @@ rt_gc_copy_young_object_recursively(
 			/* Set the forwarding pointer. */
 			(*obj)->forward = new_obj;
 
+			/*
+			 * Mark the new copy as processed too: a second
+			 * visit in this cycle (e.g. the remember-set scan
+			 * after the root scan already rewrote a slot)
+			 * must not evacuate it again, or two live copies
+			 * of the object would diverge.
+			 */
+			new_obj->is_marked = true;
+
 			/* Increment the promotion count. */
 			new_obj->promotion_count = (*obj)->promotion_count + 1;
 		} else {

@@ -1199,6 +1199,8 @@ rt_check_dict_key_cstr(
 {
 	struct rt_value key_val;
 
+	key_val.type = NOCT_VALUE_INT;
+	key_val.val.i = 0;
 	if (env->frame != NULL)
 		rt_pin_local(env, &key_val);
 	else
@@ -1395,6 +1397,8 @@ rt_remove_dict_elem_cstr(
 {
 	struct rt_value key_val;
 
+	key_val.type = NOCT_VALUE_INT;
+	key_val.val.i = 0;
 	if (env->frame != NULL)
 		rt_pin_local(env, &key_val);
 	else

@@ -3247,6 +3247,8 @@ om_write_dict_with_hash(
 {
 	struct rt_value s;
 
+	s.type = NOCT_VALUE_INT;
+	s.val.i = 0;
 	rt_pin_local(env, &s);
 
 	if (!rt_make_string_with_hash(env, &s, key, len, hash)) {
