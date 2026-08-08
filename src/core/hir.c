@@ -51,7 +51,7 @@
  * Constructed HIR.
  */
 
-#define HIR_FUNC_MAX	128
+#define HIR_FUNC_MAX	1024
 
 char *hir_file_name;
 uint32_t hir_func_count;
