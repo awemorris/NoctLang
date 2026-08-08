@@ -94,6 +94,12 @@ int command_run(int argc, char *argv[])
 		return false;
 	}
 #endif
+#if defined(NOCT_USE_PROCESS)
+	if (!noct_register_api_process(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+#endif
 
 	/* Register native functions. */
 	if (!register_cli_cfunc(env)) {
@@ -160,6 +166,11 @@ parse_options(
 		}
 		if (strncmp(argv[i], "--jit-threshold=", 16) == 0) {
 			config.jit_threshold = atoi(argv[i] + 16);
+			file_arg++;
+			continue;
+		}
+		if (strncmp(argv[i], "--jit-code-size=", 16) == 0) {
+			config.jit_code_size = (size_t)atoi(argv[i] + 16);
 			file_arg++;
 			continue;
 		}

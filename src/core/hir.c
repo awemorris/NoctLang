@@ -29,7 +29,7 @@
 
 /* Arena allocator size. */
 #if !defined(NOCT_MEMORY_SMALL)
-#define ARENA_SIZE		(4 * 1024 * 1024)
+#define ARENA_SIZE		(64 * 1024 * 1024)
 #else
 #define ARENA_SIZE		(512 * 1024)
 #endif
@@ -51,7 +51,7 @@
  * Constructed HIR.
  */
 
-#define HIR_FUNC_MAX	128
+#define HIR_FUNC_MAX	1024
 
 char *hir_file_name;
 uint32_t hir_func_count;

@@ -44,11 +44,28 @@ static bool cfunc_File_write(NoctEnv *env);
 static void file_finalizer(void *native_pointer);
 static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
 static bool cfunc_FileUtil_listDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_readTextEucJp(NoctEnv *env);
+static bool cfunc_FileUtil_getCurrentDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_setCurrentDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_getHomeDirectory(NoctEnv *env);
 static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
 static bool cfunc_FileUtil_readText(NoctEnv *env);
 static bool cfunc_FileUtil_writeText(NoctEnv *env);
 static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
 static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
+
+static struct {
+	const struct NoctDirectoryBackend *operations;
+	void *context;
+} directory_backend;
+
+NOCT_DLL void
+noct_set_directory_backend(const struct NoctDirectoryBackend *backend,
+			   void *context)
+{
+	directory_backend.operations = backend;
+	directory_backend.context = context;
+}
 
 struct ffi_item {
 	const char *global_name;
@@ -69,6 +86,10 @@ static struct ffi_item ffi_items[] = {
 
 	{"FileUtil.checkFileExists",	"FileUtil", "checkFileExists",	1, {"path"},		cfunc_FileUtil_checkFileExists},
 	{"FileUtil.listDirectory",	"FileUtil", "listDirectory",	1, {"path"},		cfunc_FileUtil_listDirectory},
+	{"FileUtil.readTextEucJp",	"FileUtil", "readTextEucJp",	1, {"path"},		cfunc_FileUtil_readTextEucJp},
+	{"FileUtil.getCurrentDirectory", "FileUtil", "getCurrentDirectory", 0, {NULL},	cfunc_FileUtil_getCurrentDirectory},
+	{"FileUtil.setCurrentDirectory", "FileUtil", "setCurrentDirectory", 1, {"path"},	cfunc_FileUtil_setCurrentDirectory},
+	{"FileUtil.getHomeDirectory",	"FileUtil", "getHomeDirectory",	0, {NULL},	cfunc_FileUtil_getHomeDirectory},
 	{"FileUtil.getFileSize",	"FileUtil", "getFileSize",	1, {"path"},		cfunc_FileUtil_getFileSize},
 	{"FileUtil.readText",		"FileUtil", "readText",		1, {"path"},		cfunc_FileUtil_readText},
 	{"FileUtil.writeText",		"FileUtil", "writeText",	2, {"path", "text"},	cfunc_FileUtil_writeText},
@@ -342,13 +363,19 @@ cfunc_FileUtil_checkFileExists(NoctEnv *env)
 {
 	NoctValue path, ret;
 	const char *path_s;
+	FILE *fp;
+	int exists;
 	bool ok = false;
 
 	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !noct_set_return_make_int(env, &ret,
-				      access(path_s, F_OK) == 0 ? 1 : 0))
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+	fp = fopen(path_s, "rb");
+	exists = fp != NULL;
+	if (fp != NULL)
+		(void)fclose(fp);
+	if (!noct_set_return_make_int(env, &ret, exists))
 		goto cleanup;
 	ok = true;
 cleanup:
@@ -368,112 +395,108 @@ cfunc_FileUtil_listDirectory(NoctEnv *env)
 {
 	NoctValue path, ret, elem;
 	const char *path_s;
-	bool ok = false;
-#if defined(NOCT_TARGET_WINDOWS)
-	/* Not supported on this platform yet. */
-	if (!noct_pin_local(env, 3, &path, &ret, &elem))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
-	if (!noct_make_empty_array(env, &ret))
-		goto cleanup;
-	if (!noct_set_return(env, &ret))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
-	return ok;
-#elif defined(NOCT_TARGET_DOS4G)
 	char **names = NULL;
 	size_t nnames = 0, alloc = 0, i, j;
+	bool ok = false;
+#if defined(NOCT_TARGET_POSIX)
+	DIR *dir = NULL;
+#elif defined(NOCT_TARGET_DOS4G)
 	struct find_t find;
 	char pattern[256 + 1];
-	unsigned rc;
+#endif
 
 	if (!noct_pin_local(env, 3, &path, &ret, &elem))
 		return false;
 	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup_dos;
+		goto cleanup;
 	if (!noct_make_empty_array(env, &ret))
-		goto cleanup_dos;
-
-	snprintf(pattern, sizeof(pattern), "%s\\*.*", path_s);
-	rc = _dos_findfirst(pattern, _A_NORMAL | _A_RDONLY | _A_HIDDEN |
-				     _A_SYSTEM | _A_SUBDIR | _A_ARCH,
-			    &find);
-	if (rc == 0) {
-		do {
-			size_t len;
+		goto cleanup;
+	if (directory_backend.operations != NULL &&
+	    directory_backend.operations->read != NULL) {
+		for (i = 0; i < 65536; i++) {
+			char buffer[256];
 			char *name;
+			size_t length;
+			int is_directory = 0;
+			int result = directory_backend.operations->read(
+				directory_backend.context, path_s, i, buffer,
+				sizeof(buffer), &is_directory);
 
-			if (strcmp(find.name, ".") == 0 ||
-			    strcmp(find.name, "..") == 0)
+			if (result <= 0)
+				break;
+			buffer[sizeof(buffer) - 1] = '\0';
+			length = strlen(buffer);
+			if (length == 0 || !strcmp(buffer, ".") ||
+			    !strcmp(buffer, ".."))
 				continue;
-
-			len = strlen(find.name);
-			name = malloc(len + 2);
+			name = noct_malloc(length + (is_directory ? 2 : 1));
 			if (name == NULL)
-				continue;
-			strcpy(name, find.name);
-			if ((find.attrib & _A_SUBDIR) != 0)
-				strcat(name, "/");
+				goto cleanup;
+			memcpy(name, buffer, length);
+			if (is_directory)
+				name[length++] = '/';
+			name[length] = '\0';
+			if (nnames == alloc) {
+				char **new_names;
+				size_t new_alloc = alloc == 0 ? 16 : alloc * 2;
 
-			if (nnames >= alloc) {
-				char **nn;
-				size_t new_alloc;
-				new_alloc = alloc == 0 ? 64 : alloc * 2;
-				nn = realloc(names, sizeof(char *) * new_alloc);
-				if (nn == NULL) {
-					free(name);
-					continue;
+				new_names = noct_realloc(names,
+						 sizeof(*names) * new_alloc);
+				if (new_names == NULL) {
+					noct_free(name);
+					goto cleanup;
 				}
-				names = nn;
+				names = new_names;
 				alloc = new_alloc;
 			}
 			names[nnames++] = name;
-		} while (_dos_findnext(&find) == 0);
-	}
-
-	for (i = 0; i + 1 < nnames; i++) {
-		for (j = i + 1; j < nnames; j++) {
-			if (strcmp(names[j], names[i]) < 0) {
-				char *t = names[i];
-				names[i] = names[j];
-				names[j] = t;
-			}
 		}
-	}
+	} else {
+#if defined(NOCT_TARGET_DOS4G)
+		unsigned rc;
 
-	for (i = 0; i < nnames; i++) {
-		if (!noct_make_string(env, &elem, names[i]))
-			goto cleanup_dos;
-		if (!noct_set_array_elem(env, &ret, i, &elem))
-			goto cleanup_dos;
-	}
-	if (!noct_set_return(env, &ret))
-		goto cleanup_dos;
-	ok = true;
-cleanup_dos:
-	for (i = 0; i < nnames; i++)
-		free(names[i]);
-	free(names);
-	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
-	return ok;
-#else
-	DIR *dir = NULL;
-	struct dirent *ent;
-	char **names = NULL;
-	size_t nnames = 0, alloc = 0, i, j;
+		snprintf(pattern, sizeof(pattern), "%s\\*.*", path_s);
+		rc = _dos_findfirst(pattern, _A_NORMAL | _A_RDONLY | _A_HIDDEN |
+				     _A_SYSTEM | _A_SUBDIR | _A_ARCH,
+			    &find);
+		if (rc == 0) {
+			do {
+				size_t len;
+				char *name;
 
-	if (!noct_pin_local(env, 3, &path, &ret, &elem))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
-	if (!noct_make_empty_array(env, &ret))
-		goto cleanup;
+				if (strcmp(find.name, ".") == 0 ||
+				    strcmp(find.name, "..") == 0)
+					continue;
 
-	dir = opendir(path_s);
-	if (dir != NULL) {
+				len = strlen(find.name);
+				name = noct_malloc(len + 2);
+				if (name == NULL)
+					continue;
+				strcpy(name, find.name);
+				if ((find.attrib & _A_SUBDIR) != 0)
+					strcat(name, "/");
+
+				if (nnames >= alloc) {
+					char **nn;
+					size_t new_alloc;
+
+					new_alloc = alloc == 0 ? 64 : alloc * 2;
+					nn = noct_realloc(names, sizeof(char *) * new_alloc);
+					if (nn == NULL) {
+						noct_free(name);
+						continue;
+					}
+					names = nn;
+					alloc = new_alloc;
+				}
+				names[nnames++] = name;
+			} while (_dos_findnext(&find) == 0);
+		}
+#elif defined(NOCT_TARGET_POSIX)
+		struct dirent *ent;
+
+		dir = opendir(path_s);
+		if (dir != NULL) {
 		while ((ent = readdir(dir)) != NULL) {
 			char full[2048];
 			struct stat st;
@@ -486,7 +509,7 @@ cleanup_dos:
 
 			snprintf(full, sizeof(full), "%s/%s", path_s, ent->d_name);
 			len = strlen(ent->d_name);
-			name = malloc(len + 2);
+			name = noct_malloc(len + 2);
 			if (name == NULL)
 				continue;
 			strcpy(name, ent->d_name);
@@ -496,10 +519,11 @@ cleanup_dos:
 			if (nnames >= alloc) {
 				char **nn;
 				size_t new_alloc;
+
 				new_alloc = alloc == 0 ? 64 : alloc * 2;
-				nn = realloc(names, sizeof(char *) * new_alloc);
+				nn = noct_realloc(names, sizeof(char *) * new_alloc);
 				if (nn == NULL) {
-					free(name);
+					noct_free(name);
 					continue;
 				}
 				names = nn;
@@ -509,6 +533,8 @@ cleanup_dos:
 		}
 		closedir(dir);
 		dir = NULL;
+		}
+#endif
 	}
 
 	/* Sort for deterministic completion. */
@@ -532,14 +558,210 @@ cleanup_dos:
 		goto cleanup;
 	ok = true;
 cleanup:
+#if defined(NOCT_TARGET_POSIX)
 	if (dir != NULL)
 		closedir(dir);
+#endif
 	for (i = 0; i < nnames; i++)
-		free(names[i]);
-	free(names);
+		noct_free(names[i]);
+	noct_free(names);
 	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
 	return ok;
+}
+
+/* JIS X 0208 to Unicode, generated in jisx0208.c. */
+extern const uint16_t noct_jisx0208_to_ucs[7896];
+
+/* Encode a codepoint as UTF-8; returns the byte count. */
+static int
+fileutil_utf8_encode(uint32_t cp, char *out)
+{
+	if (cp < 0x80) {
+		out[0] = (char)cp;
+		return 1;
+	}
+	if (cp < 0x800) {
+		out[0] = (char)(0xC0 | (cp >> 6));
+		out[1] = (char)(0x80 | (cp & 0x3F));
+		return 2;
+	}
+	out[0] = (char)(0xE0 | (cp >> 12));
+	out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+	out[2] = (char)(0x80 | (cp & 0x3F));
+	return 3;
+}
+
+/*
+ * FileUtil.readTextEucJp(path)
+ *
+ * Reads an EUC-JP encoded file and returns its content as a (UTF-8)
+ * string. Undecodable bytes become U+FFFD. Returns an empty string
+ * for a missing file.
+ */
+static bool
+cfunc_FileUtil_readTextEucJp(NoctEnv *env)
+{
+	NoctValue path, ret;
+	const char *path_s;
+	FILE *fp = NULL;
+	unsigned char *raw = NULL;
+	char *out = NULL;
+	long size;
+	size_t i, o;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+
+	fp = fopen(path_s, "rb");
+	if (fp == NULL) {
+		ok = noct_set_return_make_string(env, &ret, "");
+		goto cleanup;
+	}
+	fseek(fp, 0, SEEK_END);
+	size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	raw = malloc((size_t)size + 1);
+	if (raw == NULL)
+		goto cleanup;
+	if (fread(raw, 1, (size_t)size, fp) != (size_t)size)
+		goto cleanup;
+	fclose(fp);
+	fp = NULL;
+
+	/* Worst case each EUC byte pair becomes 3 UTF-8 bytes. */
+	out = malloc((size_t)size * 3 + 4);
+	if (out == NULL)
+		goto cleanup;
+
+	o = 0;
+	i = 0;
+	while (i < (size_t)size) {
+		unsigned char c = raw[i];
+		uint32_t cp;
+
+		if (c < 0x80) {
+			out[o++] = (char)c;
+			i++;
+			continue;
+		}
+		if (c == 0x8E && i + 1 < (size_t)size) {
+			/* Half-width katakana: 0x8E 0xA1-0xDF. */
+			unsigned char c2 = raw[i + 1];
+			if (c2 >= 0xA1 && c2 <= 0xDF) {
+				cp = 0xFF61 + (uint32_t)(c2 - 0xA1);
+				o += (size_t)fileutil_utf8_encode(cp, out + o);
+				i += 2;
+				continue;
+			}
+			i++;
+			continue;
+		}
+		if (c >= 0xA1 && c <= 0xF4 && i + 1 < (size_t)size) {
+			unsigned char c2 = raw[i + 1];
+			if (c2 >= 0xA1 && c2 <= 0xFE) {
+				size_t idx = (size_t)(c - 0xA1) * 94 + (size_t)(c2 - 0xA1);
+				cp = noct_jisx0208_to_ucs[idx];
+				if (cp == 0)
+					cp = 0xFFFD;
+				o += (size_t)fileutil_utf8_encode(cp, out + o);
+				i += 2;
+				continue;
+			}
+		}
+		/* Undecodable byte. */
+		o += (size_t)fileutil_utf8_encode(0xFFFD, out + o);
+		i++;
+	}
+	out[o] = '\0';
+
+	ok = noct_set_return_make_string(env, &ret, out);
+
+cleanup:
+	if (fp != NULL)
+		fclose(fp);
+	free(raw);
+	free(out);
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
+}
+
+/*
+ * FileUtil.getCurrentDirectory()
+ */
+static bool
+cfunc_FileUtil_getCurrentDirectory(NoctEnv *env)
+{
+	NoctValue ret;
+	char buf[2048];
+	bool ok = false;
+
+	if (!noct_pin_local(env, 1, &ret))
+		return false;
+#if defined(_WIN32)
+	if (GetCurrentDirectoryA(sizeof(buf), buf) == 0)
+		buf[0] = '\0';
+#else
+	if (getcwd(buf, sizeof(buf)) == NULL)
+		buf[0] = '\0';
 #endif
+	ok = noct_set_return_make_string(env, &ret, buf);
+	(void)noct_unpin_local(env, 1, &ret);
+	return ok;
+}
+
+/*
+ * FileUtil.setCurrentDirectory(path)
+ */
+static bool
+cfunc_FileUtil_setCurrentDirectory(NoctEnv *env)
+{
+	NoctValue path, ret;
+	const char *path_s;
+	int r;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+#if defined(_WIN32)
+	r = SetCurrentDirectoryA(path_s) ? 0 : -1;
+#else
+	r = chdir(path_s);
+#endif
+	ok = noct_set_return_make_int(env, &ret, r == 0 ? 1 : 0);
+cleanup:
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
+}
+
+/*
+ * FileUtil.getHomeDirectory()
+ *
+ * HOME on POSIX; USERPROFILE on Windows.
+ */
+static bool
+cfunc_FileUtil_getHomeDirectory(NoctEnv *env)
+{
+	NoctValue ret;
+	const char *home;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 1, &ret))
+		return false;
+	home = getenv("HOME");
+#if defined(_WIN32)
+	if (home == NULL || home[0] == '\0')
+		home = getenv("USERPROFILE");
+#endif
+	if (home == NULL)
+		home = "";
+	ok = noct_set_return_make_string(env, &ret, home);
+	(void)noct_unpin_local(env, 1, &ret);
+	return ok;
 }
 
 static bool

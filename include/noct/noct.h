@@ -121,6 +121,9 @@ struct rt_config {
 	/* Optimization level. */
 	int optimize_level;
 
+	/* Maximum bytes reserved for generated JIT code. */
+	size_t jit_code_size;
+
 	/* GC nursery region size. */
 	size_t gc_nursery_size;
 
@@ -136,7 +139,7 @@ struct rt_config {
 	/* GC tenure-promotion threshold. */
 	size_t gc_promotion_threshold;
 
-	uint64_t reserved[56];
+	uint64_t reserved[55];
 };
 typedef struct rt_config NoctConfig;
 
@@ -1988,6 +1991,21 @@ bool
 noct_register_api_file(
 	NoctEnv *env);
 
+/*
+ * Optional directory enumerator for freestanding FileUtil backends.
+ * read() returns 1 for an entry, 0 at end-of-directory, and -1 on error.
+ */
+struct NoctDirectoryBackend {
+	int (*read)(void *context, const char *path, size_t index,
+		    char *name, size_t name_capacity, int *is_directory);
+};
+
+NOCT_DLL
+void
+noct_set_directory_backend(
+	const struct NoctDirectoryBackend *backend,
+	void *context);
+
 /* Register the "Thread.*" APIs. (Multithread build only) */
 #if defined(NOCT_USE_MULTITHREAD)
 NOCT_DLL
@@ -2012,6 +2030,66 @@ NOCT_DLL
 bool
 noct_register_api_term(
 	NoctEnv *env);
+
+/*
+ * Target-neutral backend for Term.*.
+ *
+ * Freestanding targets can implement the terminal without emulating a POSIX
+ * tty.  Rows and columns are one-based at the Noct API boundary.  read_key()
+ * returns a Unicode codepoint, a NOCT_TERM_KEY_* value with optional modifier
+ * bits, or -1 when the timeout expires.
+ */
+struct NoctTermStyle {
+	int foreground;		/* -1 means the terminal default. */
+	int background;		/* -1 means the terminal default. */
+	bool bold;
+	bool reverse;
+	bool underline;
+};
+
+struct NoctTermBackend {
+	int (*open)(void *context);
+	void (*close)(void *context);
+	int (*is_tty)(void *context);
+	int (*size)(void *context, unsigned *rows, unsigned *columns);
+	int (*resized)(void *context);
+	int (*move_to)(void *context, unsigned row, unsigned column);
+	int (*write)(void *context, const char *utf8, size_t length);
+	int (*clear)(void *context);
+	int (*clear_to_eol)(void *context);
+	int (*set_style)(void *context, const struct NoctTermStyle *style);
+	int (*show_cursor)(void *context, int visible);
+	int (*flush)(void *context);
+	int (*read_key)(void *context, int timeout_ms);
+	int (*pending_input)(void *context);
+};
+
+#define NOCT_TERM_MOD_META	(1 << 27)
+#define NOCT_TERM_MOD_CTRL	(1 << 26)
+#define NOCT_TERM_MOD_SHIFT	(1 << 25)
+#define NOCT_TERM_KEY_BASE	0xe000
+#define NOCT_TERM_KEY_UP	(NOCT_TERM_KEY_BASE + 0)
+#define NOCT_TERM_KEY_DOWN	(NOCT_TERM_KEY_BASE + 1)
+#define NOCT_TERM_KEY_RIGHT	(NOCT_TERM_KEY_BASE + 2)
+#define NOCT_TERM_KEY_LEFT	(NOCT_TERM_KEY_BASE + 3)
+#define NOCT_TERM_KEY_HOME	(NOCT_TERM_KEY_BASE + 4)
+#define NOCT_TERM_KEY_END	(NOCT_TERM_KEY_BASE + 5)
+#define NOCT_TERM_KEY_PGUP	(NOCT_TERM_KEY_BASE + 6)
+#define NOCT_TERM_KEY_PGDN	(NOCT_TERM_KEY_BASE + 7)
+#define NOCT_TERM_KEY_INSERT	(NOCT_TERM_KEY_BASE + 8)
+#define NOCT_TERM_KEY_DELETE	(NOCT_TERM_KEY_BASE + 9)
+#define NOCT_TERM_KEY_F1	(NOCT_TERM_KEY_BASE + 11)
+
+NOCT_DLL
+bool
+noct_register_api_term_backend(
+	NoctEnv *env,
+	const struct NoctTermBackend *backend,
+	void *context);
+
+NOCT_DLL
+bool
+noct_register_api_process(NoctEnv *env);
 
 /*
  * Custom Allocators

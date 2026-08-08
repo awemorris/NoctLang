@@ -75,6 +75,7 @@ static bool rt_intrin_Math_cos(NoctEnv *env);
 static bool rt_intrin_Math_tan(NoctEnv *env);
 static bool rt_intrin_Math_random(NoctEnv *env);
 static bool rt_intrin_Global_hasVariable(NoctEnv *env);
+static bool rt_intrin_Global_get(NoctEnv *env);
 static bool rt_intrin_Type_of(NoctEnv *env);
 static bool rt_intrin_GC_youngGC(NoctEnv *env);
 static bool rt_intrin_GC_oldGC(NoctEnv *env);
@@ -140,6 +141,8 @@ struct intrin_item {
 	{"Math",	"tan",		"Math.tan",		rt_intrin_Math_tan,		1, {"x"}},
 	{"Math",	"random",	"Math.random",		rt_intrin_Math_random,		0, {NULL}},
 	{"Global",	"isSet",	"Global.isSet",		rt_intrin_Global_hasVariable,	1, {"name"}},
+	{"Global",	"hasVariable",	"Global.hasVariable",	rt_intrin_Global_hasVariable,	1, {"name"}},
+	{"Global",	"get",	"Global.get",		rt_intrin_Global_get,		1, {"name"}},
 	{"Type",	"of",		"Type.of",		rt_intrin_Type_of,		1, {"val"}},
 	{"GC",		"youngGC",	"GC.youngGC",		rt_intrin_GC_youngGC,		0, {NULL}},
 	{"GC",		"oldGC",	"GC.oldGC",		rt_intrin_GC_oldGC,		0, {NULL}},
@@ -1345,19 +1348,21 @@ get_string_length(
 /* Get a top character of a utf-8 string as a utf-32. */
 static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 {
-	size_t mbslen, octets, i;
+	size_t octets, i;
 	uint32_t ret;
 
 	assert(mbs != NULL);
 
-	/* If mbs is empty. */
-	mbslen = strlen(mbs);
-	if(mbslen == 0)
-		return 0;
+	/*
+	 * Never call strlen() here: this runs once per character in
+	 * every string scan, and taking the length of the remaining
+	 * string each time turns those scans quadratic. The
+	 * continuation-byte checks below catch truncated sequences.
+	 */
 
 	/* Check the first byte, get an octet count. */
 	if (mbs[0] == '\0')
-		octets = 0;
+		return 0;
 	else if ((mbs[0] & 0x80) == 0)
 		octets = 1;
 	else if ((mbs[0] & 0xe0) == 0xc0)
@@ -1367,11 +1372,7 @@ static int utf8_to_utf32(const char *mbs, uint32_t *wc)
 	else if ((mbs[0] & 0xf8) == 0xf0)
 		octets = 4;
 	else
-		return -1;	/* Not suppoerted. */
-
-	/* Check the mbs length. */
-	if (mbslen < octets)
-		return -1;	/* mbs is too short. */
+		return -1;	/* Not supported. */
 
 	/* Check for 2-4 bytes. */
 	for (i = 1; i < octets; i++) {
@@ -2887,6 +2888,44 @@ rt_intrin_Type_of(
 
 	noct_unpin_local(env, 2, &val, &ret);
 
+	return true;
+}
+
+/*
+ * Global.get(name)
+ *
+ * Returns the value of a global variable (including a function) by
+ * name, or 0 when it is unset. Used by the Lisp compiler to grab a
+ * freshly registered function.
+ */
+static bool
+rt_intrin_Global_get(
+	NoctEnv *env)
+{
+	NoctValue name, ret;
+	const char *name_s;
+	bool has_var;
+
+	memset(&name, 0, sizeof(name));
+	memset(&ret, 0, sizeof(ret));
+	noct_pin_local(env, 2, &name, &ret);
+
+	if (!noct_get_arg_check_string(env, 0, &name, &name_s))
+		return false;
+	if (!noct_check_global(env, name_s, &has_var))
+		return false;
+	if (!has_var) {
+		if (!noct_set_return_make_int(env, &ret, 0))
+			return false;
+		noct_unpin_local(env, 2, &name, &ret);
+		return true;
+	}
+	if (!noct_get_global(env, name_s, &ret))
+		return false;
+	if (!noct_set_return(env, &ret))
+		return false;
+
+	noct_unpin_local(env, 2, &name, &ret);
 	return true;
 }
 

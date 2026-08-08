@@ -125,6 +125,8 @@ static bool cfunc_Term_size(NoctEnv *env);
 static bool cfunc_Term_resized(NoctEnv *env);
 static bool cfunc_Term_moveTo(NoctEnv *env);
 static bool cfunc_Term_write(NoctEnv *env);
+static bool cfunc_Term_syncBegin(NoctEnv *env);
+static bool cfunc_Term_syncEnd(NoctEnv *env);
 static bool cfunc_Term_clear(NoctEnv *env);
 static bool cfunc_Term_clearToEol(NoctEnv *env);
 static bool cfunc_Term_setStyle(NoctEnv *env);
@@ -148,6 +150,8 @@ static struct term_ffi_item term_ffi_items[] = {
 	{"Term.resized",	"resized",	0, {NULL},		cfunc_Term_resized},
 	{"Term.moveTo",		"moveTo",	2, {"row", "col"},	cfunc_Term_moveTo},
 	{"Term.write",		"write",	1, {"text"},		cfunc_Term_write},
+	{"Term.syncBegin",	"syncBegin",	0, {NULL},		cfunc_Term_syncBegin},
+	{"Term.syncEnd",	"syncEnd",	0, {NULL},		cfunc_Term_syncEnd},
 	{"Term.clear",		"clear",	0, {NULL},		cfunc_Term_clear},
 	{"Term.clearToEol",	"clearToEol",	0, {NULL},		cfunc_Term_clearToEol},
 	{"Term.setStyle",	"setStyle",	1, {"style"},		cfunc_Term_setStyle},
@@ -460,6 +464,29 @@ cfunc_Term_moveTo(
 		return false;
 	snprintf(seq, sizeof(seq), "\x1B[%d;%dH", (int)row, (int)col);
 	if (!out_put_cstr(env, seq))
+		return false;
+	return return_int(env, 1);
+}
+
+/*
+ * Term.syncBegin() / Term.syncEnd()
+ *
+ * Bracket a frame with DEC private mode 2026 (synchronized output):
+ * capable terminals hold rendering until the frame completes, which
+ * removes flicker; others ignore the sequence.
+ */
+static bool
+cfunc_Term_syncBegin(NoctEnv *env)
+{
+	if (!out_put_cstr(env, "\033[?2026h"))
+		return false;
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_Term_syncEnd(NoctEnv *env)
+{
+	if (!out_put_cstr(env, "\033[?2026l"))
 		return false;
 	return return_int(env, 1);
 }
@@ -782,9 +809,12 @@ decode_event(
 	/* Plain control characters. */
 	if (c0 != 0x1B && c0 < 0x20) {
 		in_consume(1);
-		/* TAB and RET keep their traditional identities. */
-		if (c0 == '\t' || c0 == '\r' || c0 == '\n')
-			return c0 == '\n' ? '\r' : c0;
+		/* TAB and RET keep their traditional identities;
+		   LF is C-j, as in Emacs. */
+		if (c0 == '\t' || c0 == '\r')
+			return c0;
+		if (c0 == '\n')
+			return MOD_CTRL | 0x6A;
 		/* NUL is C-SPC (typed as Ctrl+Space or Ctrl+@). */
 		if (c0 == 0x00)
 			return MOD_CTRL | 0x20;

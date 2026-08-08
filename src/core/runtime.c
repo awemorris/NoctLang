@@ -891,10 +891,16 @@ rt_enter_frame(
 {
 	struct rt_frame *frame;
 
-	if (++env->cur_frame_index >= RT_FRAME_MAX) {
+	/*
+	 * Check before incrementing so the frame index stays valid when
+	 * the stack is full: the caller's error path still unwinds
+	 * against its own (unchanged) frame.
+	 */
+	if (env->cur_frame_index + 1 >= RT_FRAME_MAX) {
 		rt_error(env, N_TR("Stack overflow."));
 		return false;
 	}
+	env->cur_frame_index++;
 
 	frame = &env->frame_alloc[env->cur_frame_index];
 	env->frame = frame;
@@ -1199,6 +1205,8 @@ rt_check_dict_key_cstr(
 {
 	struct rt_value key_val;
 
+	key_val.type = NOCT_VALUE_INT;
+	key_val.val.i = 0;
 	if (env->frame != NULL)
 		rt_pin_local(env, &key_val);
 	else
@@ -1395,6 +1403,8 @@ rt_remove_dict_elem_cstr(
 {
 	struct rt_value key_val;
 
+	key_val.type = NOCT_VALUE_INT;
+	key_val.val.i = 0;
 	if (env->frame != NULL)
 		rt_pin_local(env, &key_val);
 	else
