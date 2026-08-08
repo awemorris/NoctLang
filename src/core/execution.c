@@ -1780,6 +1780,18 @@ noct_ex_eq_helper(
 			break;
 		}
 		break;
+	case NOCT_VALUE_ARRAY:
+	case NOCT_VALUE_DICT:
+	case NOCT_VALUE_PACKED:
+	case NOCT_VALUE_FUNC:
+		/* Reference types compare by identity. */
+		dst_val->type = NOCT_VALUE_INT;
+		if (src2_val->type == src1_val->type &&
+		    src1_val->val.obj == src2_val->val.obj)
+			dst_val->val.i = 1;
+		else
+			dst_val->val.i = 0;
+		break;
 	default:
 		dst_val->type = NOCT_VALUE_INT;
 		dst_val->val.i = 0;
@@ -1891,6 +1903,18 @@ noct_ex_neq_helper(
 			dst_val->val.i = 1;
 			break;
 		}
+		break;
+	case NOCT_VALUE_ARRAY:
+	case NOCT_VALUE_DICT:
+	case NOCT_VALUE_PACKED:
+	case NOCT_VALUE_FUNC:
+		/* Reference types compare by identity. */
+		dst_val->type = NOCT_VALUE_INT;
+		if (src2_val->type == src1_val->type &&
+		    src1_val->val.obj == src2_val->val.obj)
+			dst_val->val.i = 0;
+		else
+			dst_val->val.i = 1;
 		break;
 	default:
 		dst_val->type = NOCT_VALUE_INT;
