@@ -155,7 +155,7 @@ jobs:
 
       - name: Set up dependencies
         run: |
-          dnf -y install gcc make cmake
+          dnf -y install gcc make cmake python3
 
       - name: Build static
         run: |
