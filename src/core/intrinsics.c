@@ -1690,9 +1690,16 @@ rt_intrin_Dict_remove(
 	if (!noct_get_arg_check_string(env, 1, &key, &key_s))
 		return false;
 
-	/* Remove the key. */
-	if (!noct_remove_dict_elem(env, &dict, &key))
-		return false;
+	/* Removing an absent key is a no-op, not an error. */
+	{
+		bool has;
+		if (!noct_check_dict_key_cstr(env, &dict, key_s, &has))
+			return false;
+		if (has) {
+			if (!noct_remove_dict_elem(env, &dict, &key))
+				return false;
+		}
+	}
 
 	noct_unpin_local(env, 2, &dict, &key);
 
