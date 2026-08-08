@@ -495,7 +495,14 @@ func lispKeyEvent(e) {
             if (m == "control") { mods = mods | Term.CTRL; }
             else if (m == "meta") { mods = mods | Term.META; }
             else if (m == "shift") { mods = mods | Term.SHIFT; }
-            else if (Type.of(m) == "int") { base = m; }
+            else if (Type.of(m) == "int") {
+                // Bare small ints in key position ((meta 2)) almost
+                // always mean the digit key, not C0 codepoint 2; those
+                // are written as (control b) / named symbols instead.
+                // ?2-style char literals arrive here as 0x32 already.
+                if (m >= 0 && m <= 9) { base = 0x30 + m; }
+                else { base = m; }
+            }
             else { base = lispSpecialKey(m); }
         }
         if ((mods & Term.CTRL) && base >= 0x41 && base <= 0x5A) {
@@ -525,4 +532,25 @@ func lispSpecialKey(name) {
     if (name == "escape") { return 0x1B; }
     if (name == "SPC" || name == "space") { return 0x20; }
     return kbdBaseKey(name);
+}
+
+// Editor-coupled special variables: a setq of one of these names feeds
+// the value into the corresponding editor mechanism, so DDSKK-style
+// configuration pastes into ~/.remacs.el unchanged.
+func lispSpecialVarHook(name, val) {
+    if (name == "skk-rom-kana-rule-list") {
+        // '(("1" nil "#1") ...): DDSKK (input next-state output)
+        // triples. next-state and non-string outputs are ignored;
+        // string rules merge into the SKK romaji table.
+        if (Type.of(val) != "array") { return 0; }
+        var rules = {};
+        for (t in val) {
+            if (Type.of(t) == "array" && Array.size(t) >= 3 &&
+                Type.of(t[0]) == "string" && Type.of(t[2]) == "string") {
+                rules[t[0]] = t[2];
+            }
+        }
+        skkSetRomKanaRule(rules);
+    }
+    return 0;
 }

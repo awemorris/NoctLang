@@ -192,6 +192,15 @@ func lispReadString(st) {
             if (e == "n") { out = out + "\n"; continue; }
             if (e == "t") { out = out + "\t"; continue; }
             if (e == "r") { out = out + "\r"; continue; }
+            if (e == "e") { out = out + String.chr(0x1B); continue; }
+            if (e == "d") { out = out + String.chr(0x7F); continue; }
+            // Key-sequence modifier escapes (\C- \M- \S-): keep the
+            // backslash so lispParseKeyString can see the prefix.
+            if ((e == "C" || e == "M" || e == "S") &&
+                st.i < st.n && String.charAt(st.s, st.i) == "-") {
+                out = out + "\\" + e;
+                continue;
+            }
             out = out + e;
             continue;
         }
@@ -489,6 +498,7 @@ func lispEvalSetq(node, env) {
         }
         ret = lispEval(node[i + 1], env);
         lispSetVar(env, nameNode.sym, ret);
+        lispSpecialVarHook(nameNode.sym, ret);
         i = i + 2;
     }
     return ret;

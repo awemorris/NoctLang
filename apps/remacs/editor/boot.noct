@@ -123,10 +123,22 @@ func main(arg) {
 // the command it names, or self-insert. This is also the reentry point
 // for universal-argument, which dispatches its terminating key here.
 func dispatchKey(ed, key) {
-    // M-digit starts a numeric argument directly.
+    // M-digit starts a numeric argument directly — unless the user
+    // rebound it (in Emacs digit-argument is itself just a binding,
+    // so an explicit global-set-key must win).
     if (key >= (Term.META | 0x30) && key <= (Term.META | 0x39)) {
-        readPrefixArg(ed, (key & 0xFF) - 0x30, 0);
-        return 0;
+        var dstr = "" + key;
+        var dbound = 0;
+        if (Type.of(Buf.localMap) == "dict" && Dict.hasKey(Buf.localMap, dstr)) {
+            dbound = 1;
+        }
+        if (Dict.hasKey(GlobalMap, dstr)) {
+            dbound = 1;
+        }
+        if (dbound == 0) {
+            readPrefixArg(ed, (key & 0xFF) - 0x30, 0);
+            return 0;
+        }
     }
     // The SKK input method sees keys first while it is on.
     if (skkHandleKey(ed, key) == 1) {
