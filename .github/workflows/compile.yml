@@ -197,6 +197,9 @@ jobs:
 
       - name: Build tar.gz
         run: |
+          cd build-static
+          make install
+          cd ..
           cd apps/remacs/
           make
           mv build-nb/REMACS.NB ../../REmacs.nap
