@@ -21,6 +21,7 @@
 #if defined(NOCT_TARGET_WINDOWS)
 #include <io.h>
 #define access	_access
+#define F_OK	0
 #endif
 
 static bool cfunc_File_open(NoctEnv *env);
