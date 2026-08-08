@@ -782,9 +782,12 @@ decode_event(
 	/* Plain control characters. */
 	if (c0 != 0x1B && c0 < 0x20) {
 		in_consume(1);
-		/* TAB and RET keep their traditional identities. */
-		if (c0 == '\t' || c0 == '\r' || c0 == '\n')
-			return c0 == '\n' ? '\r' : c0;
+		/* TAB and RET keep their traditional identities;
+		   LF is C-j, as in Emacs. */
+		if (c0 == '\t' || c0 == '\r')
+			return c0;
+		if (c0 == '\n')
+			return MOD_CTRL | 0x6A;
 		/* NUL is C-SPC (typed as Ctrl+Space or Ctrl+@). */
 		if (c0 == 0x00)
 			return MOD_CTRL | 0x20;
