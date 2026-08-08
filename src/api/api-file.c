@@ -11,9 +11,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(NOCT_TARGET_POSIX)
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#endif
+
+#if defined(NOCT_TARGET_WINDOWS)
+#include <io.h>
+#define access	_access
+#endif
 
 static bool cfunc_File_open(NoctEnv *env);
 static bool cfunc_File_close(NoctEnv *env);
@@ -40,27 +48,20 @@ struct ffi_item {
 };
 
 static struct ffi_item ffi_items[] = {
-	{"File.open", "File", "open", 2, {"path", "mode"}, cfunc_File_open},
-	{"File.close", "File", "close", 1, {"file"}, cfunc_File_close},
-	{"File.tell", "File", "tell", 1, {"file"}, cfunc_File_tell},
-	{"File.seek", "File", "seek", 2, {"file", "offset"}, cfunc_File_seek},
-	{"File.read", "File", "read", 2, {"file", "len"}, cfunc_File_read},
-	{"File.write", "File", "write", 4,
-	 {"file", "data", "offset", "size"}, cfunc_File_write},
-	{"FileUtil.checkFileExists", "FileUtil", "checkFileExists", 1,
-	 {"path"}, cfunc_FileUtil_checkFileExists},
-	{"FileUtil.listDirectory", "FileUtil", "listDirectory", 1,
-	 {"path"}, cfunc_FileUtil_listDirectory},
-	{"FileUtil.getFileSize", "FileUtil", "getFileSize", 1,
-	 {"path"}, cfunc_FileUtil_getFileSize},
-	{"FileUtil.readText", "FileUtil", "readText", 1,
-	 {"path"}, cfunc_FileUtil_readText},
-	{"FileUtil.writeText", "FileUtil", "writeText", 2,
-	 {"path", "text"}, cfunc_FileUtil_writeText},
-	{"FileUtil.readForEachLine", "FileUtil", "readForEachLine", 2,
-	 {"path", "func"}, cfunc_FileUtil_readForEachLine},
-	{"FileUtil.writeForEachLine", "FileUtil", "writeForEachLine", 2,
-	 {"path", "lines"}, cfunc_FileUtil_writeForEachLine},
+	{"File.open",	"File",	"open",		2, {"path", "mode"},	cfunc_File_open},
+	{"File.close",	"File",	"close",	1, {"file"},		cfunc_File_close},
+	{"File.tell",	"File", "tell",		1, {"file"},		cfunc_File_tell},
+	{"File.seek",	"File", "seek",		2, {"file", "offset"},	cfunc_File_seek},
+	{"File.read",	"File", "read",		2, {"file", "len"},	cfunc_File_read},
+	{"File.write",	"File", "write",	4, {"file", "data", "offset", "size"},	cfunc_File_write},
+
+	{"FileUtil.checkFileExists",	"FileUtil", "checkFileExists",	1, {"path"},		cfunc_FileUtil_checkFileExists},
+	{"FileUtil.listDirectory",	"FileUtil", "listDirectory",	1, {"path"},		cfunc_FileUtil_listDirectory},
+	{"FileUtil.getFileSize",	"FileUtil", "getFileSize",	1, {"path"},		cfunc_FileUtil_getFileSize},
+	{"FileUtil.readText",		"FileUtil", "readText",		1, {"path"},		cfunc_FileUtil_readText},
+	{"FileUtil.writeText",		"FileUtil", "writeText",	2, {"path", "text"},	cfunc_FileUtil_writeText},
+	{"FileUtil.readForEachLine",	"FileUtil", "readForEachLine",	2, {"path", "func"},	cfunc_FileUtil_readForEachLine},
+	{"FileUtil.writeForEachLine",	"FileUtil", "writeForEachLine",	2, {"path", "lines"},	cfunc_FileUtil_writeForEachLine},
 };
 
 NOCT_DLL bool
