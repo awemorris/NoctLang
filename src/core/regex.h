@@ -13,8 +13,9 @@
 #define NOCT_REGEX_H
 
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
+
+#include <noct/c89compat.h>
 
 struct rx_prog;
 

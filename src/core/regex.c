@@ -32,7 +32,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdbool.h>
+
+#include <noct/c89compat.h>
 
 #include "regex.h"
 

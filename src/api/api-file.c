@@ -16,12 +16,23 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#elif defined(NOCT_TARGET_DOS4G)
+#include <dos.h>
+#include <io.h>
+#include <sys/stat.h>
 #endif
 
 #if defined(NOCT_TARGET_WINDOWS)
 #include <io.h>
 #define access	_access
 #define F_OK	0
+#elif defined(NOCT_TARGET_DOS4G)
+#ifndef F_OK
+#define F_OK	0
+#endif
+#ifndef _A_SUBDIR
+#define _A_SUBDIR 0x10
+#endif
 #endif
 
 static bool cfunc_File_open(NoctEnv *env);
@@ -358,7 +369,7 @@ cfunc_FileUtil_listDirectory(NoctEnv *env)
 	NoctValue path, ret, elem;
 	const char *path_s;
 	bool ok = false;
-#if defined(_WIN32)
+#if defined(NOCT_TARGET_WINDOWS)
 	/* Not supported on this platform yet. */
 	if (!noct_pin_local(env, 3, &path, &ret, &elem))
 		return false;
@@ -370,6 +381,80 @@ cfunc_FileUtil_listDirectory(NoctEnv *env)
 		goto cleanup;
 	ok = true;
 cleanup:
+	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+	return ok;
+#elif defined(NOCT_TARGET_DOS4G)
+	char **names = NULL;
+	size_t nnames = 0, alloc = 0, i, j;
+	struct find_t find;
+	char pattern[256 + 1];
+	unsigned rc;
+
+	if (!noct_pin_local(env, 3, &path, &ret, &elem))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup_dos;
+	if (!noct_make_empty_array(env, &ret))
+		goto cleanup_dos;
+
+	snprintf(pattern, sizeof(pattern), "%s\\*.*", path_s);
+	rc = _dos_findfirst(pattern, _A_NORMAL | _A_RDONLY | _A_HIDDEN |
+				     _A_SYSTEM | _A_SUBDIR | _A_ARCH,
+			    &find);
+	if (rc == 0) {
+		do {
+			size_t len;
+			char *name;
+
+			if (strcmp(find.name, ".") == 0 ||
+			    strcmp(find.name, "..") == 0)
+				continue;
+
+			len = strlen(find.name);
+			name = malloc(len + 2);
+			if (name == NULL)
+				continue;
+			strcpy(name, find.name);
+			if ((find.attrib & _A_SUBDIR) != 0)
+				strcat(name, "/");
+
+			if (nnames >= alloc) {
+				char **nn;
+				alloc = alloc == 0 ? 64 : alloc * 2;
+				nn = realloc(names, sizeof(char *) * alloc);
+				if (nn == NULL) {
+					free(name);
+					continue;
+				}
+				names = nn;
+			}
+			names[nnames++] = name;
+		} while (_dos_findnext(&find) == 0);
+	}
+
+	for (i = 0; i + 1 < nnames; i++) {
+		for (j = i + 1; j < nnames; j++) {
+			if (strcmp(names[j], names[i]) < 0) {
+				char *t = names[i];
+				names[i] = names[j];
+				names[j] = t;
+			}
+		}
+	}
+
+	for (i = 0; i < nnames; i++) {
+		if (!noct_make_string(env, &elem, names[i]))
+			goto cleanup_dos;
+		if (!noct_set_array_elem(env, &ret, i, &elem))
+			goto cleanup_dos;
+	}
+	if (!noct_set_return(env, &ret))
+		goto cleanup_dos;
+	ok = true;
+cleanup_dos:
+	for (i = 0; i < nnames; i++)
+		free(names[i]);
+	free(names);
 	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
 	return ok;
 #else
