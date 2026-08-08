@@ -18,6 +18,10 @@
 #include <sys/stat.h>
 #endif
 
+#if defined(NOCT_TARGET_PC98BE)
+#include <unistd.h>
+#endif
+
 #if defined(NOCT_TARGET_WINDOWS)
 #include <io.h>
 #include <windows.h>

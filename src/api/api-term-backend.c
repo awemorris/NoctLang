@@ -29,6 +29,8 @@ static bool cfunc_Term_clearToEol(NoctEnv *env);
 static bool cfunc_Term_setStyle(NoctEnv *env);
 static bool cfunc_Term_showCursor(NoctEnv *env);
 static bool cfunc_Term_flush(NoctEnv *env);
+static bool cfunc_Term_syncBegin(NoctEnv *env);
+static bool cfunc_Term_syncEnd(NoctEnv *env);
 static bool cfunc_Term_readKey(NoctEnv *env);
 static bool cfunc_Term_pendingInput(NoctEnv *env);
 
@@ -53,6 +55,8 @@ static struct term_ffi_item term_ffi_items[] = {
 	{"Term.setStyle", "setStyle", 1, {"style"}, cfunc_Term_setStyle},
 	{"Term.showCursor", "showCursor", 1, {"visible"}, cfunc_Term_showCursor},
 	{"Term.flush", "flush", 0, {NULL}, cfunc_Term_flush},
+	{"Term.syncBegin", "syncBegin", 0, {NULL}, cfunc_Term_syncBegin},
+	{"Term.syncEnd", "syncEnd", 0, {NULL}, cfunc_Term_syncEnd},
 	{"Term.readKey", "readKey", 1, {"timeoutMs"}, cfunc_Term_readKey},
 	{"Term.pendingInput", "pendingInput", 0, {NULL}, cfunc_Term_pendingInput},
 };
@@ -332,6 +336,21 @@ cfunc_Term_flush(NoctEnv *env)
 	return return_int(env, active.operations != NULL &&
 		active.operations->flush != NULL ?
 		active.operations->flush(active.context) : 0);
+}
+
+/* Synchronized output is a rendering optimization for ANSI terminals.  A
+ * direct framebuffer/text-VRAM backend updates atomically enough by design,
+ * so preserving the API as a successful no-op is the correct fallback. */
+static bool
+cfunc_Term_syncBegin(NoctEnv *env)
+{
+	return return_int(env, active.operations != NULL ? 1 : 0);
+}
+
+static bool
+cfunc_Term_syncEnd(NoctEnv *env)
+{
+	return return_int(env, active.operations != NULL ? 1 : 0);
 }
 
 static bool
