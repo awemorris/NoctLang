@@ -358,8 +358,8 @@ cfunc_FileUtil_listDirectory(NoctEnv *env)
 	NoctValue path, ret, elem;
 	const char *path_s;
 	bool ok = false;
-#if defined(_WIN32)
-	/* Not supported on this platform yet. */
+#if !defined(NOCT_TARGET_POSIX)
+	/* Directory enumeration is not supported on non-POSIX targets yet. */
 	if (!noct_pin_local(env, 3, &path, &ret, &elem))
 		return false;
 	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
