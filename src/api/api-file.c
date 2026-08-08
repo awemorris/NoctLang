@@ -34,6 +34,9 @@ static void file_finalizer(void *native_pointer);
 static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
 static bool cfunc_FileUtil_listDirectory(NoctEnv *env);
 static bool cfunc_FileUtil_readTextEucJp(NoctEnv *env);
+static bool cfunc_FileUtil_getCurrentDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_setCurrentDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_getHomeDirectory(NoctEnv *env);
 static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
 static bool cfunc_FileUtil_readText(NoctEnv *env);
 static bool cfunc_FileUtil_writeText(NoctEnv *env);
@@ -73,6 +76,9 @@ static struct ffi_item ffi_items[] = {
 	{"FileUtil.checkFileExists",	"FileUtil", "checkFileExists",	1, {"path"},		cfunc_FileUtil_checkFileExists},
 	{"FileUtil.listDirectory",	"FileUtil", "listDirectory",	1, {"path"},		cfunc_FileUtil_listDirectory},
 	{"FileUtil.readTextEucJp",	"FileUtil", "readTextEucJp",	1, {"path"},		cfunc_FileUtil_readTextEucJp},
+	{"FileUtil.getCurrentDirectory", "FileUtil", "getCurrentDirectory", 0, {NULL},	cfunc_FileUtil_getCurrentDirectory},
+	{"FileUtil.setCurrentDirectory", "FileUtil", "setCurrentDirectory", 1, {"path"},	cfunc_FileUtil_setCurrentDirectory},
+	{"FileUtil.getHomeDirectory",	"FileUtil", "getHomeDirectory",	0, {NULL},	cfunc_FileUtil_getHomeDirectory},
 	{"FileUtil.getFileSize",	"FileUtil", "getFileSize",	1, {"path"},		cfunc_FileUtil_getFileSize},
 	{"FileUtil.readText",		"FileUtil", "readText",		1, {"path"},		cfunc_FileUtil_readText},
 	{"FileUtil.writeText",		"FileUtil", "writeText",	2, {"path", "text"},	cfunc_FileUtil_writeText},
@@ -622,6 +628,82 @@ cleanup:
 	free(raw);
 	free(out);
 	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
+}
+
+/*
+ * FileUtil.getCurrentDirectory()
+ */
+static bool
+cfunc_FileUtil_getCurrentDirectory(NoctEnv *env)
+{
+	NoctValue ret;
+	char buf[2048];
+	bool ok = false;
+
+	if (!noct_pin_local(env, 1, &ret))
+		return false;
+#if defined(_WIN32)
+	if (GetCurrentDirectoryA(sizeof(buf), buf) == 0)
+		buf[0] = '\0';
+#else
+	if (getcwd(buf, sizeof(buf)) == NULL)
+		buf[0] = '\0';
+#endif
+	ok = noct_set_return_make_string(env, &ret, buf);
+	(void)noct_unpin_local(env, 1, &ret);
+	return ok;
+}
+
+/*
+ * FileUtil.setCurrentDirectory(path)
+ */
+static bool
+cfunc_FileUtil_setCurrentDirectory(NoctEnv *env)
+{
+	NoctValue path, ret;
+	const char *path_s;
+	int r;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
+		goto cleanup;
+#if defined(_WIN32)
+	r = SetCurrentDirectoryA(path_s) ? 0 : -1;
+#else
+	r = chdir(path_s);
+#endif
+	ok = noct_set_return_make_int(env, &ret, r == 0 ? 1 : 0);
+cleanup:
+	(void)noct_unpin_local(env, 2, &path, &ret);
+	return ok;
+}
+
+/*
+ * FileUtil.getHomeDirectory()
+ *
+ * HOME on POSIX; USERPROFILE on Windows.
+ */
+static bool
+cfunc_FileUtil_getHomeDirectory(NoctEnv *env)
+{
+	NoctValue ret;
+	const char *home;
+	bool ok = false;
+
+	if (!noct_pin_local(env, 1, &ret))
+		return false;
+	home = getenv("HOME");
+#if defined(_WIN32)
+	if (home == NULL || home[0] == '\0')
+		home = getenv("USERPROFILE");
+#endif
+	if (home == NULL)
+		home = "";
+	ok = noct_set_return_make_string(env, &ret, home);
+	(void)noct_unpin_local(env, 1, &ret);
 	return ok;
 }
 
