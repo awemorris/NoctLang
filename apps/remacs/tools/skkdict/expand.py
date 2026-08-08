@@ -141,36 +141,52 @@ def cand_block(cands, reading):
         out.append(k + (";" + a if a else ""))
     return "/" + "/".join(out) + "/"
 
-HEADER = """;; -*- mode: fundamental; coding: utf-8 -*-
-;; SKK-JISYO.remacs - a compact everyday-Japanese dictionary for remacs.
-;;
-;; Copyright (C) 2026 remacs authors.
-;;
-;; This dictionary is an original work built from hand-authored word lists
-;; plus vocabulary collected from the maintainer's own writing.  No entry is
-;; copied from SKK-JISYO.L (GPL), which is never read by the build.  The
-;; okurigana headword construction is entirely our own.  Word readings are
-;; standard Japanese readings (facts); during the build they were enumerated
-;; and cross-checked with MeCab + IPADIC and Sudachi (SudachiDict), which are
-;; development tools only and ship no data of their own into this file.
-;;   MeCab/IPADIC: BSD-style license.   SudachiDict: Apache License 2.0.
-;; This dictionary is distributed under the same license as remacs.
-;;
-;; For a full-size dictionary, download SKK-JISYO.L separately and set
-;; SkkDictPath to it; this file is the bundled default.
-;;
-"""
+def make_header(out_path):
+    name = os.path.basename(out_path)
+    if name.endswith(".X"):
+        tagline = ("an extended dictionary covering the maintainer's full "
+                   "writing corpus")
+    else:
+        tagline = "a compact everyday-Japanese dictionary for remacs"
+    return (
+";; -*- mode: fundamental; coding: utf-8 -*-\n"
+";; %s - %s.\n"
+";;\n"
+";; Copyright (C) 2026 remacs authors.\n"
+";;\n"
+";; This dictionary is an original work built from hand-authored word lists\n"
+";; plus vocabulary collected from the maintainer's own writing.  No entry is\n"
+";; copied from SKK-JISYO.L (GPL), which is never read by the build.  The\n"
+";; okurigana headword construction is entirely our own.  Word readings are\n"
+";; standard Japanese readings (facts); during the build they were enumerated\n"
+";; and cross-checked with MeCab + IPADIC and Sudachi (SudachiDict), which are\n"
+";; development tools only and ship no data of their own into this file.\n"
+";;   MeCab/IPADIC: BSD-style license.   SudachiDict: Apache License 2.0.\n"
+";; This dictionary is distributed under the same license as remacs.\n"
+";;\n"
+";; SKK-JISYO.remacs is the compact bundled default; SKK-JISYO.X is the fuller\n"
+";; version.  For an even larger dictionary, download SKK-JISYO.L separately\n"
+";; and point SkkDictPath at it.\n"
+";;\n" % (name, tagline))
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    srcs = sorted(glob.glob(os.path.join(here, "src", "*.tsv")))
-    for s in srcs:
-        load(s)
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
         here, "..", "..", "dict", "SKK-JISYO.remacs")
+    # Optional source globs (argv[2:]) select which word lists to include;
+    # default is the compact set in src/.  SKK-JISYO.X adds srcx/.
+    if len(sys.argv) > 2:
+        patterns = sys.argv[2:]
+    else:
+        patterns = [os.path.join(here, "src", "*.tsv")]
+    srcs = []
+    for p in patterns:
+        srcs += sorted(glob.glob(p))
+    for s in srcs:
+        load(s)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as w:
-        w.write(HEADER)
+        w.write(make_header(out))
         w.write(";; okuri-ari entries.\n")
         for hw in sorted(ari.keys(), reverse=True):     # descending, SKK convention
             w.write(hw + " " + cand_block(ari[hw], hw) + "\n")

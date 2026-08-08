@@ -7,10 +7,15 @@
 ;; plus vocabulary collected from the maintainer's own writing.  No entry is
 ;; copied from SKK-JISYO.L (GPL), which is never read by the build.  The
 ;; okurigana headword construction is entirely our own.  Word readings are
-;; standard Japanese readings (facts).
+;; standard Japanese readings (facts); during the build they were enumerated
+;; and cross-checked with MeCab + IPADIC and Sudachi (SudachiDict), which are
+;; development tools only and ship no data of their own into this file.
+;;   MeCab/IPADIC: BSD-style license.   SudachiDict: Apache License 2.0.
+;; This dictionary is distributed under the same license as remacs.
 ;;
-;; For a full-size dictionary, download SKK-JISYO.L separately and set
-;; SkkDictPath to it; this file is the bundled default.
+;; SKK-JISYO.remacs is the compact bundled default; SKK-JISYO.X is the fuller
+;; version.  For an even larger dictionary, download SKK-JISYO.L separately
+;; and point SkkDictPath at it.
 ;;
 ;; okuri-ari entries.
 われr /割/

@@ -12,7 +12,9 @@ def is_kanji(c): return '一'<=c<='鿿' or c=='々'
 def mecab(text):
     return subprocess.run(['mecab'],input=text,capture_output=True,text=True).stdout
 
-corpus=open("/home/awe/text",encoding="utf-8",errors="replace").read()
+import os
+corpus_path=sys.argv[3] if len(sys.argv)>3 else "/home/awe/text"
+corpus=open(corpus_path,encoding="utf-8",errors="replace").read()
 noun=collections.Counter()          # (reading, kanji) -> freq
 verbadj={}                          # base_surface -> [pos, freq]
 for line in mecab(corpus).splitlines():
@@ -60,7 +62,9 @@ def base_reading(base):
 # emit
 NOUN_MIN=int(sys.argv[1]) if len(sys.argv)>1 else 2
 VB_MIN=int(sys.argv[2]) if len(sys.argv)>2 else 2
-with open("src/50-diary-nouns.tsv","w",encoding="utf-8") as w:
+OUT_N=sys.argv[4] if len(sys.argv)>4 else "src/50-diary-nouns.tsv"
+OUT_V=sys.argv[5] if len(sys.argv)>5 else "src/51-diary-verbs.tsv"
+with open(OUT_N,"w",encoding="utf-8") as w:
     w.write("# collected from ~/text (user diary) via MeCab enumeration.\n")
     by=collections.defaultdict(list)
     for (yomi,kanji),c in noun.items():
@@ -70,7 +74,7 @@ with open("src/50-diary-nouns.tsv","w",encoding="utf-8") as w:
         ks=[k for _,k in sorted(by[yomi],reverse=True)]
         w.write(yomi+"\t"+",".join(dict.fromkeys(ks))+"\n")
 badv=0
-with open("src/51-diary-verbs.tsv","w",encoding="utf-8") as w:
+with open(OUT_V,"w",encoding="utf-8") as w:
     w.write("# collected verbs/adjectives from ~/text via MeCab.  W <reading> <surface>.\n")
     for base,(pos,c) in sorted(verbadj.items()):
         if c<VB_MIN: continue
