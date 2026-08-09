@@ -12,6 +12,9 @@
 #include "cli-main.h"
 
 #include <noct/repl.h>
+#if defined(NOCT_USE_BEUI)
+#include <noct/beui.h>
+#endif
 
 #include <errno.h>
 #include <signal.h>
@@ -180,6 +183,12 @@ static bool register_repl_libraries(NoctEnv *env)
 #endif
 #if defined(NOCT_USE_TERM)
 	if (!noct_register_api_term(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+#endif
+#if defined(NOCT_USE_BEUI) && defined(NOCT_TARGET_PC98DOS)
+	if (!noct_register_api_beui_pc98dos(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}

@@ -792,6 +792,37 @@
             }
         },
         {
+            "name": "pc98",
+            "displayName": "MS-DOS on PC-98",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-pc98",
+            "toolchainFile": "${sourceDir}/cmake/toolchains/openwatcom-dos4gw.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NOCT_TARGET_DOS4G": "ON",
+                "NOCT_ENABLE_STATIC": "ON",
+                "NOCT_ENABLE_CLI": "ON",
+                "NOCT_ENABLE_JIT": "ON",
+                "NOCT_ENABLE_I18N": "OFF",
+                "NOCT_ENABLE_API": "ON",
+                "NOCT_ENABLE_API_THREAD": "OFF",
+                "NOCT_ENABLE_API_HTTPSERVER": "OFF",
+                "NOCT_ENABLE_API_TERM": "ON",
+                "NOCT_ENABLE_INSTALL": "OFF",
+                "NOCT_ENABLE_BCBACKEND": "OFF",
+                "NOCT_ENABLE_CBACKEND": "OFF",
+                "NOCT_ENABLE_ELBACKEND": "OFF",
+                "NOCT_ENABLE_SCMBACKEND": "OFF",
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_API_SYSTEM": "ON",
+                "NOCT_ENABLE_API_CONSOLE": "ON",
+                "NOCT_ENABLE_API_FILE": "ON",
+                "NOCT_ENABLE_API_PROCESS": "OFF",
+                "NOCT_TARGET_PC98DOS": "ON",
+                "NOCT_ENABLE_API_BEUI": "ON"
+            }
+        },
+        {
             "name": "pc98be-i386",
             "displayName": "PC-98 Bootstrap Environment i386 objects",
             "generator": "Ninja",

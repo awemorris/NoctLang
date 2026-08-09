@@ -10,6 +10,9 @@
  */
 
 #include <noct/noct.h>
+#if defined(NOCT_USE_BEUI)
+#include <noct/beui.h>
+#endif
 #include "cli-main.h"
 
 #if defined(NOCT_TARGET_WINDOWS)
@@ -90,6 +93,12 @@ int command_run(int argc, char *argv[])
 #endif
 #if defined(NOCT_USE_TERM)
 	if (!noct_register_api_term(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return false;
+	}
+#endif
+#if defined(NOCT_USE_BEUI) && defined(NOCT_TARGET_PC98DOS)
+	if (!noct_register_api_beui_pc98dos(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return false;
 	}
