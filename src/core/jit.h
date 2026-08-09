@@ -15,6 +15,8 @@
 #include <noct/c89compat.h>
 #include "bytecode.h"
 
+#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 /* Default JIT threshold. */
@@ -60,6 +62,7 @@
 #define ex_pload8u_helper noct_ex_pload8u_helper
 #define ex_pstore8_helper noct_ex_pstore8_helper
 #define ex_checktype_helper noct_ex_checktype_helper
+#define ex_condition_helper noct_ex_condition_helper
 #define ex_pload8s_helper noct_ex_pload8s_helper
 #define ex_pload16u_helper noct_ex_pload16u_helper
 #define ex_pload16s_helper noct_ex_pload16s_helper
@@ -68,6 +71,51 @@
 #define ex_pstore16_helper noct_ex_pstore16_helper
 #define ex_pstore32_helper noct_ex_pstore32_helper
 #define ex_pstore64_helper noct_ex_pstore64_helper
+#define ex_iadd_helper noct_ex_iadd_helper
+#define ex_isub_helper noct_ex_isub_helper
+#define ex_imul_helper noct_ex_imul_helper
+#define ex_idiv_helper noct_ex_idiv_helper
+#define ex_imod_helper noct_ex_imod_helper
+#define ex_iand_helper noct_ex_iand_helper
+#define ex_ior_helper noct_ex_ior_helper
+#define ex_ixor_helper noct_ex_ixor_helper
+#define ex_ishl_helper noct_ex_ishl_helper
+#define ex_ishr_helper noct_ex_ishr_helper
+#define ex_ilt_helper noct_ex_ilt_helper
+#define ex_ilte_helper noct_ex_ilte_helper
+#define ex_igt_helper noct_ex_igt_helper
+#define ex_igte_helper noct_ex_igte_helper
+#define ex_fadd_helper noct_ex_fadd_helper
+#define ex_fsub_helper noct_ex_fsub_helper
+#define ex_fmul_helper noct_ex_fmul_helper
+#define ex_fdiv_helper noct_ex_fdiv_helper
+#define ex_flt_helper noct_ex_flt_helper
+#define ex_flte_helper noct_ex_flte_helper
+#define ex_fgt_helper noct_ex_fgt_helper
+#define ex_fgte_helper noct_ex_fgte_helper
+#define ex_vloadi32x4_helper noct_ex_vloadi32x4_helper
+#define ex_vstorei32x4_helper noct_ex_vstorei32x4_helper
+#define ex_vsplati32_helper noct_ex_vsplati32_helper
+#define ex_vgetlanei32_helper noct_ex_vgetlanei32_helper
+#define ex_vmov128_helper noct_ex_vmov128_helper
+#define ex_vaddi32x4_helper noct_ex_vaddi32x4_helper
+#define ex_vsubi32x4_helper noct_ex_vsubi32x4_helper
+#define ex_vmuli32x4_helper noct_ex_vmuli32x4_helper
+#define ex_vand128_helper noct_ex_vand128_helper
+#define ex_vor128_helper noct_ex_vor128_helper
+#define ex_vxor128_helper noct_ex_vxor128_helper
+#define ex_vshli32x4_helper noct_ex_vshli32x4_helper
+#define ex_vshri32x4_helper noct_ex_vshri32x4_helper
+#define ex_vloadf32x4_helper noct_ex_vloadf32x4_helper
+#define ex_vstoref32x4_helper noct_ex_vstoref32x4_helper
+#define ex_vsplatf32_helper noct_ex_vsplatf32_helper
+#define ex_vgetlanef32_helper noct_ex_vgetlanef32_helper
+#define ex_vaddf32x4_helper noct_ex_vaddf32x4_helper
+#define ex_vsubf32x4_helper noct_ex_vsubf32x4_helper
+#define ex_vmulf32x4_helper noct_ex_vmulf32x4_helper
+#define ex_vdivf32x4_helper noct_ex_vdivf32x4_helper
+#define ex_ploadf32_helper noct_ex_ploadf32_helper
+#define ex_pstoref32_helper noct_ex_pstoref32_helper
 
 /* Generate a JIT-compiled code for a function. */
 bool
@@ -124,12 +172,42 @@ jit_get_code_size(
 /* Branch pathch size. */
 #define BRANCH_PATCH_MAX	2048
 
+/* Runtime SIMD capabilities, detected independently by each JIT backend. */
+#define JIT_SIMD_CAP_SSE2	(1u << 0)
+#define JIT_SIMD_CAP_SSE41	(1u << 1)
+#define JIT_SIMD_CAP_NEON	(1u << 2)
+#define JIT_SIMD_CAP_ALTIVEC	(1u << 3)
+
+/* Test/user ceiling.  It can remove detected features, never add them. */
+static INLINE uint32_t
+jit_apply_simd_max(uint32_t detected)
+{
+	const char *max = getenv("NOCT_JIT_SIMD_MAX");
+
+	if (max == NULL || max[0] == '\0')
+		return detected;
+	if (strcmp(max, "scalar") == 0)
+		return 0;
+	if (strcmp(max, "sse2") == 0)
+		return detected & JIT_SIMD_CAP_SSE2;
+	if (strcmp(max, "sse41") == 0)
+		return detected & (JIT_SIMD_CAP_SSE2 | JIT_SIMD_CAP_SSE41);
+	if (strcmp(max, "neon") == 0)
+		return detected & JIT_SIMD_CAP_NEON;
+	if (strcmp(max, "altivec") == 0)
+		return detected & JIT_SIMD_CAP_ALTIVEC;
+	return detected;
+}
+
 /*
  * JIT codegen context
  */
 struct jit_context {
 	struct rt_env *env;
 	struct rt_func *func;
+	uint32_t simd_caps;
+	bool has_vector_ops;
+	int vector_kind;	/* 0 unknown, 1 integer, 2 float region */
 
 	/* Top of the mapped code area. */
 	void *code_top;
@@ -169,6 +247,20 @@ struct jit_context {
 	} branch_patch[BRANCH_PATCH_MAX];
 	int branch_patch_count;
 };
+
+static INLINE void
+jit_configure_simd(struct jit_context *ctx, uint32_t detected,
+		   const char *backend)
+{
+	ctx->simd_caps = jit_apply_simd_max(detected);
+	ctx->has_vector_ops = ctx->func->has_vector_ops;
+	if (getenv("NOCT_JIT_SIMD_DEBUG") != NULL) {
+		fprintf(stderr,
+			"noct-jit-simd: %s: caps=0x%x vector=%d\n",
+			backend, (unsigned)ctx->simd_caps,
+			ctx->has_vector_ops ? 1 : 0);
+	}
+}
 
 /* Map a region. */
 bool jit_map_memory_region(void **region, size_t size);

@@ -53,6 +53,7 @@ static bool is_writable;
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
+static uint32_t jit_detect_simd_caps(void);
 
 /*
  * Generate a JIT-compiled code for a function.
@@ -83,6 +84,7 @@ jit_build(
         ctx.code = ctx.code_top;
         ctx.env = env;
         ctx.func = func;
+	jit_configure_simd(&ctx, jit_detect_simd_caps(), "x86_64");
 
         /* Make code writable and non-executable. */
         if (!is_writable)
@@ -2181,6 +2183,627 @@ jit_visit_pstore64_op(
         return true;
 }
 
+/* Visit a OP_PLOADF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_ploadf32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_ploadf32_helper);
+        return true;
+}
+
+/* Visit a OP_PSTOREF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_pstoref32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_pstoref32_helper);
+        return true;
+}
+
+
+/*
+ * Typed arithmetic ops (docs/design/07-typed-ops.md): inline machine
+ * code.  Every op trusts the operand tags (proven by the LIR layer);
+ * rax/rcx/rdx and xmm0 are per-op scratch, like the other emitters.
+ *
+ * The float comparisons are NaN-safe by construction: ucomiss sets
+ * CF=ZF=PF=1 on an unordered compare, so seta/setae (which read
+ * CF/ZF) yield 0 for NaN, matching the C semantics of the scalar
+ * helpers.  "a < b" is emitted as "b > a" (load b, compare against
+ * a, seta) so that the unordered case falls on the false side; never
+ * replace seta/setae with setl/setle here.
+ */
+
+/* Emit "movl ofs+8(%r15), %eax". */
+#define TYPED_LOAD_EAX(ofs)     IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)((ofs) + 8))
+/* Emit "movss ofs+8(%r15), %xmm0". */
+#define TYPED_LOAD_XMM0(ofs)    IB(0xf3); IB(0x41); IB(0x0f); IB(0x10); IB(0x87); ID((uint32_t)((ofs) + 8))
+/* Emit "movl $tag, dst(%r15); movl %eax, dst+8(%r15)". */
+#define TYPED_STORE_EAX(dst, tag)                                                               \
+        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)(dst)); ID((uint32_t)(tag));                 \
+        IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)((dst) + 8))
+/* Emit "setcc %al; movzbl %al, %eax" (cc = setcc second opcode byte). */
+#define TYPED_SETCC_EAX(cc)                                                                     \
+        IB(0x0f); IB(cc); IB(0xc0);                                                             \
+        IB(0x0f); IB(0xb6); IB(0xc0)
+
+/* Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic; inline.) */
+static INLINE bool
+jit_visit_typed_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        if (op == OP_ISHL || op == OP_ISHR) {
+                /* The shift count is an imm8, not a tmpvar. */
+                CONSUME_IMM8(src2);
+        } else {
+                CONSUME_TMPVAR(src2);
+        }
+
+        dst *= (int)sizeof(struct rt_value);
+        if (op != OP_ISHL && op != OP_ISHR)
+                src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        switch (op) {
+        case OP_IADD:
+        case OP_ISUB:
+        case OP_IMUL:
+        case OP_IAND:
+        case OP_IOR:
+        case OP_IXOR:
+                ASM {
+                        /* r15: &env->frame->tmpvar[0] */
+                        TYPED_LOAD_EAX(src1);
+                }
+                switch (op) {
+                /* op src2+8(%r15) -> %eax */
+                case OP_IADD: ASM { IB(0x41); IB(0x03); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                case OP_ISUB: ASM { IB(0x41); IB(0x2b); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                case OP_IAND: ASM { IB(0x41); IB(0x23); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                case OP_IOR:  ASM { IB(0x41); IB(0x0b); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                case OP_IXOR: ASM { IB(0x41); IB(0x33); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                default:      ASM { IB(0x41); IB(0x0f); IB(0xaf); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                }
+                ASM {
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                }
+                break;
+        case OP_ISHL:
+        case OP_ISHR:
+                /* src2 is the shift-count immediate (0..31). */
+                ASM {
+                        TYPED_LOAD_EAX(src1);
+                }
+                if ((src2 & 31) != 0) {
+                        if (op == OP_ISHL) {
+                                /* shll $imm, %eax */
+                                ASM { IB(0xc1); IB(0xe0); IB((uint8_t)(src2 & 31)); }
+                        } else {
+                                /* shrl $imm, %eax (LOGICAL) */
+                                ASM { IB(0xc1); IB(0xe8); IB((uint8_t)(src2 & 31)); }
+                        }
+                }
+                ASM {
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                }
+                break;
+        case OP_IDIV:
+        case OP_IMOD:
+                /* The LIR layer only emits these with a literal
+                   divisor outside {0, -1}: no trap is reachable from
+                   compiled code.  (Crafted bytecode is outside the
+                   JIT trust model, as with the PLOAD family.) */
+                ASM {
+                        TYPED_LOAD_EAX(src1);
+                        /* cltd */              IB(0x99);
+                        /* idivl src2+8(%r15) */ IB(0x41); IB(0xf7); IB(0xbf); ID((uint32_t)(src2 + 8));
+                }
+                if (op == OP_IMOD) {
+                        /* movl %edx, %eax */
+                        ASM { IB(0x89); IB(0xd0); }
+                }
+                ASM {
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                }
+                break;
+        case OP_ILT:
+        case OP_ILTE:
+        case OP_IGT:
+        case OP_IGTE:
+                ASM {
+                        TYPED_LOAD_EAX(src1);
+                        /* cmpl src2+8(%r15), %eax */
+                        IB(0x41); IB(0x3b); IB(0x87); ID((uint32_t)(src2 + 8));
+                }
+                switch (op) {
+                case OP_ILT:  ASM { TYPED_SETCC_EAX(0x9c); } break;     /* setl  */
+                case OP_ILTE: ASM { TYPED_SETCC_EAX(0x9e); } break;     /* setle */
+                case OP_IGT:  ASM { TYPED_SETCC_EAX(0x9f); } break;     /* setg  */
+                default:      ASM { TYPED_SETCC_EAX(0x9d); } break;     /* setge */
+                }
+                ASM {
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                }
+                break;
+        case OP_FADD:
+        case OP_FSUB:
+        case OP_FMUL:
+        case OP_FDIV:
+                ASM {
+                        TYPED_LOAD_XMM0(src1);
+                }
+                switch (op) {
+                /* opss src2+8(%r15) -> %xmm0 */
+                case OP_FADD: ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x58); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                case OP_FSUB: ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x5c); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                case OP_FMUL: ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x59); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                default:      ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x5e); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
+                }
+                ASM {
+                        /* movl $tag, dst(%r15) */
+                        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT);
+                        /* movss %xmm0, dst+8(%r15) */
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x87); ID((uint32_t)(dst + 8));
+                }
+                break;
+        case OP_FLT:
+        case OP_FLTE:
+                /* a < b  ==  b > a: load b, compare against a. */
+                ASM {
+                        TYPED_LOAD_XMM0(src2);
+                        /* ucomiss src1+8(%r15), %xmm0 */
+                        IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src1 + 8));
+                }
+                if (op == OP_FLT) {
+                        ASM { TYPED_SETCC_EAX(0x97); }  /* seta  */
+                } else {
+                        ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
+                }
+                ASM {
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                }
+                break;
+        case OP_FGT:
+        case OP_FGTE:
+                ASM {
+                        TYPED_LOAD_XMM0(src1);
+                        /* ucomiss src2+8(%r15), %xmm0 */
+                        IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src2 + 8));
+                }
+                if (op == OP_FGT) {
+                        ASM { TYPED_SETCC_EAX(0x97); }  /* seta  */
+                } else {
+                        ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
+                }
+                ASM {
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                }
+                break;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+
+        return true;
+}
+
+/*
+ * 128-bit SIMD ops (docs/design/06-simd.md).
+ *
+ * SysV x86_64 with SSE2/SSE4.1 (runtime CPUID gate): inline vector code,
+ * vreg k -> xmm k (all of xmm0..7 are caller-saved, and vector state
+ * only lives inside a strip region that emits no calls).  Win64 uses
+ * direct scalar lowering over env->vreg so it never owns nonvolatile
+ * xmm6/xmm7; scalar FP uses only volatile xmm0.
+ */
+
+/* Per-build CPUID: no unsynchronised process-global feature cache. */
+static uint32_t
+jit_detect_simd_caps(void)
+{
+        uint32_t a, b, c, d;
+	uint32_t caps = 0;
+        __asm__ __volatile__("cpuid"
+                             : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(1), "c"(0));
+	if ((d & (1u << 26)) != 0)
+		caps |= JIT_SIMD_CAP_SSE2;
+	if ((c & (1u << 19)) != 0)
+		caps |= JIT_SIMD_CAP_SSE41;
+	return caps;
+}
+
+/* Direct scalar lowering for the forced-scalar and Win64 tiers. */
+static INLINE bool
+jit_visit_vector_scalar_op(
+        struct jit_context *ctx,
+        int op,
+        int dst,
+        int src1,
+        int src2)
+{
+        uint32_t vbase = (uint32_t)offsetof(struct rt_env, vreg);
+        int lane;
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+        {
+                int base = src1 * (int)sizeof(struct rt_value);
+                int ofs = src2 * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                        IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x8b); IB(0x54); IB(0x88); IB((uint8_t)(lane * 4));
+                        IB(0x41); IB(0x89); IB(0x96);
+                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+        {
+                int base = dst * (int)sizeof(struct rt_value);
+                int ofs = src1 * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                        IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x41); IB(0x8b); IB(0x96);
+                        ID(vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4);
+                        IB(0x89); IB(0x54); IB(0x88); IB((uint8_t)(lane * 4));
+                }
+                return true;
+        }
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+        {
+                int src = src1 * (int)sizeof(struct rt_value);
+                ASM { IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(src + 8)); }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x41); IB(0x89); IB(0x86);
+                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+        {
+                int d = dst * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x41); IB(0x8b); IB(0x86);
+                        ID(vbase + (uint32_t)src1 * 16 + (uint32_t)src2 * 4);
+                        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)d);
+                        ID((uint32_t)(op == OP_VGETLANEF32 ?
+                                      NOCT_VALUE_FLOAT : NOCT_VALUE_INT));
+                        IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(d + 8));
+                }
+                return true;
+        }
+        case OP_VMOV128:
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x41); IB(0x8b); IB(0x86);
+                        ID(vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4);
+                        IB(0x41); IB(0x89); IB(0x86);
+                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VMULI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+                        IB(0x41);
+                        switch (op) {
+                        case OP_VADDI32X4: IB(0x03); IB(0x86); ID(b); break;
+                        case OP_VSUBI32X4: IB(0x2b); IB(0x86); ID(b); break;
+                        case OP_VMULI32X4: IB(0x0f); IB(0xaf); IB(0x86); ID(b); break;
+                        case OP_VAND128:   IB(0x23); IB(0x86); ID(b); break;
+                        case OP_VOR128:    IB(0x0b); IB(0x86); ID(b); break;
+                        default:           IB(0x33); IB(0x86); ID(b); break;
+                        }
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(s);
+                        IB(0xc1); IB((uint8_t)(op == OP_VSHLI32X4 ? 0xe0 : 0xe8));
+                        IB((uint8_t)src2);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x10); IB(0x86); ID(a);
+                        IB(0xf3); IB(0x41); IB(0x0f);
+                        switch (op) {
+                        case OP_VADDF32X4: IB(0x58); break;
+                        case OP_VSUBF32X4: IB(0x5c); break;
+                        case OP_VMULF32X4: IB(0x59); break;
+                        default:           IB(0x5e); break;
+                        }
+                        IB(0x86); ID(b);
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
+                }
+                return true;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+}
+
+/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
+static INLINE bool
+jit_visit_vector_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int a;
+        int b;
+        int c;
+        int inline_ok;
+
+	/* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+	   receive an explicitly tested save area.  SysV needs only SSE2;
+	   SSE4.1 selects shorter multiply/extract sequences below. */
+	inline_ok = !IS_MSABI &&
+		    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        /* Decode (shapes vary per op; see bytecode.h). */
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+                CONSUME_IMM8(a);
+                CONSUME_TMPVAR(b);
+                CONSUME_TMPVAR(c);
+                break;
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+                CONSUME_TMPVAR(a);
+                CONSUME_TMPVAR(b);
+                CONSUME_IMM8(c);
+                break;
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+                CONSUME_IMM8(a);
+                CONSUME_TMPVAR(b);
+                c = 0;
+                break;
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+                CONSUME_TMPVAR(a);
+                CONSUME_IMM8(b);
+                CONSUME_IMM8(c);
+                break;
+        case OP_VMOV128:
+                CONSUME_IMM8(a);
+                CONSUME_IMM8(b);
+                c = 0;
+                break;
+        default:
+                CONSUME_IMM8(a);
+                CONSUME_IMM8(b);
+                CONSUME_IMM8(c);
+                break;
+        }
+
+        if (!inline_ok)
+                return jit_visit_vector_scalar_op(ctx, op, a, b, c);
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+        {
+                int base = b * (int)sizeof(struct rt_value);
+                int ofs = c * (int)sizeof(struct rt_value);
+                ASM {
+                        /* r15: &env->frame->tmpvar[0] */
+                        /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                        /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                        /* movdqu (%rax,%rcx,4) -> %xmmA */ IB(0xf3); IB(0x0f); IB(0x6f); IB((uint8_t)(0x04 | (a << 3))); IB(0x88);
+                }
+                break;
+        }
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+        {
+                int base = a * (int)sizeof(struct rt_value);
+                int ofs = b * (int)sizeof(struct rt_value);
+                ASM {
+                        /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                        /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                        /* movdqu %xmmC -> (%rax,%rcx,4) */ IB(0xf3); IB(0x0f); IB(0x7f); IB((uint8_t)(0x04 | (c << 3))); IB(0x88);
+                }
+                break;
+        }
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+        {
+                int src = b * (int)sizeof(struct rt_value);
+                ASM {
+                        /* movd src+8(%r15) -> %xmmA */    IB(0x66); IB(0x41); IB(0x0f); IB(0x6e); IB((uint8_t)(0x87 | (a << 3))); ID((uint32_t)(src + 8));
+                        /* pshufd $0, %xmmA -> %xmmA */    IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (a << 3) | a)); IB(0x00);
+                }
+                break;
+        }
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+        {
+                int dst = a * (int)sizeof(struct rt_value);
+		if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+			ASM {
+				/* pextrd $c, %xmmB -> dst+8(%r15) */ IB(0x66); IB(0x41); IB(0x0f); IB(0x3a); IB(0x16); IB((uint8_t)(0x87 | (b << 3))); ID((uint32_t)(dst + 8)); IB((uint8_t)c);
+			}
+		} else {
+			ASM {
+				/* SSE2: combine two pextrw results without changing xmmB. */
+				IB(0x66); IB(0x0f); IB(0xc5); IB((uint8_t)(0xc0 | b)); IB((uint8_t)(c * 2));
+				IB(0x66); IB(0x0f); IB(0xc5); IB((uint8_t)(0xc8 | b)); IB((uint8_t)(c * 2 + 1));
+				IB(0xc1); IB(0xe1); IB(0x10);
+				IB(0x09); IB(0xc8);
+				IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst + 8));
+			}
+		}
+		ASM {
+			/* Both i32 and f32 lanes are raw 32-bit payloads. */
+			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst);
+			ID((uint32_t)(op == OP_VGETLANEF32 ?
+				      NOCT_VALUE_FLOAT : NOCT_VALUE_INT));
+		}
+                break;
+        }
+        case OP_VMOV128:
+                if (a != b) {
+                        ASM {
+                                /* movdqa %xmmB -> %xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b));
+                        }
+                }
+                break;
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VMULI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+                /* Two-address lowering: vd = va first (the LIR layer
+                   guarantees vd != vb), then op vd, vb. */
+                if (op == OP_VMULI32X4 &&
+		    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
+			/* Save odd lanes in scratch xmm8/xmm9 before vd is
+			   overwritten; these registers are caller-saved on SysV. */
+			ASM {
+				/* movdqa xmmB,xmm8; pshufd $f5,xmm8,xmm8 */
+				IB(0x66); IB(0x44); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | b));
+				IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xc0); IB(0xf5);
+				/* movdqa xmmC,xmm9; pshufd $f5,xmm9,xmm9 */
+				IB(0x66); IB(0x44); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc8 | c));
+				IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xc9); IB(0xf5);
+				/* pmuludq xmm9,xmm8 */
+				IB(0x66); IB(0x45); IB(0x0f); IB(0xf4); IB(0xc1);
+			}
+		}
+		if (a != b) {
+                        ASM {
+                                /* movdqa %xmmB -> %xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b));
+                        }
+                }
+                switch (op) {
+                case OP_VADDI32X4:
+                        ASM { /* paddd */  IB(0x66); IB(0x0f); IB(0xfe); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+                        break;
+                case OP_VSUBI32X4:
+                        ASM { /* psubd */  IB(0x66); IB(0x0f); IB(0xfa); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+                        break;
+                case OP_VMULI32X4:
+			if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+				ASM { /* pmulld */ IB(0x66); IB(0x0f); IB(0x38); IB(0x40); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+			} else {
+				ASM {
+					/* even lanes; merge low dwords with odd products. */
+					IB(0x66); IB(0x0f); IB(0xf4); IB((uint8_t)(0xc0 | (a << 3) | c));
+					IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (a << 3) | a)); IB(0x88);
+					IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xc0); IB(0x88);
+					IB(0x66); IB(0x41); IB(0x0f); IB(0x62); IB((uint8_t)(0xc0 | (a << 3)));
+				}
+			}
+                        break;
+                case OP_VAND128:
+                        ASM { /* pand */   IB(0x66); IB(0x0f); IB(0xdb); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+                        break;
+                case OP_VOR128:
+                        ASM { /* por */    IB(0x66); IB(0x0f); IB(0xeb); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+                        break;
+                default:
+                        ASM { /* pxor */   IB(0x66); IB(0x0f); IB(0xef); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+                        break;
+                }
+                break;
+	case OP_VADDF32X4:
+	case OP_VSUBF32X4:
+	case OP_VMULF32X4:
+	case OP_VDIVF32X4:
+		if (a != b) {
+			ASM { /* movdqa xmmB,xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b)); }
+		}
+		switch (op) {
+		case OP_VADDF32X4:
+			ASM { IB(0x0f); IB(0x58); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+			break;
+		case OP_VSUBF32X4:
+			ASM { IB(0x0f); IB(0x5c); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+			break;
+		case OP_VMULF32X4:
+			ASM { IB(0x0f); IB(0x59); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+			break;
+		default:
+			ASM { IB(0x0f); IB(0x5e); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+			break;
+		}
+		break;
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+                if (a != b) {
+                        ASM {
+                                /* movdqa %xmmB -> %xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b));
+                        }
+                }
+                if (op == OP_VSHLI32X4) {
+                        ASM { /* pslld $c, %xmmA */ IB(0x66); IB(0x0f); IB(0x72); IB((uint8_t)(0xf0 | a)); IB((uint8_t)c); }
+                } else {
+                        ASM { /* psrld $c, %xmmA */ IB(0x66); IB(0x0f); IB(0x72); IB((uint8_t)(0xd0 | a)); IB((uint8_t)c); }
+                }
+                break;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2544,6 +3167,63 @@ jit_visit_bytecode(
                         if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
+                case OP_PLOADF32:
+                        if (!jit_visit_ploadf32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTOREF32:
+                        if (!jit_visit_pstoref32_op(ctx))
+                                return false;
+                        break;
+                case OP_IADD:
+                case OP_ISUB:
+                case OP_IMUL:
+                case OP_IDIV:
+                case OP_IMOD:
+                case OP_IAND:
+                case OP_IOR:
+                case OP_IXOR:
+                case OP_ISHL:
+                case OP_ISHR:
+                case OP_ILT:
+                case OP_ILTE:
+                case OP_IGT:
+                case OP_IGTE:
+                case OP_FADD:
+                case OP_FSUB:
+                case OP_FMUL:
+                case OP_FDIV:
+                case OP_FLT:
+                case OP_FLTE:
+                case OP_FGT:
+                case OP_FGTE:
+                        if (!jit_visit_typed_op(ctx, opcode))
+                                return false;
+                        break;
+                case OP_VLOADI32X4:
+                case OP_VSTOREI32X4:
+                case OP_VSPLATI32:
+                case OP_VGETLANEI32:
+                case OP_VMOV128:
+                case OP_VADDI32X4:
+                case OP_VSUBI32X4:
+                case OP_VMULI32X4:
+                case OP_VAND128:
+                case OP_VOR128:
+                case OP_VXOR128:
+                case OP_VSHLI32X4:
+                case OP_VSHRI32X4:
+                case OP_VLOADF32X4:
+                case OP_VSTOREF32X4:
+                case OP_VSPLATF32:
+                case OP_VGETLANEF32:
+                case OP_VADDF32X4:
+                case OP_VSUBF32X4:
+                case OP_VMULF32X4:
+                case OP_VDIVF32X4:
+                        if (!jit_visit_vector_op(ctx, opcode))
+                                return false;
+                        break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);
                         break;
@@ -2601,6 +3281,7 @@ jit_patch_branch(
 {
         uint8_t *target_code;
         int offset;
+        intptr_t wide_offset;
         uint32_t i;
 
         /* Search a code addr at lpc. */
@@ -2618,7 +3299,13 @@ jit_patch_branch(
         }
 
         /* Calc a branch offset. */
-        offset = (int)((intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code);
+        wide_offset = (intptr_t)target_code -
+                      (intptr_t)ctx->branch_patch[patch_index].code;
+        if (wide_offset < (-2147483647L - 1L) || wide_offset > 2147483647L) {
+                rt_error(ctx->env, "Branch target too far.");
+                return false;
+        }
+        offset = (int)wide_offset;
 
         /* Set the assembler cursor. */
         ctx->code = ctx->branch_patch[patch_index].code;

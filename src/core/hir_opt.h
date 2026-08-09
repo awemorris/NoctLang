@@ -17,11 +17,13 @@
 #include "hir.h"
 
 /*
- * Pass entry points.  Both are compiled only when NOCT_USE_OPTIMIZER
+ * Pass entry points.  All are compiled only when NOCT_USE_OPTIMIZER
  * is defined; hir_optimize_func() in hir.c is the only caller.
  */
 bool hir_opt_abce_func(struct hir_block *func_block);
+bool hir_opt_simd_func(struct hir_block *func_block);
 bool hir_opt_cse_func(struct hir_block *func_block);
+bool hir_opt_typed_func(struct hir_block *func_block);
 
 /*
  * hir.c internals shared with the optimizer passes.

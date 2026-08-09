@@ -123,7 +123,9 @@ static int hir_scope_line;	/* current stmt line for messages  */
 
 /* Early declarations for the scope machinery (redeclared below). */
 static void hir_fatal(int line, const char *msg);
-static bool hir_check_type_annotation(int line, const char *type_name, int *tag);
+static bool hir_check_type_annotation(int line, const char *type_name,
+				      int *tag, int *packed_type,
+				      bool *restricted);
 /* hir_out_of_memory/hir_malloc/hir_strdup are declared in hir_opt.h. */
 
 /* Reset the scope machinery at function entry. */
@@ -1082,9 +1084,13 @@ hir_visit_assign_stmt(
 		/* Validate the optional type annotation (hint only). */
 		{
 			int anno_tag;
+			int anno_packed_type;
+			bool anno_restricted;
 			if (!hir_check_type_annotation(cur_astmt->line,
 						       cur_astmt->val.assign.type_name,
-						       &anno_tag)) {
+						       &anno_tag,
+						       &anno_packed_type,
+						       &anno_restricted)) {
 				hir_free_stmt(hstmt);
 				return false;
 			}
@@ -1221,6 +1227,8 @@ hir_add_local(
 		return false;
 	}
 	local->index = index;
+	/* -1 = unproven; NOT zero (NOCT_VALUE_INT == 0; see hir.h). */
+	local->proven_type = -1;
 	local->next = func->val.func.local;
 	func->val.func.local = local;
 
@@ -2526,52 +2534,88 @@ hir_visit_term(
  * integer names degrade to their storage-class tag.  Returns the
  * NOCT_VALUE_* tag, or -1 for an unknown name (caller errors).
  */
-static int
-hir_resolve_type_name(const char *name)
+static bool
+hir_resolve_type_name(
+	const char *name,
+	int *tag,
+	int *packed_type,
+	bool *restricted)
 {
 	static const struct {
 		const char *name;
 		int tag;
+		int packed_type;
+		bool restricted;
 	} tbl[] = {
-		{ "int",    NOCT_VALUE_INT },
-		{ "long",   NOCT_VALUE_LONG },
-		{ "float",  NOCT_VALUE_FLOAT },
-		{ "double", NOCT_VALUE_DOUBLE },
-		{ "string", NOCT_VALUE_STRING },
-		{ "array",  NOCT_VALUE_ARRAY },
-		{ "dict",   NOCT_VALUE_DICT },
-		{ "packed", NOCT_VALUE_PACKED },
-		{ "func",   NOCT_VALUE_FUNC },
-		{ "i8",     NOCT_VALUE_INT },
-		{ "i16",    NOCT_VALUE_INT },
-		{ "i32",    NOCT_VALUE_INT },
-		{ "u8",     NOCT_VALUE_INT },
-		{ "u16",    NOCT_VALUE_INT },
-		{ "u32",    NOCT_VALUE_INT },
-		{ "i64",    NOCT_VALUE_LONG },
-		{ "u64",    NOCT_VALUE_LONG }
+		{ "int",             NOCT_VALUE_INT,    -1, false },
+		{ "long",            NOCT_VALUE_LONG,   -1, false },
+		{ "float",           NOCT_VALUE_FLOAT,  -1, false },
+		{ "double",          NOCT_VALUE_DOUBLE, -1, false },
+		{ "string",          NOCT_VALUE_STRING, -1, false },
+		{ "array",           NOCT_VALUE_ARRAY,  -1, false },
+		{ "dict",            NOCT_VALUE_DICT,   -1, false },
+		{ "packed",          NOCT_VALUE_PACKED, NOCT_PACKED_ANY, false },
+		{ "func",            NOCT_VALUE_FUNC,   -1, false },
+		{ "i8",              NOCT_VALUE_INT,    -1, false },
+		{ "i16",             NOCT_VALUE_INT,    -1, false },
+		{ "i32",             NOCT_VALUE_INT,    -1, false },
+		{ "u8",              NOCT_VALUE_INT,    -1, false },
+		{ "u16",             NOCT_VALUE_INT,    -1, false },
+		{ "u32",             NOCT_VALUE_INT,    -1, false },
+		{ "i64",             NOCT_VALUE_LONG,   -1, false },
+		{ "u64",             NOCT_VALUE_LONG,   -1, false },
+		{ "packedint8",      NOCT_VALUE_PACKED, NOCT_PACKED_INT8, false },
+		{ "packeduint8",     NOCT_VALUE_PACKED, NOCT_PACKED_UINT8, false },
+		{ "packedint16",     NOCT_VALUE_PACKED, NOCT_PACKED_INT16, false },
+		{ "packeduint16",    NOCT_VALUE_PACKED, NOCT_PACKED_UINT16, false },
+		{ "packedint32",     NOCT_VALUE_PACKED, NOCT_PACKED_INT32, false },
+		{ "packeduint32",    NOCT_VALUE_PACKED, NOCT_PACKED_UINT32, false },
+		{ "packedint64",     NOCT_VALUE_PACKED, NOCT_PACKED_INT64, false },
+		{ "packeduint64",    NOCT_VALUE_PACKED, NOCT_PACKED_UINT64, false },
+		{ "packedfloat",     NOCT_VALUE_PACKED, NOCT_PACKED_FLOAT32, false },
+		{ "packeddouble",    NOCT_VALUE_PACKED, NOCT_PACKED_FLOAT64, false },
+		{ "rpackedint8",     NOCT_VALUE_PACKED, NOCT_PACKED_INT8, true },
+		{ "rpackeduint8",    NOCT_VALUE_PACKED, NOCT_PACKED_UINT8, true },
+		{ "rpackedint16",    NOCT_VALUE_PACKED, NOCT_PACKED_INT16, true },
+		{ "rpackeduint16",   NOCT_VALUE_PACKED, NOCT_PACKED_UINT16, true },
+		{ "rpackedint32",    NOCT_VALUE_PACKED, NOCT_PACKED_INT32, true },
+		{ "rpackeduint32",   NOCT_VALUE_PACKED, NOCT_PACKED_UINT32, true },
+		{ "rpackedint64",    NOCT_VALUE_PACKED, NOCT_PACKED_INT64, true },
+		{ "rpackeduint64",   NOCT_VALUE_PACKED, NOCT_PACKED_UINT64, true },
+		{ "rpackedfloat",    NOCT_VALUE_PACKED, NOCT_PACKED_FLOAT32, true },
+		{ "rpackeddouble",   NOCT_VALUE_PACKED, NOCT_PACKED_FLOAT64, true }
 	};
 	size_t i;
 
 	for (i = 0; i < sizeof(tbl) / sizeof(tbl[0]); i++) {
-		if (strcmp(tbl[i].name, name) == 0)
-			return tbl[i].tag;
+		if (strcmp(tbl[i].name, name) == 0) {
+			*tag = tbl[i].tag;
+			*packed_type = tbl[i].packed_type;
+			*restricted = tbl[i].restricted;
+			return true;
+		}
 	}
-	return -1;
+	return false;
 }
 
 /* Resolve an optional annotation; error on an unknown name. */
 static bool
-hir_check_type_annotation(int line, const char *type_name, int *tag)
+hir_check_type_annotation(
+	int line,
+	const char *type_name,
+	int *tag,
+	int *packed_type,
+	bool *restricted)
 {
 	char msg[256];
 
 	if (type_name == NULL) {
 		*tag = -1;
+		*packed_type = -1;
+		*restricted = false;
 		return true;
 	}
-	*tag = hir_resolve_type_name(type_name);
-	if (*tag < 0) {
+	if (!hir_resolve_type_name(type_name, tag, packed_type, restricted)) {
 		snprintf(msg, sizeof(msg),
 			 N_TR("Unknown type name '%s'."), type_name);
 		hir_fatal(line, msg);
@@ -2592,8 +2636,11 @@ hir_visit_param_list(
 	/* -1 = unannotated (0 would read as NOCT_VALUE_INT). */
 	{
 		uint32_t k;
-		for (k = 0; k < HIR_PARAM_SIZE; k++)
+		for (k = 0; k < HIR_PARAM_SIZE; k++) {
 			hfunc->val.func.param_type[k] = -1;
+			hfunc->val.func.param_packed_type[k] = -1;
+			hfunc->val.func.param_restricted[k] = false;
+		}
 	}
 
 	/* If there is no param_list. */
@@ -2624,7 +2671,9 @@ hir_visit_param_list(
 		/* Resolve the optional type annotation. */
 		if (!hir_check_type_annotation(0,
 					       param->type_name,
-					       &hfunc->val.func.param_type[param_count]))
+					       &hfunc->val.func.param_type[param_count],
+					       &hfunc->val.func.param_packed_type[param_count],
+					       &hfunc->val.func.param_restricted[param_count]))
 			return false;
 		param_count++;
 
@@ -2934,9 +2983,11 @@ hir_free_expr(
 	case HIR_EXPR_PLOAD16S:
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOAD64:
+	case HIR_EXPR_PLOADF32:
 	case HIR_EXPR_PSTORE16:
 	case HIR_EXPR_PSTORE32:
 	case HIR_EXPR_PSTORE64:
+	case HIR_EXPR_PSTOREF32:
 		/* ABCE binary ops. */
 		if (e->val.binary.expr[0] != NULL) {
 			hir_free_expr(e->val.binary.expr[0]);
@@ -3194,7 +3245,13 @@ hir_optimize_func(
 
 	if (!hir_opt_abce_func(func_block))
 		return false;
+	/* SIMD right after ABCE (it consumes the fast-loop marks). */
+	if (!hir_opt_simd_func(func_block))
+		return false;
 	if (!hir_opt_cse_func(func_block))
+		return false;
+	/* After CSE: the lattice must see CAPTURE home assignments. */
+	if (!hir_opt_typed_func(func_block))
 		return false;
 
 	return true;

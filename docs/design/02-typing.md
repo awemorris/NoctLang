@@ -42,7 +42,10 @@ let k: int = 3;                            /* works with let (04-)    */
 | `string` | `NOCT_VALUE_STRING` | |
 | `array` | `NOCT_VALUE_ARRAY` | |
 | `dict` | `NOCT_VALUE_DICT` | |
-| `packed` | `NOCT_VALUE_PACKED` | element type NOT checked in v1 |
+| `packed` | `NOCT_VALUE_PACKED` | any element type |
+| `packedint8` ... `packeduint64` | `NOCT_VALUE_PACKED` | exact integer element type checked |
+| `packedfloat packeddouble` | `NOCT_VALUE_PACKED` | float32 / float64 elements |
+| `rpacked...` | `NOCT_VALUE_PACKED` | exact element type plus restricted optimization metadata |
 | `func` | `NOCT_VALUE_FUNC` | |
 | `i8 i16 i32 u8 u16 u32` | `NOCT_VALUE_INT` | width/sign are metadata only |
 | `i64 u64` | `NOCT_VALUE_LONG` | width/sign are metadata only |
@@ -51,6 +54,12 @@ Sized names exist so future Packed accessors and typed arithmetic can
 consume the width; **their runtime check degrades to the storage-class
 tag** (int or long). Document this in docs/syntax.md when
 implementing.
+
+Packed element names are different: at optimization level 2 their entry
+check validates both the packed value tag and its `NOCT_PACKED_*` element
+kind.  The `r` prefix is retained separately in HIR/LIR/runtime metadata;
+alias guards consume it during vectorization and fall back to scalar code
+when the relevant backing ranges overlap.
 
 An **unknown type name is a compile-time error** ("Unknown type name
 '%s'.") — typo protection is the one place annotations are strict.
@@ -180,6 +189,14 @@ Level < 2: `lir_build` emits nothing — annotations parse, store, and
 have zero runtime footprint.
 
 ## 6. v2 (specified now, implement later — separate task)
+
+> **Superseded by [07-typed-ops.md](07-typed-ops.md)** (2026-08-10):
+> the op list there extends this one (bitwise, constant-count shifts,
+> a float family), restricts IDIV/IMOD to literal divisors, and
+> stages the rollout (ABCE-region proofs first, then the
+> provable-locals walk).  Implement from 07; the acceptance bar
+> below (behavioral identity, full syntax suite at level 2) still
+> applies.
 
 Do NOT start this until v1 is merged and green.
 

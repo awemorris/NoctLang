@@ -20,6 +20,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#if defined(__linux__)
+#include <sys/auxv.h>
+#include <asm/cputable.h>
+#endif
 
 /* False asseretion */
 #define JIT_OP_NOT_IMPLEMENTED  0
@@ -47,6 +51,16 @@ static bool is_writable;
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
+
+static uint32_t
+jit_detect_simd_caps(void)
+{
+#if defined(__linux__) && defined(PPC_FEATURE_HAS_ALTIVEC)
+	if ((getauxval(AT_HWCAP) & PPC_FEATURE_HAS_ALTIVEC) != 0)
+		return JIT_SIMD_CAP_ALTIVEC;
+#endif
+	return 0;
+}
 
 /*
  * Generate a JIT-compiled code for a function.
@@ -77,6 +91,7 @@ jit_build(
         ctx.code = ctx.code_top;
         ctx.env = env;
         ctx.func = func;
+	jit_configure_simd(&ctx, jit_detect_simd_caps(), "ppc32");
 
         /* Make code writable and non-executable. */
         if (!is_writable) {
@@ -198,6 +213,44 @@ jit_put_word(
         return true;
 }
 
+/* Convert a Power ISA instruction word to the byte-oriented IW form. */
+static INLINE uint32_t
+jit_ppc_iw(uint32_t word)
+{
+        return ((word & 0xff) << 24) |
+               (((word >> 8) & 0xff) << 16) |
+               (((word >> 16) & 0xff) << 8) |
+               ((word >> 24) & 0xff);
+}
+
+static INLINE uint32_t
+jit_ppc_vx(uint32_t base, int vd, int va, int vb)
+{
+        return jit_ppc_iw(base | ((uint32_t)vd << 21) |
+                          ((uint32_t)va << 16) | ((uint32_t)vb << 11));
+}
+
+/* Save/reload the eight program-visible volatile AltiVec registers. */
+static bool
+jit_put_altivec_sync(struct jit_context *ctx, bool load)
+{
+        uint32_t ofs = (uint32_t)offsetof(struct rt_env, vreg);
+        uint32_t hi = (ofs + 0x8000) >> 16;
+        int i;
+
+        /* addis r11,r14,vreg@ha; addi r11,r11,vreg@l; li r12,0 */
+        IW(jit_ppc_iw(0x3d6e0000 | (hi & 0xffff)));
+        IW(jit_ppc_iw(0x396b0000 | (ofs & 0xffff)));
+        IW(jit_ppc_iw(0x39800000));
+        for (i = 0; i < 8; i++) {
+                IW(jit_ppc_vx(load ? 0x7c0000ce : 0x7c0001ce,
+                              i, REG_R11, REG_R12));
+                if (i != 7)
+                        IW(jit_ppc_iw(0x398c0010)); /* addi r12,r12,16 */
+        }
+        return true;
+}
+
 /*
  * Templates
  */
@@ -223,13 +276,25 @@ static INLINE uint32_t tvar16(int d)
         return (b0 << 24) | (b1 << 16);
 }
 
-#define EXC()   exc((uint32_t)ctx->exception_code, (uint32_t)ctx->code)
-static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
+#define EXCEPTION_IF_EQUAL() if (!jit_put_exception_if_equal(ctx)) return false
+static INLINE bool jit_put_exception_if_equal(struct jit_context *ctx)
 {
-        uint32_t tmp = handler - cur;
-        uint32_t b0 = tmp & 0xff;
-        uint32_t b1 = (tmp >> 8) & 0xff;
-        return (b0 << 24) | (b1 << 16);
+        intptr_t offset;
+
+        /* Invert EQ and skip the following wide unconditional branch. */
+        if (!jit_put_word(ctx, 0x08008240))
+                return false;
+        offset = (intptr_t)ctx->exception_code - (intptr_t)ctx->code;
+        if (offset < -33554432 || offset > 33554428) {
+                rt_error(ctx->env, "Exception target too far.");
+                return false;
+        }
+        return jit_put_word(ctx,
+                            0x00000048 |
+                            (((uint32_t)offset & 0xff) << 24) |
+                            ((((uint32_t)offset >> 8) & 0xff) << 16) |
+                            ((((uint32_t)offset >> 16) & 0xff) << 8) |
+                            (((uint32_t)offset >> 24) & 0x03));
 }
 
 #define ASM_BINARY_OP(f)                                                                        \
@@ -260,7 +325,7 @@ static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
                                                                                                 \
                 /* If failed: */                                                                \
                 /* cmpwi r3, 0 */               IW(0x0000032c);                                 \
-                /* beq exception_handler */     IW(0x00008241 | EXC());                         \
+                EXCEPTION_IF_EQUAL();                                                           \
         }
 
 #define ASM_UNARY_OP(f)                                                                         \
@@ -288,7 +353,7 @@ static INLINE uint32_t exc(uint32_t handler, uint32_t cur)
                                                                                                 \
                 /* If failed: */                                                                \
                 /* cmpwi r3, 0 */               IW(0x0000032c);                                 \
-                /* beq exception_handler */     IW(0x00008241 | EXC());                         \
+                EXCEPTION_IF_EQUAL();                                                           \
         }
 
 /*
@@ -578,7 +643,7 @@ jit_visit_sconst_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | EXC());
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -620,7 +685,7 @@ jit_visit_aconst_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | EXC());
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -662,7 +727,7 @@ jit_visit_dconst_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | EXC());
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1218,7 +1283,7 @@ jit_visit_loadsymbol_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | EXC());
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1275,7 +1340,7 @@ jit_visit_storesymbol_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | (uint32_t)((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) & 0xff) << 24) | (uint32_t)(((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) >> 8) & 0xff) << 16));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1336,7 +1401,7 @@ jit_visit_loaddot_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | (uint32_t)((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) & 0xff) << 24) | (uint32_t)(((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) >> 8) & 0xff) << 16));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1397,7 +1462,7 @@ jit_visit_storedot_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | EXC());
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1476,7 +1541,7 @@ jit_visit_call_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | EXC());
+                EXCEPTION_IF_EQUAL();
         }
         
         return true;
@@ -1570,7 +1635,7 @@ jit_visit_thiscall_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | EXC());
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1618,20 +1683,21 @@ jit_visit_jmpiftrue_op(
                 return false;
         }
 
-        src *= (int)sizeof(struct rt_value);
-
         ASM {
-                /* R14: env */
-                /* R15: &env->frame->tmpvar[0] */
-                /* R31: saved LR */
-
-                /* R3 = env->frame->tmpvar[src].val.i */
-                /* li r3, src */                IW(0x00006038 | lo16((uint32_t)src));
-                /* add r3, r3, r15 */           IW(0x147a637c);
-                /* lwz r3, 8(r3) */             IW(0x08006380);
-
-                /* Compare: env->frame->tmpvar[dst].val.i == 1 */
-                /* cmpwi r3, 0 */               IW(0x0000032c);
+                /* r3 = ex_condition_helper(env, src): 1/0, -1 on error. */
+                IW(0x7873c37d);
+                IW(0x00008038 | tvar16(src));
+                IW(0x0000803d | hi16((uint32_t)ex_condition_helper));
+                IW(0x00008c61 | lo16((uint32_t)ex_condition_helper));
+                IW(0xa602e87f);
+                IW(0xa603897d);
+                IW(0x2104804e);
+                IW(0xa603e87f);
+                /* -1 means the helper reported a type error. */
+                IW(0xffff032c);
+                EXCEPTION_IF_EQUAL();
+                /* Compare truth value with zero for the patched branch. */
+                IW(0x0000032c);
         }
 
         /* Patch later. */
@@ -1643,6 +1709,7 @@ jit_visit_jmpiftrue_op(
         ASM {
                 /* Patched later. */
                 /* bne 0 */     IW(0x00008240);
+                /* nop: reserved long-branch slot */ IW(0x00000060);
         }
 
         return true;
@@ -1663,20 +1730,19 @@ jit_visit_jmpiffalse_op(
                 return false;
         }
 
-        src *= (int)sizeof(struct rt_value);
-
         ASM {
-                /* R14: env */
-                /* R15: &env->frame->tmpvar[0] */
-                /* R31: saved LR */
-
-                /* R3 = env->frame->tmpvar[src].val.i */
-                /* li r3, src */                IW(0x00006038 | lo16((uint32_t)src));
-                /* add r3, r3, r15 */           IW(0x147a637c);
-                /* lwz r3, 8(r3) */             IW(0x08006380);
-
-                /* Compare: env->frame->tmpvar[dst].val.i == 1 */
-                /* cmpwi r3, 0 */               IW(0x0000032c);
+                /* r3 = ex_condition_helper(env, src): 1/0, -1 on error. */
+                IW(0x7873c37d);
+                IW(0x00008038 | tvar16(src));
+                IW(0x0000803d | hi16((uint32_t)ex_condition_helper));
+                IW(0x00008c61 | lo16((uint32_t)ex_condition_helper));
+                IW(0xa602e87f);
+                IW(0xa603897d);
+                IW(0x2104804e);
+                IW(0xa603e87f);
+                IW(0xffff032c);
+                EXCEPTION_IF_EQUAL();
+                IW(0x0000032c);
         }
         
         /* Patch later. */
@@ -1688,6 +1754,7 @@ jit_visit_jmpiffalse_op(
         ASM {
                 /* Patched later. */
                 /* beq 0 */     IW(0x00008241);
+                /* nop: reserved long-branch slot */ IW(0x00000060);
         }
 
         return true;
@@ -1717,6 +1784,7 @@ jit_visit_jmpifeq_op(
         ASM {
                 /* Patched later. */
                 /* beq 0 */     IW(0x00008241);
+                /* nop: reserved long-branch slot */ IW(0x00000060);
         }
 
         return true;
@@ -1750,7 +1818,7 @@ jit_visit_safepoint_op(
 
                 /* If failed: */
                 /* cmpwi r3, 0 */               IW(0x0000032c);
-                /* beq exception_handler */     IW(0x00008241 | (uint32_t)((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) & 0xff) << 24) | (uint32_t)(((((uint32_t)ctx->exception_code - (uint32_t)ctx->code) >> 8) & 0xff) << 16));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -2175,6 +2243,384 @@ jit_visit_pstore64_op(
         return true;
 }
 
+/* Visit a OP_PLOADF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_ploadf32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_ploadf32_helper);
+        return true;
+}
+
+/* Visit a OP_PSTOREF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_pstoref32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_pstoref32_helper);
+        return true;
+}
+
+
+/*
+ * Typed arithmetic ops (docs/design/07-typed-ops.md): dispatch-free
+ * helper calls, like OP_PLOAD64 above.  The table is indexed by
+ * (opcode - OP_IADD); the opcode block is contiguous by contract.
+ */
+typedef bool (CDECL *jit_typed_helper_t)(NoctEnv *env, int dst, int src1, int src2);
+
+static const jit_typed_helper_t jit_typed_op_helper[] = {
+        ex_iadd_helper,
+        ex_isub_helper,
+        ex_imul_helper,
+        ex_idiv_helper,
+        ex_imod_helper,
+        ex_iand_helper,
+        ex_ior_helper,
+        ex_ixor_helper,
+        ex_ishl_helper,
+        ex_ishr_helper,
+        ex_ilt_helper,
+        ex_ilte_helper,
+        ex_igt_helper,
+        ex_igte_helper,
+        ex_fadd_helper,
+        ex_fsub_helper,
+        ex_fmul_helper,
+        ex_fdiv_helper,
+        ex_flt_helper,
+        ex_flte_helper,
+        ex_fgt_helper,
+        ex_fgte_helper
+};
+
+/* Visit an OP_IADD..OP_FGTE instruction. */
+static INLINE bool
+jit_visit_typed_op(
+        struct jit_context *ctx,
+        int op)
+{
+        jit_typed_helper_t f;
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        if (op == OP_ISHL || op == OP_ISHR) {
+                /* The shift count is an imm8, not a tmpvar. */
+                CONSUME_IMM8(src2);
+        } else {
+                CONSUME_TMPVAR(src2);
+        }
+
+        f = jit_typed_op_helper[op - OP_IADD];
+
+        /* if (!f(env, dst, src1, src2)) return false; */
+        ASM_BINARY_OP(f);
+
+        return true;
+}
+
+/*
+ * 128-bit vector ops: native AltiVec where available, with direct scalar
+ * lowering over env->vreg for the remaining operations.
+ */
+static bool
+jit_put_altivec_op(struct jit_context *ctx, int op, int dst, int src1, int src2)
+{
+        uint32_t base;
+
+        switch (op) {
+        case OP_VMOV128:    base = 0x10000484; src2 = src1; break; /* vor */
+        case OP_VADDI32X4:  base = 0x10000080; break; /* vadduwm */
+        case OP_VSUBI32X4:  base = 0x10000480; break; /* vsubuwm */
+        case OP_VAND128:    base = 0x10000404; break;
+        case OP_VOR128:     base = 0x10000484; break;
+        case OP_VXOR128:    base = 0x100004c4; break;
+        case OP_VADDF32X4:  base = 0x1000000a; break;
+        case OP_VSUBF32X4:  base = 0x1000004a; break;
+        case OP_VMULF32X4:
+                /* vxor v8,v8,v8; vmaddfp vd,va,vb,v8 (va * vb + 0). */
+                IW(jit_ppc_vx(0x100004c4, 8, 8, 8));
+                IW(jit_ppc_iw(0x1000002e | ((uint32_t)dst << 21) |
+                              ((uint32_t)src1 << 16) |
+                              ((uint32_t)8 << 11) |
+                              ((uint32_t)src2 << 6)));
+                return true;
+        default:
+                return false;
+        }
+        IW(jit_ppc_vx(base, dst, src1, src2));
+        return true;
+}
+
+static bool
+jit_altivec_supports_op(int op)
+{
+        switch (op) {
+        case OP_VMOV128:
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+                return true;
+        default:
+                return false;
+        }
+}
+
+static bool
+jit_put_scalar_vreg_base(struct jit_context *ctx)
+{
+        uint32_t ofs = (uint32_t)offsetof(struct rt_env, vreg);
+        uint32_t hi = (ofs + 0x8000) >> 16;
+
+        /* addis r5,r14,vreg@ha; addi r5,r5,vreg@l */
+        IW(jit_ppc_iw(0x3cae0000 | (hi & 0xffff)));
+        IW(jit_ppc_iw(0x38a50000 | (ofs & 0xffff)));
+        return true;
+}
+
+/* Direct scalar lowering over env->vreg (r5). */
+static bool
+jit_put_vector_scalar_op(struct jit_context *ctx, int op,
+                         int dst, int src1, int src2)
+{
+        int lane;
+
+        if (!jit_put_scalar_vreg_base(ctx))
+                return false;
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+        {
+                int base = src1 * (int)sizeof(struct rt_value);
+                int ofs = src2 * (int)sizeof(struct rt_value);
+#if defined(NOCT_ARCH_BE)
+                base += 12;
+#else
+                base += 8;
+#endif
+                /* lwz r3,base(r15); lwz r4,ofs+8(r15); index *= 4; add */
+                IW(jit_ppc_iw(0x806f0000 | ((uint32_t)base & 0xffff)));
+                IW(jit_ppc_iw(0x808f0000 | ((uint32_t)(ofs + 8) & 0xffff)));
+                IW(jit_ppc_iw(0x7c842214));
+                IW(jit_ppc_iw(0x7c842214));
+                IW(jit_ppc_iw(0x7c632214));
+                for (lane = 0; lane < 4; lane++) {
+                        IW(jit_ppc_iw(0x80c30000 | ((uint32_t)lane * 4)));
+                        IW(jit_ppc_iw(0x90c50000 |
+                                      ((uint32_t)dst * 16 + (uint32_t)lane * 4)));
+                }
+                return true;
+        }
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+        {
+                int base = dst * (int)sizeof(struct rt_value);
+                int ofs = src1 * (int)sizeof(struct rt_value);
+#if defined(NOCT_ARCH_BE)
+                base += 12;
+#else
+                base += 8;
+#endif
+                IW(jit_ppc_iw(0x806f0000 | ((uint32_t)base & 0xffff)));
+                IW(jit_ppc_iw(0x808f0000 | ((uint32_t)(ofs + 8) & 0xffff)));
+                IW(jit_ppc_iw(0x7c842214));
+                IW(jit_ppc_iw(0x7c842214));
+                IW(jit_ppc_iw(0x7c632214));
+                for (lane = 0; lane < 4; lane++) {
+                        IW(jit_ppc_iw(0x80c50000 |
+                                      ((uint32_t)src2 * 16 + (uint32_t)lane * 4)));
+                        IW(jit_ppc_iw(0x90c30000 | ((uint32_t)lane * 4)));
+                }
+                return true;
+        }
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+        {
+                int src = src1 * (int)sizeof(struct rt_value);
+                IW(jit_ppc_iw(0x80cf0000 | ((uint32_t)(src + 8) & 0xffff)));
+                for (lane = 0; lane < 4; lane++)
+                        IW(jit_ppc_iw(0x90c50000 |
+                                      ((uint32_t)dst * 16 + (uint32_t)lane * 4)));
+                return true;
+        }
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+        {
+                int d = dst * (int)sizeof(struct rt_value);
+                uint32_t tag = (uint32_t)(op == OP_VGETLANEF32 ?
+                                           NOCT_VALUE_FLOAT : NOCT_VALUE_INT);
+                IW(jit_ppc_iw(0x80c50000 |
+                              ((uint32_t)src1 * 16 + (uint32_t)src2 * 4)));
+                IW(jit_ppc_iw(0x38e00000 | tag)); /* li r7,tag */
+                IW(jit_ppc_iw(0x90ef0000 | ((uint32_t)d & 0xffff)));
+                IW(jit_ppc_iw(0x90cf0000 | ((uint32_t)(d + 8) & 0xffff)));
+                return true;
+        }
+        case OP_VMOV128:
+                for (lane = 0; lane < 4; lane++) {
+                        IW(jit_ppc_iw(0x80c50000 |
+                                      ((uint32_t)src1 * 16 + (uint32_t)lane * 4)));
+                        IW(jit_ppc_iw(0x90c50000 |
+                                      ((uint32_t)dst * 16 + (uint32_t)lane * 4)));
+                }
+                return true;
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VMULI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t word;
+                        IW(jit_ppc_iw(0x80c50000 | a));
+                        IW(jit_ppc_iw(0x80e50000 | b));
+                        switch (op) {
+                        case OP_VADDI32X4: word = 0x7cc63a14; break;
+                        case OP_VSUBI32X4: word = 0x7cc73050; break;
+                        case OP_VMULI32X4: word = 0x7cc639d6; break;
+                        case OP_VAND128:   word = 0x7cc63838; break;
+                        case OP_VOR128:    word = 0x7cc63b78; break;
+                        default:           word = 0x7cc63a78; break;
+                        }
+                        IW(jit_ppc_iw(word));
+                        IW(jit_ppc_iw(0x90c50000 | d));
+                }
+                return true;
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+                IW(jit_ppc_iw(0x38e00000 | ((uint32_t)src2 & 31u)));
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IW(jit_ppc_iw(0x80c50000 | s));
+                        IW(jit_ppc_iw(op == OP_VSHLI32X4 ?
+                                      0x7cc63830 : 0x7cc63c30));
+                        IW(jit_ppc_iw(0x90c50000 | d));
+                }
+                return true;
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t word;
+                        IW(jit_ppc_iw(0xc0050000 | a)); /* lfs f0,a(r5) */
+                        IW(jit_ppc_iw(0xc0250000 | b)); /* lfs f1,b(r5) */
+                        switch (op) {
+                        case OP_VADDF32X4: word = 0xec40082a; break;
+                        case OP_VSUBF32X4: word = 0xec400828; break;
+                        case OP_VMULF32X4: word = 0xec400072; break;
+                        default:           word = 0xec400824; break;
+                        }
+                        IW(jit_ppc_iw(word));
+                        IW(jit_ppc_iw(0xd0450000 | d)); /* stfs f2,d(r5) */
+                }
+                return true;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+}
+
+/* Visit an OP_VLOADI32X4..OP_VDIVF32X4 instruction. */
+static INLINE bool
+jit_visit_vector_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        /* Decode (operand shapes vary per op; see bytecode.h). */
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_TMPVAR(src2);
+                break;
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+                CONSUME_TMPVAR(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                src2 = 0;
+                break;
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+                CONSUME_TMPVAR(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VMOV128:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                src2 = 0;
+                break;
+        default:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        }
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_ALTIVEC) != 0 &&
+            jit_altivec_supports_op(op))
+                return jit_put_altivec_op(ctx, op, dst, src1, src2);
+
+        /* AltiVec lacks several required portable operations.  Keep its
+         * register state coherent around direct scalar lowering. */
+        if ((ctx->simd_caps & JIT_SIMD_CAP_ALTIVEC) != 0 &&
+            !jit_put_altivec_sync(ctx, false))
+                return false;
+
+        if (!jit_put_vector_scalar_op(ctx, op, dst, src1, src2))
+                return false;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_ALTIVEC) != 0 &&
+            !jit_put_altivec_sync(ctx, true))
+                return false;
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2473,6 +2919,63 @@ jit_visit_bytecode(
                         if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
+                case OP_PLOADF32:
+                        if (!jit_visit_ploadf32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTOREF32:
+                        if (!jit_visit_pstoref32_op(ctx))
+                                return false;
+                        break;
+                case OP_IADD:
+                case OP_ISUB:
+                case OP_IMUL:
+                case OP_IDIV:
+                case OP_IMOD:
+                case OP_IAND:
+                case OP_IOR:
+                case OP_IXOR:
+                case OP_ISHL:
+                case OP_ISHR:
+                case OP_ILT:
+                case OP_ILTE:
+                case OP_IGT:
+                case OP_IGTE:
+                case OP_FADD:
+                case OP_FSUB:
+                case OP_FMUL:
+                case OP_FDIV:
+                case OP_FLT:
+                case OP_FLTE:
+                case OP_FGT:
+                case OP_FGTE:
+                        if (!jit_visit_typed_op(ctx, opcode))
+                                return false;
+                        break;
+                case OP_VLOADI32X4:
+                case OP_VSTOREI32X4:
+                case OP_VSPLATI32:
+                case OP_VGETLANEI32:
+                case OP_VMOV128:
+                case OP_VADDI32X4:
+                case OP_VSUBI32X4:
+                case OP_VMULI32X4:
+                case OP_VAND128:
+                case OP_VOR128:
+                case OP_VXOR128:
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+        case OP_VLOADF32X4:
+        case OP_VSTOREF32X4:
+        case OP_VSPLATF32:
+        case OP_VGETLANEF32:
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                        if (!jit_visit_vector_op(ctx, opcode))
+                                return false;
+                        break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);
                         break;
@@ -2532,7 +3035,7 @@ jit_patch_branch(
 
         /* Assemble. */
         if (ctx->branch_patch[patch_index].type == PATCH_BAL) {
-                if (abs(offset) & ~0x3ffffff) {
+                if (offset < -33554432 || offset > 33554428) {
                         rt_error(ctx->env, "Branch target too far.");
                         return false;
                 }
@@ -2546,28 +3049,48 @@ jit_patch_branch(
                            (((uint32_t)offset >> 24) & 0x03));
                 }
         } else if (ctx->branch_patch[patch_index].type == PATCH_BEQ) {
-                if (abs(offset) & ~0xffff) {
-                        rt_error(ctx->env, "Branch target too far.");
-                        return false;
-                }
-
-                ASM {
-                        /* beq offset */
-                        IW(0x00008241 |
-                           (((uint32_t)offset & 0xff) << 24) |
-                           ((((uint32_t)offset >> 8) & 0xff) << 16));
+                if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+                    offset >= -32768 && offset <= 32764) {
+                        ASM {
+                                /* beq offset; nop */
+                                IW(0x00008241 |
+                                   (((uint32_t)offset & 0xff) << 24) |
+                                   ((((uint32_t)offset >> 8) & 0xff) << 16));
+                                IW(0x00000060);
+                        }
+                } else {
+                        int long_offset = offset - 4;
+                        ASM {
+                                /* bne +8; b long_offset */
+                                IW(0x08008240);
+                                IW(0x00000048 |
+                                   (((uint32_t)long_offset & 0xff) << 24) |
+                                   ((((uint32_t)long_offset >> 8) & 0xff) << 16) |
+                                   ((((uint32_t)long_offset >> 16) & 0xff) << 8) |
+                                   (((uint32_t)long_offset >> 24) & 0x03));
+                        }
                 }
         } else if (ctx->branch_patch[patch_index].type == PATCH_BNE) {
-                if (abs(offset) & ~0xffff) {
-                        rt_error(ctx->env, "Branch target too far.");
-                        return false;
-                }
-
-                ASM {
-                        /* bne offset */
-                        IW(0x00008240 |
-                           (((uint32_t)offset & 0xff) << 24) |
-                           ((((uint32_t)offset >> 8) & 0xff) << 16));
+                if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+                    offset >= -32768 && offset <= 32764) {
+                        ASM {
+                                /* bne offset; nop */
+                                IW(0x00008240 |
+                                   (((uint32_t)offset & 0xff) << 24) |
+                                   ((((uint32_t)offset >> 8) & 0xff) << 16));
+                                IW(0x00000060);
+                        }
+                } else {
+                        int long_offset = offset - 4;
+                        ASM {
+                                /* beq +8; b long_offset */
+                                IW(0x08008241);
+                                IW(0x00000048 |
+                                   (((uint32_t)long_offset & 0xff) << 24) |
+                                   ((((uint32_t)long_offset >> 8) & 0xff) << 16) |
+                                   ((((uint32_t)long_offset >> 16) & 0xff) << 8) |
+                                   (((uint32_t)long_offset >> 24) & 0x03));
+                        }
                 }
         }
 

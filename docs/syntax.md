@@ -49,6 +49,30 @@ func main() {
 }
 ```
 
+## Type Annotations
+
+Parameters and local declarations may carry optimization-oriented type
+annotations.  At optimization level 2, annotated parameters are checked at
+function entry.
+
+```
+func copy_words(dst: rpackeduint32, src: rpackeduint32) {
+    // The r prefix supplies a checked non-aliasing optimization hint.
+}
+```
+
+Packed annotations include `packedint8`, `packeduint8`, `packedint16`,
+`packeduint16`, `packedint32`, `packeduint32`, `packedint64`,
+`packeduint64`, `packedfloat` (float32 elements), and `packeddouble`
+(float64 elements).  Prefixing one of these names with `r` produces its
+restricted form, for example `rpackeduint8` or `rpackedfloat`.  The existing
+plain `packed` name accepts any packed element type but does not provide an
+element-type or non-aliasing optimization fact.
+
+Restricted annotations do not introduce undefined behavior.  Optimized code
+checks the relevant backing-buffer ranges and uses the scalar path when the
+non-aliasing condition is not satisfied.
+
 ## Array
 
 Arrays are ordered collections of values, accessed by index. Arrays

@@ -57,8 +57,14 @@
 #define ABCE_MAX_BLOCKS		64	/* cloneable blocks in a body    */
 #define ABCE_MAX_SITES		4	/* guarded subscript sites       */
 #define ABCE_MAX_GUARDS		8	/* TYPEIS-guarded local reads    */
+#define ABCE_GUARD_INT		1	/* affine-index local            */
+#define ABCE_GUARD_BODY		2	/* scalar value local            */
+#define ABCE_BODY_UNKNOWN	0
+#define ABCE_BODY_INT		1
+#define ABCE_BODY_F32		2
 #define ABCE_MAX_ASSIGNED	32	/* assigned locals in a body     */
 #define ABCE_MAX_LOOPS		16	/* candidate loops per function  */
+#define ABCE_MAX_PACKED		4	/* packed locals per loop        */
 
 /* A subscript site shape: p[i], p[i+u], p[u+i], p[i-u]. */
 enum abce_shape {
@@ -73,6 +79,7 @@ struct abce_site {
 	bool u_is_const;
 	int u_const;		/* if u_is_const */
 	const char *u_name;	/* if !u_is_const (invariant local) */
+	int packed_index;	/* owner packed (ctx->packed[]) */
 };
 
 /*
@@ -235,11 +242,25 @@ struct abce_ctx {
 	struct hir_block *func_block;
 	struct hir_block *loop;
 	const char *counter;
-	const char *packed;			/* single packed local */
+
+	/*
+	 * Packed locals accessed by the loop (multi-packed since design
+	 * 06 Part A; the SIMD strip loop needs src+dst in one loop).
+	 * Each packed gets its own element-type bet, PCHECK guard term,
+	 * and $abceN_baseK hoisted base local.
+	 */
+	const char *packed[ABCE_MAX_PACKED];
+	int packed_bet[ABCE_MAX_PACKED];	/* NOCT_PACKED_* per packed */
+	int packed_count;
 	const char *assigned[ABCE_MAX_ASSIGNED];
 	int assigned_count;
-	const char *guards[ABCE_MAX_GUARDS];	/* locals to TYPEIS-int */
+	const char *guards[ABCE_MAX_GUARDS];	/* locals protected by TYPEIS */
+	uint8_t guard_req[ABCE_MAX_GUARDS];	/* ABCE_GUARD_* bit mask */
 	int guard_count;
+	int body_kind;			/* ABCE_BODY_* */
+	bool saw_int_term;
+	bool saw_float_term;
+	bool saw_int_only_op;
 	struct abce_site sites[ABCE_MAX_SITES];
 	int site_count;
 	/* Clone map. */
@@ -249,7 +270,7 @@ struct abce_ctx {
 	/* Hoisted local names. */
 	char lo_name[32];
 	char hi_name[32];
-	char base_name[32];
+	char base_name[ABCE_MAX_PACKED][32];
 	char g_name[32];
 
 	/* Element-type bet (NOCT_PACKED_*) from constant propagation. */
@@ -424,18 +445,36 @@ abce_is_local(struct abce_ctx *ctx, const char *name)
 }
 
 static bool
-abce_add_guard(struct abce_ctx *ctx, const char *name)
+abce_add_guard(struct abce_ctx *ctx, const char *name, uint8_t req)
 {
 	int i;
 
 	for (i = 0; i < ctx->guard_count; i++) {
-		if (strcmp(ctx->guards[i], name) == 0)
+		if (strcmp(ctx->guards[i], name) == 0) {
+			ctx->guard_req[i] |= req;
 			return true;
+		}
 	}
 	if (ctx->guard_count >= ABCE_MAX_GUARDS)
 		return false;	/* over the cap: ineligible */
-	ctx->guards[ctx->guard_count++] = name;
+	ctx->guards[ctx->guard_count] = name;
+	ctx->guard_req[ctx->guard_count] = req;
+	ctx->guard_count++;
 	return true;
+}
+
+/* Pick the guarded element type for a packed local. */
+static int
+abce_bet_for_symbol(struct abce_ctx *ctx, const char *name)
+{
+	int k;
+
+	if (ctx->facts == NULL)
+		return NOCT_PACKED_UINT8;
+	k = abce_fact_find(ctx->facts, name);
+	if (k < 0 || ctx->facts->type[k] < 0)
+		return NOCT_PACKED_UINT8;
+	return ctx->facts->type[k];
 }
 
 static bool
@@ -487,14 +526,35 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 	if (!abce_is_local(ctx, base->val.term.term->val.symbol))
 		return false;
 
-	/* All sites must target one packed local. */
-	if (ctx->packed == NULL) {
-		ctx->packed = base->val.term.term->val.symbol;
-	} else if (strcmp(ctx->packed, base->val.term.term->val.symbol) != 0) {
-		return false;
-	}
+	/* Find or register the owner packed local. */
+	{
+		const char *sym = base->val.term.term->val.symbol;
+		int bet = abce_bet_for_symbol(ctx, sym);
+		int body_kind;
+		int k;
 
-	memset(&site, 0, sizeof(site));
+		if (bet == NOCT_PACKED_FLOAT64)
+			return false;
+		body_kind = bet == NOCT_PACKED_FLOAT32 ?
+			ABCE_BODY_F32 : ABCE_BODY_INT;
+		if (ctx->body_kind != ABCE_BODY_UNKNOWN &&
+		    ctx->body_kind != body_kind)
+			return false;
+		ctx->body_kind = body_kind;
+		for (k = 0; k < ctx->packed_count; k++) {
+			if (strcmp(ctx->packed[k], sym) == 0)
+				break;
+		}
+		if (k == ctx->packed_count) {
+			if (ctx->packed_count >= ABCE_MAX_PACKED)
+				return false;
+			ctx->packed[ctx->packed_count] = sym;
+			ctx->packed_bet[ctx->packed_count] = bet;
+			ctx->packed_count++;
+		}
+		memset(&site, 0, sizeof(site));
+		site.packed_index = k;
+	}
 
 	/* Match the index shape. */
 	if (f->type == HIR_EXPR_TERM &&
@@ -540,7 +600,7 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 				return false;	/* i+i: coefficient 2 */
 			if (!abce_is_local(ctx, site.u_name))
 				return false;	/* global: not invariant */
-			if (!abce_add_guard(ctx, site.u_name))
+			if (!abce_add_guard(ctx, site.u_name, ABCE_GUARD_INT))
 				return false;
 		}
 	} else {
@@ -550,6 +610,8 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 	/* Dedup structurally-equal sites. */
 	for (i = 0; i < ctx->site_count; i++) {
 		struct abce_site *o = &ctx->sites[i];
+		if (o->packed_index != site.packed_index)
+			continue;
 		if (o->shape != site.shape)
 			continue;
 		if (o->u_is_const != site.u_is_const)
@@ -580,29 +642,32 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 		t = expr->val.term.term;
 		switch (t->type) {
 		case HIR_TERM_INT:
-			return true;
-		case HIR_TERM_LONG:
+			ctx->saw_int_term = true;
+			return ctx->body_kind != ABCE_BODY_F32;
 		case HIR_TERM_FLOAT:
+			ctx->saw_float_term = true;
+			return ctx->body_kind != ABCE_BODY_INT;
+		case HIR_TERM_LONG:
 		case HIR_TERM_DOUBLE:
-			/* Rejected: keeps every value in the fast body
-			   int-tagged (PSTORE8/16/32 assume an int source;
-			   a float flowing into a store would write its raw
-			   bits).  See bytecode.h. */
 			return false;
 		case HIR_TERM_SYMBOL:
 			if (strcmp(t->val.symbol, ctx->counter) == 0)
 				return true;
 			if (!abce_is_local(ctx, t->val.symbol))
 				return false;	/* global read */
-			/* Every local read gets an is-int guard. */
-			return abce_add_guard(ctx, t->val.symbol);
+			/* Value locals are guarded according to the body kind. */
+			return abce_add_guard(ctx, t->val.symbol, ABCE_GUARD_BODY);
 		default:
 			/* STRING / EMPTY_ARRAY / EMPTY_DICT allocate. */
 			return false;
 		}
 	case HIR_EXPR_PAR:
 	case HIR_EXPR_NEG:
+		return abce_check_expr(ctx, expr->val.unary.expr);
 	case HIR_EXPR_NOT:
+		ctx->saw_int_only_op = true;
+		if (ctx->body_kind == ABCE_BODY_F32)
+			return false;
 		return abce_check_expr(ctx, expr->val.unary.expr);
 	case HIR_EXPR_LT:
 	case HIR_EXPR_LTE:
@@ -622,9 +687,20 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 	case HIR_EXPR_SHR:
 	case HIR_EXPR_LAND:
 	case HIR_EXPR_LOR:
+		if (expr->type != HIR_EXPR_PLUS &&
+		    expr->type != HIR_EXPR_MINUS &&
+		    expr->type != HIR_EXPR_MUL &&
+		    expr->type != HIR_EXPR_DIV) {
+			ctx->saw_int_only_op = true;
+			if (ctx->body_kind == ABCE_BODY_F32)
+				return false;
+		}
 		if (!abce_check_expr(ctx, expr->val.binary.expr[0]))
 			return false;
-		return abce_check_expr(ctx, expr->val.binary.expr[1]);
+		if (!abce_check_expr(ctx, expr->val.binary.expr[1]))
+			return false;
+		return !(ctx->body_kind == ABCE_BODY_F32 &&
+			 ctx->saw_int_only_op);
 	case HIR_EXPR_SUBSCR:
 		return abce_check_site(ctx, expr);
 	default:
@@ -740,12 +816,14 @@ abce_check_eligibility(struct abce_ctx *ctx)
 		return false;
 
 	/* At least one packed access, otherwise nothing to gain. */
-	if (ctx->packed == NULL || ctx->site_count == 0)
+	if (ctx->packed_count == 0 || ctx->site_count == 0)
 		return false;
 
-	/* The packed and every affine u must be loop-invariant. */
-	if (abce_is_assigned(ctx, ctx->packed))
-		return false;
+	/* Every packed and every affine u must be loop-invariant. */
+	for (i = 0; i < ctx->packed_count; i++) {
+		if (abce_is_assigned(ctx, ctx->packed[i]))
+			return false;
+	}
 	for (i = 0; i < ctx->site_count; i++) {
 		if (!ctx->sites[i].u_is_const &&
 		    ctx->sites[i].u_name != NULL &&
@@ -753,20 +831,35 @@ abce_check_eligibility(struct abce_ctx *ctx)
 			return false;
 	}
 
+	/* Raw stores require a homogeneous scalar representation. */
+	if (ctx->body_kind == ABCE_BODY_F32) {
+		if (ctx->saw_int_term || ctx->saw_int_only_op)
+			return false;
+	} else if (ctx->body_kind == ABCE_BODY_INT) {
+		if (ctx->saw_float_term)
+			return false;
+	} else {
+		return false;
+	}
+	for (i = 0; i < ctx->guard_count; i++) {
+		if (ctx->body_kind == ABCE_BODY_F32 &&
+		    ctx->guard_req[i] == (ABCE_GUARD_INT | ABCE_GUARD_BODY))
+			return false;
+	}
+
 	/*
-	 * Pick the element-type bet.  A propagated creation fact wins;
-	 * otherwise default to uint8 (the remacs buffer type).  Float
-	 * elements are not supported by the v1 fast body (the guards
-	 * are int-typed), so a float fact keeps the loop unversioned.
+	 * Multi-packed loops reject 64-bit bets outright: a PLOAD64
+	 * yields a long, and letting it flow into another packed's
+	 * PSTORE8/16/32 (which assume an int-tagged source) would write
+	 * raw long bits.  Single-packed 64-bit loops keep today's
+	 * behavior (loads and stores agree on the width; PSTORE64
+	 * dispatches on int/long).
 	 */
-	ctx->bet = NOCT_PACKED_UINT8;
-	if (ctx->facts != NULL) {
-		i = abce_fact_find(ctx->facts, ctx->packed);
-		if (i >= 0 && ctx->facts->type[i] >= 0) {
-			if (ctx->facts->type[i] == NOCT_PACKED_FLOAT32 ||
-			    ctx->facts->type[i] == NOCT_PACKED_FLOAT64)
+	if (ctx->packed_count > 1) {
+		for (i = 0; i < ctx->packed_count; i++) {
+			if (ctx->packed_bet[i] == NOCT_PACKED_INT64 ||
+			    ctx->packed_bet[i] == NOCT_PACKED_UINT64)
 				return false;
-			ctx->bet = ctx->facts->type[i];
 		}
 	}
 
@@ -1043,6 +1136,7 @@ abce_load_kind(int bet)
 	case NOCT_PACKED_UINT32: return HIR_EXPR_PLOAD32;
 	case NOCT_PACKED_INT64:  return HIR_EXPR_PLOAD64;
 	case NOCT_PACKED_UINT64: return HIR_EXPR_PLOAD64;
+	case NOCT_PACKED_FLOAT32:return HIR_EXPR_PLOADF32;
 	default:                 return HIR_EXPR_PLOAD8U;
 	}
 }
@@ -1059,21 +1153,30 @@ abce_store_kind(int bet)
 	case NOCT_PACKED_UINT32: return HIR_EXPR_PSTORE32;
 	case NOCT_PACKED_INT64:  return HIR_EXPR_PSTORE64;
 	case NOCT_PACKED_UINT64: return HIR_EXPR_PSTORE64;
+	case NOCT_PACKED_FLOAT32:return HIR_EXPR_PSTOREF32;
 	default:                 return HIR_EXPR_PSTORE8;
 	}
 }
 
-static bool
-abce_expr_is_packed_subscr(struct abce_ctx *ctx, struct hir_expr *e)
+/* Return the owner packed index of a p[f] subscript, or -1. */
+static int
+abce_packed_subscr_index(struct abce_ctx *ctx, struct hir_expr *e)
 {
+	const char *sym;
+	int k;
+
 	if (e->type != HIR_EXPR_SUBSCR)
-		return false;
+		return -1;
 	if (e->val.binary.expr[0]->type != HIR_EXPR_TERM)
-		return false;
+		return -1;
 	if (e->val.binary.expr[0]->val.term.term->type != HIR_TERM_SYMBOL)
-		return false;
-	return strcmp(e->val.binary.expr[0]->val.term.term->val.symbol,
-		      ctx->packed) == 0;
+		return -1;
+	sym = e->val.binary.expr[0]->val.term.term->val.symbol;
+	for (k = 0; k < ctx->packed_count; k++) {
+		if (strcmp(ctx->packed[k], sym) == 0)
+			return k;
+	}
+	return -1;
 }
 
 static bool
@@ -1083,16 +1186,19 @@ abce_rewrite_expr(struct abce_ctx *ctx, struct hir_expr *e)
 
 	if (e == NULL)
 		return true;
-	if (abce_expr_is_packed_subscr(ctx, e)) {
-		/* p[f]  ->  PLOAD8U($base, f) */
-		struct hir_expr *base_term;
-		base_term = abce_mk_expr_symbol(ctx->base_name);
-		if (base_term == NULL)
-			return false;
-		e->type = abce_load_kind(ctx->bet);
-		e->val.binary.expr[0] = base_term;
-		/* expr[1] (the offset) stays. */
-		return abce_rewrite_expr(ctx, e->val.binary.expr[1]);
+	{
+		int k = abce_packed_subscr_index(ctx, e);
+		if (k >= 0) {
+			/* p[f]  ->  PLOAD*($baseK, f) */
+			struct hir_expr *base_term;
+			base_term = abce_mk_expr_symbol(ctx->base_name[k]);
+			if (base_term == NULL)
+				return false;
+			e->type = abce_load_kind(ctx->packed_bet[k]);
+			e->val.binary.expr[0] = base_term;
+			/* expr[1] (the offset) stays. */
+			return abce_rewrite_expr(ctx, e->val.binary.expr[1]);
+		}
 	}
 	switch (e->type) {
 	case HIR_EXPR_TERM:
@@ -1135,14 +1241,15 @@ abce_rewrite_block(struct abce_ctx *ctx, struct hir_block *b)
 	case HIR_BLOCK_BASIC:
 		stmt = b->val.basic.stmt_list;
 		while (stmt != NULL) {
+			int k;
 			if (stmt->lhs != NULL &&
-			    abce_expr_is_packed_subscr(ctx, stmt->lhs)) {
-				/* p[f] = x  ->  PSTORE8($base, f) = x */
+			    (k = abce_packed_subscr_index(ctx, stmt->lhs)) >= 0) {
+				/* p[f] = x  ->  PSTORE*($baseK, f) = x */
 				struct hir_expr *base_term;
-				base_term = abce_mk_expr_symbol(ctx->base_name);
+				base_term = abce_mk_expr_symbol(ctx->base_name[k]);
 				if (base_term == NULL)
 					return false;
-				stmt->lhs->type = abce_store_kind(ctx->bet);
+				stmt->lhs->type = abce_store_kind(ctx->packed_bet[k]);
 				stmt->lhs->val.binary.expr[0] = base_term;
 				if (!abce_rewrite_expr(ctx, stmt->lhs->val.binary.expr[1]))
 					return false;
@@ -1226,11 +1333,15 @@ abce_mk_guard(struct abce_ctx *ctx)
 			   abce_mk_expr_int(NOCT_VALUE_INT));
 	g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 
-	/* TYPEIS(v, int) for every guarded local. */
+	/* TYPEIS(v, int/float) for every guarded local. */
 	for (i = 0; i < ctx->guard_count; i++) {
+		int type = NOCT_VALUE_INT;
+		if ((ctx->guard_req[i] & ABCE_GUARD_BODY) != 0 &&
+		    ctx->body_kind == ABCE_BODY_F32)
+			type = NOCT_VALUE_FLOAT;
 		e = abce_mk_binary(HIR_EXPR_TYPEIS,
 				   abce_mk_expr_symbol(ctx->guards[i]),
-				   abce_mk_expr_int(NOCT_VALUE_INT));
+				   abce_mk_expr_int(type));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 	}
 
@@ -1240,11 +1351,13 @@ abce_mk_guard(struct abce_ctx *ctx)
 			   abce_mk_expr_symbol(ctx->hi_name));
 	g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 
-	/* PCHECK(p, <bet>) */
-	e = abce_mk_binary(HIR_EXPR_PCHECK,
-			   abce_mk_expr_symbol(ctx->packed),
-			   abce_mk_expr_int(ctx->bet));
-	g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+	/* PCHECK(p_k, <bet_k>) for every packed. */
+	for (i = 0; i < ctx->packed_count; i++) {
+		e = abce_mk_binary(HIR_EXPR_PCHECK,
+				   abce_mk_expr_symbol(ctx->packed[i]),
+				   abce_mk_expr_int(ctx->packed_bet[i]));
+		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+	}
 
 	/*
 	 * Per-site endpoint bounds.  BOTH endpoints are checked against
@@ -1266,7 +1379,7 @@ abce_mk_guard(struct abce_ctx *ctx)
 		e = abce_mk_binary(HIR_EXPR_LT,
 				   abce_mk_endpoint(ctx, &ctx->sites[i], false),
 				   abce_mk_unary(HIR_EXPR_PLEN,
-						 abce_mk_expr_symbol(ctx->packed)));
+						 abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index])));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 		/* f(hi-1) >= 0 && f(hi-1) < PLEN(p) */
 		e = abce_mk_binary(HIR_EXPR_GTE,
@@ -1276,7 +1389,7 @@ abce_mk_guard(struct abce_ctx *ctx)
 		e = abce_mk_binary(HIR_EXPR_LT,
 				   abce_mk_endpoint(ctx, &ctx->sites[i], true),
 				   abce_mk_unary(HIR_EXPR_PLEN,
-						 abce_mk_expr_symbol(ctx->packed)));
+						 abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index])));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 	}
 
@@ -1319,15 +1432,20 @@ abce_version_loop(struct abce_ctx *ctx)
 	/* Unique hoist-local names. */
 	snprintf(ctx->lo_name, sizeof(ctx->lo_name), "$abce%d_lo", abce_loop_seq);
 	snprintf(ctx->hi_name, sizeof(ctx->hi_name), "$abce%d_hi", abce_loop_seq);
-	snprintf(ctx->base_name, sizeof(ctx->base_name), "$abce%d_base", abce_loop_seq);
+	for (i = 0; i < ctx->packed_count; i++) {
+		snprintf(ctx->base_name[i], sizeof(ctx->base_name[i]),
+			 "$abce%d_base%d", abce_loop_seq, i);
+	}
 	snprintf(ctx->g_name, sizeof(ctx->g_name), "$abce%d_g", abce_loop_seq);
 	abce_loop_seq++;
 	if (!hir_add_local(F, ctx->lo_name))
 		return false;
 	if (!hir_add_local(F, ctx->hi_name))
 		return false;
-	if (!hir_add_local(F, ctx->base_name))
-		return false;
+	for (i = 0; i < ctx->packed_count; i++) {
+		if (!hir_add_local(F, ctx->base_name[i]))
+			return false;
+	}
 	if (!hir_add_local(F, ctx->g_name))
 		return false;
 
@@ -1380,6 +1498,24 @@ abce_version_loop(struct abce_ctx *ctx)
 	/* FAST uses the cloned body. */
 	FAST->val.for_.is_ranged = true;
 	FAST->val.for_.counter_symbol = F->val.for_.counter_symbol;
+	/*
+	 * Typed-op region (docs/design/07-typed-ops.md 3.2): inside the
+	 * guarded fast loop every local read is TYPEIS-int proven, and
+	 * with loads of width <= 32 (int-yielding) plus the int-only
+	 * safe-expression rules, every body assignment re-establishes
+	 * int, so the proof holds inductively.  A 64-bit load would let
+	 * an accumulator turn long at runtime (width64.noct), so it
+	 * suppresses the flag.  The SLOW loop (guard false) must never
+	 * be flagged.
+	 */
+	FAST->val.for_.typed_int_region = ctx->body_kind == ABCE_BODY_INT;
+	for (i = 0; i < ctx->packed_count; i++) {
+		if (ctx->packed_bet[i] == NOCT_PACKED_INT64 ||
+		    ctx->packed_bet[i] == NOCT_PACKED_UINT64)
+			FAST->val.for_.typed_int_region = false;
+	}
+	/* Mark for the SIMD pass (design 06; it runs right after us). */
+	FAST->val.for_.abce_fast = true;
 	FAST->val.for_.key_symbol = NULL;
 	FAST->val.for_.value_symbol = NULL;
 	FAST->val.for_.collection = NULL;
@@ -1411,12 +1547,24 @@ abce_version_loop(struct abce_ctx *ctx)
 			return false;
 	}
 
-	/* B1: $base = PBASE(p) */
-	pbase = abce_mk_unary(HIR_EXPR_PBASE, abce_mk_expr_symbol(ctx->packed));
-	s_base = abce_mk_assign_stmt(line, abce_mk_expr_symbol(ctx->base_name), pbase);
-	if (s_base == NULL)
-		return false;
-	B1->val.basic.stmt_list = s_base;
+	/* B1: $baseK = PBASE(pK) for every packed. */
+	{
+		struct hir_stmt *tail = NULL;
+		for (i = 0; i < ctx->packed_count; i++) {
+			pbase = abce_mk_unary(HIR_EXPR_PBASE,
+					      abce_mk_expr_symbol(ctx->packed[i]));
+			s_base = abce_mk_assign_stmt(line,
+						     abce_mk_expr_symbol(ctx->base_name[i]),
+						     pbase);
+			if (s_base == NULL)
+				return false;
+			if (tail == NULL)
+				B1->val.basic.stmt_list = s_base;
+			else
+				tail->next = s_base;
+			tail = s_base;
+		}
+	}
 	B1->succ = FAST;
 
 	/*
@@ -1605,6 +1753,14 @@ hir_opt_abce_func(
 	/* Packed element-type facts (function-wide, two passes). */
 	static struct abce_facts facts;
 	memset(&facts, 0, sizeof(facts));
+	/* Element-specific packed annotations are entry-checked before the
+	   body at this optimization level, so they are sound seed facts. */
+	for (i = 0; i < (int)func_block->val.func.param_count; i++) {
+		int packed_type = func_block->val.func.param_packed_type[i];
+		if (packed_type >= 0 && packed_type != NOCT_PACKED_ANY)
+			abce_fact_meet(&facts,
+				func_block->val.func.param_name[i], packed_type);
+	}
 	if (func_block->val.func.inner != NULL) {
 		abce_facts_scan_chain(&facts, func_block->val.func.inner, 0);
 		abce_facts_scan_chain(&facts, func_block->val.func.inner, 1);
@@ -1628,8 +1784,9 @@ hir_opt_abce_func(
 		if (!abce_version_loop(ctx))
 			return false;
 		if (getenv("NOCT_ABCE_DEBUG") != NULL)
-			fprintf(stderr, "[abce] %s:%d: versioned (sites=%d guards=%d packed=%s bet=%d)\n",
-				hir_file_name, loops[i]->line, ctx->site_count, ctx->guard_count, ctx->packed, ctx->bet);
+			fprintf(stderr, "[abce] %s:%d: versioned (sites=%d guards=%d packeds=%d bet0=%d)\n",
+				hir_file_name, loops[i]->line, ctx->site_count, ctx->guard_count,
+				ctx->packed_count, ctx->packed_bet[0]);
 #ifndef NDEBUG
 		abce_verify_fast(ctx);
 #endif

@@ -12,6 +12,7 @@
 #include <noct/noct.h>
 #include "runtime.h"
 #include "intrinsics.h"
+#include "bytecode.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -496,6 +497,14 @@ noct_ex_div_helper(
 	src1_val = &env->frame->tmpvar[src1];
 	src2_val = &env->frame->tmpvar[src2];
 
+	/*
+	 * Integer-performed divisions (both operands int/long) error on
+	 * a zero divisor.  Float/double-performed divisions are total:
+	 * they follow IEEE 754 and yield +/-inf or NaN (design 07
+	 * Part 0, D-TOP12).  The FP environment keeps its default
+	 * masked-exception state on every target; the runtime never
+	 * touches MXCSR/FPCR or their equivalents.
+	 */
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
 		switch (src2_val->type) {
@@ -503,6 +512,14 @@ noct_ex_div_helper(
 			if (src2_val->val.i == 0) {
 				rt_error(env, N_TR("Division by zero."));
 				return false;
+			}
+			if (src2_val->val.i == -1 &&
+			    src1_val->val.i == (-2147483647 - 1)) {
+				/* Wraps: -INT_MIN == INT_MIN; the raw C
+				   division traps (SIGFPE). */
+				dst_val->type = NOCT_VALUE_INT;
+				dst_val->val.i = src1_val->val.i;
+				break;
 			}
 			dst_val->type = NOCT_VALUE_INT;
 			dst_val->val.i = src1_val->val.i / src2_val->val.i;
@@ -516,18 +533,10 @@ noct_ex_div_helper(
 			dst_val->val.l = (int64_t)src1_val->val.i / src2_val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			if (src2_val->val.f == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = (float)src1_val->val.i / src2_val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			if (src2_val->val.lf == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_DOUBLE;
 			dst_val->val.lf = (double)src1_val->val.i / src2_val->val.lf;
 			break;
@@ -543,6 +552,12 @@ noct_ex_div_helper(
 				rt_error(env, N_TR("Division by zero."));
 				return false;
 			}
+			if (src2_val->val.i == -1 &&
+			    src1_val->val.l == (int64_t)((uint64_t)1 << 63)) {
+				dst_val->type = NOCT_VALUE_LONG;
+				dst_val->val.l = src1_val->val.l;
+				break;
+			}
 			dst_val->type = NOCT_VALUE_LONG;
 			dst_val->val.l = src1_val->val.l / (int64_t)src2_val->val.i;
 			break;
@@ -551,22 +566,20 @@ noct_ex_div_helper(
 				rt_error(env, N_TR("Division by zero."));
 				return false;
 			}
+			if (src2_val->val.l == -1 &&
+			    src1_val->val.l == (int64_t)((uint64_t)1 << 63)) {
+				dst_val->type = NOCT_VALUE_LONG;
+				dst_val->val.l = src1_val->val.l;
+				break;
+			}
 			dst_val->type = NOCT_VALUE_LONG;
 			dst_val->val.l = src1_val->val.l / src2_val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			if (src2_val->val.f == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = (float)src1_val->val.l / src2_val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			if (src2_val->val.lf == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_DOUBLE;
 			dst_val->val.lf = (double)src1_val->val.l / src2_val->val.lf;
 			break;
@@ -578,34 +591,18 @@ noct_ex_div_helper(
 	case NOCT_VALUE_FLOAT:
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
-			if (src2_val->val.i == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = src1_val->val.f / (float)src2_val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			if (src2_val->val.l == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = src1_val->val.f / (float)src2_val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			if (src2_val->val.f == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_FLOAT;
 			dst_val->val.f = src1_val->val.f / src2_val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			if (src2_val->val.lf == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_DOUBLE;
 			dst_val->val.lf = (double)src1_val->val.f / src2_val->val.lf;
 			break;
@@ -617,34 +614,18 @@ noct_ex_div_helper(
 	case NOCT_VALUE_DOUBLE:
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
-			if (src2_val->val.i == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_DOUBLE;
 			dst_val->val.lf = src1_val->val.lf / (double)src2_val->val.i;
 			break;
 		case NOCT_VALUE_LONG:
-			if (src2_val->val.l == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_DOUBLE;
 			dst_val->val.lf = src1_val->val.lf / (double)src2_val->val.l;
 			break;
 		case NOCT_VALUE_FLOAT:
-			if (src2_val->val.f == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_DOUBLE;
 			dst_val->val.lf = src1_val->val.lf / (double)src2_val->val.f;
 			break;
 		case NOCT_VALUE_DOUBLE:
-			if (src2_val->val.lf == 0) {
-				rt_error(env, N_TR("Division by zero."));
-				return false;
-			}
 			dst_val->type = NOCT_VALUE_DOUBLE;
 			dst_val->val.lf = src1_val->val.lf / src2_val->val.lf;
 			break;
@@ -689,6 +670,13 @@ noct_ex_mod_helper(
 				rt_error(env, N_TR("Division by zero."));
 				return false;
 			}
+			if (src2_val->val.i == -1 &&
+			    src1_val->val.i == (-2147483647 - 1)) {
+				/* The raw C modulo traps (SIGFPE). */
+				dst_val->type = NOCT_VALUE_INT;
+				dst_val->val.i = 0;
+				break;
+			}
 			dst_val->type = NOCT_VALUE_INT;
 			dst_val->val.i = src1_val->val.i % src2_val->val.i;
 			break;
@@ -712,6 +700,12 @@ noct_ex_mod_helper(
 				rt_error(env, N_TR("Division by zero."));
 				return false;
 			}
+			if (src2_val->val.i == -1 &&
+			    src1_val->val.l == (int64_t)((uint64_t)1 << 63)) {
+				dst_val->type = NOCT_VALUE_LONG;
+				dst_val->val.l = 0;
+				break;
+			}
 			dst_val->type = NOCT_VALUE_LONG;
 			dst_val->val.l = src1_val->val.l % (int64_t)src2_val->val.i;
 			break;
@@ -719,6 +713,12 @@ noct_ex_mod_helper(
 			if (src2_val->val.l == 0) {
 				rt_error(env, N_TR("Division by zero."));
 				return false;
+			}
+			if (src2_val->val.l == -1 &&
+			    src1_val->val.l == (int64_t)((uint64_t)1 << 63)) {
+				dst_val->type = NOCT_VALUE_LONG;
+				dst_val->val.l = 0;
+				break;
 			}
 			dst_val->type = NOCT_VALUE_LONG;
 			dst_val->val.l = src1_val->val.l % src2_val->val.l;
@@ -1493,6 +1493,29 @@ noct_ex_gt_helper(
 			return false;
 		}
 		break;
+	case NOCT_VALUE_DOUBLE:
+		switch (src2_val->type) {
+		case NOCT_VALUE_INT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf > (double)src2_val->val.i) ? 1 : 0;
+			break;
+		case NOCT_VALUE_LONG:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf > (double)src2_val->val.l) ? 1 : 0;
+			break;
+		case NOCT_VALUE_FLOAT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf > (double)src2_val->val.f) ? 1 : 0;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.lf > src2_val->val.lf) ? 1 : 0;
+			break;
+		default:
+			rt_error(env, N_TR("Value is not a number."));
+			return false;
+		}
+		break;
 	case NOCT_VALUE_STRING:
 		switch (src2_val->type) {
 		case NOCT_VALUE_STRING:
@@ -1837,6 +1860,30 @@ noct_ex_neq_helper(
 		case NOCT_VALUE_DOUBLE:
 			dst_val->type = NOCT_VALUE_INT;
 			dst_val->val.i = ((double)src1_val->val.i != src2_val->val.lf) ? 1 : 0;
+			break;
+		default:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = 1;
+			break;
+		}
+		break;
+	case NOCT_VALUE_LONG:
+		switch (src2_val->type) {
+		case NOCT_VALUE_INT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((uint64_t)src1_val->val.l != (uint64_t)(uint32_t)src2_val->val.i) ? 1 : 0;
+			break;
+		case NOCT_VALUE_LONG:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = (src1_val->val.l != src2_val->val.l) ? 1 : 0;
+			break;
+		case NOCT_VALUE_FLOAT:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((float)src1_val->val.l != src2_val->val.f) ? 1 : 0;
+			break;
+		case NOCT_VALUE_DOUBLE:
+			dst_val->type = NOCT_VALUE_INT;
+			dst_val->val.i = ((double)src1_val->val.l != src2_val->val.lf) ? 1 : 0;
 			break;
 		default:
 			dst_val->type = NOCT_VALUE_INT;
@@ -2865,6 +2912,45 @@ noct_ex_pstore64_helper(
 	return true;
 }
 
+NOCT_DLL
+bool
+CDECL
+noct_ex_ploadf32_helper(
+	NoctEnv *env,
+	int dst,
+	int base,
+	int ofs)
+{
+	struct rt_value *d = &env->frame->tmpvar[dst];
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	const char *p;
+
+	p = (const char *)(intptr_t)b->val.l + (int64_t)ABCE_OFS(o) * 4;
+	memcpy(&d->val.f, p, sizeof(float));
+	d->type = NOCT_VALUE_FLOAT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstoref32_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int src)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	struct rt_value *s = &env->frame->tmpvar[src];
+	char *p;
+
+	p = (char *)(intptr_t)b->val.l + (int64_t)ABCE_OFS(o) * 4;
+	memcpy(p, &s->val.f, sizeof(float));
+	return true;
+}
+
 /*
  * CHECKTYPE helper. (Type annotation entry check.)
  */
@@ -2878,8 +2964,46 @@ noct_ex_checktype_helper(
 {
 	struct rt_value *val;
 	const char *type_name;
+	int packed_type;
+	bool restricted;
 
 	val = &env->frame->tmpvar[slot];
+	packed_type = -1;
+	restricted = false;
+	if (value_type >= TYPECHECK_PACKED_BASE &&
+	    value_type < TYPECHECK_PACKED_BASE + NOCT_PACKED_ANY) {
+		packed_type = value_type - TYPECHECK_PACKED_BASE;
+	} else if (value_type >= TYPECHECK_RPACKED_BASE &&
+		   value_type < TYPECHECK_RPACKED_BASE + NOCT_PACKED_ANY) {
+		packed_type = value_type - TYPECHECK_RPACKED_BASE;
+		restricted = true;
+	}
+	if (packed_type >= 0) {
+		static const char *const packed_name[] = {
+			"packedint8", "packeduint8",
+			"packedint16", "packeduint16",
+			"packedint32", "packeduint32",
+			"packedint64", "packeduint64",
+			"packedfloat", "packeddouble"
+		};
+		static const char *const rpacked_name[] = {
+			"rpackedint8", "rpackeduint8",
+			"rpackedint16", "rpackeduint16",
+			"rpackedint32", "rpackeduint32",
+			"rpackedint64", "rpackeduint64",
+			"rpackedfloat", "rpackeddouble"
+		};
+
+		if (val->type == NOCT_VALUE_PACKED &&
+		    val->val.packed->type == packed_type)
+			return true;
+		type_name = restricted ? rpacked_name[packed_type] :
+			packed_name[packed_type];
+		rt_error(env, N_TR("%s(): argument type mismatch (expected %s)."),
+			 env->frame->func != NULL ? env->frame->func->name : "?",
+			 type_name);
+		return false;
+	}
 	if (val->type == value_type)
 		return true;
 
@@ -2909,3 +3033,512 @@ noct_ex_checktype_helper(
 		 type_name);
 	return false;
 }
+
+/* Evaluate a condition without depending on the target's word order. */
+NOCT_DLL
+int
+CDECL
+noct_ex_condition_helper(
+	NoctEnv *env,
+	int slot)
+{
+	struct rt_value *v;
+
+	v = &env->frame->tmpvar[slot];
+	switch (v->type) {
+	case NOCT_VALUE_INT:    return v->val.i != 0;
+	case NOCT_VALUE_LONG:   return v->val.l != 0;
+	case NOCT_VALUE_FLOAT:  return v->val.f != 0.0f;
+	case NOCT_VALUE_DOUBLE: return v->val.lf != 0.0;
+	default:
+		rt_error(env, N_TR("Condition is not a number."));
+		return -1;
+	}
+}
+
+/*
+ * Typed arithmetic helpers (docs/design/07-typed-ops.md).
+ *
+ * Dispatch-free: they trust the operand tags (int for i*, float for
+ * f*) and are undefined on wrong-typed operands (D-TOP1).  The LIR
+ * generator emits the corresponding opcodes only under type proofs.
+ * Integer arithmetic is performed in uint32_t (defined wraparound,
+ * matching both the generic helpers' shipped behavior and the inline
+ * machine code).  Comparisons yield an int-tagged 0/1.
+ *
+ * These are compiled unconditionally (not gated on the optimizer):
+ * precompiled bytecode containing typed ops must run on targets that
+ * never optimize, exactly like the PLOAD/PSTORE family above.
+ */
+
+#define TYPED_I2(name, expr)						\
+NOCT_DLL								\
+bool									\
+CDECL									\
+name(									\
+	NoctEnv *env,							\
+	int dst,							\
+	int src1,							\
+	int src2)							\
+{									\
+	struct rt_value *d = &env->frame->tmpvar[dst];			\
+	uint32_t a = (uint32_t)env->frame->tmpvar[src1].val.i;		\
+	uint32_t b = (uint32_t)env->frame->tmpvar[src2].val.i;		\
+	d->val.i = (int32_t)(expr);					\
+	d->type = NOCT_VALUE_INT;					\
+	return true;							\
+}
+
+TYPED_I2(noct_ex_iadd_helper, a + b)
+TYPED_I2(noct_ex_isub_helper, a - b)
+TYPED_I2(noct_ex_imul_helper, a * b)
+TYPED_I2(noct_ex_iand_helper, a & b)
+TYPED_I2(noct_ex_ior_helper,  a | b)
+TYPED_I2(noct_ex_ixor_helper, a ^ b)
+
+/* For ISHL/ISHR, src2 is the shift count as an immediate (0..31,
+   guaranteed by the emission rule; masked here so a hand-crafted
+   bytecode cannot reach C undefined behavior). */
+NOCT_DLL
+bool
+CDECL
+noct_ex_ishl_helper(
+	NoctEnv *env,
+	int dst,
+	int src1,
+	int src2)
+{
+	struct rt_value *d = &env->frame->tmpvar[dst];
+	uint32_t a = (uint32_t)env->frame->tmpvar[src1].val.i;
+
+	d->val.i = (int32_t)(a << ((uint32_t)src2 & 31));
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ishr_helper(
+	NoctEnv *env,
+	int dst,
+	int src1,
+	int src2)
+{
+	struct rt_value *d = &env->frame->tmpvar[dst];
+	uint32_t a = (uint32_t)env->frame->tmpvar[src1].val.i;
+
+	/* LOGICAL shift: matches noct_ex_shr_helper's int semantics. */
+	d->val.i = (int32_t)(a >> ((uint32_t)src2 & 31));
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+/*
+ * IDIV/IMOD: the emission rule (literal divisor not in {0, -1})
+ * makes the checks below unreachable from our compiler, but bytecode
+ * files are an external input and a division trap would take down
+ * the process, so they stay (defensive; D-TOP5).
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_idiv_helper(
+	NoctEnv *env,
+	int dst,
+	int src1,
+	int src2)
+{
+	struct rt_value *d = &env->frame->tmpvar[dst];
+	int32_t a = (int32_t)env->frame->tmpvar[src1].val.i;
+	int32_t b = (int32_t)env->frame->tmpvar[src2].val.i;
+
+	if (b == 0) {
+		rt_error(env, N_TR("Division by zero."));
+		return false;
+	}
+	if (b == -1 && a == (-2147483647 - 1)) {
+		/* Wraps: -INT_MIN == INT_MIN in two's complement. */
+		d->val.i = a;
+	} else {
+		d->val.i = a / b;
+	}
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_imod_helper(
+	NoctEnv *env,
+	int dst,
+	int src1,
+	int src2)
+{
+	struct rt_value *d = &env->frame->tmpvar[dst];
+	int32_t a = (int32_t)env->frame->tmpvar[src1].val.i;
+	int32_t b = (int32_t)env->frame->tmpvar[src2].val.i;
+
+	if (b == 0) {
+		rt_error(env, N_TR("Division by zero."));
+		return false;
+	}
+	if (b == -1 && a == (-2147483647 - 1)) {
+		d->val.i = 0;
+	} else {
+		d->val.i = a % b;
+	}
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+#define TYPED_ICMP(name, op)						\
+NOCT_DLL								\
+bool									\
+CDECL									\
+name(									\
+	NoctEnv *env,							\
+	int dst,							\
+	int src1,							\
+	int src2)							\
+{									\
+	struct rt_value *d = &env->frame->tmpvar[dst];			\
+	int32_t a = (int32_t)env->frame->tmpvar[src1].val.i;		\
+	int32_t b = (int32_t)env->frame->tmpvar[src2].val.i;		\
+	d->val.i = (a op b) ? 1 : 0;					\
+	d->type = NOCT_VALUE_INT;					\
+	return true;							\
+}
+
+TYPED_ICMP(noct_ex_ilt_helper,  <)
+TYPED_ICMP(noct_ex_ilte_helper, <=)
+TYPED_ICMP(noct_ex_igt_helper,  >)
+TYPED_ICMP(noct_ex_igte_helper, >=)
+
+#define TYPED_F2(name, op)						\
+NOCT_DLL								\
+bool									\
+CDECL									\
+name(									\
+	NoctEnv *env,							\
+	int dst,							\
+	int src1,							\
+	int src2)							\
+{									\
+	struct rt_value *d = &env->frame->tmpvar[dst];			\
+	float a = env->frame->tmpvar[src1].val.f;			\
+	float b = env->frame->tmpvar[src2].val.f;			\
+	d->val.f = a op b;						\
+	d->type = NOCT_VALUE_FLOAT;					\
+	return true;							\
+}
+
+TYPED_F2(noct_ex_fadd_helper, +)
+TYPED_F2(noct_ex_fsub_helper, -)
+TYPED_F2(noct_ex_fmul_helper, *)
+/* Division is IEEE-total (07 Part 0): zero divisors yield inf/NaN. */
+TYPED_F2(noct_ex_fdiv_helper, /)
+
+/* C comparison semantics: any comparison involving NaN yields 0. */
+#define TYPED_FCMP(name, op)						\
+NOCT_DLL								\
+bool									\
+CDECL									\
+name(									\
+	NoctEnv *env,							\
+	int dst,							\
+	int src1,							\
+	int src2)							\
+{									\
+	struct rt_value *d = &env->frame->tmpvar[dst];			\
+	float a = env->frame->tmpvar[src1].val.f;			\
+	float b = env->frame->tmpvar[src2].val.f;			\
+	d->val.i = (a op b) ? 1 : 0;					\
+	d->type = NOCT_VALUE_INT;					\
+	return true;							\
+}
+
+TYPED_FCMP(noct_ex_flt_helper,  <)
+TYPED_FCMP(noct_ex_flte_helper, <=)
+TYPED_FCMP(noct_ex_fgt_helper,  >)
+TYPED_FCMP(noct_ex_fgte_helper, >=)
+
+/*
+ * 128-bit SIMD helpers (docs/design/06-simd.md).
+ *
+ * Portable lane-wise emulation over env->vreg[]; the reference
+ * semantics for every backend.  The x86_64/arm64 JITs emit inline
+ * vector instructions instead; every other backend (and the
+ * interpreter) calls these.  Lane order is element memory order, so
+ * big-endian ports are self-consistent by construction.  All access
+ * goes through memcpy: no alignment requirements anywhere.
+ *
+ * Operand convention: (env, a, b, c) ints.  For loads/stores a base
+ * operand is a TMPVAR INDEX whose slot holds a long payload address
+ * (PBASE-derived) and an ofs operand is a tmpvar index whose slot
+ * holds an int element index; vreg operands and shift counts arrive
+ * as immediate ints.  These helpers trust their inputs exactly like
+ * the PLOAD/PSTORE family: the ABCE/SIMD guards proved bounds and
+ * types at runtime.
+ *
+ * Always compiled (precompiled bytecode must run everywhere), C89.
+ */
+
+union rt_vlanes {
+	uint8_t b[16];
+	int32_t i[4];
+	uint32_t u[4];
+	float f[4];
+};
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vloadi32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int base,
+	int ofs)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	const char *p;
+
+	p = (const char *)(intptr_t)b->val.l +
+		(int64_t)o->val.i * 4;
+	memcpy(env->vreg[vd], p, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vstorei32x4_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int vs)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	char *p;
+
+	p = (char *)(intptr_t)b->val.l +
+		(int64_t)o->val.i * 4;
+	memcpy(p, env->vreg[vs], 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vsplati32_helper(
+	NoctEnv *env,
+	int vd,
+	int src,
+	int unused)
+{
+	union rt_vlanes x;
+	int32_t v = (int32_t)env->frame->tmpvar[src].val.i;
+
+	UNUSED_PARAMETER(unused);
+	x.i[0] = v;
+	x.i[1] = v;
+	x.i[2] = v;
+	x.i[3] = v;
+	memcpy(env->vreg[vd], &x, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vgetlanei32_helper(
+	NoctEnv *env,
+	int dst,
+	int vs,
+	int lane)
+{
+	struct rt_value *d = &env->frame->tmpvar[dst];
+	union rt_vlanes x;
+
+	memcpy(&x, env->vreg[vs], 16);
+	d->val.i = x.i[lane & 3];
+	d->type = NOCT_VALUE_INT;
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmov128_helper(
+	NoctEnv *env,
+	int vd,
+	int vs,
+	int unused)
+{
+	UNUSED_PARAMETER(unused);
+	memcpy(env->vreg[vd], env->vreg[vs], 16);
+	return true;
+}
+
+#define RT_VALU(name, expr)						\
+NOCT_DLL								\
+bool									\
+CDECL									\
+name(									\
+	NoctEnv *env,							\
+	int vd,								\
+	int va,								\
+	int vb)								\
+{									\
+	union rt_vlanes x;						\
+	union rt_vlanes y;						\
+	int k;								\
+	memcpy(&x, env->vreg[va], 16);					\
+	memcpy(&y, env->vreg[vb], 16);					\
+	for (k = 0; k < 4; k++)						\
+		x.u[k] = (expr);					\
+	memcpy(env->vreg[vd], &x, 16);					\
+	return true;							\
+}
+
+RT_VALU(noct_ex_vaddi32x4_helper, x.u[k] + y.u[k])
+RT_VALU(noct_ex_vsubi32x4_helper, x.u[k] - y.u[k])
+RT_VALU(noct_ex_vmuli32x4_helper, x.u[k] * y.u[k])
+RT_VALU(noct_ex_vand128_helper,   x.u[k] & y.u[k])
+RT_VALU(noct_ex_vor128_helper,    x.u[k] | y.u[k])
+RT_VALU(noct_ex_vxor128_helper,   x.u[k] ^ y.u[k])
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vshli32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int va,
+	int count)
+{
+	union rt_vlanes x;
+	int k;
+	uint32_t c = (uint32_t)count & 31;
+
+	memcpy(&x, env->vreg[va], 16);
+	for (k = 0; k < 4; k++)
+		x.u[k] = x.u[k] << c;
+	memcpy(env->vreg[vd], &x, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vshri32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int va,
+	int count)
+{
+	union rt_vlanes x;
+	int k;
+	uint32_t c = (uint32_t)count & 31;
+
+	memcpy(&x, env->vreg[va], 16);
+	/* LOGICAL: matches the scalar int >> semantics. */
+	for (k = 0; k < 4; k++)
+		x.u[k] = x.u[k] >> c;
+	memcpy(env->vreg[vd], &x, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vloadf32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int base,
+	int ofs)
+{
+	return noct_ex_vloadi32x4_helper(env, vd, base, ofs);
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vstoref32x4_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int vs)
+{
+	return noct_ex_vstorei32x4_helper(env, base, ofs, vs);
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vsplatf32_helper(
+	NoctEnv *env,
+	int vd,
+	int src,
+	int unused)
+{
+	union rt_vlanes x;
+	float v = env->frame->tmpvar[src].val.f;
+
+	UNUSED_PARAMETER(unused);
+	x.f[0] = v;
+	x.f[1] = v;
+	x.f[2] = v;
+	x.f[3] = v;
+	memcpy(env->vreg[vd], &x, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vgetlanef32_helper(
+	NoctEnv *env,
+	int dst,
+	int vs,
+	int lane)
+{
+	struct rt_value *d = &env->frame->tmpvar[dst];
+	union rt_vlanes x;
+
+	memcpy(&x, env->vreg[vs], 16);
+	d->val.f = x.f[lane & 3];
+	d->type = NOCT_VALUE_FLOAT;
+	return true;
+}
+
+#define RT_VALF(name, expr) \
+NOCT_DLL \
+bool \
+CDECL \
+name( \
+	NoctEnv *env, \
+	int vd, \
+	int va, \
+	int vb) \
+{ \
+	union rt_vlanes x; \
+	union rt_vlanes y; \
+	int k; \
+	memcpy(&x, env->vreg[va], 16); \
+	memcpy(&y, env->vreg[vb], 16); \
+	for (k = 0; k < 4; k++) \
+		x.f[k] = (expr); \
+	memcpy(env->vreg[vd], &x, 16); \
+	return true; \
+}
+
+RT_VALF(noct_ex_vaddf32x4_helper, x.f[k] + y.f[k])
+RT_VALF(noct_ex_vsubf32x4_helper, x.f[k] - y.f[k])
+RT_VALF(noct_ex_vmulf32x4_helper, x.f[k] * y.f[k])
+RT_VALF(noct_ex_vdivf32x4_helper, x.f[k] / y.f[k])
+
+#undef RT_VALF

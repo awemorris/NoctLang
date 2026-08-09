@@ -1178,6 +1178,27 @@ rt_visit_pstore64_op(
         BINARY_OP(ex_pstore64_helper);
 }
 
+/* Visit raw float32 packed load/store operations. */
+static INLINE bool
+rt_visit_ploadf32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PLOADF32");
+        BINARY_OP(ex_ploadf32_helper);
+}
+
+static INLINE bool
+rt_visit_pstoref32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "PSTOREF32");
+        BINARY_OP(ex_pstoref32_helper);
+}
+
 /* Visit a OP_CHECKTYPE instruction. */
 static INLINE bool
 rt_visit_checktype_op(
@@ -1192,6 +1213,164 @@ rt_visit_checktype_op(
         GET_TMPVAR(&slot);
         GET_U8(&type);
         if (!ex_checktype_helper(env, (int)slot, (int)type))
+                return false;
+        return true;
+}
+
+/*
+ * Typed arithmetic ops (docs/design/07-typed-ops.md): dispatch-free
+ * helper calls.  The table is indexed by (opcode - OP_IADD); the
+ * opcode block in bytecode.h is contiguous by contract.
+ */
+typedef bool (CDECL *rt_typed_helper_t)(NoctEnv *env, int dst, int src1, int src2);
+
+static const rt_typed_helper_t rt_typed_op_helper[] = {
+        ex_iadd_helper,         /* OP_IADD */
+        ex_isub_helper,         /* OP_ISUB */
+        ex_imul_helper,         /* OP_IMUL */
+        ex_idiv_helper,         /* OP_IDIV */
+        ex_imod_helper,         /* OP_IMOD */
+        ex_iand_helper,         /* OP_IAND */
+        ex_ior_helper,          /* OP_IOR  */
+        ex_ixor_helper,         /* OP_IXOR */
+        ex_ishl_helper,         /* OP_ISHL */
+        ex_ishr_helper,         /* OP_ISHR */
+        ex_ilt_helper,          /* OP_ILT  */
+        ex_ilte_helper,         /* OP_ILTE */
+        ex_igt_helper,          /* OP_IGT  */
+        ex_igte_helper,         /* OP_IGTE */
+        ex_fadd_helper,         /* OP_FADD */
+        ex_fsub_helper,         /* OP_FSUB */
+        ex_fmul_helper,         /* OP_FMUL */
+        ex_fdiv_helper,         /* OP_FDIV */
+        ex_flt_helper,          /* OP_FLT  */
+        ex_flte_helper,         /* OP_FLTE */
+        ex_fgt_helper,          /* OP_FGT  */
+        ex_fgte_helper          /* OP_FGTE */
+};
+
+/* Visit an OP_IADD..OP_FGTE instruction. */
+static INLINE bool
+rt_visit_typed_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc,
+        int op)
+{
+        rt_typed_helper_t helper;
+
+        DEBUG_TRACE(*pc, "TYPED");
+
+        helper = rt_typed_op_helper[op - OP_IADD];
+
+        /* ISHL/ISHR carry the shift count as an imm8, not a tmpvar
+           (a count would fail the tmpvar frame-size validation). */
+        if (op == OP_ISHL || op == OP_ISHR) {
+                int dst, src1, imm;
+                GET_TMPVAR(&dst);
+                GET_TMPVAR(&src1);
+                GET_U8(&imm);
+                if (!helper(env, dst, src1, imm))
+                        return false;
+                return true;
+        }
+
+        /* Braced so the macro's declarations open a fresh block
+           (strict C89: no declaration after statement). */
+        {
+                BINARY_OP(helper);
+        }
+}
+
+/*
+ * 128-bit SIMD ops (docs/design/06-simd.md): lane-wise C emulation
+ * helpers.  Table indexed by (opcode - OP_VLOADI32X4).  Operand
+ * shapes vary per op (u16 tmpvars vs raw imm8 vreg/lane/count), so
+ * the decode below switches on the opcode class.
+ */
+static const rt_typed_helper_t rt_vector_op_helper[] = {
+        ex_vloadi32x4_helper,   /* OP_VLOADI32X4  */
+        ex_vstorei32x4_helper,  /* OP_VSTOREI32X4 */
+        ex_vsplati32_helper,    /* OP_VSPLATI32   */
+        ex_vgetlanei32_helper,  /* OP_VGETLANEI32 */
+        ex_vmov128_helper,      /* OP_VMOV128     */
+        ex_vaddi32x4_helper,    /* OP_VADDI32X4   */
+        ex_vsubi32x4_helper,    /* OP_VSUBI32X4   */
+        ex_vmuli32x4_helper,    /* OP_VMULI32X4   */
+        ex_vand128_helper,      /* OP_VAND128     */
+        ex_vor128_helper,       /* OP_VOR128      */
+        ex_vxor128_helper,      /* OP_VXOR128     */
+        ex_vshli32x4_helper,    /* OP_VSHLI32X4   */
+        ex_vshri32x4_helper,    /* OP_VSHRI32X4   */
+        ex_vloadf32x4_helper,   /* OP_VLOADF32X4  */
+        ex_vstoref32x4_helper,  /* OP_VSTOREF32X4 */
+        ex_vsplatf32_helper,    /* OP_VSPLATF32   */
+        ex_vgetlanef32_helper,  /* OP_VGETLANEF32 */
+        ex_vaddf32x4_helper,    /* OP_VADDF32X4   */
+        ex_vsubf32x4_helper,    /* OP_VSUBF32X4   */
+        ex_vmulf32x4_helper,    /* OP_VMULF32X4   */
+        ex_vdivf32x4_helper     /* OP_VDIVF32X4   */
+};
+
+/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
+static INLINE bool
+rt_visit_vector_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc,
+        int op)
+{
+        rt_typed_helper_t helper;
+        int a, b, c;
+
+        DEBUG_TRACE(*pc, "VECTOR");
+
+        helper = rt_vector_op_helper[op - OP_VLOADI32X4];
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+                /* vd(imm8), base(u16), ofs(u16) */
+                GET_U8(&a);
+                GET_TMPVAR(&b);
+                GET_TMPVAR(&c);
+                break;
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+                /* base(u16), ofs(u16), vs(imm8) */
+                GET_TMPVAR(&a);
+                GET_TMPVAR(&b);
+                GET_U8(&c);
+                break;
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+                /* vd(imm8), src(u16) */
+                GET_U8(&a);
+                GET_TMPVAR(&b);
+                c = 0;
+                break;
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+                /* dst(u16), vs(imm8), lane(imm8) */
+                GET_TMPVAR(&a);
+                GET_U8(&b);
+                GET_U8(&c);
+                break;
+        case OP_VMOV128:
+                /* vd(imm8), vs(imm8) */
+                GET_U8(&a);
+                GET_U8(&b);
+                c = 0;
+                break;
+        default:
+                /* ALU/shift: vd, va, vb-or-count (imm8 x3) */
+                GET_U8(&a);
+                GET_U8(&b);
+                GET_U8(&c);
+                break;
+        }
+
+        if (!helper(env, a, b, c))
                 return false;
         return true;
 }
@@ -1453,6 +1632,63 @@ rt_visit_op(
                 break;
         case OP_PSTORE64:
                 if (!rt_visit_pstore64_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PLOADF32:
+                if (!rt_visit_ploadf32_op(env, func, pc))
+                        return false;
+                break;
+        case OP_PSTOREF32:
+                if (!rt_visit_pstoref32_op(env, func, pc))
+                        return false;
+                break;
+        case OP_IADD:
+        case OP_ISUB:
+        case OP_IMUL:
+        case OP_IDIV:
+        case OP_IMOD:
+        case OP_IAND:
+        case OP_IOR:
+        case OP_IXOR:
+        case OP_ISHL:
+        case OP_ISHR:
+        case OP_ILT:
+        case OP_ILTE:
+        case OP_IGT:
+        case OP_IGTE:
+        case OP_FADD:
+        case OP_FSUB:
+        case OP_FMUL:
+        case OP_FDIV:
+        case OP_FLT:
+        case OP_FLTE:
+        case OP_FGT:
+        case OP_FGTE:
+                if (!rt_visit_typed_op(env, func, pc, op))
+                        return false;
+                break;
+        case OP_VLOADI32X4:
+        case OP_VSTOREI32X4:
+        case OP_VSPLATI32:
+        case OP_VGETLANEI32:
+        case OP_VMOV128:
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VMULI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+        case OP_VLOADF32X4:
+        case OP_VSTOREF32X4:
+        case OP_VSPLATF32:
+        case OP_VGETLANEF32:
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                if (!rt_visit_vector_op(env, func, pc, op))
                         return false;
                 break;
         default:

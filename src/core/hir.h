@@ -72,9 +72,11 @@ enum hir_expr_type {
 	HIR_EXPR_PLOAD16S,	/* binary: sign-extended int16 load               */
 	HIR_EXPR_PLOAD32,	/* binary: int32 load (uint32 wraps)              */
 	HIR_EXPR_PLOAD64,	/* binary: int64/uint64 load -> long              */
+	HIR_EXPR_PLOADF32,	/* binary: float32 load -> float                  */
 	HIR_EXPR_PSTORE16,	/* as LHS only                                    */
 	HIR_EXPR_PSTORE32,	/* as LHS only                                    */
 	HIR_EXPR_PSTORE64,	/* as LHS only                                    */
+	HIR_EXPR_PSTOREF32,	/* as LHS only; float32 source                    */
 
 	/*
 	 * CSE (docs/design/05-cse.md).  Created only by the HIR
@@ -151,6 +153,12 @@ struct hir_block {
 			/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
 			int param_type[HIR_PARAM_SIZE];
 
+			/* NOCT_PACKED_* element kind, or -1 = not typed packed. */
+			int param_packed_type[HIR_PARAM_SIZE];
+
+			/* rpacked* source annotation. */
+			bool param_restricted[HIR_PARAM_SIZE];
+
 			/* File name. */
 			char *file_name;
 
@@ -204,6 +212,30 @@ struct hir_block {
 
 			/* For code generation. */
 			uint32_t inc_addr;
+
+			/*
+			 * Optimizer-only (docs/design/07-typed-ops.md,
+			 * set by hir_opt_abce.c on the versioned fast
+			 * loop): every local/param read in this subtree
+			 * is guard-proven int AND stays int (no 64-bit
+			 * loads in the body).  The parser leaves this
+			 * false (blocks are zero-initialized).  It must
+			 * NEVER be set on a block reachable when the
+			 * ABCE guard $g is false.
+			 */
+			bool typed_int_region;
+
+			/*
+			 * Optimizer-only (docs/design/06-simd.md).
+			 * abce_fast: set by hir_opt_abce.c on the
+			 * versioned fast loop; consumed (and cleared)
+			 * by hir_opt_simd.c.  is_vector: this FOR is a
+			 * 4-lane strip loop -- lir.c lowers its body
+			 * through the vector visitor, and CSE must
+			 * skip the subtree.
+			 */
+			bool abce_fast;
+			bool is_vector;
 		} for_;
 
 		/* While Block */
@@ -371,6 +403,19 @@ struct hir_local {
 
 	/* Variable index. */
 	int index;
+
+	/*
+	 * Proven runtime tag (docs/design/07-typed-ops.md Stage B):
+	 * -1 = unknown, else NOCT_VALUE_INT or NOCT_VALUE_FLOAT.
+	 * Computed by hir_opt_typed_func(); consumed by the LIR
+	 * generator at optimize level >= 2.
+	 *
+	 * DANGER (D-TOP10): NOCT_VALUE_INT == 0, so a zero-initialized
+	 * field would read as "proven int".  hir_add_local() is the
+	 * single allocation site and initializes this to -1; keep it
+	 * that way.
+	 */
+	int proven_type;
 
 	/* Next. */
 	struct hir_local *next;

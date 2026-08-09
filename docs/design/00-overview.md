@@ -15,6 +15,8 @@ should NOT re-litigate decisions recorded in the Decision Log below.
 | [03-class.md](03-class.md) | Read-only class dicts, top-level `class` / top-level `var`/`let` via load-time init | 04 (uses `let` semantics) |
 | [04-scoping.md](04-scoping.md) | `let`, block scoping, redeclaration errors, static use-before-declaration errors | nothing |
 | [05-cse.md](05-cse.md) | HIR optimizer build split (NOCT_ENABLE_OPTIMIZER) + common subexpression elimination | 01 (splits ABCE out of hir.c; CSE runs after ABCE) |
+| [06-simd.md](06-simd.md) | 128-bit SIMD auto-vectorization (i32x4) of ABCE fast loops; multi-packed ABCE | 01, 05 (runs between ABCE and CSE; reuses the clone machinery) |
+| [07-typed-ops.md](07-typed-ops.md) | Typed arithmetic opcodes (int + float) inline-emitted under ABCE-guard or lattice proofs; float div-by-zero -> IEEE inf/NaN (Part 0, semantics change); supersedes 02 §6 | 01, 02 (CHECKTYPE); independent of 06 (cross-notes if both land) |
 
 Recommended implementation order: **01 → 04 → 03 → 02**.
 01 is self-contained and highest value (remacs Editor/Buffer speedup).

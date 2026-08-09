@@ -22,6 +22,14 @@
 #include <assert.h>
 
 static FILE *fp;
+static int bcback_optimize_level;
+
+NOCT_DLL
+void
+noct_bcback_set_optimize_level(int level)
+{
+	bcback_optimize_level = level;
+}
 
 /*
  * Start the BC backend.
@@ -69,6 +77,8 @@ noct_bcback_translate(
 		return false;
 	}
 
+	lir_set_optimize_level(bcback_optimize_level);
+
 	/* Put a file header. (The count is known only after hir_build.) */
 	func_count = hir_get_function_count();
 	fprintf(fp, "Noct Bytecode 1.0\n");
@@ -84,6 +94,10 @@ noct_bcback_translate(
 
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(i);
+		if (!hir_optimize_func(hfunc, bcback_optimize_level)) {
+			printf(N_TR("Error: %s\n"), hir_get_error_message());
+			return false;
+		}
 		if (!lir_build(hfunc, &lfunc)) {
 			printf(N_TR("Error: %s:%d: %s\n"),
 			       lir_get_file_name(),
@@ -113,6 +127,35 @@ noct_bcback_translate(
 				for (j = 0; j < lfunc->param_count; j++)
 					fprintf(fp, "%d\n", lfunc->param_type[j]);
 			}
+		}
+		{
+			int has_packed_types = 0;
+			for (j = 0; j < lfunc->param_count; j++) {
+				if (lfunc->param_packed_type[j] >= 0)
+					has_packed_types = 1;
+			}
+			if (has_packed_types) {
+				fprintf(fp, "Parameter Packed Types\n");
+				for (j = 0; j < lfunc->param_count; j++)
+					fprintf(fp, "%d\n", lfunc->param_packed_type[j]);
+			}
+		}
+		{
+			int has_restricted = 0;
+			for (j = 0; j < lfunc->param_count; j++) {
+				if (lfunc->param_restricted[j])
+					has_restricted = 1;
+			}
+			if (has_restricted) {
+				fprintf(fp, "Parameter Restricted\n");
+				for (j = 0; j < lfunc->param_count; j++)
+					fprintf(fp, "%d\n",
+						lfunc->param_restricted[j] ? 1 : 0);
+			}
+		}
+		if (lfunc->has_vector_ops) {
+			fprintf(fp, "Vector Ops\n");
+			fprintf(fp, "1\n");
 		}
 		fprintf(fp, "Temporary Size\n");
 		fprintf(fp, "%d\n", lfunc->tmpvar_size);

@@ -23,9 +23,20 @@ command_compile(
 	char *argv[])
 {
 	int i;
+	int first = 2;
+
+	/* Optional: --optimize-level=N before input files. */
+	if (argc > 2 && strncmp(argv[2], "--optimize-level=", 17) == 0) {
+		noct_bcback_set_optimize_level(atoi(argv[2] + 17));
+		first = 3;
+	}
+	if (argc <= first) {
+		show_usage();
+		return 1;
+	}
 
 	/* For each argument file. */
-	for (i = 2; i < argc; i++) {
+	for (i = first; i < argc; i++) {
 		/* Compile a source to bytecode. */
 		if (!compile_source(argv[i]))
 			return 1;

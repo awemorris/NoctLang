@@ -20,6 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 /* False asseretion */
 #define JIT_OP_NOT_IMPLEMENTED        0
@@ -47,6 +50,98 @@ static bool is_writable;
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
+static uint32_t jit_detect_simd_caps(void);
+
+#if defined(__GNUC__) || defined(__clang__)
+static bool
+jit_x86_has_cpuid(void)
+{
+        uint32_t before;
+        uint32_t after;
+
+        /* CPUID itself is not safe as a feature probe on old i386 CPUs.
+         * EFLAGS.ID is writable exactly when CPUID is available. */
+        __asm__ __volatile__(
+                "pushfl\n\t"
+                "pushfl\n\t"
+                "popl %0\n\t"
+                "movl %0, %1\n\t"
+                "xorl $0x200000, %1\n\t"
+                "pushl %1\n\t"
+                "popfl\n\t"
+                "pushfl\n\t"
+                "popl %1\n\t"
+                "popfl"
+                : "=&r"(before), "=&r"(after)
+                :
+                : "cc");
+        return ((before ^ after) & (1u << 21)) != 0;
+}
+#elif defined(_MSC_VER)
+static bool
+jit_x86_has_cpuid(void)
+{
+        uint32_t before;
+        uint32_t after;
+
+        __asm {
+                pushfd
+                pushfd
+                pop eax
+                mov before, eax
+                xor eax, 00200000h
+                push eax
+                popfd
+                pushfd
+                pop eax
+                mov after, eax
+                popfd
+        }
+        return ((before ^ after) & (1u << 21)) != 0;
+}
+#endif
+
+static uint32_t
+jit_detect_simd_caps(void)
+{
+#if defined(__GNUC__) || defined(__clang__)
+        uint32_t a, b, c, d;
+	uint32_t caps = 0;
+
+        if (!jit_x86_has_cpuid())
+                return 0;
+        __asm__ __volatile__("cpuid"
+                             : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(0), "c"(0));
+        if (a < 1)
+                return 0;
+        __asm__ __volatile__("cpuid"
+                             : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(1), "c"(0));
+	if ((d & (1u << 26)) != 0)
+		caps |= JIT_SIMD_CAP_SSE2;
+	if ((c & (1u << 19)) != 0)
+		caps |= JIT_SIMD_CAP_SSE41;
+	return caps;
+#elif defined(_MSC_VER)
+        int regs[4];
+        uint32_t caps = 0;
+
+        if (!jit_x86_has_cpuid())
+                return 0;
+        __cpuid(regs, 0);
+        if (regs[0] < 1)
+                return 0;
+        __cpuid(regs, 1);
+        if (((uint32_t)regs[3] & (1u << 26)) != 0)
+                caps |= JIT_SIMD_CAP_SSE2;
+        if (((uint32_t)regs[2] & (1u << 19)) != 0)
+                caps |= JIT_SIMD_CAP_SSE41;
+        return caps;
+#else
+        return 0;
+#endif
+}
 
 /*
  * Generate a JIT-compiled code for a function.
@@ -81,6 +176,7 @@ jit_build(
         ctx.code = ctx.code_top;
         ctx.env = env;
         ctx.func = func;
+	jit_configure_simd(&ctx, jit_detect_simd_caps(), "x86");
 
         /* Make code writable and non-executable. */
         jit_map_writable(jit_code_region, jit_get_code_size(env));
@@ -329,6 +425,12 @@ jit_visit_assign_op(
                 /* movl 8(%ebx), %edx */         IB(0x8b); IB(0x53); IB(0x08);
                 /* movl %ecx, (%eax) */          IB(0x89); IB(0x08);
                 /* movl %edx, 8(%eax) */         IB(0x89); IB(0x50); IB(0x08);
+                /* The value union is 8 bytes: long/double live in
+                   +8..+15, so the high word must be copied too (it
+                   was dropped, truncating every long/double copied
+                   through OP_ASSIGN on this backend). */
+                /* movl 12(%ebx), %edx */        IB(0x8b); IB(0x53); IB(0x0c);
+                /* movl %edx, 12(%eax) */        IB(0x89); IB(0x50); IB(0x0c);
         }
 
         return true;
@@ -1994,6 +2096,520 @@ jit_visit_pstore64_op(
         return true;
 }
 
+/* Visit a OP_PLOADF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_ploadf32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_ploadf32_helper);
+        return true;
+}
+
+/* Visit a OP_PSTOREF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_pstoref32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_pstoref32_helper);
+        return true;
+}
+
+
+/*
+ * Typed arithmetic ops (docs/design/07-typed-ops.md): dispatch-free
+ * helper calls, like OP_PLOAD64 above.  The table is indexed by
+ * (opcode - OP_IADD); the opcode block is contiguous by contract.
+ */
+typedef bool (CDECL *jit_typed_helper_t)(NoctEnv *env, int dst, int src1, int src2);
+
+static const jit_typed_helper_t jit_typed_op_helper[] = {
+        ex_iadd_helper,
+        ex_isub_helper,
+        ex_imul_helper,
+        ex_idiv_helper,
+        ex_imod_helper,
+        ex_iand_helper,
+        ex_ior_helper,
+        ex_ixor_helper,
+        ex_ishl_helper,
+        ex_ishr_helper,
+        ex_ilt_helper,
+        ex_ilte_helper,
+        ex_igt_helper,
+        ex_igte_helper,
+        ex_fadd_helper,
+        ex_fsub_helper,
+        ex_fmul_helper,
+        ex_fdiv_helper,
+        ex_flt_helper,
+        ex_flte_helper,
+        ex_fgt_helper,
+        ex_fgte_helper
+};
+
+/* Visit an OP_IADD..OP_FGTE instruction. */
+static INLINE bool
+jit_visit_typed_op(
+        struct jit_context *ctx,
+        int op)
+{
+        jit_typed_helper_t f;
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        if (op == OP_ISHL || op == OP_ISHR) {
+                /* The shift count is an imm8, not a tmpvar. */
+                CONSUME_IMM8(src2);
+        } else {
+                CONSUME_TMPVAR(src2);
+        }
+
+        f = jit_typed_op_helper[op - OP_IADD];
+
+        /* if (!f(env, dst, src1, src2)) return false; */
+        ASM_BINARY_OP(f);
+
+        return true;
+}
+
+/*
+ * 128-bit vector ops: native SSE tiers or direct scalar lowering over
+ * env->vreg, selected from the runtime capability mask.
+ */
+/* Scalar x86 lowering used when CPUID reports no SSE2.  Vector state stays
+ * in env->vreg and every lane is emitted as ordinary integer/x87 code. */
+static INLINE bool
+jit_visit_vector_scalar_op(
+        struct jit_context *ctx,
+        int op,
+        int dst,
+        int src1,
+        int src2)
+{
+        uint32_t vbase = (uint32_t)offsetof(struct rt_env, vreg);
+        int lane;
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+        {
+                int base = src1 * (int)sizeof(struct rt_value);
+                int ofs = src2 * (int)sizeof(struct rt_value);
+                ASM {
+                        /* eax = packed payload; ecx = signed element index. */
+                        IB(0x8b); IB(0x5d); IB(0xfc);
+                        IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                        IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                        /* edx = env. */
+                        IB(0x8b); IB(0x55); IB(0xf8);
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        /* mov lane*4(eax,ecx,4),ebx */
+                        IB(0x8b); IB(0x5c); IB(0x88); IB((uint8_t)(lane * 4));
+                        /* mov ebx,env->vreg[dst][lane] */
+                        IB(0x89); IB(0x9a);
+                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+        {
+                int base = dst * (int)sizeof(struct rt_value);
+                int ofs = src1 * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x8b); IB(0x5d); IB(0xfc);
+                        IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+                        IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+                        IB(0x8b); IB(0x55); IB(0xf8);
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x8b); IB(0x9a);
+                        ID(vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4);
+                        /* mov ebx,lane*4(eax,ecx,4) */
+                        IB(0x89); IB(0x5c); IB(0x88); IB((uint8_t)(lane * 4));
+                }
+                return true;
+        }
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+        {
+                int src = src1 * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x8b); IB(0x5d); IB(0xfc);
+                        IB(0x8b); IB(0x8b); ID((uint32_t)(src + 8));
+                        IB(0x8b); IB(0x45); IB(0xf8);
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x89); IB(0x88);
+                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+        {
+                int d = dst * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x8b); IB(0x45); IB(0xf8);
+                        IB(0x8b); IB(0x88);
+                        ID(vbase + (uint32_t)src1 * 16 + (uint32_t)src2 * 4);
+                        IB(0x8b); IB(0x5d); IB(0xfc);
+                        IB(0xc7); IB(0x83); ID((uint32_t)d);
+                        ID((uint32_t)(op == OP_VGETLANEF32 ?
+                                      NOCT_VALUE_FLOAT : NOCT_VALUE_INT));
+                        IB(0x89); IB(0x8b); ID((uint32_t)(d + 8));
+                }
+                return true;
+        }
+        case OP_VMOV128:
+                ASM { IB(0x8b); IB(0x45); IB(0xf8); }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x8b); IB(0x88);
+                        ID(vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4);
+                        IB(0x89); IB(0x88);
+                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VMULI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+                ASM { IB(0x8b); IB(0x45); IB(0xf8); }
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IB(0x8b); IB(0x88); ID(a); /* mov a,ecx */
+                        switch (op) {
+                        case OP_VADDI32X4: IB(0x03); IB(0x88); ID(b); break;
+                        case OP_VSUBI32X4: IB(0x2b); IB(0x88); ID(b); break;
+                        case OP_VMULI32X4: IB(0x0f); IB(0xaf); IB(0x88); ID(b); break;
+                        case OP_VAND128:   IB(0x23); IB(0x88); ID(b); break;
+                        case OP_VOR128:    IB(0x0b); IB(0x88); ID(b); break;
+                        default:           IB(0x33); IB(0x88); ID(b); break;
+                        }
+                        IB(0x89); IB(0x88); ID(d);
+                }
+                return true;
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+                ASM { IB(0x8b); IB(0x45); IB(0xf8); }
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IB(0x8b); IB(0x88); ID(s);
+                        IB(0xc1); IB((uint8_t)(op == OP_VSHLI32X4 ? 0xe1 : 0xe9));
+                        IB((uint8_t)src2);
+                        IB(0x89); IB(0x88); ID(d);
+                }
+                return true;
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                ASM { IB(0x8b); IB(0x45); IB(0xf8); }
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IB(0xd9); IB(0x80); ID(a); /* fld dword ptr [eax+a] */
+                        IB(0xd8);
+                        switch (op) {
+                        case OP_VADDF32X4: IB(0x80); break;
+                        case OP_VSUBF32X4: IB(0xa0); break;
+                        case OP_VMULF32X4: IB(0x88); break;
+                        default:           IB(0xb0); break;
+                        }
+                        ID(b);
+                        IB(0xd9); IB(0x98); ID(d); /* fstp dword ptr [eax+d] */
+                }
+                return true;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+}
+
+/* Visit a vector instruction: SSE2/SSE4.1 register tier or direct scalar. */
+static INLINE bool
+jit_visit_vector_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        /* Decode (operand shapes vary per op; see bytecode.h). */
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_TMPVAR(src2);
+                break;
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+                CONSUME_TMPVAR(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                src2 = 0;
+                break;
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+                CONSUME_TMPVAR(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VMOV128:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                src2 = 0;
+                break;
+        default:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        }
+
+	if ((ctx->simd_caps & JIT_SIMD_CAP_SSE2) == 0) {
+		return jit_visit_vector_scalar_op(ctx, op, dst, src1, src2);
+	}
+
+	switch (op) {
+	case OP_VLOADI32X4:
+	case OP_VLOADF32X4:
+	{
+		int base = src1 * (int)sizeof(struct rt_value);
+		int ofs = src2 * (int)sizeof(struct rt_value);
+		ASM {
+			/* ebx = tmpvar; eax = base pointer; ecx = signed index. */
+			IB(0x8b); IB(0x5d); IB(0xfc);
+			IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+			IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+			/* movdqu (%eax,%ecx,4), xmmD */
+			IB(0xf3); IB(0x0f); IB(0x6f);
+			IB((uint8_t)(0x04 | (dst << 3))); IB(0x88);
+		}
+		break;
+	}
+	case OP_VSTOREI32X4:
+	case OP_VSTOREF32X4:
+	{
+		int base = dst * (int)sizeof(struct rt_value);
+		int ofs = src1 * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x8b); IB(0x5d); IB(0xfc);
+			IB(0x8b); IB(0x83); ID((uint32_t)(base + 8));
+			IB(0x8b); IB(0x8b); ID((uint32_t)(ofs + 8));
+			/* movdqu xmmS, (%eax,%ecx,4) */
+			IB(0xf3); IB(0x0f); IB(0x7f);
+			IB((uint8_t)(0x04 | (src2 << 3))); IB(0x88);
+		}
+		break;
+	}
+	case OP_VSPLATI32:
+	case OP_VSPLATF32:
+	{
+		int src = src1 * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x8b); IB(0x5d); IB(0xfc);
+			/* movd src+8(%ebx),xmmD; pshufd $0,xmmD,xmmD */
+			IB(0x66); IB(0x0f); IB(0x6e);
+			IB((uint8_t)(0x83 | (dst << 3))); ID((uint32_t)(src + 8));
+			IB(0x66); IB(0x0f); IB(0x70);
+			IB((uint8_t)(0xc0 | (dst << 3) | dst)); IB(0x00);
+		}
+		break;
+	}
+	case OP_VGETLANEI32:
+	case OP_VGETLANEF32:
+	{
+		int d = dst * (int)sizeof(struct rt_value);
+		ASM { IB(0x8b); IB(0x5d); IB(0xfc); }
+		if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+			ASM {
+				/* pextrd $lane,xmmS,dst+8(%ebx) */
+				IB(0x66); IB(0x0f); IB(0x3a); IB(0x16);
+				IB((uint8_t)(0x83 | (src1 << 3))); ID((uint32_t)(d + 8));
+				IB((uint8_t)src2);
+			}
+		} else {
+			ASM {
+				/* SSE2: join the two 16-bit halves in eax. */
+				IB(0x66); IB(0x0f); IB(0xc5); IB((uint8_t)(0xc0 | src1)); IB((uint8_t)(src2 * 2));
+				IB(0x66); IB(0x0f); IB(0xc5); IB((uint8_t)(0xc8 | src1)); IB((uint8_t)(src2 * 2 + 1));
+				IB(0xc1); IB(0xe1); IB(0x10);
+				IB(0x09); IB(0xc8);
+				IB(0x89); IB(0x83); ID((uint32_t)(d + 8));
+			}
+		}
+		ASM {
+			IB(0xc7); IB(0x83); ID((uint32_t)d);
+			ID((uint32_t)(op == OP_VGETLANEF32 ?
+				      NOCT_VALUE_FLOAT : NOCT_VALUE_INT));
+		}
+		break;
+	}
+	case OP_VMOV128:
+		if (dst != src1) {
+			ASM { IB(0x66); IB(0x0f); IB(0x6f);
+			      IB((uint8_t)(0xc0 | (dst << 3) | src1)); }
+		}
+		break;
+	case OP_VADDI32X4:
+	case OP_VSUBI32X4:
+	case OP_VMULI32X4:
+	case OP_VAND128:
+	case OP_VOR128:
+	case OP_VXOR128:
+	{
+		int scratch1 = -1;
+		int scratch2 = -1;
+		int i;
+
+		if (op == OP_VMULI32X4 &&
+		    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
+			/* x86 has no extra XMM registers.  Preserve two registers
+			 * that are not operands and use them for the SSE2 multiply. */
+			for (i = 0; i < 8; i++) {
+				if (i == dst || i == src1 || i == src2)
+					continue;
+				if (scratch1 < 0)
+					scratch1 = i;
+				else {
+					scratch2 = i;
+					break;
+				}
+			}
+			assert(scratch1 >= 0 && scratch2 >= 0);
+			ASM {
+				/* Save scratch XMM registers to an unaligned stack area. */
+				IB(0x83); IB(0xec); IB(0x20);
+				IB(0xf3); IB(0x0f); IB(0x7f); IB((uint8_t)(0x04 | (scratch1 << 3))); IB(0x24);
+				IB(0xf3); IB(0x0f); IB(0x7f); IB((uint8_t)(0x44 | (scratch2 << 3))); IB(0x24); IB(0x10);
+				/* Odd lanes: shuffle to even positions, then pmuludq. */
+				IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (scratch1 << 3) | src1));
+				IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (scratch1 << 3) | scratch1)); IB(0xf5);
+				IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (scratch2 << 3) | src2));
+				IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (scratch2 << 3) | scratch2)); IB(0xf5);
+				IB(0x66); IB(0x0f); IB(0xf4); IB((uint8_t)(0xc0 | (scratch1 << 3) | scratch2));
+			}
+		}
+		if (dst != src1) {
+			ASM { IB(0x66); IB(0x0f); IB(0x6f);
+			      IB((uint8_t)(0xc0 | (dst << 3) | src1)); }
+		}
+		switch (op) {
+		case OP_VADDI32X4:
+			ASM { IB(0x66); IB(0x0f); IB(0xfe); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		case OP_VSUBI32X4:
+			ASM { IB(0x66); IB(0x0f); IB(0xfa); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		case OP_VMULI32X4:
+			if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+				ASM { IB(0x66); IB(0x0f); IB(0x38); IB(0x40); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			} else {
+				ASM {
+					/* Even products in dst; merge their low dwords
+					 * with the odd products from scratch1. */
+					IB(0x66); IB(0x0f); IB(0xf4); IB((uint8_t)(0xc0 | (dst << 3) | src2));
+					IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (dst << 3) | dst)); IB(0x88);
+					IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (scratch1 << 3) | scratch1)); IB(0x88);
+					IB(0x66); IB(0x0f); IB(0x62); IB((uint8_t)(0xc0 | (dst << 3) | scratch1));
+					/* Restore the borrowed XMM registers. */
+					IB(0xf3); IB(0x0f); IB(0x6f); IB((uint8_t)(0x04 | (scratch1 << 3))); IB(0x24);
+					IB(0xf3); IB(0x0f); IB(0x6f); IB((uint8_t)(0x44 | (scratch2 << 3))); IB(0x24); IB(0x10);
+					IB(0x83); IB(0xc4); IB(0x20);
+				}
+			}
+			break;
+		case OP_VAND128:
+			ASM { IB(0x66); IB(0x0f); IB(0xdb); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		case OP_VOR128:
+			ASM { IB(0x66); IB(0x0f); IB(0xeb); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		default:
+			ASM { IB(0x66); IB(0x0f); IB(0xef); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		}
+		break;
+	}
+	case OP_VSHLI32X4:
+	case OP_VSHRI32X4:
+		if (dst != src1) {
+			ASM { IB(0x66); IB(0x0f); IB(0x6f);
+			      IB((uint8_t)(0xc0 | (dst << 3) | src1)); }
+		}
+		if (op == OP_VSHLI32X4) {
+			ASM { IB(0x66); IB(0x0f); IB(0x72);
+			      IB((uint8_t)(0xf0 | dst)); IB((uint8_t)src2); }
+		} else {
+			ASM { IB(0x66); IB(0x0f); IB(0x72);
+			      IB((uint8_t)(0xd0 | dst)); IB((uint8_t)src2); }
+		}
+		break;
+	case OP_VADDF32X4:
+	case OP_VSUBF32X4:
+	case OP_VMULF32X4:
+	case OP_VDIVF32X4:
+		if (dst != src1) {
+			ASM { IB(0x66); IB(0x0f); IB(0x6f);
+			      IB((uint8_t)(0xc0 | (dst << 3) | src1)); }
+		}
+		switch (op) {
+		case OP_VADDF32X4:
+			ASM { IB(0x0f); IB(0x58); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		case OP_VSUBF32X4:
+			ASM { IB(0x0f); IB(0x5c); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		case OP_VMULF32X4:
+			ASM { IB(0x0f); IB(0x59); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		default:
+			ASM { IB(0x0f); IB(0x5e); IB((uint8_t)(0xc0 | (dst << 3) | src2)); }
+			break;
+		}
+		break;
+	default:
+		assert(NEVER_COME_HERE);
+		return false;
+	}
+
+	return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2311,6 +2927,63 @@ jit_visit_bytecode(
                         if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
+                case OP_PLOADF32:
+                        if (!jit_visit_ploadf32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTOREF32:
+                        if (!jit_visit_pstoref32_op(ctx))
+                                return false;
+                        break;
+                case OP_IADD:
+                case OP_ISUB:
+                case OP_IMUL:
+                case OP_IDIV:
+                case OP_IMOD:
+                case OP_IAND:
+                case OP_IOR:
+                case OP_IXOR:
+                case OP_ISHL:
+                case OP_ISHR:
+                case OP_ILT:
+                case OP_ILTE:
+                case OP_IGT:
+                case OP_IGTE:
+                case OP_FADD:
+                case OP_FSUB:
+                case OP_FMUL:
+                case OP_FDIV:
+                case OP_FLT:
+                case OP_FLTE:
+                case OP_FGT:
+                case OP_FGTE:
+                        if (!jit_visit_typed_op(ctx, opcode))
+                                return false;
+                        break;
+                case OP_VLOADI32X4:
+                case OP_VSTOREI32X4:
+                case OP_VSPLATI32:
+                case OP_VGETLANEI32:
+                case OP_VMOV128:
+                case OP_VADDI32X4:
+                case OP_VSUBI32X4:
+                case OP_VMULI32X4:
+                case OP_VAND128:
+                case OP_VOR128:
+                case OP_VXOR128:
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+        case OP_VLOADF32X4:
+        case OP_VSTOREF32X4:
+        case OP_VSPLATF32:
+        case OP_VGETLANEF32:
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                        if (!jit_visit_vector_op(ctx, opcode))
+                                return false;
+                        break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);
                         break;
@@ -2346,6 +3019,7 @@ jit_patch_branch(
 {
         uint8_t *target_code;
         int offset;
+        intptr_t wide_offset;
         int i;
 
         /* Search a code addr at lpc. */
@@ -2363,7 +3037,13 @@ jit_patch_branch(
         }
 
         /* Calc a branch offset. */
-        offset = (intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code;
+        wide_offset = (intptr_t)target_code -
+                      (intptr_t)ctx->branch_patch[patch_index].code;
+        if (wide_offset < (-2147483647L - 1L) || wide_offset > 2147483647L) {
+                rt_error(ctx->env, "Branch target too far.");
+                return false;
+        }
+        offset = (int)wide_offset;
 
         /* Set the assembler cursor. */
         ctx->code = ctx->branch_patch[patch_index].code;

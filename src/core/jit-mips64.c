@@ -71,6 +71,8 @@ jit_build(
         ctx.code = ctx.code_top;
         ctx.env = env;
         ctx.func = func;
+	/* This backend has no vector ISA tier in the current design. */
+	jit_configure_simd(&ctx, 0, "mips64");
 
         /* Make code writable and non-executable. */
         if (!is_writable) {
@@ -224,11 +226,33 @@ static INLINE uint32_t tvar16(int d)
         return (uint32_t)d & 0xffff;
 }
 
-#define EXC()   exc((uint64_t)ctx->exception_code, (uint64_t)ctx->code)
-static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
+/* Absolute 64-bit jump through $t9 (eight slots with delay slot). */
+static INLINE bool
+jit_put_abs_jump(
+        struct jit_context *ctx,
+        uint64_t target)
 {
-        return (uint32_t)(((handler - cur - 4) / 4) & 0xffff);
+        if (!jit_put_word(ctx, 0x3c190000 | hihi16(target))) return false;
+        if (!jit_put_word(ctx, 0x37390000 | hilo16(target))) return false;
+        if (!jit_put_word(ctx, 0x0019cc38)) return false;
+        if (!jit_put_word(ctx, 0x37390000 | lohi16(target))) return false;
+        if (!jit_put_word(ctx, 0x0019cc38)) return false;
+        if (!jit_put_word(ctx, 0x37390000 | lolo16(target))) return false;
+        if (!jit_put_word(ctx, 0x03200008)) return false;
+        if (!jit_put_word(ctx, 0x00000000)) return false;
+        return true;
 }
+
+#define EXCEPTION_IF_EQUAL(rs, rt) do {                                 \
+        if (!jit_put_word(ctx, 0x14000009 |                              \
+                          ((uint32_t)(rs) << 21) |                       \
+                          ((uint32_t)(rt) << 16))) return false;         \
+        if (!jit_put_word(ctx, 0)) return false;                         \
+        if (!jit_put_abs_jump(ctx,                                      \
+                (uint64_t)(uintptr_t)ctx->exception_code)) return false; \
+} while (0)
+
+#define EXCEPTION_IF_ZERO(rs) EXCEPTION_IF_EQUAL((rs), REG_ZERO)
 
 #define ASM_BINARY_OP(f)                                                                                                \
         ASM {                                                                                                           \
@@ -260,8 +284,7 @@ static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
                 /* move $ra, $s2 */             IW(0x0240f825);                                                         \
                                                                                                                         \
                 /* If failed: */                                                                                        \
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());                                                 \
-                /* nop */                       IW(0x00000000);                                                         \
+                EXCEPTION_IF_ZERO(REG_V0);                                                                               \
         }
 
 #define ASM_UNARY_OP(f)                                                                                                 \
@@ -291,8 +314,7 @@ static INLINE uint32_t exc(uint64_t handler, uint64_t cur)
                 /* move $ra, $s2 */             IW(0x0240f825);                                                         \
                                                                                                                         \
                 /* If failed: */                                                                                        \
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());                                                 \
-                /* nop */                       IW(0x00000000);                                                         \
+                EXCEPTION_IF_ZERO(REG_V0);                                                                               \
         }
 
 /*
@@ -562,8 +584,7 @@ jit_visit_sconst_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -607,8 +628,7 @@ jit_visit_aconst_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -652,8 +672,7 @@ jit_visit_dconst_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -1215,8 +1234,7 @@ jit_visit_loadsymbol_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -1279,8 +1297,7 @@ jit_visit_storesymbol_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -1348,8 +1365,7 @@ jit_visit_loaddot_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -1417,8 +1433,7 @@ jit_visit_storedot_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -1503,8 +1518,7 @@ jit_visit_call_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -1608,8 +1622,7 @@ jit_visit_thiscall_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -1638,6 +1651,8 @@ jit_visit_jmp_op(
                 /* Patched later. */
                 /* b 0 */       IW(0x10000000);
                 /* nop */       IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000);
         }
 
         return true;
@@ -1658,16 +1673,24 @@ jit_visit_jmpiftrue_op(
                 return false;
         }
 
-        src *= (int)sizeof(struct rt_value);
-
         ASM {
-                /* $s0: env */
-                /* $s1: &env->frame->tmpvar[0] */
-
-                /* $at = env->frame->tmpvar[src].val.i */
-                /* li    $t0, src */            IW(0x240c0000 | tvar16(src));
-                /* daddu $t0, $t0, $s1 */       IW(0x0191602d);
-                /* lw    $at, 8($t0) */         IW(0x8d810008);
+                /* $v0 = ex_condition_helper(env, src): 1/0, -1 on error. */
+                IW(0x02002025);
+                IW(0x24050000 | tvar16(src));
+                IW(0x3c190000 | hihi16((uint64_t)ex_condition_helper));
+                IW(0x37390000 | hilo16((uint64_t)ex_condition_helper));
+                IW(0x0019cc38);
+                IW(0x37390000 | lohi16((uint64_t)ex_condition_helper));
+                IW(0x0019cc38);
+                IW(0x37390000 | lolo16((uint64_t)ex_condition_helper));
+                IW(0x03e09025);
+                IW(0x0320f809);
+                IW(0x00000000);
+                IW(0x0240f825);
+                IW(0x240cffff);
+                EXCEPTION_IF_EQUAL(REG_V0, REG_T4);
+                /* Branch patching expects the condition in $at. */
+                IW(0x00400825);
         }
 
         /* Patch later. */
@@ -1678,8 +1701,10 @@ jit_visit_jmpiftrue_op(
 
         ASM {
                 /* Patched later. */
-                /* bne $at, 0, taget */         IW(0x14200000);
+                /* bne $at, 0, target */        IW(0x14200000);
                 /* nop */                       IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000); IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000); IW(0x00000000);
         }
 
         return true;
@@ -1700,16 +1725,23 @@ jit_visit_jmpiffalse_op(
                 return false;
         }
 
-        src *= (int)sizeof(struct rt_value);
-
         ASM {
-                /* $s0: env */
-                /* $s1: &env->frame->tmpvar[0] */
-
-                /* $at = env->frame->tmpvar[src].val.i */
-                /* li    $t0, src */            IW(0x240c0000 | tvar16(src));
-                /* daddu $t0, $t0, $s1 */       IW(0x0191602d);
-                /* lw    $at, 8($t0) */         IW(0x8d810008);
+                /* $v0 = ex_condition_helper(env, src): 1/0, -1 on error. */
+                IW(0x02002025);
+                IW(0x24050000 | tvar16(src));
+                IW(0x3c190000 | hihi16((uint64_t)ex_condition_helper));
+                IW(0x37390000 | hilo16((uint64_t)ex_condition_helper));
+                IW(0x0019cc38);
+                IW(0x37390000 | lohi16((uint64_t)ex_condition_helper));
+                IW(0x0019cc38);
+                IW(0x37390000 | lolo16((uint64_t)ex_condition_helper));
+                IW(0x03e09025);
+                IW(0x0320f809);
+                IW(0x00000000);
+                IW(0x0240f825);
+                IW(0x240cffff);
+                EXCEPTION_IF_EQUAL(REG_V0, REG_T4);
+                IW(0x00400825);
         }
         
         /* Patch later. */
@@ -1720,8 +1752,10 @@ jit_visit_jmpiffalse_op(
 
         ASM {
                 /* Patched later. */
-                /* beq $at, 0, taget */         IW(0x10200000);
+                /* beq $at, 0, target */        IW(0x10200000);
                 /* nop */                       IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000); IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000); IW(0x00000000);
         }
 
         return true;
@@ -1752,6 +1786,8 @@ jit_visit_jmpifeq_op(
                 /* Patched later. */
                 /* beq $at, 0, taget */         IW(0x10200000);
                 /* nop */                       IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000); IW(0x00000000);
+                IW(0x00000000); IW(0x00000000); IW(0x00000000); IW(0x00000000);
         }
 
         return true;
@@ -1787,8 +1823,7 @@ jit_visit_safepoint_op(
                 /* move $ra, $s2 */             IW(0x0240f825);
 
                 /* If failed: */
-                /* beqz $v0, $zero, exc */      IW(0x10400000 | EXC());
-                /* nop */                       IW(0x00000000);
+                EXCEPTION_IF_ZERO(REG_V0);
         }
 
         return true;
@@ -2203,6 +2238,297 @@ jit_visit_pstore64_op(
         return true;
 }
 
+/* Visit a OP_PLOADF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_ploadf32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_ploadf32_helper);
+        return true;
+}
+
+/* Visit a OP_PSTOREF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_pstoref32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_pstoref32_helper);
+        return true;
+}
+
+
+/*
+ * Typed arithmetic ops (docs/design/07-typed-ops.md): dispatch-free
+ * helper calls, like OP_PLOAD64 above.  The table is indexed by
+ * (opcode - OP_IADD); the opcode block is contiguous by contract.
+ */
+typedef bool (CDECL *jit_typed_helper_t)(NoctEnv *env, int dst, int src1, int src2);
+
+static const jit_typed_helper_t jit_typed_op_helper[] = {
+        ex_iadd_helper,
+        ex_isub_helper,
+        ex_imul_helper,
+        ex_idiv_helper,
+        ex_imod_helper,
+        ex_iand_helper,
+        ex_ior_helper,
+        ex_ixor_helper,
+        ex_ishl_helper,
+        ex_ishr_helper,
+        ex_ilt_helper,
+        ex_ilte_helper,
+        ex_igt_helper,
+        ex_igte_helper,
+        ex_fadd_helper,
+        ex_fsub_helper,
+        ex_fmul_helper,
+        ex_fdiv_helper,
+        ex_flt_helper,
+        ex_flte_helper,
+        ex_fgt_helper,
+        ex_fgte_helper
+};
+
+/* Visit an OP_IADD..OP_FGTE instruction. */
+static INLINE bool
+jit_visit_typed_op(
+        struct jit_context *ctx,
+        int op)
+{
+        jit_typed_helper_t f;
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        if (op == OP_ISHL || op == OP_ISHR) {
+                /* The shift count is an imm8, not a tmpvar. */
+                CONSUME_IMM8(src2);
+        } else {
+                CONSUME_TMPVAR(src2);
+        }
+
+        f = jit_typed_op_helper[op - OP_IADD];
+
+        /* if (!f(env, dst, src1, src2)) return false; */
+        ASM_BINARY_OP(f);
+
+        return true;
+}
+
+/*
+ * 128-bit vector ops use direct scalar lane operations over env->vreg.
+ */
+static bool
+jit_put_scalar_vreg_base(struct jit_context *ctx)
+{
+        uint32_t ofs = (uint32_t)offsetof(struct rt_env, vreg);
+
+        /* lui/ori $t4,offset; daddu $t4,$t4,$s0 */
+        IW(0x3c0c0000 | hi16(ofs));
+        IW(0x358c0000 | lo16(ofs));
+        IW(0x0190602d);
+        return true;
+}
+
+static bool
+jit_put_vector_scalar_op(struct jit_context *ctx, int op,
+                         int dst, int src1, int src2)
+{
+        int lane;
+
+        if (!jit_put_scalar_vreg_base(ctx))
+                return false;
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+        {
+                int base = src1 * (int)sizeof(struct rt_value) + 8;
+                int ofs = src2 * (int)sizeof(struct rt_value) + 8;
+                IW(0xde280000 | lo16((uint32_t)base));
+                IW(0x8e290000 | lo16((uint32_t)ofs));
+                IW(0x00094880);
+                IW(0x0109402d); /* daddu t0,t0,t1 */
+                for (lane = 0; lane < 4; lane++) {
+                        IW(0x8d0a0000 | (uint32_t)lane * 4);
+                        IW(0xad8a0000 | (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+        {
+                int base = dst * (int)sizeof(struct rt_value) + 8;
+                int ofs = src1 * (int)sizeof(struct rt_value) + 8;
+                IW(0xde280000 | lo16((uint32_t)base));
+                IW(0x8e290000 | lo16((uint32_t)ofs));
+                IW(0x00094880);
+                IW(0x0109402d);
+                for (lane = 0; lane < 4; lane++) {
+                        IW(0x8d8a0000 | (uint32_t)src2 * 16 + (uint32_t)lane * 4);
+                        IW(0xad0a0000 | (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+        {
+                int src = src1 * (int)sizeof(struct rt_value) + 8;
+                IW(0x8e2a0000 | lo16((uint32_t)src));
+                for (lane = 0; lane < 4; lane++)
+                        IW(0xad8a0000 | (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                return true;
+        }
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+        {
+                int d = dst * (int)sizeof(struct rt_value);
+                uint32_t tag = (uint32_t)(op == OP_VGETLANEF32 ?
+                                           NOCT_VALUE_FLOAT : NOCT_VALUE_INT);
+                IW(0x8d8a0000 | (uint32_t)src1 * 16 + (uint32_t)src2 * 4);
+                IW(0x240b0000 | tag);
+                IW(0xae2b0000 | lo16((uint32_t)d));
+                IW(0xae2a0000 | lo16((uint32_t)(d + 8)));
+                return true;
+        }
+        case OP_VMOV128:
+                for (lane = 0; lane < 4; lane++) {
+                        IW(0x8d8a0000 | (uint32_t)src1 * 16 + (uint32_t)lane * 4);
+                        IW(0xad8a0000 | (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VMULI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t word;
+                        IW(0x8d880000 | a);
+                        IW(0x8d890000 | b);
+                        switch (op) {
+                        case OP_VADDI32X4: word = 0x01095021; break;
+                        case OP_VSUBI32X4: word = 0x01095023; break;
+                        case OP_VMULI32X4: word = 0x71095002; break;
+                        case OP_VAND128:   word = 0x01095024; break;
+                        case OP_VOR128:    word = 0x01095025; break;
+                        default:           word = 0x01095026; break;
+                        }
+                        IW(word);
+                        IW(0xad8a0000 | d);
+                }
+                return true;
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+                IW(0x240b0000 | ((uint32_t)src2 & 31u));
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        IW(0x8d880000 | s);
+                        IW(op == OP_VSHLI32X4 ? 0x01685004 : 0x01685006);
+                        IW(0xad8a0000 | d);
+                }
+                return true;
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t word;
+                        IW(0xc5800000 | a);
+                        IW(0xc5820000 | b);
+                        switch (op) {
+                        case OP_VADDF32X4: word = 0x46020100; break;
+                        case OP_VSUBF32X4: word = 0x46020101; break;
+                        case OP_VMULF32X4: word = 0x46020102; break;
+                        default:           word = 0x46020103; break;
+                        }
+                        IW(word);
+                        IW(0xe5840000 | d);
+                }
+                return true;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+}
+
+/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
+static INLINE bool
+jit_visit_vector_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        /* Decode (operand shapes vary per op; see bytecode.h). */
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_TMPVAR(src2);
+                break;
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+                CONSUME_TMPVAR(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                src2 = 0;
+                break;
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+                CONSUME_TMPVAR(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VMOV128:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                src2 = 0;
+                break;
+        default:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        }
+
+        return jit_put_vector_scalar_op(ctx, op, dst, src1, src2);
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2514,6 +2840,63 @@ jit_visit_bytecode(
                         if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
+                case OP_PLOADF32:
+                        if (!jit_visit_ploadf32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTOREF32:
+                        if (!jit_visit_pstoref32_op(ctx))
+                                return false;
+                        break;
+                case OP_IADD:
+                case OP_ISUB:
+                case OP_IMUL:
+                case OP_IDIV:
+                case OP_IMOD:
+                case OP_IAND:
+                case OP_IOR:
+                case OP_IXOR:
+                case OP_ISHL:
+                case OP_ISHR:
+                case OP_ILT:
+                case OP_ILTE:
+                case OP_IGT:
+                case OP_IGTE:
+                case OP_FADD:
+                case OP_FSUB:
+                case OP_FMUL:
+                case OP_FDIV:
+                case OP_FLT:
+                case OP_FLTE:
+                case OP_FGT:
+                case OP_FGTE:
+                        if (!jit_visit_typed_op(ctx, opcode))
+                                return false;
+                        break;
+                case OP_VLOADI32X4:
+                case OP_VSTOREI32X4:
+                case OP_VSPLATI32:
+                case OP_VGETLANEI32:
+                case OP_VMOV128:
+                case OP_VADDI32X4:
+                case OP_VSUBI32X4:
+                case OP_VMULI32X4:
+                case OP_VAND128:
+                case OP_VOR128:
+                case OP_VXOR128:
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+        case OP_VLOADF32X4:
+        case OP_VSTOREF32X4:
+        case OP_VSPLATF32:
+        case OP_VGETLANEF32:
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                        if (!jit_visit_vector_op(ctx, opcode))
+                                return false;
+                        break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);
                         break;
@@ -2573,26 +2956,38 @@ jit_patch_branch(
 
         /* Calc a branch offset. */
         offset = (int)((intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code - 4) / 4;
-        if (abs(offset) & ~0xffff) {
-                rt_error(ctx->env, "Branch target too far.");
-                return false;
-        }
-
         /* Set the assembler cursor. */
         ctx->code = ctx->branch_patch[patch_index].code;
 
         /* Assemble. */
         if (ctx->branch_patch[patch_index].type == PATCH_BAL) {
-                ASM {
-                        /* b offset */          IW(0x10000000 | lo16((uint32_t)offset));
+                if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+                    offset >= -32768 && offset <= 32767) {
+                        int i;
+                        ASM { IW(0x10000000 | lo16((uint32_t)offset)); IW(0); }
+                        for (i = 0; i < 6; i++) if (!jit_put_word(ctx, 0)) return false;
+                } else if (!jit_put_abs_jump(ctx, (uint64_t)(uintptr_t)target_code)) {
+                        return false;
                 }
         } else if (ctx->branch_patch[patch_index].type == PATCH_BEQ) {
-                ASM {
-                        /* beq offset */        IW(0x10200000 | lo16((uint32_t)offset));
+                if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+                    offset >= -32768 && offset <= 32767) {
+                        int i;
+                        ASM { IW(0x10200000 | lo16((uint32_t)offset)); IW(0); }
+                        for (i = 0; i < 8; i++) if (!jit_put_word(ctx, 0)) return false;
+                } else {
+                        ASM { IW(0x14200009); IW(0); }
+                        if (!jit_put_abs_jump(ctx, (uint64_t)(uintptr_t)target_code)) return false;
                 }
         } else if (ctx->branch_patch[patch_index].type == PATCH_BNE) {
-                ASM {
-                        /* bne offset */        IW(0x14200000 | lo16((uint32_t)offset));
+                if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+                    offset >= -32768 && offset <= 32767) {
+                        int i;
+                        ASM { IW(0x14200000 | lo16((uint32_t)offset)); IW(0); }
+                        for (i = 0; i < 8; i++) if (!jit_put_word(ctx, 0)) return false;
+                } else {
+                        ASM { IW(0x10200009); IW(0); }
+                        if (!jit_put_abs_jump(ctx, (uint64_t)(uintptr_t)target_code)) return false;
                 }
         }
 

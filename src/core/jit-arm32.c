@@ -20,6 +20,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#if defined(__linux__)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
 
 /* False asseretion */
 #define JIT_OP_NOT_IMPLEMENTED  0
@@ -47,6 +51,16 @@ static bool is_writable;
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
+
+static uint32_t
+jit_detect_simd_caps(void)
+{
+#if defined(__linux__) && defined(HWCAP_NEON)
+	if ((getauxval(AT_HWCAP) & HWCAP_NEON) != 0)
+		return JIT_SIMD_CAP_NEON;
+#endif
+	return 0;
+}
 
 /*
  * Generate a JIT-compiled code for a function.
@@ -77,6 +91,7 @@ jit_build(
         ctx.code = ctx.code_top;
         ctx.env = env;
         ctx.func = func;
+	jit_configure_simd(&ctx, jit_detect_simd_caps(), "arm32");
 
         /* Make code writable and non-executable. */
         if (!is_writable) {
@@ -2498,6 +2513,434 @@ jit_visit_pstore64_op(
         return true;
 }
 
+/* Visit a OP_PLOADF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_ploadf32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_ploadf32_helper);
+        return true;
+}
+
+/* Visit a OP_PSTOREF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_pstoref32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_pstoref32_helper);
+        return true;
+}
+
+
+/*
+ * Typed arithmetic ops (docs/design/07-typed-ops.md): dispatch-free
+ * helper calls, like OP_PLOAD64 above.  The table is indexed by
+ * (opcode - OP_IADD); the opcode block is contiguous by contract.
+ */
+typedef bool (CDECL *jit_typed_helper_t)(NoctEnv *env, int dst, int src1, int src2);
+
+static const jit_typed_helper_t jit_typed_op_helper[] = {
+        ex_iadd_helper,
+        ex_isub_helper,
+        ex_imul_helper,
+        ex_idiv_helper,
+        ex_imod_helper,
+        ex_iand_helper,
+        ex_ior_helper,
+        ex_ixor_helper,
+        ex_ishl_helper,
+        ex_ishr_helper,
+        ex_ilt_helper,
+        ex_ilte_helper,
+        ex_igt_helper,
+        ex_igte_helper,
+        ex_fadd_helper,
+        ex_fsub_helper,
+        ex_fmul_helper,
+        ex_fdiv_helper,
+        ex_flt_helper,
+        ex_flte_helper,
+        ex_fgt_helper,
+        ex_fgte_helper
+};
+
+/* Visit an OP_IADD..OP_FGTE instruction. */
+static INLINE bool
+jit_visit_typed_op(
+        struct jit_context *ctx,
+        int op)
+{
+        jit_typed_helper_t f;
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        if (op == OP_ISHL || op == OP_ISHR) {
+                /* The shift count is an imm8, not a tmpvar. */
+                CONSUME_IMM8(src2);
+        } else {
+                CONSUME_TMPVAR(src2);
+        }
+
+        f = jit_typed_op_helper[op - OP_IADD];
+
+        /* if (!f(env, dst, src1, src2)) return false; */
+        ASM_BINARY_OP(f);
+
+        return true;
+}
+
+/*
+ * 128-bit vector ops: native NEON integer ops or direct scalar lowering
+ * over env->vreg, selected from the runtime capability mask.
+ */
+/* Program vreg k maps to q(8+k) = d(16+2k), all caller-saved in AAPCS. */
+static INLINE uint32_t
+jit_neon_q3(uint32_t base, int qd, int qn, int qm)
+{
+	uint32_t dd = (uint32_t)(16 + qd * 2);
+	uint32_t dn = (uint32_t)(16 + qn * 2);
+	uint32_t dm = (uint32_t)(16 + qm * 2);
+	return base |
+	       ((dd & 16u) << 18) | ((dd & 15u) << 12) |
+	       ((dn & 15u) << 16) | ((dn & 16u) << 3) |
+	       ((dm & 16u) << 1) | (dm & 15u);
+}
+
+static bool
+jit_put_scalar_vreg_base(struct jit_context *ctx, int rd)
+{
+	uint32_t ofs = (uint32_t)offsetof(struct rt_env, vreg);
+
+	if (!jit_put_movw(ctx, rd, ofs & 0xffff) ||
+	    !jit_put_movt(ctx, rd, (ofs >> 16) & 0xffff) ||
+	    !jit_put_add(ctx, rd, REG_R11, rd))
+		return false;
+	return true;
+}
+
+/* Direct ARM/VFP scalar lowering.  The arm-linux-gnueabihf target already
+ * requires VFP; this path deliberately emits no NEON instruction. */
+static INLINE bool
+jit_visit_vector_scalar_op(
+	struct jit_context *ctx,
+	int op,
+	int dst,
+	int src1,
+	int src2)
+{
+	int lane;
+
+	if (!jit_put_scalar_vreg_base(ctx, REG_R4))
+		return false;
+
+	switch (op) {
+	case OP_VLOADI32X4:
+	case OP_VLOADF32X4:
+	{
+		int base = src1 * (int)sizeof(struct rt_value);
+		int ofs = src2 * (int)sizeof(struct rt_value);
+		ASM {
+			LDR(REG_R0, REG_R12, base + 8);
+			LDR(REG_R1, REG_R12, ofs + 8);
+			LSL_IMM(REG_R1, REG_R1, 2);
+			ADD(REG_R0, REG_R0, REG_R1);
+		}
+		for (lane = 0; lane < 4; lane++) {
+			LDR(REG_R2, REG_R0, lane * 4);
+			STR(REG_R2, REG_R4, dst * 16 + lane * 4);
+		}
+		return true;
+	}
+	case OP_VSTOREI32X4:
+	case OP_VSTOREF32X4:
+	{
+		int base = dst * (int)sizeof(struct rt_value);
+		int ofs = src1 * (int)sizeof(struct rt_value);
+		ASM {
+			LDR(REG_R0, REG_R12, base + 8);
+			LDR(REG_R1, REG_R12, ofs + 8);
+			LSL_IMM(REG_R1, REG_R1, 2);
+			ADD(REG_R0, REG_R0, REG_R1);
+		}
+		for (lane = 0; lane < 4; lane++) {
+			LDR(REG_R2, REG_R4, src2 * 16 + lane * 4);
+			STR(REG_R2, REG_R0, lane * 4);
+		}
+		return true;
+	}
+	case OP_VSPLATI32:
+	case OP_VSPLATF32:
+	{
+		int src = src1 * (int)sizeof(struct rt_value);
+		LDR(REG_R2, REG_R12, src + 8);
+		for (lane = 0; lane < 4; lane++)
+			STR(REG_R2, REG_R4, dst * 16 + lane * 4);
+		return true;
+	}
+	case OP_VGETLANEI32:
+	case OP_VGETLANEF32:
+	{
+		int d = dst * (int)sizeof(struct rt_value);
+		ASM {
+			LDR(REG_R1, REG_R4, src1 * 16 + src2 * 4);
+			MOVW(REG_R2, (uint32_t)(op == OP_VGETLANEF32 ?
+					       NOCT_VALUE_FLOAT : NOCT_VALUE_INT));
+			STR(REG_R2, REG_R12, d);
+			STR(REG_R1, REG_R12, d + 8);
+		}
+		return true;
+	}
+	case OP_VMOV128:
+		for (lane = 0; lane < 4; lane++) {
+			LDR(REG_R2, REG_R4, src1 * 16 + lane * 4);
+			STR(REG_R2, REG_R4, dst * 16 + lane * 4);
+		}
+		return true;
+	case OP_VADDI32X4:
+	case OP_VSUBI32X4:
+	case OP_VMULI32X4:
+	case OP_VAND128:
+	case OP_VOR128:
+	case OP_VXOR128:
+		for (lane = 0; lane < 4; lane++) {
+			LDR(REG_R0, REG_R4, src1 * 16 + lane * 4);
+			LDR(REG_R1, REG_R4, src2 * 16 + lane * 4);
+			switch (op) {
+			case OP_VADDI32X4: if (!jit_put_word(ctx, 0xe0802001)) return false; break;
+			case OP_VSUBI32X4: if (!jit_put_word(ctx, 0xe0402001)) return false; break;
+			case OP_VMULI32X4: if (!jit_put_word(ctx, 0xe0020190)) return false; break;
+			case OP_VAND128:   if (!jit_put_word(ctx, 0xe0002001)) return false; break;
+			case OP_VOR128:    if (!jit_put_word(ctx, 0xe1802001)) return false; break;
+			default:           if (!jit_put_word(ctx, 0xe0202001)) return false; break;
+			}
+			STR(REG_R2, REG_R4, dst * 16 + lane * 4);
+		}
+		return true;
+	case OP_VSHLI32X4:
+	case OP_VSHRI32X4:
+		for (lane = 0; lane < 4; lane++) {
+			uint32_t word;
+			LDR(REG_R0, REG_R4, src1 * 16 + lane * 4);
+			word = (op == OP_VSHLI32X4 ? 0xe1a02000 : 0xe1a02020) |
+			       ((uint32_t)src2 << 7);
+			if (!jit_put_word(ctx, word))
+				return false;
+			STR(REG_R2, REG_R4, dst * 16 + lane * 4);
+		}
+		return true;
+	case OP_VADDF32X4:
+	case OP_VSUBF32X4:
+	case OP_VMULF32X4:
+	case OP_VDIVF32X4:
+		for (lane = 0; lane < 4; lane++) {
+			uint32_t a = (uint32_t)(src1 * 16 + lane * 4) / 4;
+			uint32_t b = (uint32_t)(src2 * 16 + lane * 4) / 4;
+			uint32_t d = (uint32_t)(dst * 16 + lane * 4) / 4;
+			uint32_t word;
+			/* vldr s0,[r4,#a]; vldr s1,[r4,#b] */
+			if (!jit_put_word(ctx, 0xed940a00 | a) ||
+			    !jit_put_word(ctx, 0xedd40a00 | b))
+				return false;
+			switch (op) {
+			case OP_VADDF32X4: word = 0xee301a20; break;
+			case OP_VSUBF32X4: word = 0xee301a60; break;
+			case OP_VMULF32X4: word = 0xee201a20; break;
+			default:           word = 0xee801a20; break;
+			}
+			if (!jit_put_word(ctx, word) ||
+			    !jit_put_word(ctx, 0xed841a00 | d))
+				return false;
+		}
+		return true;
+	default:
+		assert(NEVER_COME_HERE);
+		return false;
+	}
+}
+
+static INLINE uint32_t
+jit_neon_q2_imm(uint32_t base, int qd, int qm, uint32_t imm)
+{
+	uint32_t dd = (uint32_t)(16 + qd * 2);
+	uint32_t dm = (uint32_t)(16 + qm * 2);
+	return base | (imm << 16) |
+	       ((dd & 16u) << 18) | ((dd & 15u) << 12) |
+	       ((dm & 16u) << 1) | (dm & 15u);
+}
+
+/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
+static INLINE bool
+jit_visit_vector_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        /* Decode (operand shapes vary per op; see bytecode.h). */
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_TMPVAR(src2);
+                break;
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+                CONSUME_TMPVAR(dst);
+                CONSUME_TMPVAR(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+                CONSUME_IMM8(dst);
+                CONSUME_TMPVAR(src1);
+                src2 = 0;
+                break;
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+                CONSUME_TMPVAR(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        case OP_VMOV128:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                src2 = 0;
+                break;
+        default:
+                CONSUME_IMM8(dst);
+                CONSUME_IMM8(src1);
+                CONSUME_IMM8(src2);
+                break;
+        }
+
+	if (op != OP_VMOV128)
+		ctx->vector_kind = op >= OP_VLOADF32X4 ? 2 : 1;
+	if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) != 0 &&
+	    ctx->vector_kind == 1) {
+		switch (op) {
+		case OP_VLOADI32X4:
+		{
+			int base = src1 * (int)sizeof(struct rt_value);
+			int ofs = src2 * (int)sizeof(struct rt_value);
+			uint32_t dd = (uint32_t)(16 + dst * 2);
+			ASM {
+				LDR(REG_R2, REG_R12, base + 8);
+				LDR(REG_R3, REG_R12, ofs + 8);
+				LSL_IMM(REG_R3, REG_R3, 2);
+				ADD(REG_R2, REG_R2, REG_R3);
+			}
+			if (!jit_put_word(ctx, 0xf4200a0f |
+					  ((dd & 16u) << 18) |
+					  ((dd & 15u) << 12) | (2u << 16)))
+				return false;
+			return true;
+		}
+		case OP_VSTOREI32X4:
+		{
+			int base = dst * (int)sizeof(struct rt_value);
+			int ofs = src1 * (int)sizeof(struct rt_value);
+			uint32_t dd = (uint32_t)(16 + src2 * 2);
+			ASM {
+				LDR(REG_R2, REG_R12, base + 8);
+				LDR(REG_R3, REG_R12, ofs + 8);
+				LSL_IMM(REG_R3, REG_R3, 2);
+				ADD(REG_R2, REG_R2, REG_R3);
+			}
+			if (!jit_put_word(ctx, 0xf4000a0f |
+					  ((dd & 16u) << 18) |
+					  ((dd & 15u) << 12) | (2u << 16)))
+				return false;
+			return true;
+		}
+		case OP_VSPLATI32:
+		{
+			uint32_t dd = (uint32_t)(16 + dst * 2);
+			int src = src1 * (int)sizeof(struct rt_value);
+			ASM { LDR(REG_R3, REG_R12, src + 8); }
+			if (!jit_put_word(ctx, 0xee800b90 | (3u << 12) |
+					  ((dd & 16u) << 17) |
+					  ((dd & 15u) << 16)))
+				return false;
+			return true;
+		}
+		case OP_VGETLANEI32:
+		{
+			uint32_t dd = (uint32_t)(16 + src1 * 2 + src2 / 2);
+			int d = dst * (int)sizeof(struct rt_value);
+			if (!jit_put_word(ctx, 0xee100b90 | (3u << 12) |
+					  ((uint32_t)(src2 & 1) << 21) |
+					  ((dd & 16u) << 3) |
+					  ((dd & 15u) << 16)))
+				return false;
+			ASM {
+				MOVW(REG_R2, NOCT_VALUE_INT);
+				STR(REG_R2, REG_R12, d);
+				STR(REG_R3, REG_R12, d + 8);
+			}
+			return true;
+		}
+		case OP_VMOV128:
+			if (dst != src1 &&
+			    !jit_put_word(ctx, jit_neon_q3(0xf2200150,
+							 dst, src1, src1)))
+				return false;
+			return true;
+		case OP_VADDI32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf2200840,
+							       dst, src1, src2));
+		case OP_VSUBI32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf3200840,
+							       dst, src1, src2));
+		case OP_VMULI32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf2200950,
+							       dst, src1, src2));
+		case OP_VAND128:
+			return jit_put_word(ctx, jit_neon_q3(0xf2000150,
+							       dst, src1, src2));
+		case OP_VOR128:
+			return jit_put_word(ctx, jit_neon_q3(0xf2200150,
+							       dst, src1, src2));
+		case OP_VXOR128:
+			return jit_put_word(ctx, jit_neon_q3(0xf3000150,
+							       dst, src1, src2));
+		case OP_VSHLI32X4:
+			return jit_put_word(ctx, jit_neon_q2_imm(0xf2800550,
+								    dst, src1,
+								    32u + (uint32_t)src2));
+		case OP_VSHRI32X4:
+			return jit_put_word(ctx, jit_neon_q2_imm(0xf3800050,
+								    dst, src1,
+								    64u - (uint32_t)src2));
+		default:
+			break;
+		}
+	}
+
+	return jit_visit_vector_scalar_op(ctx, op, dst, src1, src2);
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2821,6 +3264,63 @@ jit_visit_bytecode(
                         if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
+                case OP_PLOADF32:
+                        if (!jit_visit_ploadf32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTOREF32:
+                        if (!jit_visit_pstoref32_op(ctx))
+                                return false;
+                        break;
+                case OP_IADD:
+                case OP_ISUB:
+                case OP_IMUL:
+                case OP_IDIV:
+                case OP_IMOD:
+                case OP_IAND:
+                case OP_IOR:
+                case OP_IXOR:
+                case OP_ISHL:
+                case OP_ISHR:
+                case OP_ILT:
+                case OP_ILTE:
+                case OP_IGT:
+                case OP_IGTE:
+                case OP_FADD:
+                case OP_FSUB:
+                case OP_FMUL:
+                case OP_FDIV:
+                case OP_FLT:
+                case OP_FLTE:
+                case OP_FGT:
+                case OP_FGTE:
+                        if (!jit_visit_typed_op(ctx, opcode))
+                                return false;
+                        break;
+                case OP_VLOADI32X4:
+                case OP_VSTOREI32X4:
+                case OP_VSPLATI32:
+                case OP_VGETLANEI32:
+                case OP_VMOV128:
+                case OP_VADDI32X4:
+                case OP_VSUBI32X4:
+                case OP_VMULI32X4:
+                case OP_VAND128:
+                case OP_VOR128:
+                case OP_VXOR128:
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+        case OP_VLOADF32X4:
+        case OP_VSTOREF32X4:
+        case OP_VSPLATF32:
+        case OP_VGETLANEF32:
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                        if (!jit_visit_vector_op(ctx, opcode))
+                                return false;
+                        break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);
                         break;
@@ -2886,7 +3386,8 @@ jit_patch_branch(
 
         /* Calc a branch offset. */
         offset = (intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code;
-        if (abs(offset) & ~0xffffff) {
+        /* ARM B/cond uses signed imm24 words relative to PC+8. */
+        if (offset < -33554424 || offset > 33554436) {
                 rt_error(ctx->env, "Branch target too far.");
                 return false;
         }

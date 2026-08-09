@@ -43,6 +43,20 @@ static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
+static void rt_report_jit_result(struct rt_func *func, bool success);
+
+/* Test/debug observability for JIT compilation and silent interpreter fallback. */
+static void
+rt_report_jit_result(
+	struct rt_func *func,
+	bool success)
+{
+	if (getenv("NOCT_JIT_DEBUG") != NULL)
+		fprintf(stderr,
+			"noct-jit: %s: %s\n",
+			func->name,
+			success ? "compiled" : "fallback");
+}
 static void rt_leave_frame(struct rt_env *env);
 static bool rt_init_global(struct rt_env *env);
 static void rt_cleanup_global(struct rt_env *env);
@@ -450,10 +464,16 @@ rt_register_lir(
 		return false;
 	}
 	func->param_count = lir->param_count;
-	for (i = 0; i < NOCT_ARG_MAX; i++)
+	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		func->param_type[i] = -1;
-	for (i = 0; i < lir->param_count; i++)
+		func->param_packed_type[i] = -1;
+		func->param_restricted[i] = false;
+	}
+	for (i = 0; i < lir->param_count; i++) {
 		func->param_type[i] = lir->param_type[i];
+		func->param_packed_type[i] = lir->param_packed_type[i];
+		func->param_restricted[i] = lir->param_restricted[i];
+	}
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_name[i] = noct_strdup(lir->param_name[i]);
 		if (func->param_name[i] == NULL) {
@@ -471,6 +491,7 @@ rt_register_lir(
 		memcpy(func->bytecode, lir->bytecode, (size_t)lir->bytecode_size);
 	}
 	func->tmpvar_size = lir->tmpvar_size;
+	func->has_vector_ops = lir->has_vector_ops;
 	func->file_name = noct_strdup(lir->file_name);
 	if (func->file_name == NULL) {
 		rt_out_of_memory(env);
@@ -488,9 +509,11 @@ rt_register_lir(
 		if (env->vm->config.jit_threshold == 0) {
 			/* Write code. */
 			if (!jit_build(env, func)) {
+				rt_report_jit_result(func, false);
 				/* -1 means JIT failed. */
 				func->call_count = -1;
 			} else {
+				rt_report_jit_result(func, true);
 				/* Need to commit before call. */
 				env->vm->is_jit_dirty = true;
 			}
@@ -602,8 +625,11 @@ rt_register_bytecode_function(
 
 	memset(&lfunc, 0, sizeof(lfunc));
 	lfunc.file_name = file_name;
-	for (i = 0; i < LIR_PARAM_SIZE; i++)
+	for (i = 0; i < LIR_PARAM_SIZE; i++) {
 		lfunc.param_type[i] = -1;
+		lfunc.param_packed_type[i] = -1;
+		lfunc.param_restricted[i] = false;
+	}
 
 	succeeded = false;
 	do {
@@ -667,6 +693,35 @@ rt_register_bytecode_function(
 			}
 			if (i != lfunc.param_count)
 				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Parameter Packed Types") == 0) {
+			for (i = 0; i < lfunc.param_count; i++) {
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL)
+					break;
+				lfunc.param_packed_type[i] = atoi(line);
+			}
+			if (i != lfunc.param_count)
+				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Parameter Restricted") == 0) {
+			for (i = 0; i < lfunc.param_count; i++) {
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL)
+					break;
+				lfunc.param_restricted[i] = atoi(line) != 0;
+			}
+			if (i != lfunc.param_count)
+				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Vector Ops") == 0) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			lfunc.has_vector_ops = atoi(line) != 0;
 			line = rt_read_bytecode_line(data, size, pos);
 		}
 
@@ -775,6 +830,11 @@ rt_register_cfunc(
 		return false;
 	}
 	func->param_count = param_count;
+	for (i = 0; i < NOCT_ARG_MAX; i++) {
+		func->param_type[i] = -1;
+		func->param_packed_type[i] = -1;
+		func->param_restricted[i] = false;
+	}
 	for (i = 0; i < param_count; i++) {
 		func->param_name[i] = noct_strdup(param_name[i]);
 		if (func->param_name[i] == NULL) {
@@ -865,8 +925,11 @@ rt_call(
 		func->call_count++;
 		if (func->call_count == env->vm->config.jit_threshold) {
 			if (!jit_build(env, func)) {
+				rt_report_jit_result(func, false);
 				/* -1 means JIT failed. */
 				func->call_count = -1;
+			} else {
+				rt_report_jit_result(func, true);
 			}
 
 			/* Need to commit before call. */

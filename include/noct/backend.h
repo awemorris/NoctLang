@@ -20,6 +20,10 @@
 
 /* Start the BC backend. */
 NOCT_DLL
+void
+noct_bcback_set_optimize_level(int level);
+
+NOCT_DLL
 bool
 noct_bcback_start(
 	const char *out_file_name);

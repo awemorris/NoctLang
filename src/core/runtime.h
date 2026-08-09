@@ -188,12 +188,20 @@ struct rt_func {
 	/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
 	int param_type[NOCT_ARG_MAX];
 
+	/* NOCT_PACKED_* element kind, or -1 = not typed packed. */
+	int param_packed_type[NOCT_ARG_MAX];
+
+	/* rpacked* source annotation. */
+	bool param_restricted[NOCT_ARG_MAX];
+
 	char *file_name;
 
 	/* Bytecode for a function. (if not a cfunc) */
 	uint32_t bytecode_size;
 	uint8_t *bytecode;
 	uint32_t tmpvar_size;
+	/* ABI/prologue metadata: bytecode contains OP_V* instructions. */
+	bool has_vector_ops;
 
 	/* JIT-generated code. */
 	bool (CDECL *jit_code)(struct rt_env *env);
@@ -326,6 +334,23 @@ struct rt_env {
 	 * Is this thread the STW executor?
 	 */
 	bool is_stw_executor;
+#endif
+
+	/*
+	 * SIMD scratch register file (docs/design/06-simd.md).  Raw
+	 * lane bytes; never holds references; never scanned by the GC;
+	 * content is dead outside a single vectorized strip region.
+	 * Byte order within a vreg is memory order (lane k of an i32x4
+	 * is bytes 4k..4k+3).  Indices 0..7 are program-visible; 8..15
+	 * are reserved.  All C access goes through memcpy (no
+	 * alignment requirement).
+	 */
+#if defined(__GNUC__) || defined(__clang__)
+	uint8_t vreg[16][16] __attribute__((aligned(16)));
+#elif defined(_MSC_VER)
+	__declspec(align(16)) uint8_t vreg[16][16];
+#else
+	uint8_t vreg[16][16];
 #endif
 };
 

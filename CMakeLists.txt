@@ -177,7 +177,9 @@ set(
 if(NOCT_ENABLE_OPTIMIZER)
   list(APPEND NOCT_BASE_SOURCE
     src/core/hir_opt_abce.c  # HIR optimizer (ABCE pass)
+    src/core/hir_opt_simd.c  # HIR optimizer (SIMD auto-vectorization)
     src/core/hir_opt_cse.c   # HIR optimizer (CSE pass)
+    src/core/hir_opt_typed.c # HIR optimizer (Stage B type lattice)
   )
 endif()
 

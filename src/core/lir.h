@@ -34,6 +34,12 @@ struct lir_func {
 
 	/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
 	int param_type[LIR_PARAM_SIZE];
+	/* NOCT_PACKED_* element kind, or -1 = not typed packed. */
+	int param_packed_type[LIR_PARAM_SIZE];
+	/* rpacked* source annotation. */
+	bool param_restricted[LIR_PARAM_SIZE];
+	/* Bytecode contains at least one OP_V* instruction. */
+	bool has_vector_ops;
 	uint32_t tmpvar_size;
 	uint32_t bytecode_size;
 	uint8_t *bytecode;

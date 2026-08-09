@@ -12,6 +12,10 @@
 #ifndef NOCT_BYTECODE_H
 #define NOCT_BYTECODE_H
 
+/* OP_CHECKTYPE imm8 encoding for element-specific packed annotations. */
+#define TYPECHECK_PACKED_BASE	16
+#define TYPECHECK_RPACKED_BASE	32
+
 enum bytecode {
 	/* no operation */
 	OP_NOP,			/* 0x00:   0: nop */
@@ -116,6 +120,86 @@ enum bytecode {
 	OP_PSTORE16,		/* 0x3a:  58: *(uint16 *)base[ofs] = src */
 	OP_PSTORE32,		/* 0x3b:  59: *(uint32 *)base[ofs] = src */
 	OP_PSTORE64,		/* 0x3c:  60: *(uint64 *)base[ofs] = src (int or long) */
+
+	/*
+	 * Typed arithmetic (docs/design/07-typed-ops.md).  Emitted only
+	 * by the LIR generator at optimize level >= 2 under type proofs
+	 * (ABCE guard regions or the Stage B lattice).  Operands are
+	 * three u16s (dst, src1, src2), EXCEPT that ISHL/ISHR encode
+	 * the shift count as an imm8 third operand (a u16-tmpvar count
+	 * would fail the frame-size operand validation).  These ops
+	 * trust the operand tags (int for OP_I*, float for OP_F*) and
+	 * are undefined on wrong-typed operands (D-TOP1).
+	 *
+	 * OP_IADD..OP_FGTE MUST stay contiguous and in this order: the
+	 * interpreter and the JIT backends index a helper table by
+	 * (opcode - OP_IADD).
+	 */
+	OP_IADD,		/* 0x3d:  61: dst = src1 + src2 (int32, wraps) */
+	OP_ISUB,		/* 0x3e:  62: dst = src1 - src2 (int32, wraps) */
+	OP_IMUL,		/* 0x3f:  63: dst = src1 * src2 (int32, low 32, wraps) */
+	OP_IDIV,		/* 0x40:  64: dst = src1 / src2 (int32; emitted only for literal src2 not in {0,-1}) */
+	OP_IMOD,		/* 0x41:  65: dst = src1 % src2 (int32; same literal rule) */
+	OP_IAND,		/* 0x42:  66: dst = src1 & src2 (int32) */
+	OP_IOR,			/* 0x43:  67: dst = src1 | src2 (int32) */
+	OP_IXOR,		/* 0x44:  68: dst = src1 ^ src2 (int32) */
+	OP_ISHL,		/* 0x45:  69: dst = (uint32)src1 << imm (imm = operand 3, 0..31) */
+	OP_ISHR,		/* 0x46:  70: dst = (uint32)src1 >> imm (LOGICAL; imm = operand 3, 0..31) */
+	OP_ILT,			/* 0x47:  71: dst = src1 <  src2 (int32) [0 or 1] */
+	OP_ILTE,		/* 0x48:  72: dst = src1 <= src2 (int32) [0 or 1] */
+	OP_IGT,			/* 0x49:  73: dst = src1 >  src2 (int32) [0 or 1] */
+	OP_IGTE,		/* 0x4a:  74: dst = src1 >= src2 (int32) [0 or 1] */
+	OP_FADD,		/* 0x4b:  75: dst = src1 + src2 (float, IEEE binary32) */
+	OP_FSUB,		/* 0x4c:  76: dst = src1 - src2 (float) */
+	OP_FMUL,		/* 0x4d:  77: dst = src1 * src2 (float) */
+	OP_FDIV,		/* 0x4e:  78: dst = src1 / src2 (float; IEEE-total, 07 Part 0) */
+	OP_FLT,			/* 0x4f:  79: dst = src1 <  src2 (float) [0 or 1; NaN -> 0] */
+	OP_FLTE,		/* 0x50:  80: dst = src1 <= src2 (float) [0 or 1; NaN -> 0] */
+	OP_FGT,			/* 0x51:  81: dst = src1 >  src2 (float) [0 or 1; NaN -> 0] */
+	OP_FGTE,		/* 0x52:  82: dst = src1 >= src2 (float) [0 or 1; NaN -> 0] */
+
+	/*
+	 * 128-bit SIMD (docs/design/06-simd.md).  Emitted only by the
+	 * LIR generator inside vectorized strip loops at optimize level
+	 * >= 2.  Operand encoding mixes u16 tmpvar indices (validated
+	 * against the frame size) and raw imm8s for vreg indices, lane
+	 * numbers and shift counts (an imm8 never goes through the
+	 * tmpvar validators -- the design-07 lesson).  vd/va/vb/vs are
+	 * vreg indices 0..7 into env->vreg[]; "base" tmpvars hold a
+	 * long payload address (PBASE-derived), "ofs" tmpvars an int
+	 * ELEMENT index scaled by 4 bytes.  Loads/stores are unaligned
+	 * by contract.  Every helper is (env, int, int, int).
+	 *
+	 * OP_VLOADI32X4..OP_VSHRI32X4 MUST stay contiguous and in this
+	 * order (helper tables index by opcode - OP_VLOADI32X4).
+	 */
+	OP_VLOADI32X4,		/* 0x53:  83: vreg[vd](imm8) = 16B at base(u16).l + sext(ofs(u16).i)*4 */
+	OP_VSTOREI32X4,		/* 0x54:  84: 16B at base(u16).l + sext(ofs(u16).i)*4 = vreg[vs](imm8) */
+	OP_VSPLATI32,		/* 0x55:  85: vreg[vd](imm8).i[0..3] = src(u16).val.i */
+	OP_VGETLANEI32,		/* 0x56:  86: dst(u16) = int vreg[vs](imm8).i[lane(imm8)] */
+	OP_VMOV128,		/* 0x57:  87: vreg[vd](imm8) = vreg[vs](imm8) */
+	OP_VADDI32X4,		/* 0x58:  88: vd = va + vb, lane-wise int32 wrap (imm8 x3) */
+	OP_VSUBI32X4,		/* 0x59:  89: vd = va - vb (imm8 x3) */
+	OP_VMULI32X4,		/* 0x5a:  90: vd = va * vb, low 32 (imm8 x3) */
+	OP_VAND128,		/* 0x5b:  91: vd = va & vb (imm8 x3) */
+	OP_VOR128,		/* 0x5c:  92: vd = va | vb (imm8 x3) */
+	OP_VXOR128,		/* 0x5d:  93: vd = va ^ vb (imm8 x3) */
+	OP_VSHLI32X4,		/* 0x5e:  94: vd = va << c, lane-wise (imm8 x3; c in 1..31) */
+	OP_VSHRI32X4,		/* 0x5f:  95: vd = va >> c, LOGICAL (imm8 x3; c in 1..31) */
+
+	/* FP32x4 reference operations; kept contiguous for helper tables. */
+	OP_VLOADF32X4,		/* 0x60:  96: vd = four float32 elements at base + ofs*4 */
+	OP_VSTOREF32X4,		/* 0x61:  97: store four float32 elements */
+	OP_VSPLATF32,		/* 0x62:  98: vd.f[0..3] = src.val.f */
+	OP_VGETLANEF32,		/* 0x63:  99: dst = float vd.f[lane] */
+	OP_VADDF32X4,		/* 0x64: 100: vd = va + vb (IEEE binary32) */
+	OP_VSUBF32X4,		/* 0x65: 101: vd = va - vb */
+	OP_VMULF32X4,		/* 0x66: 102: vd = va * vb */
+	OP_VDIVF32X4,		/* 0x67: 103: vd = va / vb */
+
+	/* ABCE float32 scalar remainder/reference operations. */
+	OP_PLOADF32,		/* 0x68: 104: dst(float) = base[ofs] */
+	OP_PSTOREF32,		/* 0x69: 105: base[ofs] = src(float) */
 };
 
 #endif

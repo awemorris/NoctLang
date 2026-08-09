@@ -71,6 +71,8 @@ jit_build(
         ctx.code = ctx.code_top;
         ctx.env = env;
         ctx.func = func;
+	/* Advanced SIMD is part of the AArch64 application-profile ABI. */
+	jit_configure_simd(&ctx, JIT_SIMD_CAP_NEON, "arm64");
 
         /* Make code writable and non-executable. */
         if (!is_writable) {
@@ -289,6 +291,21 @@ jit_put_ldr_w_imm(
         return true;
 }
 
+#define STR_W_IMM(rd, rs, imm)          if (!jit_put_str_w_imm(ctx, rd, rs, imm)) return false
+static INLINE bool
+jit_put_str_w_imm(
+        struct jit_context *ctx,
+        uint32_t rd,
+        uint32_t rs,
+        uint32_t imm)
+{
+        /* str wRd, [xRs, #imm] (imm scaled by 4) */
+        if (!jit_put_word(ctx, 0xb9000000 | (((imm / 4) & 0xfff) << 10) |
+                          (rs << 5) | rd))
+                return false;
+        return true;
+}
+
 #define LSL_IMM(rd, rs, sh)             if (!jit_put_lsl_imm(ctx, rd, rs, sh)) return false
 static INLINE bool
 jit_put_lsl_imm(
@@ -443,7 +460,21 @@ jit_put_cmp_w3_w4(
         return true;
 }
 
-/* BAL */
+/* B (unconditional, imm26: +/-128 MiB). */
+#define B(rel)                          if (!jit_put_b(ctx, rel)) return false
+static INLINE bool
+jit_put_b(
+        struct jit_context *ctx,
+        int32_t rel)
+{
+        if (!jit_put_word(ctx,
+                          0x14000000 |
+                          (((uint32_t)(rel / 4)) & 0x03ffffff)))
+                return false;
+        return true;
+}
+
+/* BAL (b.cond al; short conditional form). */
 #define BAL(rel)                        if (!jit_put_bal(ctx, rel)) return false
 static INLINE bool
 jit_put_bal(
@@ -487,6 +518,14 @@ jit_put_bne(
                 return false;
         return true;
 }
+
+/* Jump to the shared exception epilogue without relying on imm19 range. */
+#define EXCEPTION_IF_EQUAL() do {                                      \
+        if (!jit_put_bne(ctx, 8)) return false;                        \
+        if (!jit_put_b(ctx, (int32_t)((intptr_t)ctx->exception_code - \
+                                      (intptr_t)ctx->code)))           \
+                return false;                                          \
+} while (0)
 
 /* BLR */
 #define BLR(rd)                         if (!jit_put_blr(ctx, rd)) return false
@@ -548,7 +587,7 @@ jit_put_ret(
                 CMP_IMM         (REG_X0, IMM12(0));                                                     \
                 LDP_POP         (REG_X30, REG_X1);                                                      \
                 LDP_POP         (REG_X0, REG_X1);                                                       \
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));           \
+                EXCEPTION_IF_EQUAL();                                                                  \
         }
 
 #define ASM_UNARY_OP(f)                                                                                 \
@@ -578,7 +617,7 @@ jit_put_ret(
                 CMP_IMM         (REG_X0, IMM12(0));                                                     \
                 LDP_POP         (REG_X30, REG_X1);                                                      \
                 LDP_POP         (REG_X0, REG_X1);                                                       \
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));           \
+                EXCEPTION_IF_EQUAL();                                                                  \
         }
 
 /*
@@ -840,7 +879,7 @@ jit_visit_sconst_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint32_t)(ptrdiff_t)((uint64_t)ctx->exception_code - (uint64_t)ctx->code)));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -882,7 +921,7 @@ jit_visit_aconst_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -924,7 +963,7 @@ jit_visit_dconst_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1480,7 +1519,7 @@ jit_visit_loadsymbol_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1538,7 +1577,7 @@ jit_visit_storesymbol_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1601,7 +1640,7 @@ jit_visit_loaddot_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1664,7 +1703,7 @@ jit_visit_storedot_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1741,7 +1780,7 @@ jit_visit_call_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
         
         return true;
@@ -1835,7 +1874,7 @@ jit_visit_thiscall_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
 
         return true;
@@ -1862,7 +1901,7 @@ jit_visit_jmp_op(
 
         ASM {
                 /* Patched later. */
-                BAL        (IMM19(0));
+                B               (0);
         }
 
         return true;
@@ -1907,6 +1946,7 @@ jit_visit_jmpiftrue_op(
         ASM {
                 /* Patched later. */
                 BNE             (IMM19(0));
+                if (!jit_put_word(ctx, 0xd503201f)) return false;
         }
 
         return true;
@@ -1951,6 +1991,7 @@ jit_visit_jmpiffalse_op(
         ASM {
                 /* Patched later. */
                 BEQ             (IMM19(0));
+                if (!jit_put_word(ctx, 0xd503201f)) return false;
         }
 
         return true;
@@ -1980,6 +2021,7 @@ jit_visit_jmpifeq_op(
         ASM {
                 /* Patched later. */
                 BEQ             (IMM19(0));
+                if (!jit_put_word(ctx, 0xd503201f)) return false;
         }
 
         return true;
@@ -2010,7 +2052,7 @@ jit_visit_safepoint_op(
                 CMP_IMM         (REG_X0, IMM12(0));
                 LDP_POP         (REG_X30, REG_X1);
                 LDP_POP         (REG_X0, REG_X1);
-                BEQ             (IMM19((uint64_t)ctx->exception_code - (uint64_t)ctx->code));
+                EXCEPTION_IF_EQUAL();
         }
         
         return true;
@@ -2455,6 +2497,693 @@ jit_visit_pstore64_op(
         return true;
 }
 
+/* Visit a OP_PLOADF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_ploadf32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_ploadf32_helper);
+        return true;
+}
+
+/* Visit a OP_PSTOREF32 instruction. (ABCE float32 width op; helper-call.) */
+static INLINE bool
+jit_visit_pstoref32_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        ASM_BINARY_OP(ex_pstoref32_helper);
+        return true;
+}
+
+
+/*
+ * Typed arithmetic ops (docs/design/07-typed-ops.md): inline machine
+ * code, arm64.  Every op trusts the operand tags (proven by the LIR
+ * layer); w2/w3/w4 and s0/s1 are per-op scratch (v0/v1 are
+ * caller-saved under AAPCS64 and unused by the other emitters).
+ *
+ * Float comparisons: after FCMP the unordered (NaN) result sets C
+ * and V, so the signed-int conditions LT/LE would read as true.  The
+ * NaN-safe condition set is MI (<), LS (<=), GT (>), GE (>=) -- do
+ * not "simplify" MI/LS to LT/LE (07-typed-ops.md par.6).
+ */
+
+/* AArch64 condition codes (for CSET). */
+#define TYPED_COND_MI   4
+#define TYPED_COND_LS   9
+#define TYPED_COND_GE   10
+#define TYPED_COND_LT   11
+#define TYPED_COND_GT   12
+#define TYPED_COND_LE   13
+
+/* cset wRd, cond == csinc wRd, wzr, wzr, !cond */
+#define TYPED_CSET_W(rd, cond)                                          \
+        if (!jit_put_word(ctx, 0x1a9f07e0 | (((uint32_t)(cond) ^ 1u) << 12) | (rd))) \
+                return false
+
+/* Store an int/float result: tag then the 8-byte union slot.  The
+   value register was produced by a 32-bit op (zero-extended), so the
+   64-bit store writes value bits + zero padding, the same full-union
+   write the PLOAD32 emitter does. */
+#define TYPED_STORE(vreg, dstofs, tag)                                  \
+        MOVZ(REG_X4, IMM16(tag), LSL_0);                                \
+        STR_IMM(REG_X4, REG_X1, IMM9(dstofs));                          \
+        STR_IMM(vreg, REG_X1, IMM9((dstofs) + 8))
+
+/* Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic; inline.) */
+static INLINE bool
+jit_visit_typed_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int dst;
+        int src1;
+        int src2;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        if (op == OP_ISHL || op == OP_ISHR) {
+                /* The shift count is an imm8, not a tmpvar. */
+                CONSUME_IMM8(src2);
+        } else {
+                CONSUME_TMPVAR(src2);
+        }
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        if (op != OP_ISHL && op != OP_ISHR)
+                src2 *= (int)sizeof(struct rt_value);
+
+        switch (op) {
+        case OP_IADD:
+        case OP_ISUB:
+        case OP_IMUL:
+        case OP_IAND:
+        case OP_IOR:
+        case OP_IXOR:
+        case OP_IDIV:
+        case OP_IMOD:
+        case OP_ILT:
+        case OP_ILTE:
+        case OP_IGT:
+        case OP_IGTE:
+                ASM {
+                        /* x1 = &env->frame->tmpvar[0] */
+                        /* w2 = src1 value, w3 = src2 value */
+                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+                }
+                switch (op) {
+                case OP_IADD:
+                        /* add w2, w2, w3 */
+                        if (!jit_put_word(ctx, 0x0b000000 | (3u << 16) | (2u << 5) | 2u))
+                                return false;
+                        break;
+                case OP_ISUB:
+                        /* sub w2, w2, w3 */
+                        if (!jit_put_word(ctx, 0x4b000000 | (3u << 16) | (2u << 5) | 2u))
+                                return false;
+                        break;
+                case OP_IMUL:
+                        /* mul w2, w2, w3 (madd w2, w2, w3, wzr) */
+                        if (!jit_put_word(ctx, 0x1b007c00 | (3u << 16) | (2u << 5) | 2u))
+                                return false;
+                        break;
+                case OP_IAND:
+                        /* and w2, w2, w3 */
+                        if (!jit_put_word(ctx, 0x0a000000 | (3u << 16) | (2u << 5) | 2u))
+                                return false;
+                        break;
+                case OP_IOR:
+                        /* orr w2, w2, w3 */
+                        if (!jit_put_word(ctx, 0x2a000000 | (3u << 16) | (2u << 5) | 2u))
+                                return false;
+                        break;
+                case OP_IXOR:
+                        /* eor w2, w2, w3 */
+                        if (!jit_put_word(ctx, 0x4a000000 | (3u << 16) | (2u << 5) | 2u))
+                                return false;
+                        break;
+                case OP_IDIV:
+                        /* sdiv w2, w2, w3 (AArch64: no trap; /0 = 0) */
+                        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) | (2u << 5) | 2u))
+                                return false;
+                        break;
+                case OP_IMOD:
+                        /* sdiv w4, w2, w3; msub w2, w4, w3, w2 */
+                        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) | (2u << 5) | 4u))
+                                return false;
+                        if (!jit_put_word(ctx, 0x1b008000 | (3u << 16) | (2u << 10) | (4u << 5) | 2u))
+                                return false;
+                        break;
+                default:
+                        /* cmp w2, w3 (subs wzr, w2, w3) */
+                        if (!jit_put_word(ctx, 0x6b000000 | (3u << 16) | (2u << 5) | 31u))
+                                return false;
+                        switch (op) {
+                        case OP_ILT:  TYPED_CSET_W(2, TYPED_COND_LT); break;
+                        case OP_ILTE: TYPED_CSET_W(2, TYPED_COND_LE); break;
+                        case OP_IGT:  TYPED_CSET_W(2, TYPED_COND_GT); break;
+                        default:      TYPED_CSET_W(2, TYPED_COND_GE); break;
+                        }
+                        break;
+                }
+                ASM {
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT);
+                }
+                break;
+        case OP_ISHL:
+        case OP_ISHR:
+                /* src2 is the shift-count immediate (0..31). */
+                ASM {
+                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                }
+                if ((src2 & 31) != 0) {
+                        uint32_t sh = (uint32_t)(src2 & 31);
+                        if (op == OP_ISHL) {
+                                /* lsl w2, w2, #sh (ubfm w2, w2, #(32-sh)&31, #(31-sh)) */
+                                if (!jit_put_word(ctx, 0x53000000 |
+                                                  (((32u - sh) & 31u) << 16) |
+                                                  ((31u - sh) << 10) |
+                                                  (2u << 5) | 2u))
+                                        return false;
+                        } else {
+                                /* lsr w2, w2, #sh (LOGICAL; ubfm w2, w2, #sh, #31) */
+                                if (!jit_put_word(ctx, 0x53000000 |
+                                                  (sh << 16) |
+                                                  (31u << 10) |
+                                                  (2u << 5) | 2u))
+                                        return false;
+                        }
+                }
+                ASM {
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT);
+                }
+                break;
+        case OP_FADD:
+        case OP_FSUB:
+        case OP_FMUL:
+        case OP_FDIV:
+                ASM {
+                        /* s0 = src1 float bits, s1 = src2 float bits */
+                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+                }
+                /* fmov s0, w2; fmov s1, w3 */
+                if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                        return false;
+                if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                        return false;
+                switch (op) {
+                case OP_FADD:
+                        /* fadd s0, s0, s1 */
+                        if (!jit_put_word(ctx, 0x1e202800 | (1u << 16) | (0u << 5) | 0u))
+                                return false;
+                        break;
+                case OP_FSUB:
+                        /* fsub s0, s0, s1 */
+                        if (!jit_put_word(ctx, 0x1e203800 | (1u << 16) | (0u << 5) | 0u))
+                                return false;
+                        break;
+                case OP_FMUL:
+                        /* fmul s0, s0, s1 */
+                        if (!jit_put_word(ctx, 0x1e200800 | (1u << 16) | (0u << 5) | 0u))
+                                return false;
+                        break;
+                default:
+                        /* fdiv s0, s0, s1 (IEEE-total; 07 Part 0) */
+                        if (!jit_put_word(ctx, 0x1e201800 | (1u << 16) | (0u << 5) | 0u))
+                                return false;
+                        break;
+                }
+                /* fmov w2, s0 */
+                if (!jit_put_word(ctx, 0x1e260000 | (0u << 5) | 2u))
+                        return false;
+                ASM {
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT);
+                }
+                break;
+        case OP_FLT:
+        case OP_FLTE:
+        case OP_FGT:
+        case OP_FGTE:
+                ASM {
+                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+                }
+                /* fmov s0, w2; fmov s1, w3 */
+                if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                        return false;
+                if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                        return false;
+                /* fcmp s0, s1 */
+                if (!jit_put_word(ctx, 0x1e202000 | (1u << 16) | (0u << 5)))
+                        return false;
+                switch (op) {
+                case OP_FLT:  TYPED_CSET_W(2, TYPED_COND_MI); break;
+                case OP_FLTE: TYPED_CSET_W(2, TYPED_COND_LS); break;
+                case OP_FGT:  TYPED_CSET_W(2, TYPED_COND_GT); break;
+                default:      TYPED_CSET_W(2, TYPED_COND_GE); break;
+                }
+                ASM {
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT);
+                }
+                break;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+
+        return true;
+}
+
+/*
+ * 128-bit SIMD ops (docs/design/06-simd.md): inline NEON, arm64.
+ * vreg k -> v k (v0..v7 are caller-saved under AAPCS64, unused by
+ * the other emitters, and vector state only lives inside a strip
+ * region that emits no calls).  NEON is baseline on AArch64: no
+ * feature gate.  NEON ALU is three-address, so there is no
+ * two-address copy dance and no vd==vb hazard at all.
+ */
+
+static bool
+jit_put_scalar_vreg_base(struct jit_context *ctx, uint32_t rd)
+{
+        uint32_t ofs = (uint32_t)offsetof(struct rt_env, vreg);
+
+        if (!jit_put_movz(ctx, rd, ofs & 0xffff, LSL_0) ||
+            !jit_put_movk(ctx, rd, (ofs >> 16) & 0xffff, LSL_16) ||
+            !jit_put_add(ctx, rd, REG_X0, rd))
+                return false;
+        return true;
+}
+
+/* Direct scalar lowering used by the forced-scalar capability tier. */
+static INLINE bool
+jit_visit_vector_scalar_op(
+        struct jit_context *ctx,
+        int op,
+        int dst,
+        int src1,
+        int src2)
+{
+        int lane;
+
+        if (!jit_put_scalar_vreg_base(ctx, REG_X5))
+                return false;
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+        {
+                int base = src1 * (int)sizeof(struct rt_value);
+                int ofs = src2 * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_IMM(REG_X2, REG_X1, IMM9(base + 8));
+                        LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                        LSL_IMM(REG_X3, REG_X3, 2);
+                        ADD(REG_X2, REG_X2, REG_X3);
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        LDR_W_IMM(REG_X3, REG_X2, (uint32_t)lane * 4);
+                        STR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+        {
+                int base = dst * (int)sizeof(struct rt_value);
+                int ofs = src1 * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_IMM(REG_X2, REG_X1, IMM9(base + 8));
+                        LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                        LSL_IMM(REG_X3, REG_X3, 2);
+                        ADD(REG_X2, REG_X2, REG_X3);
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        LDR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)src2 * 16 + (uint32_t)lane * 4);
+                        STR_W_IMM(REG_X3, REG_X2, (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+        {
+                int src = src1 * (int)sizeof(struct rt_value);
+                LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(src + 8));
+                for (lane = 0; lane < 4; lane++)
+                        STR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                return true;
+        }
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+        {
+                int d = dst * (int)sizeof(struct rt_value);
+                LDR_W_IMM(REG_X3, REG_X5,
+                          (uint32_t)src1 * 16 + (uint32_t)src2 * 4);
+                ASM {
+                        MOVZ(REG_X4,
+                             IMM16(op == OP_VGETLANEF32 ?
+                                   NOCT_VALUE_FLOAT : NOCT_VALUE_INT),
+                             LSL_0);
+                        STR_IMM(REG_X4, REG_X1, IMM9(d));
+                        STR_IMM(REG_X3, REG_X1, IMM9(d + 8));
+                }
+                return true;
+        }
+        case OP_VMOV128:
+                for (lane = 0; lane < 4; lane++) {
+                        LDR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)src1 * 16 + (uint32_t)lane * 4);
+                        STR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        case OP_VADDI32X4:
+        case OP_VSUBI32X4:
+        case OP_VMULI32X4:
+        case OP_VAND128:
+        case OP_VOR128:
+        case OP_VXOR128:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+                        switch (op) {
+                        case OP_VADDI32X4:
+                                if (!jit_put_word(ctx, 0x0b000000 | (4u << 16) |
+                                                  (3u << 5) | 3u)) return false;
+                                break;
+                        case OP_VSUBI32X4:
+                                if (!jit_put_word(ctx, 0x4b000000 | (4u << 16) |
+                                                  (3u << 5) | 3u)) return false;
+                                break;
+                        case OP_VMULI32X4:
+                                if (!jit_put_word(ctx, 0x1b007c00 | (4u << 16) |
+                                                  (3u << 5) | 3u)) return false;
+                                break;
+                        case OP_VAND128:
+                                if (!jit_put_word(ctx, 0x0a000000 | (4u << 16) |
+                                                  (3u << 5) | 3u)) return false;
+                                break;
+                        case OP_VOR128:
+                                if (!jit_put_word(ctx, 0x2a000000 | (4u << 16) |
+                                                  (3u << 5) | 3u)) return false;
+                                break;
+                        default:
+                                if (!jit_put_word(ctx, 0x4a000000 | (4u << 16) |
+                                                  (3u << 5) | 3u)) return false;
+                                break;
+                        }
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        case OP_VSHLI32X4:
+        case OP_VSHRI32X4:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t word;
+                        LDR_W_IMM(REG_X3, REG_X5, s);
+                        if (op == OP_VSHLI32X4)
+                                word = 0x53000000 |
+                                       (((32u - (uint32_t)src2) & 31u) << 16) |
+                                       ((31u - (uint32_t)src2) << 10) |
+                                       (3u << 5) | 3u;
+                        else
+                                word = 0x53000000 | ((uint32_t)src2 << 16) |
+                                       (31u << 10) | (3u << 5) | 3u;
+                        if (!jit_put_word(ctx, word))
+                                return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        case OP_VADDF32X4:
+        case OP_VSUBF32X4:
+        case OP_VMULF32X4:
+        case OP_VDIVF32X4:
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
+                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t base;
+                        /* ldr s0,[x5,#a]; ldr s1,[x5,#b] */
+                        if (!jit_put_word(ctx, 0xbd400000 | ((a / 4) << 10) |
+                                                  (REG_X5 << 5)) ||
+                            !jit_put_word(ctx, 0xbd400001 | ((b / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                        switch (op) {
+                        case OP_VADDF32X4: base = 0x1e202800; break;
+                        case OP_VSUBF32X4: base = 0x1e203800; break;
+                        case OP_VMULF32X4: base = 0x1e200800; break;
+                        default:           base = 0x1e201800; break;
+                        }
+                        if (!jit_put_word(ctx, base | (1u << 16)) ||
+                            !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                }
+                return true;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+}
+
+/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
+static INLINE bool
+jit_visit_vector_op(
+        struct jit_context *ctx,
+        int op)
+{
+        int a;
+        int b;
+        int c;
+
+        /* Decode (shapes vary per op; see bytecode.h). */
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+                CONSUME_IMM8(a);
+                CONSUME_TMPVAR(b);
+                CONSUME_TMPVAR(c);
+                break;
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+                CONSUME_TMPVAR(a);
+                CONSUME_TMPVAR(b);
+                CONSUME_IMM8(c);
+                break;
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+                CONSUME_IMM8(a);
+                CONSUME_TMPVAR(b);
+                c = 0;
+                break;
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+                CONSUME_TMPVAR(a);
+                CONSUME_IMM8(b);
+                CONSUME_IMM8(c);
+                break;
+        case OP_VMOV128:
+                CONSUME_IMM8(a);
+                CONSUME_IMM8(b);
+                c = 0;
+                break;
+        default:
+                CONSUME_IMM8(a);
+                CONSUME_IMM8(b);
+                CONSUME_IMM8(c);
+                break;
+        }
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                return jit_visit_vector_scalar_op(ctx, op, a, b, c);
+        }
+
+        switch (op) {
+        case OP_VLOADI32X4:
+        case OP_VLOADF32X4:
+        {
+                int base = b * (int)sizeof(struct rt_value);
+                int ofs = c * (int)sizeof(struct rt_value);
+                ASM {
+                        /* x1 = &env->frame->tmpvar[0] */
+                        LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
+                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                        LSL_IMM         (REG_X3, REG_X3, 2);
+                        ADD             (REG_X2, REG_X2, REG_X3);
+                }
+                /* ldr qA, [x2] */
+                if (!jit_put_word(ctx, 0x3dc00000 | (2u << 5) | (uint32_t)a))
+                        return false;
+                break;
+        }
+        case OP_VSTOREI32X4:
+        case OP_VSTOREF32X4:
+        {
+                int base = a * (int)sizeof(struct rt_value);
+                int ofs = b * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
+                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                        LSL_IMM         (REG_X3, REG_X3, 2);
+                        ADD             (REG_X2, REG_X2, REG_X3);
+                }
+                /* str qC, [x2] */
+                if (!jit_put_word(ctx, 0x3d800000 | (2u << 5) | (uint32_t)c))
+                        return false;
+                break;
+        }
+        case OP_VSPLATI32:
+        case OP_VSPLATF32:
+        {
+                int src = b * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src + 8));
+                }
+                /* dup vA.4s, w3 */
+                if (!jit_put_word(ctx, 0x4e040c00 | (3u << 5) | (uint32_t)a))
+                        return false;
+                break;
+        }
+        case OP_VGETLANEI32:
+        case OP_VGETLANEF32:
+        {
+                int dst = a * (int)sizeof(struct rt_value);
+                /* umov w3, vB.s[c] (imm5 = (lane << 3) | 4) */
+                if (!jit_put_word(ctx, 0x0e003c00 |
+                                  ((((uint32_t)c << 3) | 4u) << 16) |
+                                  ((uint32_t)b << 5) | 3u))
+                        return false;
+                ASM {
+                        /* Tag + full-union value store (w3 is
+                           zero-extended into x3 by umov). */
+			MOVZ            (REG_X4,
+					  IMM16(op == OP_VGETLANEF32 ?
+						NOCT_VALUE_FLOAT : NOCT_VALUE_INT),
+					  LSL_0);
+                        STR_IMM         (REG_X4, REG_X1, IMM9(dst));
+                        STR_IMM         (REG_X3, REG_X1, IMM9(dst + 8));
+                }
+                break;
+        }
+        case OP_VMOV128:
+                if (a != b) {
+                        /* mov vA.16b, vB.16b (orr vA, vB, vB) */
+                        if (!jit_put_word(ctx, 0x4ea01c00 |
+                                          ((uint32_t)b << 16) |
+                                          ((uint32_t)b << 5) | (uint32_t)a))
+                                return false;
+                }
+                break;
+        case OP_VADDI32X4:
+                /* add vA.4s, vB.4s, vC.4s */
+                if (!jit_put_word(ctx, 0x4ea08400 | ((uint32_t)c << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+        case OP_VSUBI32X4:
+                /* sub vA.4s, vB.4s, vC.4s */
+                if (!jit_put_word(ctx, 0x6ea08400 | ((uint32_t)c << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+        case OP_VMULI32X4:
+                /* mul vA.4s, vB.4s, vC.4s */
+                if (!jit_put_word(ctx, 0x4ea09c00 | ((uint32_t)c << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+        case OP_VAND128:
+                /* and vA.16b, vB.16b, vC.16b */
+                if (!jit_put_word(ctx, 0x4e201c00 | ((uint32_t)c << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+        case OP_VOR128:
+                /* orr vA.16b, vB.16b, vC.16b */
+                if (!jit_put_word(ctx, 0x4ea01c00 | ((uint32_t)c << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+        case OP_VXOR128:
+                /* eor vA.16b, vB.16b, vC.16b */
+                if (!jit_put_word(ctx, 0x6e201c00 | ((uint32_t)c << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+        case OP_VSHLI32X4:
+                /* shl vA.4s, vB.4s, #c (immh:immb = 32 + c) */
+                if (!jit_put_word(ctx, 0x4f005400 |
+                                  ((32u + (uint32_t)c) << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+        case OP_VSHRI32X4:
+                /* ushr vA.4s, vB.4s, #c (LOGICAL; immh:immb = 64 - c;
+                   the LIR layer never emits c == 0) */
+                if (!jit_put_word(ctx, 0x6f000400 |
+                                  ((64u - (uint32_t)c) << 16) |
+                                  ((uint32_t)b << 5) | (uint32_t)a))
+                        return false;
+                break;
+	case OP_VADDF32X4:
+		/* fadd vA.4s, vB.4s, vC.4s */
+		if (!jit_put_word(ctx, 0x4e20d400 | ((uint32_t)c << 16) |
+				  ((uint32_t)b << 5) | (uint32_t)a))
+			return false;
+		break;
+	case OP_VSUBF32X4:
+		/* fsub vA.4s, vB.4s, vC.4s */
+		if (!jit_put_word(ctx, 0x4ea0d400 | ((uint32_t)c << 16) |
+				  ((uint32_t)b << 5) | (uint32_t)a))
+			return false;
+		break;
+	case OP_VMULF32X4:
+		/* fmul vA.4s, vB.4s, vC.4s */
+		if (!jit_put_word(ctx, 0x6e20dc00 | ((uint32_t)c << 16) |
+				  ((uint32_t)b << 5) | (uint32_t)a))
+			return false;
+		break;
+	case OP_VDIVF32X4:
+		/* fdiv vA.4s, vB.4s, vC.4s */
+		if (!jit_put_word(ctx, 0x6e20fc00 | ((uint32_t)c << 16) |
+				  ((uint32_t)b << 5) | (uint32_t)a))
+			return false;
+		break;
+        default:
+                assert(NEVER_COME_HERE);
+                return false;
+        }
+
+        return true;
+}
+
 /* Visit a bytecode of a function. */
 bool
 jit_visit_bytecode(
@@ -2772,6 +3501,63 @@ jit_visit_bytecode(
                         if (!jit_visit_pstore64_op(ctx))
                                 return false;
                         break;
+                case OP_PLOADF32:
+                        if (!jit_visit_ploadf32_op(ctx))
+                                return false;
+                        break;
+                case OP_PSTOREF32:
+                        if (!jit_visit_pstoref32_op(ctx))
+                                return false;
+                        break;
+                case OP_IADD:
+                case OP_ISUB:
+                case OP_IMUL:
+                case OP_IDIV:
+                case OP_IMOD:
+                case OP_IAND:
+                case OP_IOR:
+                case OP_IXOR:
+                case OP_ISHL:
+                case OP_ISHR:
+                case OP_ILT:
+                case OP_ILTE:
+                case OP_IGT:
+                case OP_IGTE:
+                case OP_FADD:
+                case OP_FSUB:
+                case OP_FMUL:
+                case OP_FDIV:
+                case OP_FLT:
+                case OP_FLTE:
+                case OP_FGT:
+                case OP_FGTE:
+                        if (!jit_visit_typed_op(ctx, opcode))
+                                return false;
+                        break;
+                case OP_VLOADI32X4:
+                case OP_VSTOREI32X4:
+                case OP_VSPLATI32:
+                case OP_VGETLANEI32:
+                case OP_VMOV128:
+                case OP_VADDI32X4:
+                case OP_VSUBI32X4:
+                case OP_VMULI32X4:
+                case OP_VAND128:
+                case OP_VOR128:
+                case OP_VXOR128:
+                case OP_VSHLI32X4:
+                case OP_VSHRI32X4:
+                case OP_VLOADF32X4:
+                case OP_VSTOREF32X4:
+                case OP_VSPLATF32:
+                case OP_VGETLANEF32:
+                case OP_VADDF32X4:
+                case OP_VSUBF32X4:
+                case OP_VMULF32X4:
+                case OP_VDIVF32X4:
+                        if (!jit_visit_vector_op(ctx, opcode))
+                                return false;
+                        break;
                 default:
                         assert(JIT_OP_NOT_IMPLEMENTED);
                         break;
@@ -2837,7 +3623,7 @@ jit_patch_branch(
 
         /* Calc a branch offset. */
         offset = (int)((intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code);
-        if (abs(offset) & ~0x7ffff) {
+        if (offset < -134217728 || offset > 134217724) {
                 rt_error(ctx->env, "Branch target too far.");
                 return false;
         }
@@ -2848,15 +3634,35 @@ jit_patch_branch(
         /* Assemble. */
         if (ctx->branch_patch[patch_index].type == PATCH_BAL) {
                 ASM {
-                        BAL     (IMM19(offset));
+                        B       (offset);
                 }
         } else if (ctx->branch_patch[patch_index].type == PATCH_BEQ) {
-                ASM {
-                        BEQ     (IMM19(offset));
+                if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+                    offset >= -1048576 && offset <= 1048572) {
+                        ASM {
+                                BEQ     (IMM19(offset));
+                                if (!jit_put_word(ctx, 0xd503201f)) return false;
+                        }
+                } else {
+                        ASM {
+                                /* If not equal, skip the long B. */
+                                BNE     (IMM19(8));
+                                B       (offset - 4);
+                        }
                 }
         } else if (ctx->branch_patch[patch_index].type == PATCH_BNE) {
-                ASM {
-                        BNE     (IMM19(offset));
+                if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+                    offset >= -1048576 && offset <= 1048572) {
+                        ASM {
+                                BNE     (IMM19(offset));
+                                if (!jit_put_word(ctx, 0xd503201f)) return false;
+                        }
+                } else {
+                        ASM {
+                                /* If equal, skip the long B. */
+                                BEQ     (IMM19(8));
+                                B       (offset - 4);
+                        }
                 }
         }
 

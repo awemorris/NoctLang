@@ -1316,6 +1316,36 @@ cback_visit_pstore64_op(
 	return true;
 }
 
+static INLINE bool
+cback_visit_ploadf32_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int dst, base, ofs;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+	fprintf(fp, "    if (!noct_ex_ploadf32_helper(env, %d, %d, %d)) return false;\n",
+		dst, base, ofs);
+	return true;
+}
+
+static INLINE bool
+cback_visit_pstoref32_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int base, ofs, src;
+
+	GET_TMPVAR(&base);
+	GET_TMPVAR(&ofs);
+	GET_TMPVAR(&src);
+	fprintf(fp, "    if (!noct_ex_pstoref32_helper(env, %d, %d, %d)) return false;\n",
+		base, ofs, src);
+	return true;
+}
+
 /* Visit a LOP_CHECKTYPE instruction. */
 static INLINE bool
 cback_visit_checktype_op(
@@ -1328,6 +1358,188 @@ cback_visit_checktype_op(
 	GET_U8(&type);
 
 	fprintf(fp, "    if (!noct_ex_checktype_helper(env, %d, %d)) return false;\n", slot, type);
+
+	return true;
+}
+
+/*
+ * Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic, design
+ * 07.)  Open-coded into the generated C so the C compiler can fold
+ * and inline; the two ops with an error path (IDIV/IMOD) call their
+ * runtime helper instead, which carries the division-by-zero error
+ * plumbing.  Integer arithmetic is emitted in uint32_t (defined
+ * wraparound, identical to the helpers and the JITs).
+ */
+static INLINE bool
+cback_visit_typed_op(
+	struct lir_func *func,
+	uint32_t *pc,
+	int op)
+{
+	/* Indexed by (op - OP_IADD); NULL = special-cased below. */
+	static const char *iexpr[] = {
+		"(a + b)",	/* IADD */
+		"(a - b)",	/* ISUB */
+		"(a * b)",	/* IMUL */
+		NULL,		/* IDIV */
+		NULL,		/* IMOD */
+		"(a & b)",	/* IAND */
+		"(a | b)",	/* IOR  */
+		"(a ^ b)"	/* IXOR */
+	};
+	int dst, src1, src2;
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src1);
+	if (op == OP_ISHL || op == OP_ISHR) {
+		/* The shift count is an imm8, not a tmpvar. */
+		GET_U8(&src2);
+	} else {
+		GET_TMPVAR(&src2);
+	}
+
+	switch (op) {
+	case OP_IADD:
+	case OP_ISUB:
+	case OP_IMUL:
+	case OP_IAND:
+	case OP_IOR:
+	case OP_IXOR:
+		fprintf(fp, "    {\n");
+		fprintf(fp, "        uint32_t a = (uint32_t)env->frame->tmpvar[%d].val.i;\n", src1);
+		fprintf(fp, "        uint32_t b = (uint32_t)env->frame->tmpvar[%d].val.i;\n", src2);
+		fprintf(fp, "        env->frame->tmpvar[%d].val.i = (int32_t)%s;\n",
+			dst, iexpr[op - OP_IADD]);
+		fprintf(fp, "        env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+		fprintf(fp, "    }\n");
+		break;
+	case OP_IDIV:
+		fprintf(fp, "    if (!noct_ex_idiv_helper(env, %d, %d, %d)) return false;\n",
+			dst, src1, src2);
+		break;
+	case OP_IMOD:
+		fprintf(fp, "    if (!noct_ex_imod_helper(env, %d, %d, %d)) return false;\n",
+			dst, src1, src2);
+		break;
+	case OP_ISHL:
+	case OP_ISHR:
+		/* src2 is the shift-count immediate (0..31). */
+		fprintf(fp, "    env->frame->tmpvar[%d].val.i = (int32_t)((uint32_t)env->frame->tmpvar[%d].val.i %s %d);\n",
+			dst, src1, op == OP_ISHL ? "<<" : ">>", src2 & 31);
+		fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+		break;
+	case OP_ILT:
+	case OP_ILTE:
+	case OP_IGT:
+	case OP_IGTE:
+		fprintf(fp, "    env->frame->tmpvar[%d].val.i = (env->frame->tmpvar[%d].val.i %s env->frame->tmpvar[%d].val.i) ? 1 : 0;\n",
+			dst, src1,
+			op == OP_ILT ? "<" : op == OP_ILTE ? "<=" :
+			op == OP_IGT ? ">" : ">=", src2);
+		fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+		break;
+	case OP_FADD:
+	case OP_FSUB:
+	case OP_FMUL:
+	case OP_FDIV:
+		fprintf(fp, "    env->frame->tmpvar[%d].val.f = env->frame->tmpvar[%d].val.f %s env->frame->tmpvar[%d].val.f;\n",
+			dst, src1,
+			op == OP_FADD ? "+" : op == OP_FSUB ? "-" :
+			op == OP_FMUL ? "*" : "/", src2);
+		fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_FLOAT;\n", dst);
+		break;
+	case OP_FLT:
+	case OP_FLTE:
+	case OP_FGT:
+	case OP_FGTE:
+		fprintf(fp, "    env->frame->tmpvar[%d].val.i = (env->frame->tmpvar[%d].val.f %s env->frame->tmpvar[%d].val.f) ? 1 : 0;\n",
+			dst, src1,
+			op == OP_FLT ? "<" : op == OP_FLTE ? "<=" :
+			op == OP_FGT ? ">" : ">=", src2);
+		fprintf(fp, "    env->frame->tmpvar[%d].type = NOCT_VALUE_INT;\n", dst);
+		break;
+	default:
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction.  (128-bit SIMD,
+ * design 06.)  The generated C calls the portable emulation helpers,
+ * which the runtime always compiles (aot.h declares them).
+ */
+static INLINE bool
+cback_visit_vector_op(
+	struct lir_func *func,
+	uint32_t *pc,
+	int op)
+{
+	static const char *helper_name[] = {
+		"noct_ex_vloadi32x4_helper",
+		"noct_ex_vstorei32x4_helper",
+		"noct_ex_vsplati32_helper",
+		"noct_ex_vgetlanei32_helper",
+		"noct_ex_vmov128_helper",
+		"noct_ex_vaddi32x4_helper",
+		"noct_ex_vsubi32x4_helper",
+		"noct_ex_vmuli32x4_helper",
+		"noct_ex_vand128_helper",
+		"noct_ex_vor128_helper",
+		"noct_ex_vxor128_helper",
+		"noct_ex_vshli32x4_helper",
+		"noct_ex_vshri32x4_helper",
+		"noct_ex_vloadf32x4_helper",
+		"noct_ex_vstoref32x4_helper",
+		"noct_ex_vsplatf32_helper",
+		"noct_ex_vgetlanef32_helper",
+		"noct_ex_vaddf32x4_helper",
+		"noct_ex_vsubf32x4_helper",
+		"noct_ex_vmulf32x4_helper",
+		"noct_ex_vdivf32x4_helper"
+	};
+	int a, b, c;
+
+	switch (op) {
+	case OP_VLOADI32X4:
+	case OP_VLOADF32X4:
+		GET_U8(&a);
+		GET_TMPVAR(&b);
+		GET_TMPVAR(&c);
+		break;
+	case OP_VSTOREI32X4:
+	case OP_VSTOREF32X4:
+		GET_TMPVAR(&a);
+		GET_TMPVAR(&b);
+		GET_U8(&c);
+		break;
+	case OP_VSPLATI32:
+	case OP_VSPLATF32:
+		GET_U8(&a);
+		GET_TMPVAR(&b);
+		c = 0;
+		break;
+	case OP_VGETLANEI32:
+	case OP_VGETLANEF32:
+		GET_TMPVAR(&a);
+		GET_U8(&b);
+		GET_U8(&c);
+		break;
+	case OP_VMOV128:
+		GET_U8(&a);
+		GET_U8(&b);
+		c = 0;
+		break;
+	default:
+		GET_U8(&a);
+		GET_U8(&b);
+		GET_U8(&c);
+		break;
+	}
+
+	fprintf(fp, "    if (!%s(env, %d, %d, %d)) return false;\n",
+		helper_name[op - OP_VLOADI32X4], a, b, c);
 
 	return true;
 }
@@ -1588,6 +1800,63 @@ cback_visit_op(
 		break;
 	case OP_PSTORE64:
 		if (!cback_visit_pstore64_op(func, pc))
+			return false;
+		break;
+	case OP_PLOADF32:
+		if (!cback_visit_ploadf32_op(func, pc))
+			return false;
+		break;
+	case OP_PSTOREF32:
+		if (!cback_visit_pstoref32_op(func, pc))
+			return false;
+		break;
+	case OP_IADD:
+	case OP_ISUB:
+	case OP_IMUL:
+	case OP_IDIV:
+	case OP_IMOD:
+	case OP_IAND:
+	case OP_IOR:
+	case OP_IXOR:
+	case OP_ISHL:
+	case OP_ISHR:
+	case OP_ILT:
+	case OP_ILTE:
+	case OP_IGT:
+	case OP_IGTE:
+	case OP_FADD:
+	case OP_FSUB:
+	case OP_FMUL:
+	case OP_FDIV:
+	case OP_FLT:
+	case OP_FLTE:
+	case OP_FGT:
+	case OP_FGTE:
+		if (!cback_visit_typed_op(func, pc, op))
+			return false;
+		break;
+	case OP_VLOADI32X4:
+	case OP_VSTOREI32X4:
+	case OP_VSPLATI32:
+	case OP_VGETLANEI32:
+	case OP_VMOV128:
+	case OP_VADDI32X4:
+	case OP_VSUBI32X4:
+	case OP_VMULI32X4:
+	case OP_VAND128:
+	case OP_VOR128:
+	case OP_VXOR128:
+	case OP_VSHLI32X4:
+	case OP_VSHRI32X4:
+	case OP_VLOADF32X4:
+	case OP_VSTOREF32X4:
+	case OP_VSPLATF32:
+	case OP_VGETLANEF32:
+	case OP_VADDF32X4:
+	case OP_VSUBF32X4:
+	case OP_VMULF32X4:
+	case OP_VDIVF32X4:
+		if (!cback_visit_vector_op(func, pc, op))
 			return false;
 		break;
 	default:

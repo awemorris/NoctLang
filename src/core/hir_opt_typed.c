@@ -1,0 +1,402 @@
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ */
+
+/*
+ * HIR Optimizer: Stage B type lattice (docs/design/07-typed-ops.md).
+ *
+ * A flow-insensitive, optimistic fixpoint over the function's locals
+ * on the lattice TOP > {INT, FLOAT} > UNKNOWN:
+ *
+ *   - Every local starts at TOP ("no assignment seen yet").  A local
+ *     still TOP at the end was never assigned and therefore always
+ *     reads its zero-initialized value, integer 0 -> proven INT.
+ *     (Every declaration carries an assignment in HIR: the annotated
+ *     uninitialized form "var x: t;" is parsed as "x = 0", and the
+ *     static TDZ (design 04) rejects reads before the declaration.)
+ *   - Annotated parameters start at their annotation tag (sound at
+ *     optimize level >= 2 because OP_CHECKTYPE runs at entry) and
+ *     assignments meet into them, so a reassigned parameter loses
+ *     its proof.  Unannotated parameters start at UNKNOWN (their
+ *     incoming value is arbitrary).
+ *   - Assignment edges: statement "local = expr", the ranged-for
+ *     counter := start-expr (OP_INC preserves the tag, so the
+ *     counter's tag is start's tag for the whole loop), for-each
+ *     key/value := UNKNOWN, and every CSE CAPTURE node (it assigns
+ *     its home local the inner expression's value).
+ *
+ * The pass only fills hir_local.proven_type; it mutates nothing
+ * else.  The LIR generator consumes the proofs at level >= 2.
+ */
+
+#include "hir_opt.h"
+
+#include <string.h>
+#include <assert.h>
+
+/* Lattice values.  TP_INT/TP_FLOAT are the NOCT_VALUE_* tags. */
+#define TP_TOP		(-2)
+#define TP_UNKNOWN	(-1)
+#define TP_INT		NOCT_VALUE_INT
+#define TP_FLOAT	NOCT_VALUE_FLOAT
+
+struct tp_ctx {
+	struct hir_block *func;
+	bool changed;
+};
+
+static void tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head,
+			  bool in_region);
+
+/* Meet-into: returns the combined value of cur and incoming t. */
+static int
+tp_combine(int cur, int t)
+{
+	if (t == TP_TOP)
+		return cur;	/* No information yet: keep. */
+	if (cur == TP_TOP)
+		return t;
+	if (cur == t)
+		return cur;
+	return TP_UNKNOWN;
+}
+
+static struct hir_local *
+tp_find_local(struct tp_ctx *ctx, const char *symbol)
+{
+	struct hir_local *local;
+
+	local = ctx->func->val.func.local;
+	while (local != NULL) {
+		if (strcmp(local->symbol, symbol) == 0)
+			return local;
+		local = local->next;
+	}
+	return NULL;
+}
+
+/* Evaluate an expression's proven tag under the current lattice. */
+static int
+tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
+{
+	int a, b;
+
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		switch (e->val.term.term->type) {
+		case HIR_TERM_INT:
+			return TP_INT;
+		case HIR_TERM_FLOAT:
+			return TP_FLOAT;
+		case HIR_TERM_SYMBOL:
+		{
+			struct hir_local *local;
+			local = tp_find_local(ctx, e->val.term.term->val.symbol);
+			if (local == NULL)
+				return TP_UNKNOWN;	/* Global. */
+			/* An enclosing ABCE typed-int region proves
+			   int dynamically (TYPEIS guards), whatever
+			   the flow-insensitive lattice says. */
+			if (in_region)
+				return TP_INT;
+			return local->proven_type;
+		}
+		default:
+			return TP_UNKNOWN;
+		}
+	case HIR_EXPR_PAR:
+		return tp_eval_expr(ctx, e->val.unary.expr, in_region);
+	case HIR_EXPR_CAPTURE:
+		return tp_eval_expr(ctx, e->val.capture.expr, in_region);
+	case HIR_EXPR_PLUS:
+	case HIR_EXPR_MINUS:
+	case HIR_EXPR_MUL:
+	case HIR_EXPR_DIV:
+		a = tp_eval_expr(ctx, e->val.binary.expr[0], in_region);
+		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
+		if (a == TP_TOP || b == TP_TOP)
+			return TP_TOP;
+		if (a == TP_INT && b == TP_INT)
+			return TP_INT;
+		if (a == TP_FLOAT && b == TP_FLOAT)
+			return TP_FLOAT;
+		return TP_UNKNOWN;
+	case HIR_EXPR_MOD:
+	case HIR_EXPR_AND:
+	case HIR_EXPR_OR:
+	case HIR_EXPR_XOR:
+	case HIR_EXPR_SHL:
+	case HIR_EXPR_SHR:
+		a = tp_eval_expr(ctx, e->val.binary.expr[0], in_region);
+		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
+		if (a == TP_TOP || b == TP_TOP)
+			return TP_TOP;
+		if (a == TP_INT && b == TP_INT)
+			return TP_INT;
+		return TP_UNKNOWN;
+	case HIR_EXPR_LT:
+	case HIR_EXPR_LTE:
+	case HIR_EXPR_GT:
+	case HIR_EXPR_GTE:
+	case HIR_EXPR_EQ:
+	case HIR_EXPR_NEQ:
+		a = tp_eval_expr(ctx, e->val.binary.expr[0], in_region);
+		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
+		if (a == TP_TOP || b == TP_TOP)
+			return TP_TOP;
+		if (a != TP_UNKNOWN && b != TP_UNKNOWN)
+			return TP_INT;
+		return TP_UNKNOWN;
+	case HIR_EXPR_PLOAD8U:
+	case HIR_EXPR_PLOAD8S:
+	case HIR_EXPR_PLOAD16U:
+	case HIR_EXPR_PLOAD16S:
+	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PLEN:
+	case HIR_EXPR_PCHECK:
+	case HIR_EXPR_TYPEIS:
+		return TP_INT;
+	case HIR_EXPR_PLOADF32:
+		return TP_FLOAT;
+	default:
+		/* PLOAD64/PBASE (long), NEG, NOT, LAND, LOR, DOT,
+		   SUBSCR, CALL, THISCALL, ARRAY, DICT, NEW, ... */
+		return TP_UNKNOWN;
+	}
+}
+
+/* Meet an incoming tag into a local (by symbol; globals ignored). */
+static void
+tp_meet_symbol(struct tp_ctx *ctx, const char *symbol, int t)
+{
+	struct hir_local *local;
+	int merged;
+
+	local = tp_find_local(ctx, symbol);
+	if (local == NULL)
+		return;		/* Global or $return: no proof kept. */
+
+	merged = tp_combine(local->proven_type, t);
+	if (merged != local->proven_type) {
+		local->proven_type = merged;
+		ctx->changed = true;
+	}
+}
+
+/*
+ * Walk an expression tree applying CAPTURE edges (a CAPTURE assigns
+ * the inner value to its home local wherever it appears).
+ */
+static void
+tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
+{
+	uint32_t i;
+
+	if (e == NULL)
+		return;
+
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		return;
+	case HIR_EXPR_PAR:
+	case HIR_EXPR_NEG:
+	case HIR_EXPR_NOT:
+	case HIR_EXPR_PLEN:
+	case HIR_EXPR_PBASE:
+		tp_apply_captures(ctx, e->val.unary.expr, in_region);
+		return;
+	case HIR_EXPR_CAPTURE:
+		tp_apply_captures(ctx, e->val.capture.expr, in_region);
+		tp_meet_symbol(ctx, e->val.capture.symbol,
+			       tp_eval_expr(ctx, e->val.capture.expr, in_region));
+		return;
+	case HIR_EXPR_DOT:
+		tp_apply_captures(ctx, e->val.dot.obj, in_region);
+		return;
+	case HIR_EXPR_CALL:
+		tp_apply_captures(ctx, e->val.call.func, in_region);
+		for (i = 0; i < e->val.call.arg_count; i++)
+			tp_apply_captures(ctx, e->val.call.arg[i], in_region);
+		return;
+	case HIR_EXPR_THISCALL:
+		tp_apply_captures(ctx, e->val.thiscall.obj, in_region);
+		for (i = 0; i < e->val.thiscall.arg_count; i++)
+			tp_apply_captures(ctx, e->val.thiscall.arg[i], in_region);
+		return;
+	case HIR_EXPR_ARRAY:
+		for (i = 0; i < e->val.array.elem_count; i++)
+			tp_apply_captures(ctx, e->val.array.elem[i], in_region);
+		return;
+	case HIR_EXPR_DICT:
+		for (i = 0; i < e->val.dict.kv_count; i++)
+			tp_apply_captures(ctx, e->val.dict.value[i], in_region);
+		return;
+	case HIR_EXPR_NEW:
+		tp_apply_captures(ctx, e->val.new_.init, in_region);
+		return;
+	default:
+		/* Binary nodes (incl. SUBSCR and the PLOAD family). */
+		tp_apply_captures(ctx, e->val.binary.expr[0], in_region);
+		tp_apply_captures(ctx, e->val.binary.expr[1], in_region);
+		return;
+	}
+}
+
+static void
+tp_scan_stmt(struct tp_ctx *ctx, struct hir_stmt *stmt, bool in_region)
+{
+	tp_apply_captures(ctx, stmt->rhs, in_region);
+	if (stmt->lhs != NULL) {
+		tp_apply_captures(ctx, stmt->lhs, in_region);
+		if (stmt->lhs->type == HIR_EXPR_TERM &&
+		    stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL) {
+			tp_meet_symbol(ctx,
+				       stmt->lhs->val.term.term->val.symbol,
+				       tp_eval_expr(ctx, stmt->rhs, in_region));
+		}
+	}
+}
+
+static void
+tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
+{
+	struct hir_block *b;
+	struct hir_block *c;
+	struct hir_stmt *stmt;
+
+	b = head;
+	while (b != NULL) {
+		switch (b->type) {
+		case HIR_BLOCK_BASIC:
+			stmt = b->val.basic.stmt_list;
+			while (stmt != NULL) {
+				tp_scan_stmt(ctx, stmt, in_region);
+				stmt = stmt->next;
+			}
+			break;
+		case HIR_BLOCK_IF:
+			c = b;
+			while (c != NULL) {
+				if (c->val.if_.cond != NULL)
+					tp_apply_captures(ctx, c->val.if_.cond, in_region);
+				if (c->val.if_.inner != NULL)
+					tp_scan_chain(ctx, c->val.if_.inner, in_region);
+				c = c->val.if_.chain_next;
+			}
+			break;
+		case HIR_BLOCK_FOR:
+		{
+			bool region = in_region || b->val.for_.typed_int_region;
+			if (b->val.for_.is_ranged) {
+				tp_apply_captures(ctx, b->val.for_.start, in_region);
+				tp_apply_captures(ctx, b->val.for_.stop, in_region);
+				/* counter := start (OP_INC keeps the tag). */
+				if (b->val.for_.counter_symbol != NULL) {
+					tp_meet_symbol(ctx, b->val.for_.counter_symbol,
+						       tp_eval_expr(ctx, b->val.for_.start,
+								    in_region));
+				}
+			} else {
+				tp_apply_captures(ctx, b->val.for_.collection, in_region);
+				if (b->val.for_.key_symbol != NULL)
+					tp_meet_symbol(ctx, b->val.for_.key_symbol,
+						       TP_UNKNOWN);
+				if (b->val.for_.value_symbol != NULL)
+					tp_meet_symbol(ctx, b->val.for_.value_symbol,
+						       TP_UNKNOWN);
+			}
+			if (b->val.for_.inner != NULL)
+				tp_scan_chain(ctx, b->val.for_.inner, region);
+			break;
+		}
+		case HIR_BLOCK_WHILE:
+			if (b->val.while_.cond != NULL)
+				tp_apply_captures(ctx, b->val.while_.cond, in_region);
+			if (b->val.while_.inner != NULL)
+				tp_scan_chain(ctx, b->val.while_.inner, in_region);
+			break;
+		default:
+			break;
+		}
+		if (b->stop)
+			break;
+		b = b->succ;
+	}
+}
+
+bool
+hir_opt_typed_func(struct hir_block *func_block)
+{
+	struct tp_ctx ctx;
+	struct hir_local *local;
+	uint32_t k;
+	int pass;
+
+	assert(func_block != NULL);
+	assert(func_block->type == HIR_BLOCK_FUNC);
+
+	ctx.func = func_block;
+
+	/*
+	 * Seed: TOP everywhere, except parameters -- annotated ones
+	 * start at their annotation tag (CHECKTYPE-backed), the rest
+	 * at UNKNOWN.  Parameters occupy local slots 0..param_count-1.
+	 */
+	local = func_block->val.func.local;
+	while (local != NULL) {
+		local->proven_type = TP_TOP;
+		if (local->index < (int)func_block->val.func.param_count) {
+			int seed = TP_UNKNOWN;
+			for (k = 0; k < func_block->val.func.param_count; k++) {
+				if (strcmp(func_block->val.func.param_name[k],
+					   local->symbol) != 0)
+					continue;
+				if (func_block->val.func.param_type[k] == NOCT_VALUE_INT)
+					seed = TP_INT;
+				else if (func_block->val.func.param_type[k] == NOCT_VALUE_FLOAT)
+					seed = TP_FLOAT;
+				break;
+			}
+			local->proven_type = seed;
+		}
+		local = local->next;
+	}
+
+	/*
+	 * Optimistic fixpoint: values only move down the lattice, and
+	 * its height is 2, so this settles quickly; the pass cap is a
+	 * defensive backstop, and on overrun everything degrades to
+	 * UNKNOWN (never the other direction).
+	 */
+	for (pass = 0; pass < 64; pass++) {
+		ctx.changed = false;
+		if (func_block->val.func.inner != NULL)
+			tp_scan_chain(&ctx, func_block->val.func.inner, false);
+		if (!ctx.changed)
+			break;
+	}
+	if (pass == 64) {
+		local = func_block->val.func.local;
+		while (local != NULL) {
+			local->proven_type = TP_UNKNOWN;
+			local = local->next;
+		}
+		return true;
+	}
+
+	/*
+	 * Finalize: TOP = never assigned = always the zero-init value
+	 * (integer 0) -> proven INT.
+	 */
+	local = func_block->val.func.local;
+	while (local != NULL) {
+		if (local->proven_type == TP_TOP)
+			local->proven_type = TP_INT;
+		local = local->next;
+	}
+
+	return true;
+}

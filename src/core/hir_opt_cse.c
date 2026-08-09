@@ -907,6 +907,7 @@ cse_expr(
 	case HIR_EXPR_PLOAD16S:
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOAD64:
+	case HIR_EXPR_PLOADF32:
 		/* Heap reads: epoch-keyed. */
 		w = 0;
 		vn0 = cse_expr(ctx, &e->val.binary.expr[0], &w);
@@ -1029,7 +1030,8 @@ cse_stmt(
 	    lhs->type == HIR_EXPR_PSTORE8 ||
 	    lhs->type == HIR_EXPR_PSTORE16 ||
 	    lhs->type == HIR_EXPR_PSTORE32 ||
-	    lhs->type == HIR_EXPR_PSTORE64) {
+	    lhs->type == HIR_EXPR_PSTORE64 ||
+	    lhs->type == HIR_EXPR_PSTOREF32) {
 		w = 0;
 		(void)cse_expr(ctx, &lhs->val.binary.expr[0], &w);
 		(void)cse_expr(ctx, &lhs->val.binary.expr[1], &w);
@@ -1205,6 +1207,22 @@ cse_walk_for(
 	struct hir_block *b)
 {
 	int w;
+
+	/*
+	 * A vectorized strip loop (design 06) is off limits: its body
+	 * must stay within the vector-lowerable grammar, and a CAPTURE
+	 * node would break the vector LIR visitor.  Treat it like any
+	 * loop on the OUTSIDE (epoch bump + kill/re-key via the def
+	 * scan below runs in the caller's conservative path), but do
+	 * not analyze or rewrite anything inside.
+	 */
+	if (b->val.for_.is_vector) {
+		ctx->mem_epoch++;
+		if (b->val.for_.counter_symbol != NULL)
+			cse_kill_local(ctx, b->val.for_.counter_symbol);
+		cse_defs_chain(ctx, b->val.for_.inner);
+		return;
+	}
 
 	/* Evaluated once, before the loop: enclosing scope. */
 	if (b->val.for_.is_ranged) {

@@ -506,4 +506,81 @@ noct_ex_checktype_helper(
 	int slot,
 	int value_type);
 
+/* Numeric condition helper.  Returns 1/0, or -1 after reporting an error. */
+NOCT_DLL
+int
+CDECL
+noct_ex_condition_helper(
+	NoctEnv *rt,
+	int slot);
+
+/*
+ * Typed arithmetic helpers (docs/design/07-typed-ops.md).  All share
+ * the (env, dst, src1, src2) int-operand signature; for the shift
+ * helpers src2 is the shift count immediate (0..31).
+ */
+
+#define NOCT_DECL_TYPED_HELPER(name)		\
+NOCT_DLL					\
+bool						\
+CDECL						\
+name(						\
+	NoctEnv *rt,				\
+	int dst,				\
+	int src1,				\
+	int src2);
+
+NOCT_DECL_TYPED_HELPER(noct_ex_iadd_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_isub_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_imul_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_idiv_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_imod_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_iand_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_ior_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_ixor_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_ishl_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_ishr_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_ilt_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_ilte_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_igt_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_igte_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_fadd_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_fsub_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_fmul_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_fdiv_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_flt_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_flte_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_fgt_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_fgte_helper)
+
+/*
+ * 128-bit SIMD helpers (docs/design/06-simd.md).  Same (env, int,
+ * int, int) shape; see execution.c for the operand meanings per op.
+ */
+NOCT_DECL_TYPED_HELPER(noct_ex_vloadi32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vstorei32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vsplati32_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vgetlanei32_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vmov128_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vaddi32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vsubi32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vmuli32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vand128_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vor128_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vxor128_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vshli32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vshri32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vloadf32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vstoref32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vsplatf32_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vgetlanef32_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vaddf32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vsubf32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vmulf32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vdivf32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_ploadf32_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_pstoref32_helper)
+
+#undef NOCT_DECL_TYPED_HELPER
+
 #endif
