@@ -45,8 +45,6 @@ static uint32_t bytecode_top;
  * Variable table.
  */
 
-#define TMPVAR_MAX	128
-
 static uint32_t tmpvar_top;
 static uint32_t tmpvar_count;
 
@@ -121,6 +119,7 @@ static bool lir_visit_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct h
 static bool lir_visit_binary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_logical_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_dot_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
+static bool lir_visit_capture_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_call_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_thiscall_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_array_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
@@ -1276,6 +1275,11 @@ lir_visit_expr(
 		if (!lir_visit_dot_expr(dst_tmpvar, expr, block))
 			return false;
 		break;
+	case HIR_EXPR_CAPTURE:
+		/* For the CSE capture operator. */
+		if (!lir_visit_capture_expr(dst_tmpvar, expr, block))
+			return false;
+		break;
 	case HIR_EXPR_CALL:
 		/* For a function call. */
 		if (!lir_visit_call_expr(dst_tmpvar, expr, block))
@@ -1673,6 +1677,41 @@ lir_visit_dot_expr(
 		return false;
 
 	lir_decrement_tmpvar(opr_tmpvar);
+
+	return true;
+}
+
+/*
+ * Visit a CSE capture expr (docs/design/05-cse.md): evaluate the
+ * inner expression into dst, then copy the value into the home
+ * local's slot.  The value semantics is that of the inner expression.
+ */
+static bool
+lir_visit_capture_expr(
+	int dst_tmpvar,
+	struct hir_expr *expr,
+	struct hir_block *block)
+{
+	int local_index;
+
+	assert(expr != NULL);
+	assert(expr->type == HIR_EXPR_CAPTURE);
+	assert(expr->val.capture.expr != NULL);
+	assert(expr->val.capture.symbol != NULL);
+
+	/* Visit the inner expr. */
+	if (!lir_visit_expr(dst_tmpvar, expr->val.capture.expr, block))
+		return false;
+
+	/* Copy the value into the home local variable. */
+	local_index = lir_get_local_index(block, expr->val.capture.symbol);
+	assert(local_index >= 0);
+	if (!lir_put_opcode(OP_ASSIGN))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)local_index))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
+		return false;
 
 	return true;
 }
@@ -2229,7 +2268,7 @@ static bool
 lir_increment_tmpvar(
 	int *tmpvar_index)
 {
-	if (tmpvar_top >= TMPVAR_MAX) {
+	if (tmpvar_top >= LIR_TMPVAR_MAX) {
 		lir_fatal(N_TR("Too many local variables."));
 		return false;
 	}

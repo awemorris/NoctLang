@@ -16,6 +16,14 @@
 
 #define LIR_PARAM_SIZE		32
 
+/*
+ * Frame size limit: locals + expression temps per function.  Shared
+ * with the HIR optimizer (hir_opt_cse.c budgets its $cseN home locals
+ * against this so a program that compiles at level 0 always compiles
+ * at level 2).
+ */
+#define LIR_TMPVAR_MAX		128
+
 struct hir_block;
 
 struct lir_func {

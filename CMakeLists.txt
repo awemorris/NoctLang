@@ -30,6 +30,7 @@ option(NOCT_ENABLE_CBACKEND       "Enable C backend"                      OFF)
 option(NOCT_ENABLE_ELBACKEND      "Enable Emacs Lisp backend"             OFF)
 option(NOCT_ENABLE_SCMBACKEND     "Enable Scheme backend"                 OFF)
 option(NOCT_ENABLE_REPL           "Enable reusable REPL and CLI mode"     OFF)
+option(NOCT_ENABLE_OPTIMIZER      "Enable the HIR optimizer"              OFF)
 option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
 
 #
@@ -169,6 +170,14 @@ set(
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
 )
+
+# Determine the HIR optimizer files.
+if(NOCT_ENABLE_OPTIMIZER)
+  list(APPEND NOCT_BASE_SOURCE
+    src/core/hir_opt_abce.c  # HIR optimizer (ABCE pass)
+    src/core/hir_opt_cse.c   # HIR optimizer (CSE pass)
+  )
+endif()
 
 # Determine the object model source file.
 if(NOCT_ENABLE_MULTITHREAD)
@@ -353,6 +362,11 @@ endif()
 # If building a shared library.
 if(NOCT_ENABLE_SHARED)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_DLL)
+endif()
+
+# HIR Optimizer
+if(NOCT_ENABLE_OPTIMIZER)
+  list(APPEND NOCT_PRIVATE_CPPFLAGS NOCT_USE_OPTIMIZER)
 endif()
 
 # JIT Support

@@ -3,6 +3,10 @@
 Status: **implemented** (2026-08-09; suites: tests/run-abce.sh,
 run-scoping.sh, run-class.sh, run-typing.sh — all green).
 
+Note (2026-08-10): the ABCE implementation now lives in
+src/core/hir_opt_abce.c (split out of hir.c; see docs/design/05-cse.md)
+and is compiled only when the CMake option NOCT_ENABLE_OPTIMIZER is ON.
+
 **v2 addendum (overnight run, 2026-08-09):**
 - **Width family**: `OP_PLOAD{8S,16U,16S,32,64}` / `OP_PSTORE{16,32,64}`
   added (element-indexed; semantics mirror `rt_get/set_packed_elem`,

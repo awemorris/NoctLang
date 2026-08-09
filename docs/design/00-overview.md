@@ -14,6 +14,7 @@ should NOT re-litigate decisions recorded in the Decision Log below.
 | [02-typing.md](02-typing.md) | Type annotations as optimization hints | 01 (shares the guard/versioning mindset; independent code-wise) |
 | [03-class.md](03-class.md) | Read-only class dicts, top-level `class` / top-level `var`/`let` via load-time init | 04 (uses `let` semantics) |
 | [04-scoping.md](04-scoping.md) | `let`, block scoping, redeclaration errors, static use-before-declaration errors | nothing |
+| [05-cse.md](05-cse.md) | HIR optimizer build split (NOCT_ENABLE_OPTIMIZER) + common subexpression elimination | 01 (splits ABCE out of hir.c; CSE runs after ABCE) |
 
 Recommended implementation order: **01 → 04 → 03 → 02**.
 01 is self-contained and highest value (remacs Editor/Buffer speedup).

@@ -75,6 +75,15 @@ enum hir_expr_type {
 	HIR_EXPR_PSTORE16,	/* as LHS only                                    */
 	HIR_EXPR_PSTORE32,	/* as LHS only                                    */
 	HIR_EXPR_PSTORE64,	/* as LHS only                                    */
+
+	/*
+	 * CSE (docs/design/05-cse.md).  Created only by the HIR
+	 * optimizer (hir_opt_cse.c); the parser never produces it, so
+	 * the elback/scmback source backends never see it.  Evaluates
+	 * the inner expression, stores the result into the home local
+	 * variable, and yields the value.
+	 */
+	HIR_EXPR_CAPTURE,	/* unary + home local symbol                      */
 };
 
 /* HIR Term Type */
@@ -316,6 +325,15 @@ struct hir_expr {
 			/* Initializer. */
 			struct hir_expr *init;
 		} new_;
+
+		/* Capture Expression (optimizer-only; CSE) */
+		struct {
+			/* Captured expression. */
+			struct hir_expr *expr;
+
+			/* Home local variable symbol. */
+			char *symbol;
+		} capture;
 	} val;
 };
 
