@@ -3,7 +3,7 @@
 # Bundle the whole editor into a single bytecode file, runnable by an
 # unmodified noct with the standard APIs enabled:
 #
-#     noct REMACS.NB [file]
+#     noct remacs.nap [file]
 #
 # The 8.3 name keeps it usable from FAT16 filesystems.
 #
@@ -39,5 +39,5 @@ cat editor/buffer.noct \
     editor/boot.noct > "$BUNDLE"
 
 "$NOCT" --compile "$BUNDLE"
-mv "$OUT/remacs-all.nb" "$OUT/REMACS.NB"
-echo "Built $OUT/REMACS.NB"
+mv "$OUT/remacs-all.nb" "$OUT/remacs.nap"
+echo "Built $OUT/remacs.nap"

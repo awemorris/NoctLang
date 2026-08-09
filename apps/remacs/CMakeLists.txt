@@ -51,7 +51,7 @@ add_custom_command(
 #
 # remacs development launcher.
 #
-# The shipped form is REMACS.NB run by an unmodified noct (see the
+# The shipped form is remacs.nap run by an unmodified noct (see the
 # Makefile); this C launcher is only for development and the test
 # suite, loading the editor sources from the tree.
 #

@@ -202,7 +202,7 @@ jobs:
           cd ..
           cd apps/remacs/
           make
-          mv build-nb/REMACS.NB ../../REmacs.nap
+          mv build-nb/remacs.nap ../../REmacs.nap
           cd ../..
 
       - name: Upload binary
