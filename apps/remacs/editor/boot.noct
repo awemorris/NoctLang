@@ -77,6 +77,11 @@ func main(arg) {
             timeout = 50;
         }
         var key = Term.readKey(timeout);
+        if (key == 0 - 2) {
+            // The terminal is gone (EOF/hangup): nothing more can
+            // reach us, so leave instead of polling a dead tty.
+            break;
+        }
         if (key < 0) {
             var got = shellPump(ed);
             if (Term.resized() == 1 || got == 1) {
@@ -91,19 +96,44 @@ func main(arg) {
         // redisplay keeps a paste O(1) in redraws instead of O(chunks),
         // which otherwise makes a large paste crawl.
         while (true) {
-            // The command loop's condition-case: a user error deep in
-            // a command ("End of buffer", "Kill ring is empty", ...)
-            // unwinds to here, lands in the echo area, and the editor
-            // carries on -- it must never take the session down.
-            var r = System.pcall(dispatchKey, ed, key);
-            if (r.ok == 0) {
-                ed.echoMessage = r.message;
-                ed.echoCursor = -1;
-                ed.echoHl = 0;
+            if (batchableKey(ed, key) == 1) {
+                // Fast path: coalesce a run of plain unbound characters
+                // into one insert, so a paste costs O(chunks) instead
+                // of O(characters) of dispatch bookkeeping.
+                var run = keyToString(key);
+                var bk = Term.readKey(0);
+                while (bk >= 0 && batchableKey(ed, bk) == 1) {
+                    run = run + keyToString(bk);
+                    bk = Term.readKey(0);
+                }
+                var rr = System.pcall(selfInsertRun, ed, run);
+                if (rr.ok == 0) {
+                    ed.echoMessage = rr.message;
+                    ed.echoCursor = -1;
+                    ed.echoHl = 0;
+                }
+                if (bk >= 0) {
+                    // A non-batchable key trailed the run.
+                    key = bk;
+                    continue;
+                }
+            } else {
+                // The command loop's condition-case: a user error deep
+                // in a command ("End of buffer", "Kill ring is empty",
+                // ...) unwinds to here, lands in the echo area, and the
+                // editor carries on -- it must never take the session
+                // down.
+                var r = System.pcall(dispatchKey, ed, key);
+                if (r.ok == 0) {
+                    ed.echoMessage = r.message;
+                    ed.echoCursor = -1;
+                    ed.echoHl = 0;
+                }
+                // The prefix argument only reaches the command it
+                // precedes.
+                ed.hasPrefix = 0;
+                ed.prefixArg = 0;
             }
-            // The prefix argument only reaches the command it precedes.
-            ed.hasPrefix = 0;
-            ed.prefixArg = 0;
 
             // Drain everything already queued (the rest of this chunk),
             // then wait briefly to bridge the gap to the next chunk of
@@ -214,7 +244,9 @@ func dispatchKey(ed, key) {
         }
         // At least one prefix track continues.
         ed.echoMessage = prefix + "-";
-        redisplay(ed);
+        if (Term.pendingInput() == 0) {
+            redisplay(ed);
+        }
         nodeL = vL;
         nodeG = vG;
         var nk = Term.readKey(30000);
@@ -296,6 +328,45 @@ func dispatchKey(ed, key) {
     return 0;
 }
 
+// A key the batch path may self-insert directly: a plain graphic
+// character with SKK off, no pending prefix argument, and no binding
+// in any keymap.
+func batchableKey(ed, key) {
+    if (key < 0x20 || key >= 0x110000 || key == 0x7F) {
+        return 0;
+    }
+    if (ed.hasPrefix == 1) {
+        return 0;
+    }
+    if (Dict.hasKey(Buf, "skkOn") && Buf.skkOn == 1) {
+        return 0;
+    }
+    var kstr = "" + key;
+    if (Type.of(Buf.localMap) == "dict" && Dict.hasKey(Buf.localMap, kstr)) {
+        return 0;
+    }
+    if (Dict.hasKey(GlobalMap, kstr)) {
+        return 0;
+    }
+    return 1;
+}
+
+// Insert a run of plain characters as one command: semantically that
+// many self-inserts, sharing one undo group like the amalgamation
+// rule, but with a single buffer insertion.
+func selfInsertRun(ed, run) {
+    if (ed.lastCommand != "self-insert-command" || ed.amalgam >= 20) {
+        Editor.undoBoundary();
+        ed.amalgam = 0;
+    }
+    ed.amalgam = ed.amalgam + String.charCount(run);
+    Editor.insert(run);
+    ed.lastWasKill = 0;
+    ed.lastCommand = "self-insert-command";
+    clearLastYank();
+    return 0;
+}
+
 // The numeric prefix argument, or def when none was given.
 func prefixNum(ed, def) {
     if (ed.hasPrefix == 1) {
@@ -329,7 +400,9 @@ func readPrefixArg(ed, seedDigit, seedNeg) {
             disp = disp + " " + arg;
         }
         ed.echoMessage = disp + "-";
-        redisplay(ed);
+        if (Term.pendingInput() == 0) {
+            redisplay(ed);
+        }
         var k = Term.readKey(30000);
         if (k < 0) {
             continue;

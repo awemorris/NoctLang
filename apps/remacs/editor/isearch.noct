@@ -18,6 +18,9 @@ func isearchMode(ed, dir) {
     var success = 1;
     var wrapped = 0;
     var stack = [];
+    // 1 when the search string grew while input was queued and the
+    // deferred search has not run yet.
+    var dirty = 0;
     // skk-isearch: when SKK is on, letters compose into kana that
     // extend the search string. iskk holds the in-progress romaji.
     var iskk = { pending: "", out: "", mode: "hira" };
@@ -29,7 +32,9 @@ func isearchMode(ed, dir) {
     while (true) {
         ed.iskkPending = iskk.pending;
         isearchEcho(ed, s, dir, success, wrapped);
-        redisplay(ed);
+        if (Term.pendingInput() == 0) {
+            redisplay(ed);
+        }
         var k = Term.readKey(30000);
         if (k < 0) {
             continue;
@@ -41,6 +46,11 @@ func isearchMode(ed, dir) {
             return 0;
         }
         if (k == 0x0D) {                                  // RET: exit
+            if (dirty == 1 && s != "") {
+                // A deferred search must land before leaving.
+                success = isearchStep(s, dir, 1);
+                dirty = 0;
+            }
             if (s != "") {
                 ed.lastSearch = s;
             }
@@ -66,6 +76,10 @@ func isearchMode(ed, dir) {
             var newDir = 1;
             if (k == (Term.CTRL | 0x72)) {
                 newDir = 0 - 1;
+            }
+            if (dirty == 1) {
+                success = isearchStep(s, dir, 1);
+                dirty = 0;
             }
             if (s == "") {
                 if (ed.lastSearch == "") {
@@ -96,7 +110,11 @@ func isearchMode(ed, dir) {
             if (iskk.out != "") {
                 Array.push(stack, isearchFrame(s, success, wrapped));
                 s = s + iskk.out;
-                success = isearchStep(s, dir, 1);
+                dirty = 1;
+                if (Term.pendingInput() == 0) {
+                    success = isearchStep(s, dir, 1);
+                    dirty = 0;
+                }
             }
             continue;
         }
@@ -105,12 +123,23 @@ func isearchMode(ed, dir) {
             iskk.pending = "";
             s = s + Editor.charToString(k);
             // Retry from the start of the current match so the match
-            // can extend in place.
-            success = isearchStep(s, dir, 1);
+            // can extend in place. While more input is queued (a paste
+            // into isearch), just extend the string; one search runs
+            // when the queue drains -- per-character searching over a
+            // large buffer is quadratic.
+            dirty = 1;
+            if (Term.pendingInput() == 0) {
+                success = isearchStep(s, dir, 1);
+                dirty = 0;
+            }
             continue;
         }
 
         // Anything else exits isearch, leaving point where it is.
+        if (dirty == 1 && s != "") {
+            success = isearchStep(s, dir, 1);
+            dirty = 0;
+        }
         if (s != "") {
             ed.lastSearch = s;
         }

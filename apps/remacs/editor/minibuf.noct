@@ -18,7 +18,9 @@ func readFromMinibufferInit(ed, prompt, completer, initial) {
     while (true) {
         ed.echoMessage = prompt + input + note;
         ed.echoCursor = stringWidth(prompt + input);
-        redisplay(ed);
+        if (Term.pendingInput() == 0) {
+            redisplay(ed);
+        }
         var k = Term.readKey(30000);
         if (k < 0) {
             continue;

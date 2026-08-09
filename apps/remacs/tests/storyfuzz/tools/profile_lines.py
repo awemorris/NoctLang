@@ -29,12 +29,17 @@ REMACS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 def drive(master, pump):
     """Reproduce the stall: C-x 3, then paste 30 wrapped lines."""
-    os.write(master, b'\x183')
-    pump(0.4)
-    paste = ('\r'.join('word%02d alpha beta gamma delta epsilon' % i
-                       for i in range(30))).encode()
-    os.write(master, paste)
-    pump(1.0)
+    import random
+    rng = random.Random(1)
+    words = ['alpha', 'beta', 'gamma', 'delta', 'code', 'test']
+    lines = []
+    total = 0
+    while total < 9000:
+        l = ' '.join(rng.choice(words) for _ in range(rng.randint(1, 10)))
+        lines.append(l)
+        total += len(l) + 1
+    os.write(master, ('\r'.join(lines)).encode())
+    pump(0.5)
 
 
 def main():

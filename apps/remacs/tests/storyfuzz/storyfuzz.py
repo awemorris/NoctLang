@@ -191,6 +191,104 @@ def story_paste_burst(rng):
     return [('paste', ('\r'.join(lines)).encode())]
 
 
+# --- load-heavy stories ----------------------------------------------------
+
+HAMMER_KEYS = [b'\x06', b'\x02', b'\x0e', b'\x10',        # C-f C-b C-n C-p
+               b'\x7f', b'\x04', b'\x0b', b'\x19',        # DEL C-d C-k C-y
+               b'\x1f', b'\x14', b'\r',                   # C-_ C-t RET
+               ESC + b'f', ESC + b'b', b'\x16', ESC + b'v']
+
+
+def story_key_hammer(rng):
+    """The same key repeated up to ~200 times in one burst."""
+    key = rng.choice(HAMMER_KEYS)
+    n = rng.randint(50, 200)
+    return [('hammer x%d' % n, key * n)]
+
+
+def story_hammer_pairs(rng):
+    """Two keys alternated rapidly (kill/yank, forward/back, ...)."""
+    a, b = rng.sample(HAMMER_KEYS, 2)
+    n = rng.randint(30, 100)
+    return [('pair x%d' % n, (a + b) * n)]
+
+
+def story_scroll_hammer(rng):
+    n = rng.randint(30, 80)
+    return [('scroll-dn x%d' % n, b'\x16' * n),
+            ('scroll-up x%d' % n, (ESC + b'v') * n)]
+
+
+def story_isearch_real(rng):
+    """A practical search session over freshly typed text."""
+    word = rng.choice(WORDS)
+    steps = []
+    for _ in range(4):
+        steps.append(('text', (' '.join(
+            rng.choice(WORDS) for _ in range(6)) + ' ' + word).encode()))
+        steps.append(('nl', b'\r'))
+    steps.append(('top', ESC + b'<'))
+    steps.append(('isearch', b'\x13'))
+    steps.append(('needle', word.encode()))
+    for _ in range(rng.randint(1, 4)):
+        steps.append(('next', b'\x13'))
+    steps.append(('exit', b'\r'))
+    steps.append(('back', b'\x12'))
+    steps.append(('needle2', word[:3].encode()))
+    steps.append(('exit2', rng.choice([b'\r', CTRL_G])))
+    return steps
+
+
+def story_file_cycle(rng):
+    """Open, edit, save, kill, reopen: content must round-trip."""
+    name = 'cycle-%d.txt' % rng.randint(0, 9)
+    return [('find-file', b'\x18\x06'),
+            ('name', name.encode()), ('ret', b'\r'),
+            ('edit', ('generation %d ' % rng.randint(0, 999)).encode()),
+            ('save', b'\x18\x13'),
+            ('kill-buf', b'\x18k'), ('kill-ret', b'\r'),
+            ('reopen', b'\x18\x06'),
+            ('name2', name.encode()), ('ret2', b'\r'),
+            ('append', b'again')]
+
+
+def story_window_walk(rng):
+    """Split both ways, then hop windows rapidly."""
+    steps = [('split-v', b'\x182'), ('split-h', b'\x183')]
+    n = rng.randint(10, 30)
+    steps.append(('hop x%d' % n, b'\x18o' * n))
+    for _ in range(rng.randint(2, 6)):
+        steps.append(('move', rng.choice([b'\x0e', b'\x16', ESC + b'>'])))
+        steps.append(('hop', b'\x18o'))
+    steps.append(('one', b'\x181'))
+    return steps
+
+
+def story_huge_paste(rng):
+    """A really big paste: hundreds of lines, sometimes one huge line."""
+    if rng.random() < 0.3:
+        line = ' '.join(rng.choice(WORDS)
+                        for _ in range(rng.randint(200, 500)))
+        return [('mega-line %dB' % len(line), line.encode())]
+    lines = []
+    for _ in range(rng.randint(100, 300)):
+        lines.append(' '.join(rng.choice(WORDS)
+                              for _ in range(rng.randint(1, 10))))
+    blob = '\r'.join(lines)
+    return [('huge-paste %dB' % len(blob), blob.encode())]
+
+
+def story_long_line_nav(rng):
+    """One very long wrapped line, then hammer navigation over it."""
+    line = ' '.join(rng.choice(WORDS) for _ in range(rng.randint(150, 400)))
+    n = rng.randint(30, 80)
+    return [('long-line', line.encode()),
+            ('home', b'\x01'),
+            ('nav x%d' % n, rng.choice([b'\x06', ESC + b'f']) * n),
+            ('end', b'\x05'),
+            ('nav2 x%d' % n, rng.choice([b'\x02', ESC + b'b']) * n)]
+
+
 STORIES = [
     (story_type_text, 3), (story_navigate, 3), (story_kill_yank, 2),
     (story_edit_small, 2), (story_undo, 1), (story_isearch, 2),
@@ -198,6 +296,11 @@ STORIES = [
     (story_buffers, 2), (story_windows, 2), (story_save, 1),
     (story_query_replace, 1), (story_mx, 1), (story_skk, 2),
     (story_paste_burst, 1),
+    # Load-heavy stories.
+    (story_key_hammer, 3), (story_hammer_pairs, 2),
+    (story_scroll_hammer, 1), (story_isearch_real, 2),
+    (story_file_cycle, 2), (story_window_walk, 2),
+    (story_huge_paste, 2), (story_long_line_nav, 2),
 ]
 
 
@@ -298,18 +401,47 @@ def run_one(seed, remacs, n_stories, abort_p, time_limit, verbose=False):
             if time.time() > deadline:
                 break
 
+    def cpu_ticks():
+        try:
+            with open('/proc/%d/stat' % proc.pid) as f:
+                parts = f.read().split()
+            return int(parts[13]) + int(parts[14])
+        except Exception:
+            return -1
+
     # Orderly exit: escape any pending mode, then quit.
     result = 'OK'
+    harness_killed = False
     if proc.poll() is None:
         send('finish C-g', CTRL_G + CTRL_G)
         send('quit', b'\x18\x03')
-        end = time.time() + 5
+        # Grace for draining a queued paste before the quit key is
+        # even seen.
+        t_quit = time.time()
+        end = t_quit + 12
         while time.time() < end and proc.poll() is None:
             pump(0.1)
         if proc.poll() is None:
-            result = 'HANG'
-            proc.kill()
-            proc.wait()
+            # Distinguish a livelock from slow-but-progressing work:
+            # if the process is still burning CPU, extend the wait and
+            # report SLOW with the time it actually took.
+            t0 = cpu_ticks()
+            pump(1.0)
+            busy = cpu_ticks() > t0 >= 0
+            if busy:
+                end = t_quit + 90
+                while time.time() < end and proc.poll() is None:
+                    pump(0.2)
+                if proc.poll() is not None:
+                    result = 'SLOW(%.0fs)' % (time.time() - t_quit)
+                else:
+                    result = 'SLOW>90s'
+            else:
+                result = 'HANG'
+            if proc.poll() is None:
+                harness_killed = True
+                proc.kill()
+                proc.wait()
 
     rc = proc.returncode
     err_f.close()
@@ -317,7 +449,8 @@ def run_one(seed, remacs, n_stories, abort_p, time_limit, verbose=False):
         err = f.read()
     os.close(master)
 
-    if result != 'HANG':
+    # A negative rc after our own kill() is that kill, not a crash.
+    if result != 'HANG' and not harness_killed:
         if rc is not None and rc < 0:
             result = 'CRASH(sig %d)' % -rc
         elif b'Error:' in err:

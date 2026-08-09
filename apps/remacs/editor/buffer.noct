@@ -170,6 +170,20 @@ func bufCharToByte(ci) {
     if (Buf.cacheChar <= ci) {
         c = Buf.cacheChar;
         b = Buf.cacheByte;
+    } else if (Buf.cacheChar - ci < ci) {
+        // The target is behind the cache but closer to it than to the
+        // start of the buffer: walk backward from the cache instead of
+        // rescanning from byte 0 (backward cursor motion in a large
+        // multibyte buffer is the common case here).
+        c = Buf.cacheChar;
+        b = Buf.cacheByte;
+        while (c > ci) {
+            b = bufPrevCharByte(b);
+            c = c - 1;
+        }
+        Buf.cacheChar = ci;
+        Buf.cacheByte = b;
+        return b;
     }
     var data = Buf.data;
     var gs = Buf.gapStart;
@@ -231,11 +245,15 @@ func bufPrevCharByte(b) {
     return b;
 }
 
-// Invalidate the cache if it points at or past a modified byte offset.
-func bufCacheInvalidate(fromByte) {
-    if (Buf.cacheByte >= fromByte) {
-        Buf.cacheChar = 0;
-        Buf.cacheByte = 0;
+// A modification leaves everything before it untouched, so instead of
+// dropping the char/byte cache, re-anchor it at the modification
+// point (whose pair the caller just computed). Hammered edits at a
+// stable point then address the buffer in O(edit) instead of
+// rescanning the whole prefix.
+func bufCacheAnchor(charIndex, byteOffset) {
+    if (Buf.cacheByte >= byteOffset) {
+        Buf.cacheChar = charIndex;
+        Buf.cacheByte = byteOffset;
     }
     return 0;
 }
@@ -497,7 +515,7 @@ func insert(text) {
     Buf.gapStart = Buf.gapStart + nbytes;
     Buf.chars = Buf.chars + nchars;
     Buf.point = Buf.point + nchars;
-    bufCacheInvalidate(bi);
+    bufCacheAnchor(at - 1, bi);
     bufAdjustMarkersInsert(at, nchars);
     bufUndoRecordPoint(at);
     Array.push(Buf.undoList, { t: "ins", start: at, end: Buf.point });
@@ -529,7 +547,7 @@ func deleteRegion(start, end) {
     } else if (Buf.point > start) {
         Buf.point = start;
     }
-    bufCacheInvalidate(bs);
+    bufCacheAnchor(start - 1, bs);
     bufAdjustMarkersDelete(start, end);
     bufUndoRecordPoint(Buf.point);
     Array.push(Buf.undoList, { t: "del", text: deletedText, pos: start });

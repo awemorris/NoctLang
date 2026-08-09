@@ -45,7 +45,7 @@
 #endif
 
 /* Decoded key events waiting to be delivered. */
-#define EVENT_QUEUE_SIZE	64
+#define EVENT_QUEUE_SIZE	1024
 
 /* Records pulled per ReadConsoleInputW call. */
 #define READ_CHUNK		32
@@ -793,7 +793,9 @@ process_key_event(
 		queue_push(ev);
 }
 
-/* Drain everything the console currently has into the queue. */
+/* Drain console input into the queue. Flow control: when the queue is
+ * close to full, stop and leave the rest in the console's own buffer
+ * (a large paste must never be silently dropped). */
 static void
 drain_input(void)
 {
@@ -801,6 +803,8 @@ drain_input(void)
 	DWORD count, avail, i;
 
 	for (;;) {
+		if (term.queue_len >= EVENT_QUEUE_SIZE - READ_CHUNK * 4)
+			return;
 		if (!GetNumberOfConsoleInputEvents(term.input, &avail) ||
 		    avail == 0)
 			return;
@@ -867,6 +871,8 @@ win32_read_key(
 
 		if (wait_ret == WAIT_OBJECT_0)
 			drain_input();
+		else if (wait_ret == WAIT_FAILED)
+			return -2;	/* Console gone for good. */
 		else if (wait_ret != WAIT_OBJECT_0 + 1)
 			return -1;
 		/* A resize (or a swallowed event) may leave the queue

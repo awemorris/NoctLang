@@ -114,6 +114,9 @@ static struct {
 	size_t in_head;
 	size_t in_len;
 
+	/* The tty went away (read() returned 0). */
+	bool eof;
+
 	/* SIGWINCH flag. */
 	volatile sig_atomic_t resized;
 } term;
@@ -375,6 +378,7 @@ cfunc_Term_open(
 	term.in_head = 0;
 	term.in_len = 0;
 	term.out_len = 0;
+	term.eof = false;
 
 	return return_int(env, 1);
 }
@@ -639,6 +643,15 @@ in_fill(
 	if (term.in_len > 0)
 		return 1;
 
+	/* A dead tty would make poll() return instantly forever; keep
+	 * the caller's timing (no busy spin) and report no input. */
+	if (term.eof) {
+		noct_enter_blocking(env);
+		poll(NULL, 0, timeout_ms < 0 ? 1000 : timeout_ms);
+		noct_leave_blocking(env);
+		return 0;
+	}
+
 	pfd.fd = STDIN_FILENO;
 	pfd.events = POLLIN;
 
@@ -663,7 +676,11 @@ in_fill(
 		return 0;
 
 	n = read(STDIN_FILENO, buf, sizeof(buf));
-	if (n <= 0)
+	if (n == 0) {
+		term.eof = true;
+		return 0;
+	}
+	if (n < 0)
 		return 0;
 	for (i = 0; i < (size_t)n && term.in_len < sizeof(term.in); i++) {
 		term.in[(term.in_head + term.in_len) % sizeof(term.in)] = buf[i];
@@ -937,6 +954,10 @@ cfunc_Term_readKey(
 					esc_wait = true;
 					continue;
 				}
+				/* -2: the terminal is gone for good (EOF),
+				 * not merely idle. */
+				if (term.eof && term.in_len == 0)
+					return return_int(env, -2);
 				return return_int(env, -1);
 			}
 		}

@@ -31,7 +31,9 @@ func queryReplaceLoop(ed, from, to, isRe) {
         if (auto == 0) {
             Editor.gotoChar(me);
             ed.echoMessage = "Query replacing " + from + " with " + to + ": (y/n/!/q/.)";
-            redisplay(ed);
+            if (Term.pendingInput() == 0) {
+                redisplay(ed);
+            }
             var answered = 0;
             while (answered == 0) {
                 var k = Term.readKey(30000);
