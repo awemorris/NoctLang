@@ -60,6 +60,19 @@ struct rt_string {
 
 	/* Hash. */
 	uint32_t hash;
+
+	/*
+	 * Character-index cache: cache_ofs is the byte offset of
+	 * character cache_index. Indexing a UTF-8 string by character
+	 * otherwise has to count from the front on every access, which
+	 * makes a loop that walks a string once cost O(n^2) -- painful
+	 * for anything that parses text. Strings are immutable, so the
+	 * pair stays true for the life of the object, and both members
+	 * are offsets rather than pointers so a GC move leaves them
+	 * valid. See rt_intrin_String_charAt().
+	 */
+	size_t cache_index;
+	size_t cache_ofs;
 };
 
 /*

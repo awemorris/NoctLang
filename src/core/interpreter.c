@@ -915,7 +915,14 @@ rt_visit_jmpiftrue_op(
                 case NOCT_VALUE_FLOAT:  truthy = v->val.f != 0.0f;  break;
                 case NOCT_VALUE_DOUBLE: truthy = v->val.lf != 0.0;  break;
                 default:
-                        rt_error(env, BROKEN_BYTECODE);
+                        /*
+                         * Not a broken instruction -- a value of a type
+                         * a condition does not accept. Saying
+                         * "Broken bytecode" here sent readers looking
+                         * for a codegen fault instead of at their own
+                         * "if (someString)".
+                         */
+                        rt_error(env, N_TR("Condition is not a number."));
                         return false;
                 }
 
@@ -953,7 +960,14 @@ rt_visit_jmpiffalse_op(
                 case NOCT_VALUE_FLOAT:  truthy = v->val.f != 0.0f;  break;
                 case NOCT_VALUE_DOUBLE: truthy = v->val.lf != 0.0;  break;
                 default:
-                        rt_error(env, BROKEN_BYTECODE);
+                        /*
+                         * Not a broken instruction -- a value of a type
+                         * a condition does not accept. Saying
+                         * "Broken bytecode" here sent readers looking
+                         * for a codegen fault instead of at their own
+                         * "if (someString)".
+                         */
+                        rt_error(env, N_TR("Condition is not a number."));
                         return false;
                 }
 

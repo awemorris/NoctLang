@@ -258,6 +258,8 @@ rt_gc_alloc_string(
 		rts->data = s;
 		rts->len = len;
 		rts->hash = hash;
+		rts->cache_index = 0;
+		rts->cache_ofs = 0;
 
 		/* Succeeded. */
 		return rts;
@@ -311,6 +313,8 @@ rt_gc_alloc_string_graduate(
 		rts->data = s;
 		rts->len = len;
 		rts->hash = hash;
+		rts->cache_index = 0;
+		rts->cache_ofs = 0;
 
 		/* Succeeded. (graduate) */
 		return rts;
@@ -403,6 +407,8 @@ rt_gc_alloc_string_tenure(
 		rts->data = s;
 		rts->len = len;
 		rts->hash = hash;
+		rts->cache_index = 0;
+		rts->cache_ofs = 0;
 
 		/* Succeeded. */
 		return rts;

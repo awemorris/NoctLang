@@ -648,6 +648,7 @@ rt_intrin_String_charAt(
 	NoctEnv *env)
 {
 	NoctValue str, index, ret;
+	struct rt_string *rts;
 	const char *str_s;
 	size_t index_i;
 	const char *s;
@@ -669,10 +670,23 @@ rt_intrin_String_charAt(
          * Iterate through the UTF-8 string to locate and extract the
          * character at 'index_i'. Handles multi-byte characters
          * correctly using utf8_to_utf32().
+         *
+         * The scan starts from the string's cached (character, offset)
+         * pair when that lands at or before the character wanted. A
+         * caller walking a string in order -- which is what every parser
+         * does -- then advances one character per call instead of
+         * counting from the front each time, and the walk costs O(n)
+         * rather than O(n^2).
          */
+	rts = str.val.str;
 	s = str_s;
 	i = 0;
 	ofs = 0;
+	if (rts->cache_index != 0 && rts->cache_index <= index_i) {
+		i = rts->cache_index;
+		ofs = rts->cache_ofs;
+		s = str_s + ofs;
+	}
 	d[0] = '\0';
 	while (*s != '\0' && i <= index_i) {
 		uint32_t codepoint;
@@ -687,6 +701,8 @@ rt_intrin_String_charAt(
 			/* Succeeded. */
 			strncpy(d, &str_s[ofs], (size_t)mblen);
 			d[mblen] = '\0';
+			rts->cache_index = i;
+			rts->cache_ofs = ofs;
 			break;
 		}
 
@@ -715,10 +731,11 @@ rt_intrin_String_charCodeAt(
 	NoctEnv *env)
 {
 	NoctValue str, index, ret;
+	struct rt_string *rts;
 	const char *str_s;
 	size_t index_i;
 	const char *s;
-	size_t i;
+	size_t i, ofs;
 	int mblen;
 
 	memset(&str, 0, sizeof(str));
@@ -731,20 +748,31 @@ rt_intrin_String_charCodeAt(
 	if (!noct_get_arg_check_int_long(env, 1, &index, &index_i))
 		return false;
 
+	/* Resume from the cached character position; see charAt above. */
+	rts = str.val.str;
 	s = str_s;
 	i = 0;
+	ofs = 0;
+	if (rts->cache_index != 0 && rts->cache_index <= index_i) {
+		i = rts->cache_index;
+		ofs = rts->cache_ofs;
+		s = str_s + ofs;
+	}
 	while (*s != '\0') {
 		uint32_t codepoint;
 		mblen = utf8_to_utf32(s, &codepoint);
 		if (mblen <= 0)
 			break;
 		if (i == index_i) {
+			rts->cache_index = i;
+			rts->cache_ofs = ofs;
 			if (!noct_set_return_make_int(env, &ret, (int)codepoint))
 				return false;
 			noct_unpin_local(env, 3, &str, &index, &ret);
 			return true;
 		}
 		s += mblen;
+		ofs += (size_t)mblen;
 		i++;
 	}
 
