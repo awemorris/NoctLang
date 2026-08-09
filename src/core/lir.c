@@ -588,7 +588,7 @@ lir_visit_for_range_block(
 	struct hir_block *block)
 {
 	uint32_t loop_addr;
-	int start_tmpvar, stop_tmpvar, loop_tmpvar, cmp_tmpvar;
+	int start_tmpvar, stop_tmpvar, loop_tmpvar, cmp_tmpvar, guard_tmpvar;
 	struct hir_block *b;
 
 	assert(block != NULL);
@@ -620,6 +620,38 @@ lir_visit_for_range_block(
 		return false;
 	if (!lir_visit_expr(stop_tmpvar, block->val.for_.stop, block))
 		return false;
+
+	/*
+	 * Skip the whole loop when the range is empty.
+	 *
+	 * The per-iteration test below is an equality (OP_EQI/OP_JMPIFEQ,
+	 * a pair the JIT backends fuse): the loop ends when the counter
+	 * *reaches* the stop value. A range whose start is already past its
+	 * stop never satisfies that, and the loop runs away. This is not an
+	 * exotic case -- "for (i in 1..n)" is the ordinary way to write an
+	 * insertion sort, and it becomes "1..0" every time the collection
+	 * is empty.
+	 *
+	 * One comparison before the loop settles it, and the fused test in
+	 * the body stays as it was.
+	 */
+	if (!lir_increment_tmpvar(&guard_tmpvar))
+		return false;
+	if (!lir_put_opcode(OP_GTE))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)guard_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)stop_tmpvar))
+		return false;
+	if (!lir_put_opcode(OP_JMPIFTRUE))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)guard_tmpvar))
+		return false;
+	if (!lir_put_branch_addr(block->succ))
+		return false;
+	lir_decrement_tmpvar(guard_tmpvar);
 
 	/* Put the start value to a loop variable. */
 	loop_tmpvar = lir_get_local_index(block, block->val.for_.counter_symbol);

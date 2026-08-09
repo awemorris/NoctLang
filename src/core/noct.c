@@ -1477,6 +1477,13 @@ noct_out_of_memory(
  * String
  */
 
+/*
+ * The largest string this will format. A guard against a vsnprintf that
+ * reports failure the old way (a negative return) for a reason other
+ * than truncation, which would otherwise grow the buffer forever.
+ */
+#define MAKE_STRING_FORMAT_MAX	(64 * 1024 * 1024)
+
 NOCT_DLL
 bool
 noct_make_string_format(
@@ -1486,20 +1493,68 @@ noct_make_string_format(
 	...)
 {
 	va_list ap;
-	char tmp[1024];
+	char stack_buf[1024];
+	char *buf;
+	size_t size;
+	int len;
+	bool ok;
 
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(s != NULL);
 
-	va_start(ap, s);
-	vsnprintf(tmp, sizeof(tmp), s, ap);
-	va_end(ap);
+	/*
+	 * Format into a buffer that grows until the result fits.
+	 *
+	 * This used to be a fixed 1KB buffer whose overflow was dropped in
+	 * silence. Every string concatenation in the language arrives here
+	 * (execution.c routes each "a" + "b" through this function), so a
+	 * program building a string longer than 1023 bytes lost the tail
+	 * with no error to say so.
+	 *
+	 * va_start is repeated per attempt rather than va_copy'd: va_copy
+	 * is C99, and this VM is built for compilers older than that.
+	 */
+	buf = stack_buf;
+	size = sizeof(stack_buf);
+	for (;;) {
+		va_start(ap, s);
+		len = vsnprintf(buf, size, s, ap);
+		va_end(ap);
 
-	if (!rt_make_string(env, val, tmp))
-		return false;
+		/* Fits: len characters were written, plus a terminator. */
+		if (len >= 0 && (size_t)len < size)
+			break;
 
-	return true;
+		/*
+		 * Did not fit. A C99 vsnprintf returns the length it would
+		 * have needed; an older one returns a negative value, so
+		 * grow geometrically when there is no length to go on.
+		 */
+		if (len >= 0)
+			size = (size_t)len + 1;
+		else
+			size *= 2;
+
+		if (buf != stack_buf)
+			noct_free(buf);
+		if (size > MAKE_STRING_FORMAT_MAX) {
+			noct_error(env, N_TR("String is too long."));
+			return false;
+		}
+		buf = noct_malloc(size);
+		if (buf == NULL) {
+			noct_out_of_memory(env);
+			return false;
+		}
+	}
+
+	ok = rt_make_string(env, val, buf);
+
+	if (buf != stack_buf)
+		noct_free(buf);
+
+	return ok;
 }
 
 /*
