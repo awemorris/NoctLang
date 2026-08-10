@@ -19,7 +19,7 @@
 /*
  * Maximum number of the stack depth.
  */
-#define RT_FRAME_MAX		512
+#define RT_FRAME_MAX		32
 
 /*
  * Maximum number of the tmpvar in a stack.
