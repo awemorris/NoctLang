@@ -166,19 +166,6 @@ set(
   src/core/runtime.c       # Runtime main part
   src/core/interpreter.c   # Runtime interpreter part
   src/core/jit.c           # Runtime JIT part
-  # Architecture JIT implementations are real translation units rather than
-  # textual includes from jit.c.  Their NOCT_ARCH_* guards select exactly one
-  # implementation and, importantly, make each file a direct build input.
-  src/core/jit-x86.c
-  src/core/jit-x86_64.c
-  src/core/jit-arm32.c
-  src/core/jit-arm64.c
-  src/core/jit-mips32.c
-  src/core/jit-mips64.c
-  src/core/jit-ppc32.c
-  src/core/jit-ppc64.c
-  src/core/jit-riscv32.c
-  src/core/jit-riscv64.c
   src/core/execution.c     # Runtime execution helper part
   src/core/gc.c            # Runtime GC part
   src/core/intrinsics.c    # Intrinsics

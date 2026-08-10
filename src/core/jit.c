@@ -11,6 +11,17 @@
 
 #include <noct/c89compat.h>
 
+#include "jit-x86.c"
+#include "jit-x86_64.c"
+#include "jit-arm32.c"
+#include "jit-arm64.c"
+#include "jit-mips32.c"
+#include "jit-mips64.c"
+#include "jit-ppc32.c"
+#include "jit-ppc64.c"
+#include "jit-riscv32.c"
+#include "jit-riscv64.c"
+
 /* Disable JIT on targets without an architecture implementation. */
 #if defined(NOCT_USE_JIT)
 #if !defined(NOCT_ARCH_X86) && !defined(NOCT_ARCH_X86_64) && \
