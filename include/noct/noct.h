@@ -189,6 +189,16 @@ noct_destroy_vm(
 	NoctVM *vm);
 
 /*
+ * Appends a colon-separated search path used by top-level require
+ * declarations. The current directory is present in every VM by default.
+ */
+NOCT_DLL
+bool
+noct_add_require_path(
+	NoctVM *vm,
+	const char *path_list);
+
+/*
  * Creates a thread-local environment (=context) for another thread.
  *
  * Must be called from a thread that is currently running VM code, i.e.

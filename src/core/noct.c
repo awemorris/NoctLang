@@ -73,6 +73,18 @@ noct_destroy_vm(
 
 NOCT_DLL
 bool
+noct_add_require_path(
+	NoctVM *vm,
+	const char *path_list)
+{
+	assert(vm != NULL);
+	assert(path_list != NULL);
+
+	return rt_add_require_path(vm, path_list);
+}
+
+NOCT_DLL
+bool
 noct_register_source(
 	NoctEnv *env,
 	const char *file_name,

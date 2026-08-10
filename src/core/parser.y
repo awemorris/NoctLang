@@ -34,6 +34,7 @@ struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, stru
 struct ast_func *ast_accept_func(int flags, char *name, struct ast_param_list *param_list, char *return_type_name, struct ast_stmt_list *stmt_list);
 bool ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let, bool is_static);
 bool ast_accept_toplevel_class(int line, char *name, struct ast_kv_list *kv_list);
+bool ast_accept_require(char *name);
 struct ast_param_list *ast_accept_param_list(struct ast_param_list *param_list, char *name);
 struct ast_param_list *ast_accept_param_list_typed(struct ast_param_list *param_list, char *name, char *type_name);
 struct ast_stmt_list *ast_accept_stmt_list(struct ast_stmt_list *stmt_list, struct ast_stmt *stmt);
@@ -149,6 +150,7 @@ extern void ast_yyerror(void *scanner, char *s);
 
 %token <sval> TOKEN_SYMBOL TOKEN_STR
 %type <sval> type_name
+%type <sval> property_name
 %token <ival> TOKEN_INT
 %token <lval> TOKEN_LONG
 %token <fval> TOKEN_FLOAT
@@ -160,7 +162,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_RPAR_LBLK TOKEN_LBLK TOKEN_LBLK_BLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
 %token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSE_LBLK TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
-%token TOKEN_CONTINUE TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND TOKEN_STATIC TOKEN_INLINE
+%token TOKEN_CONTINUE TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND TOKEN_STATIC TOKEN_INLINE TOKEN_REQUIRE
 
 %type <func_list> func_list;
 %type <func> func;
@@ -286,6 +288,12 @@ toplevel_decl	: TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 			if (!ast_accept_toplevel_class(@1.first_line + 1, $2, NULL))
 				YYABORT;
 			debug("toplevel_decl: class empty");
+		}
+		| TOKEN_REQUIRE TOKEN_SYMBOL TOKEN_SEMICOLON
+		{
+			if (!ast_accept_require($2))
+				YYABORT;
+			debug("toplevel_decl: require");
 		}
 		;
 func_prefix	: TOKEN_FUNC
@@ -767,7 +775,7 @@ expr		: term
 			$$ = ast_accept_not_expr($2);
 			debug("expr: not expr");
 		}
-		| expr TOKEN_DOT TOKEN_SYMBOL
+		| expr TOKEN_DOT property_name
 		{
 			$$ = ast_accept_dot_expr($1, $3);
 			debug("expr: expr.symbol");
@@ -872,10 +880,27 @@ kv		: TOKEN_STR TOKEN_COLON expr
 			$$ = ast_accept_kv($1, $3);
 			debug("kv");
 		}
-		| TOKEN_SYMBOL TOKEN_COLON expr
+		| property_name TOKEN_COLON expr
 		{
 			$$ = ast_accept_kv($1, $3);
 			debug("kv");
+		}
+		;
+property_name	: TOKEN_SYMBOL
+		{
+			$$ = $1;
+		}
+		| TOKEN_STATIC
+		{
+			$$ = ast_strdup("static");
+		}
+		| TOKEN_INLINE
+		{
+			$$ = ast_strdup("inline");
+		}
+		| TOKEN_REQUIRE
+		{
+			$$ = ast_strdup("require");
 		}
 		;
 term		: TOKEN_INT

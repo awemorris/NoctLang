@@ -62,6 +62,11 @@ struct ast_stmt_list *ast_accept_stmt_list(struct ast_stmt_list *stmt_list, stru
 /* Top-level declarations, synthesized into $init.<file>. */
 static struct ast_stmt_list *ast_init_stmt_list;
 
+/* Top-level require declarations. */
+static struct ast_require *ast_require_list;
+static struct ast_require *ast_require_tail;
+static uint32_t ast_require_count;
+
 /* File name. */
 static char *ast_file_name;
 
@@ -149,6 +154,9 @@ ast_build(
 	ast_init_stmt_list = NULL;
 	ast_static_symbols = NULL;
 	ast_declared_symbols = NULL;
+	ast_require_list = NULL;
+	ast_require_tail = NULL;
+	ast_require_count = 0;
 	ast_error_message[0] = '\0';
 
 	/* Copy the file name. */
@@ -165,6 +173,15 @@ ast_build(
 		return false;
 	}
 	ast_yylex_destroy(scanner);
+
+	/* A require-only module still needs a valid, empty compilation unit. */
+	if (ast_require_count != 0 && ast_func_list == NULL &&
+	    ast_init_stmt_list == NULL) {
+		ast_init_stmt_list = ast_accept_stmt_list(
+			NULL, ast_accept_return_stmt(0, NULL));
+		if (ast_init_stmt_list == NULL)
+			return false;
+	}
 
 	/* Synthesize the $init.<file> function from top-level decls. */
 	if (ast_init_stmt_list != NULL) {
@@ -209,6 +226,9 @@ ast_build_app_initializer(
 	ast_init_stmt_list = NULL;
 	ast_static_symbols = NULL;
 	ast_declared_symbols = NULL;
+	ast_require_list = NULL;
+	ast_require_tail = NULL;
+	ast_require_count = 0;
 	ast_error_message[0] = '\0';
 	ast_file_name = ast_strdup(file_name);
 	if (ast_file_name == NULL)
@@ -348,6 +368,50 @@ ast_resolve_static_symbol(const char *name)
 			return entry->link_name;
 	}
 	return name;
+}
+
+/* Record a top-level source dependency. */
+bool
+ast_accept_require(char *name)
+{
+	struct ast_require *req;
+	struct ast_require *p;
+
+	for (p = ast_require_list; p != NULL; p = p->next) {
+		if (strcmp(p->name, name) == 0)
+			return true;
+	}
+	req = ast_malloc(sizeof(*req));
+	if (req == NULL) {
+		ast_out_of_memory();
+		return false;
+	}
+	memset(req, 0, sizeof(*req));
+	req->name = name;
+	if (ast_require_tail != NULL)
+		ast_require_tail->next = req;
+	else
+		ast_require_list = req;
+	ast_require_tail = req;
+	ast_require_count++;
+	return true;
+}
+
+uint32_t
+ast_get_require_count(void)
+{
+	return ast_require_count;
+}
+
+const char *
+ast_get_require_name(uint32_t index)
+{
+	struct ast_require *req;
+
+	for (req = ast_require_list; req != NULL && index != 0;
+	     req = req->next)
+		index--;
+	return req != NULL ? req->name : NULL;
 }
 
 /*

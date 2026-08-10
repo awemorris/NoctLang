@@ -130,6 +130,11 @@ noct_cback_translate(
 		       ast_get_error_message());
 		return false;
 	}
+	if (ast_get_require_count() != 0) {
+		printf("%s", N_TR("Error: require is not supported by the C transpiler; use --compile --app.\n"));
+		ast_cleanup();
+		return false;
+	}
 
 	/* Transform AST to HIR. */
 	if (!hir_build()) {

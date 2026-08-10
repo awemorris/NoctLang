@@ -62,6 +62,29 @@ static bool rt_init_global(struct rt_env *env);
 static void rt_cleanup_global(struct rt_env *env);
 static bool rt_expand_global(struct rt_env *env);
 
+enum rt_module_state {
+	RT_MODULE_LOADING,
+	RT_MODULE_LOADED,
+	RT_MODULE_FAILED
+};
+
+struct rt_module {
+	char *key;
+	char *logical_name;
+	int state;
+	struct rt_module *next;
+};
+
+static bool rt_register_source_internal(struct rt_env *env,
+					const char *file_name,
+					const char *source_text,
+					struct rt_module *module);
+static struct rt_module *rt_find_module(struct rt_vm *vm, const char *key);
+static struct rt_module *rt_add_module(struct rt_env *env, char *key,
+				       char *logical_name);
+static void rt_remove_module(struct rt_vm *vm, struct rt_module *module);
+static void rt_cleanup_modules(struct rt_vm *vm);
+
 /*
  * Initialization
  */
@@ -99,6 +122,13 @@ rt_create_vm(
 	memset(*default_env, 0, sizeof(struct rt_env));
 	(*default_env)->vm = *vm;
 	(*vm)->env_list = *default_env;
+	if (!module_paths_init(&(*vm)->require_path)) {
+		noct_free(*default_env);
+		noct_free(*vm);
+		*default_env = NULL;
+		*vm = NULL;
+		return false;
+	}
 
 	/* Enter the initial stack frame. */
 	(*default_env)->cur_frame_index = 0;
@@ -112,6 +142,7 @@ rt_create_vm(
 
 	/* Initialize the global variables. */
 	if (!rt_init_global(*default_env)) {
+		module_paths_cleanup(&(*vm)->require_path);
 		noct_free(*default_env);
 		noct_free(*vm);
 		return false;
@@ -120,6 +151,7 @@ rt_create_vm(
 	/* Initialize the garbage collector. */
 	if (!rt_gc_init(*vm)) {
 		rt_cleanup_global(*default_env);
+		module_paths_cleanup(&(*vm)->require_path);
 		noct_free(*default_env);
 		noct_free(*vm);
 		return false;
@@ -129,6 +161,7 @@ rt_create_vm(
 	if (!rt_register_intrinsics(*default_env)) {
 		rt_cleanup_global(*default_env);
 		rt_gc_cleanup(*vm);
+		module_paths_cleanup(&(*vm)->require_path);
 		noct_free(*default_env);
 		noct_free(*vm);
 		return false;
@@ -173,10 +206,82 @@ rt_destroy_vm(
 		func = next_func;
 	}
 
+	/* Free source-module paths and load state. */
+	rt_cleanup_modules(vm);
+	module_paths_cleanup(&vm->require_path);
+
 	/* Free rt_env. */
 	noct_free(vm);
 
 	return true;
+}
+
+bool
+rt_add_require_path(
+	struct rt_vm *vm,
+	const char *path_list)
+{
+	return module_paths_add(&vm->require_path, path_list);
+}
+
+static struct rt_module *
+rt_find_module(struct rt_vm *vm, const char *key)
+{
+	struct rt_module *module;
+	for (module = vm->module_list; module != NULL; module = module->next)
+		if (strcmp(module->key, key) == 0)
+			return module;
+	return NULL;
+}
+
+static struct rt_module *
+rt_add_module(struct rt_env *env, char *key, char *logical_name)
+{
+	struct rt_module *module;
+
+	module = noct_malloc(sizeof(*module));
+	if (module == NULL) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	memset(module, 0, sizeof(*module));
+	module->key = key;
+	module->logical_name = logical_name;
+	module->state = RT_MODULE_LOADING;
+	module->next = env->vm->module_list;
+	env->vm->module_list = module;
+	return module;
+}
+
+static void
+rt_remove_module(struct rt_vm *vm, struct rt_module *module)
+{
+	struct rt_module **link;
+
+	for (link = &vm->module_list; *link != NULL; link = &(*link)->next) {
+		if (*link == module) {
+			*link = module->next;
+			free(module->key);
+			free(module->logical_name);
+			noct_free(module);
+			return;
+		}
+	}
+}
+
+static void
+rt_cleanup_modules(struct rt_vm *vm)
+{
+	struct rt_module *module;
+	struct rt_module *next;
+
+	for (module = vm->module_list; module != NULL; module = next) {
+		next = module->next;
+		free(module->key);
+		free(module->logical_name);
+		noct_free(module);
+	}
+	vm->module_list = NULL;
 }
 
 /* Free a function. */
@@ -356,13 +461,70 @@ rt_register_source(
 	const char *file_name,
 	const char *source_text)
 {
+	struct rt_module *module;
+	char *key;
+	char *logical;
+	bool result;
+
+	key = module_path_key(file_name);
+	if (key == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	module = rt_find_module(env->vm, key);
+	if (module != NULL) {
+		free(key);
+		if (module->state == RT_MODULE_LOADED)
+			return true;
+		strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
+		env->file_name[sizeof(env->file_name) - 1] = '\0';
+		rt_error(env, module->state == RT_MODULE_LOADING ?
+			 "Circular require involving '%s'." :
+			 "Module '%s' previously failed to load.", file_name);
+		return false;
+	}
+	logical = malloc(strlen(file_name) + 1);
+	if (logical == NULL) {
+		free(key);
+		rt_out_of_memory(env);
+		return false;
+	}
+	memcpy(logical, file_name, strlen(file_name) + 1);
+	module = rt_add_module(env, key, logical);
+	if (module == NULL) {
+		free(key);
+		free(logical);
+		return false;
+	}
+	result = rt_register_source_internal(env, file_name, source_text, module);
+
+	/*
+	 * Public roots are registrations, not imports: REPL and
+	 * System.registerSource may intentionally reuse their logical filename.
+	 * Keep only recursively resolved dependencies in the de-duplication table.
+	 */
+	rt_remove_module(env->vm, module);
+	return result;
+}
+
+static bool
+rt_register_source_internal(
+	struct rt_env *env,
+	const char *file_name,
+	const char *source_text,
+	struct rt_module *module)
+{
 	struct hir_block *hfunc;
 	struct lir_func *lfunc;
 	uint32_t i, func_count;
+	uint32_t require_count;
+	char **require_name;
 	bool is_succeeded;
 	char init_func_name[256];
 
 	is_succeeded = false;
+	require_count = 0;
+	require_name = NULL;
 	init_func_name[0] = '\0';
 
 	do {
@@ -372,6 +534,26 @@ rt_register_source(
 			env->line = ast_get_error_line();
 			rt_error(env, "%s", ast_get_error_message());
 			break;
+		}
+
+		/* Preserve require names beyond the AST arena lifetime. */
+		require_count = ast_get_require_count();
+		if (require_count != 0) {
+			require_name = noct_malloc(sizeof(*require_name) * require_count);
+			if (require_name == NULL) {
+				rt_out_of_memory(env);
+				break;
+			}
+			memset(require_name, 0, sizeof(*require_name) * require_count);
+			for (i = 0; i < require_count; i++) {
+				require_name[i] = noct_strdup(ast_get_require_name(i));
+				if (require_name[i] == NULL) {
+					rt_out_of_memory(env);
+					break;
+				}
+			}
+			if (i != require_count)
+				break;
 		}
 
 		/* Transform AST to HIR. */
@@ -430,17 +612,78 @@ rt_register_source(
 
 	/* If failed. */
 	if (!is_succeeded)
-		return false;
+		goto failed;
+
+	/* Register current LIR first, then recursively load dependencies. */
+	for (i = 0; i < require_count; i++) {
+		char *physical;
+		char *logical;
+		char *data;
+		struct rt_module *dependency;
+
+		if (!module_resolve(&env->vm->require_path, require_name[i],
+				    &physical, &logical, &data)) {
+			strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
+			env->file_name[sizeof(env->file_name) - 1] = '\0';
+			rt_error(env, "Cannot resolve required module '%s'.",
+				 require_name[i]);
+			goto failed;
+		}
+		dependency = rt_find_module(env->vm, physical);
+		if (dependency != NULL) {
+			free(physical);
+			free(logical);
+			free(data);
+			if (dependency->state == RT_MODULE_LOADING) {
+				strncpy(env->file_name, file_name,
+					sizeof(env->file_name) - 1);
+				env->file_name[sizeof(env->file_name) - 1] = '\0';
+				rt_error(env, "Circular require involving '%s'.",
+					 require_name[i]);
+				goto failed;
+			}
+			if (dependency->state == RT_MODULE_FAILED) {
+				rt_error(env, "Required module '%s' failed to load.",
+					 require_name[i]);
+				goto failed;
+			}
+			continue;
+		}
+		dependency = rt_add_module(env, physical, logical);
+		if (dependency == NULL) {
+			free(physical);
+			free(logical);
+			free(data);
+			goto failed;
+		}
+		if (!rt_register_source_internal(env, dependency->logical_name,
+					 data, dependency)) {
+			free(data);
+			goto failed;
+		}
+		free(data);
+	}
 
 	/* Auto-execute the load-time init function ($init section). */
 	if (init_func_name[0] != '\0') {
 		struct rt_value init_ret;
 		if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
-			return false;
+			goto failed;
 	}
 
 	/* Succeeded. */
+	module->state = RT_MODULE_LOADED;
+	for (i = 0; i < require_count; i++)
+		noct_free(require_name[i]);
+	noct_free(require_name);
 	return true;
+
+failed:
+	module->state = RT_MODULE_FAILED;
+	for (i = 0; i < require_count; i++)
+		noct_free(require_name != NULL ? require_name[i] : NULL);
+	noct_free(require_name);
+	return false;
 }
 
 /* Register a function from LIR. */

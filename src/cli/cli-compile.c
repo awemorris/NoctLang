@@ -14,6 +14,8 @@
 /* Forward declaration. */
 static bool compile_source(const char *file_name);
 static bool compile_app(int argc, char *argv[], int first);
+static const char *compile_require_path[64];
+static uint32_t compile_require_path_count;
 
 /*
  * The top level function for the compile mode.
@@ -26,6 +28,7 @@ command_compile(
 	int i;
 	int first = 2;
 	bool app = false;
+	compile_require_path_count = 0;
 
 	/* Optional compiler diagnostics/settings before input files. */
 	while (first < argc) {
@@ -45,6 +48,19 @@ command_compile(
 		}
 		if (strcmp(argv[first], "--simd-info") == 0) {
 			noct_bcback_set_simd_info(true);
+			first++;
+			continue;
+		}
+		if (strncmp(argv[first], "--path=", 7) == 0) {
+			if (argv[first][7] == '\0' ||
+			    compile_require_path_count ==
+			    (uint32_t)(sizeof(compile_require_path) /
+				       sizeof(compile_require_path[0]))) {
+				printf("Invalid --path option.\n");
+				return 1;
+			}
+			compile_require_path[compile_require_path_count++] =
+				argv[first] + 7;
 			first++;
 			continue;
 		}
@@ -81,6 +97,18 @@ compile_app(int argc, char *argv[], int first)
 	if (!noct_bcback_app_start(output)) {
 		printf("Invalid Noct App output path: %s\n", output);
 		return false;
+	}
+	{
+		uint32_t path_index;
+		for (path_index = 0; path_index < compile_require_path_count;
+		     path_index++) {
+			if (!noct_bcback_app_add_require_path(
+				    compile_require_path[path_index])) {
+				printf("Invalid or out-of-memory --path option.\n");
+				noct_bcback_app_abort();
+				return false;
+			}
+		}
 	}
 	for (i = first + 1; i < argc; i++) {
 		char *source_data;

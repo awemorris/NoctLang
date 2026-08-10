@@ -14,6 +14,7 @@
 
 #include <noct/noct.h>
 #include "gc.h"
+#include "module.h"
 
 /*
  * Maximum number of the stack depth.
@@ -45,6 +46,7 @@ struct rt_dict;
 struct rt_packed;
 struct rt_func;
 struct rt_bindglobal;
+struct rt_module;
 
 /*
  * String object.
@@ -371,6 +373,10 @@ struct rt_vm {
 	/* Function list. */
 	struct rt_func *func_list;
 
+	/* Source-module resolution and duplicate/cycle state. */
+	struct module_paths require_path;
+	struct rt_module *module_list;
+
 	/* GC. */
 	struct rt_gc_info gc;
 
@@ -457,6 +463,12 @@ rt_create_vm(
 bool
 rt_destroy_vm(
 	struct rt_vm *vm);
+
+/* Append a colon-separated source-module search path. */
+bool
+rt_add_require_path(
+	struct rt_vm *vm,
+	const char *path_list);
 
 /* Create an environment for another thread. (Call while in-flight.) */
 bool

@@ -84,6 +84,13 @@ struct ast_stmt;
 struct ast_expr;
 struct ast_term;
 struct ast_arg_list;
+struct ast_require;
+
+/* A source module requested by a top-level require declaration. */
+struct ast_require {
+	char *name;
+	struct ast_require *next;
+};
 
 /* Function List */
 struct ast_func_list {
@@ -391,6 +398,13 @@ ast_get_file_name(void);
 /* Resolve a file-local source symbol, or return the original name. */
 const char *
 ast_resolve_static_symbol(const char *name);
+
+/* Get top-level require declarations in source order. */
+uint32_t
+ast_get_require_count(void);
+
+const char *
+ast_get_require_name(uint32_t index);
 
 /*
  * Get the error message.

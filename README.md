@@ -252,6 +252,27 @@ noct --compile --app app.nap main.noct library.noct
 ./app.nap
 ```
 
+Source files can load a module from the current directory or a colon-separated
+search path. `framework.noct` is preferred over `framework.nct`:
+
+```noct
+require framework;
+
+func main() {
+	framework_main();
+}
+```
+
+```sh
+noct --path=lib:vendor main.noct
+noct --compile --app --path=lib:vendor app.nap main.noct
+```
+
+Required modules are loaded once, and their initializers run in dependency
+order. A `.nap` embeds the complete require chain without running the VM while
+compiling. Standalone `.nb` files do not carry dependencies; use `.nap` when
+the source contains `require`.
+
 ### Compile into Emacs Lisp
 
 To compile a script into an Emacs Lisp file:

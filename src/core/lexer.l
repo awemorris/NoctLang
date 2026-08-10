@@ -376,6 +376,12 @@ lexer_unescape(char *s)
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_INLINE;
 		}
+"require"	{
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_REQUIRE;
+		}
 "new"		{
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;

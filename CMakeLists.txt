@@ -159,6 +159,7 @@ set(
   src/core/lexer.yy.c      # Lexer
   src/core/parser.tab.c    # Parser
   src/core/ast.c           # AST construction (called from parser)
+  src/core/module.c        # Source module search path and resolver
   src/core/hir.c           # HIR (AST->HIR construction)
   src/core/lir.c           # LIR (HIR->LIR construction)
   src/core/noct.c          # Public functions

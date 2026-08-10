@@ -7,6 +7,7 @@
 #include "hir.h"
 #include "lir.h"
 #include "bytecode.h"
+#include "module.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,18 @@ struct app_name {
 	struct app_name *next;
 };
 
+enum app_module_state {
+	APP_MODULE_LOADING,
+	APP_MODULE_LOADED,
+	APP_MODULE_FAILED
+};
+
+struct app_module {
+	char *key;
+	int state;
+	struct app_module *next;
+};
+
 static FILE *fp;
 static int bcback_optimize_level;
 static bool bcback_simd_info;
@@ -49,6 +62,13 @@ static uint32_t app_func_count;
 static uint32_t app_init_count;
 static uint32_t app_main_count;
 static uint32_t app_main_params;
+static struct module_paths app_require_path;
+static bool app_require_path_ready;
+static struct app_module *app_module_list;
+
+static bool app_add_source_internal(const char *source_file_name,
+				    const char *source_data, char *key,
+				    bool explicit_input);
 
 static char *
 bcback_strdup(const char *s)
@@ -204,6 +224,11 @@ noct_bcback_translate(const char *source_file_name, const char *source_data)
 		ast_cleanup();
 		return false;
 	}
+	if (ast_get_require_count() != 0) {
+		printf("%s", N_TR("Error: require is supported by --compile --app, not a standalone .nb file.\n"));
+		ast_cleanup();
+		return false;
+	}
 	if (!hir_build()) {
 		printf(N_TR("Error: %s:%d: %s\n"), hir_get_file_name(),
 		       hir_get_error_line(), hir_get_error_message());
@@ -267,6 +292,7 @@ NOCT_DLL void
 noct_bcback_app_abort(void)
 {
 	struct app_func *f = app_func_head;
+	struct app_module *m;
 	while (f != NULL) {
 		struct app_func *next = f->next;
 		lir_cleanup(f->func);
@@ -276,12 +302,23 @@ noct_bcback_app_abort(void)
 	app_free_names(app_init_head);
 	app_free_names(app_public);
 	app_free_names(app_source);
+	m = app_module_list;
+	while (m != NULL) {
+		struct app_module *next = m->next;
+		free(m->key);
+		free(m);
+		m = next;
+	}
+	if (app_require_path_ready)
+		module_paths_cleanup(&app_require_path);
 	free(app_output);
 	app_output = NULL;
 	app_func_head = app_func_tail = NULL;
 	app_init_head = app_init_tail = NULL;
 	app_public = app_source = app_source_tail = NULL;
 	app_func_count = app_init_count = app_main_count = app_main_params = 0;
+	app_module_list = NULL;
+	app_require_path_ready = false;
 	app_active = false;
 }
 
@@ -358,8 +395,20 @@ noct_bcback_app_start(const char *out_file_name)
 	app_output = bcback_normalize_path(out_file_name);
 	if (app_output == NULL)
 		return false;
+	if (!module_paths_init(&app_require_path)) {
+		free(app_output);
+		app_output = NULL;
+		return false;
+	}
+	app_require_path_ready = true;
 	app_active = true;
 	return true;
+}
+
+NOCT_DLL bool
+noct_bcback_app_add_require_path(const char *path_list)
+{
+	return app_active && module_paths_add(&app_require_path, path_list);
 }
 
 static bool
@@ -383,41 +432,108 @@ app_collect_init_symbols(struct hir_block *init, const char *file)
 	return true;
 }
 
-NOCT_DLL bool
-noct_bcback_app_add_source(const char *source_file_name,
-			    const char *source_data)
+static struct app_module *
+app_find_module(const char *key)
 {
-	struct app_name *sn;
-	char *init_name = NULL;
+	struct app_module *module;
+	for (module = app_module_list; module != NULL; module = module->next)
+		if (strcmp(module->key, key) == 0)
+			return module;
+	return NULL;
+}
+
+static struct app_module *
+app_new_module(char *key)
+{
+	struct app_module *module;
+	module = malloc(sizeof(*module));
+	if (module == NULL)
+		return NULL;
+	module->key = key;
+	module->state = APP_MODULE_LOADING;
+	module->next = app_module_list;
+	app_module_list = module;
+	return module;
+}
+
+static void
+app_free_require_names(char **name, uint32_t count)
+{
+	uint32_t i;
+	if (name == NULL)
+		return;
+	for (i = 0; i < count; i++)
+		free(name[i]);
+	free(name);
+}
+
+static bool
+app_add_source_internal(const char *source_file_name,
+			const char *source_data, char *key,
+			bool explicit_input)
+{
+	struct app_module *module;
+	char *init_name;
+	char **require_name;
+	uint32_t require_count;
 	uint32_t i;
 	uint32_t count;
-	bool ast_ready = false;
-	bool hir_ready = false;
-	bool ok = false;
+	bool ast_ready;
+	bool hir_ready;
+	bool ok;
 	char *logical_name;
 
-	if (!app_active || !bcback_path_is_relative(source_file_name) ||
-	    !bcback_has_suffix(source_file_name, ".noct"))
-		return false;
-	logical_name = bcback_normalize_path(source_file_name);
-	if (logical_name == NULL)
-		return false;
-	if (strcmp(logical_name, app_output) == 0) {
-		free(logical_name);
-		return false;
-	}
-	for (sn = app_source; sn != NULL; sn = sn->next) {
-		if (strcmp(sn->name, logical_name) == 0) {
-			printf("Duplicate Noct App input \"%s\".\n", logical_name);
-			free(logical_name);
+	module = app_find_module(key);
+	if (module != NULL) {
+		free(key);
+		if (explicit_input) {
+			printf("Duplicate Noct App input \"%s\".\n",
+			       source_file_name);
 			return false;
 		}
+		if (module->state == APP_MODULE_LOADING) {
+			printf("Circular require involving \"%s\".\n",
+			       source_file_name);
+			return false;
+		}
+		return module->state == APP_MODULE_LOADED;
 	}
+	module = app_new_module(key);
+	if (module == NULL) {
+		free(key);
+		return false;
+	}
+	init_name = NULL;
+	require_name = NULL;
+	require_count = 0;
+	ast_ready = false;
+	hir_ready = false;
+	ok = false;
+	logical_name = NULL;
+
+	if (!bcback_path_is_relative(source_file_name) ||
+	    (!bcback_has_suffix(source_file_name, ".noct") &&
+	     !bcback_has_suffix(source_file_name, ".nct")))
+		goto cleanup;
+	logical_name = bcback_normalize_path(source_file_name);
+	if (logical_name == NULL || strcmp(logical_name, app_output) == 0)
+		goto cleanup;
 	ast_ready = true;
 	if (!ast_build(logical_name, source_data)) {
 		printf(N_TR("Error: %s:%d: %s\n"), ast_get_file_name(),
 		       ast_get_error_line(), ast_get_error_message());
 		goto cleanup;
+	}
+	require_count = ast_get_require_count();
+	if (require_count != 0) {
+		require_name = calloc(require_count, sizeof(*require_name));
+		if (require_name == NULL)
+			goto cleanup;
+		for (i = 0; i < require_count; i++) {
+			require_name[i] = bcback_strdup(ast_get_require_name(i));
+			if (require_name[i] == NULL)
+				goto cleanup;
+		}
 	}
 	hir_ready = true;
 	if (!hir_build()) {
@@ -456,6 +572,34 @@ noct_bcback_app_add_source(const char *source_file_name,
 		}
 		if (!app_append_func(l)) { lir_cleanup(l); goto cleanup; }
 	}
+	/* AST/HIR are global compiler state; release them before recursion. */
+	hir_cleanup();
+	hir_ready = false;
+	ast_cleanup();
+	ast_ready = false;
+
+	for (i = 0; i < require_count; i++) {
+		char *physical;
+		char *dependency_logical;
+		char *dependency_data;
+
+		if (!module_resolve(&app_require_path, require_name[i], &physical,
+				    &dependency_logical, &dependency_data)) {
+			printf("Cannot resolve required module \"%s\" from %s.\n",
+			       require_name[i], logical_name);
+			goto cleanup;
+		}
+		if (!app_add_source_internal(dependency_logical, dependency_data,
+					     physical, false)) {
+			free(dependency_logical);
+			free(dependency_data);
+			goto cleanup;
+		}
+		free(dependency_logical);
+		free(dependency_data);
+	}
+
+	/* Postorder gives dependency initializers precedence over importers. */
 	if (init_name != NULL) {
 		if (!app_add_name(&app_init_head, &app_init_tail, init_name,
 				  logical_name)) goto cleanup;
@@ -463,13 +607,31 @@ noct_bcback_app_add_source(const char *source_file_name,
 	}
 	if (!app_add_name(&app_source, &app_source_tail, logical_name, NULL))
 		goto cleanup;
+	module->state = APP_MODULE_LOADED;
 	ok = true;
 cleanup:
+	if (!ok)
+		module->state = APP_MODULE_FAILED;
 	free(init_name);
 	free(logical_name);
+	app_free_require_names(require_name, require_count);
 	if (hir_ready) hir_cleanup();
 	if (ast_ready) ast_cleanup();
 	return ok;
+}
+
+NOCT_DLL bool
+noct_bcback_app_add_source(const char *source_file_name,
+			    const char *source_data)
+{
+	char *key;
+
+	if (!app_active)
+		return false;
+	key = module_path_key(source_file_name);
+	if (key == NULL)
+		return false;
+	return app_add_source_internal(source_file_name, source_data, key, true);
 }
 
 static bool

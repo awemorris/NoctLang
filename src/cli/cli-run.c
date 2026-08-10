@@ -27,6 +27,8 @@ static int file_arg;
 static int prog_arg;
 static size_t param_count;
 static bool is_oneliner;
+static const char *require_path[64];
+static uint32_t require_path_count;
 
 static bool parse_options(int argc, char *argv[]);
 static bool load_program(int argc, char *argv[]);
@@ -64,6 +66,16 @@ int command_run(int argc, char *argv[])
 	if (!noct_create_vm(&vm, &env, &config)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return 1;
+	}
+	{
+		uint32_t i;
+		for (i = 0; i < require_path_count; i++) {
+			if (!noct_add_require_path(vm, require_path[i])) {
+				wide_printf(N_TR("Out of memory.\n"));
+				noct_destroy_vm(vm);
+				return 1;
+			}
+		}
 	}
 
 	/* Register libraries. */
@@ -167,6 +179,7 @@ parse_options(
 
 	file_arg = 1;
 	is_oneliner = false;
+	require_path_count = 0;
 	for (i = 1; i < argc; i++) {
 		if (argv[i][0] != '-')
 			break;
@@ -198,6 +211,17 @@ parse_options(
 		}
 		if (strcmp(argv[i], "--simd-info") == 0) {
 			config.simd_info = true;
+			file_arg++;
+			continue;
+		}
+		if (strncmp(argv[i], "--path=", 7) == 0) {
+			if (argv[i][7] == '\0' ||
+			    require_path_count == (uint32_t)(sizeof(require_path) /
+							 sizeof(require_path[0]))) {
+				wide_printf(N_TR("Invalid --path option.\n"));
+				return false;
+			}
+			require_path[require_path_count++] = argv[i] + 7;
 			file_arg++;
 			continue;
 		}

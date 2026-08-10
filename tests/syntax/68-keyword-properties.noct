@@ -1,0 +1,15 @@
+func static_method(this, x) {
+    return this.base + x;
+}
+
+func main() {
+    var obj = {
+        base: 3,
+        static: static_method,
+        inline: 7,
+        require: 9
+    };
+    print(obj.static(4));
+    print(obj.inline);
+    print(obj.require);
+}
