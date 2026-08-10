@@ -37,11 +37,20 @@ command_transpile_c(
 {
 	int first;
 
-	/* Optional: --optimize-level=N before the output file. */
+	/* Optional compiler diagnostics/settings before the output file. */
 	first = 2;
-	if (argc > 2 && strncmp(argv[2], "--optimize-level=", 17) == 0) {
-		noct_cback_set_optimize_level(atoi(argv[2] + 17));
-		first = 3;
+	while (first < argc) {
+		if (strncmp(argv[first], "--optimize-level=", 17) == 0) {
+			noct_cback_set_optimize_level(atoi(argv[first] + 17));
+			first++;
+			continue;
+		}
+		if (strcmp(argv[first], "--simd-info") == 0) {
+			noct_cback_set_simd_info(true);
+			first++;
+			continue;
+		}
+		break;
 	}
 
 	if (argc < first + 2) {

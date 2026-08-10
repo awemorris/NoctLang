@@ -23,12 +23,20 @@
 
 static FILE *fp;
 static int bcback_optimize_level;
+static bool bcback_simd_info;
 
 NOCT_DLL
 void
 noct_bcback_set_optimize_level(int level)
 {
 	bcback_optimize_level = level;
+}
+
+NOCT_DLL
+void
+noct_bcback_set_simd_info(bool enable)
+{
+	bcback_simd_info = enable;
 }
 
 /*
@@ -94,7 +102,8 @@ noct_bcback_translate(
 
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(i);
-		if (!hir_optimize_func(hfunc, bcback_optimize_level)) {
+		if (!hir_optimize_func(hfunc, bcback_optimize_level,
+				       bcback_simd_info)) {
 			printf(N_TR("Error: %s\n"), hir_get_error_message());
 			return false;
 		}

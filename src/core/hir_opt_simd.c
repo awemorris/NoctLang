@@ -1184,7 +1184,7 @@ simd_collect_loops(struct hir_block *head, struct hir_block **loops,
 }
 
 bool
-hir_opt_simd_func(struct hir_block *func_block)
+hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 {
 	struct hir_block *loops[SIMD_MAX_LOOPS];
 	int loop_count;
@@ -1247,6 +1247,12 @@ hir_opt_simd_func(struct hir_block *func_block)
 
 		if (!simd_vectorize(ctx))
 			return false;
+
+		if (simd_info)
+			fprintf(stderr,
+				"SIMD: %s:%d: vectorized (%s)\n",
+				hir_file_name, loops[i]->line,
+				ctx->is_float ? "f32x4" : "i32x4");
 
 		if (getenv("NOCT_SIMD_DEBUG") != NULL)
 			fprintf(stderr,

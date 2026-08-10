@@ -121,6 +121,9 @@ struct rt_config {
 	/* Optimization level. */
 	int optimize_level;
 
+	/* Report successfully vectorized loops. */
+	bool simd_info;
+
 	/* Maximum bytes reserved for generated JIT code. */
 	size_t jit_code_size;
 

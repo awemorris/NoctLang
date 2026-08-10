@@ -62,6 +62,7 @@ static FILE *fp;
 
 /* Optimization level for translated output. */
 static int cback_optimize_level = 0;
+static bool cback_simd_info;
 
 /*
  * Set the optimization level for subsequent translations.
@@ -70,6 +71,12 @@ void
 noct_cback_set_optimize_level(int level)
 {
 	cback_optimize_level = level;
+}
+
+void
+noct_cback_set_simd_info(bool enable)
+{
+	cback_simd_info = enable;
 }
 
 /*
@@ -141,7 +148,8 @@ noct_cback_translate(
 
 		/* Run the HIR optimizer (ABCE; no-op below level 2). */
 		hfunc = hir_get_function(i);
-		if (!hir_optimize_func(hfunc, cback_optimize_level)) {
+		if (!hir_optimize_func(hfunc, cback_optimize_level,
+				       cback_simd_info)) {
 			printf(N_TR("Error: %s\n"), hir_get_error_message());
 			return false;
 		}

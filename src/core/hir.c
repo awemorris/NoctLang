@@ -3234,7 +3234,8 @@ hir_dump_block_at_level(
 bool
 hir_optimize_func(
 	struct hir_block *func_block,
-	int level)
+	int level,
+	bool simd_info)
 {
 #if defined(NOCT_USE_OPTIMIZER)
 	assert(func_block != NULL);
@@ -3246,7 +3247,7 @@ hir_optimize_func(
 	if (!hir_opt_abce_func(func_block))
 		return false;
 	/* SIMD right after ABCE (it consumes the fast-loop marks). */
-	if (!hir_opt_simd_func(func_block))
+	if (!hir_opt_simd_func(func_block, simd_info))
 		return false;
 	if (!hir_opt_cse_func(func_block))
 		return false;
@@ -3258,6 +3259,7 @@ hir_optimize_func(
 #else
 	UNUSED_PARAMETER(func_block);
 	UNUSED_PARAMETER(level);
+	UNUSED_PARAMETER(simd_info);
 
 	return true;
 #endif

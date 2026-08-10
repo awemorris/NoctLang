@@ -25,10 +25,19 @@ command_compile(
 	int i;
 	int first = 2;
 
-	/* Optional: --optimize-level=N before input files. */
-	if (argc > 2 && strncmp(argv[2], "--optimize-level=", 17) == 0) {
-		noct_bcback_set_optimize_level(atoi(argv[2] + 17));
-		first = 3;
+	/* Optional compiler diagnostics/settings before input files. */
+	while (first < argc) {
+		if (strncmp(argv[first], "--optimize-level=", 17) == 0) {
+			noct_bcback_set_optimize_level(atoi(argv[first] + 17));
+			first++;
+			continue;
+		}
+		if (strcmp(argv[first], "--simd-info") == 0) {
+			noct_bcback_set_simd_info(true);
+			first++;
+			continue;
+		}
+		break;
 	}
 	if (argc <= first) {
 		show_usage();

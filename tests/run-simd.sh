@@ -63,12 +63,38 @@ for name in $MUST_NOT; do
     fi
 done
 
+# --simd-info is the stable, success-only diagnostic.  It must include
+# the source loop line without exposing developer-only rejection output.
+info=$($NOCT --simd-info --disable-jit --optimize-level=2 \
+    simd/f32.noct 2>&1)
+if ! printf '%s\n' "$info" | grep -q \
+    '^SIMD: simd/f32.noct:6: vectorized (f32x4)$'; then
+    echo "FAIL --simd-info source location"
+    FAILED=1
+elif printf '%s\n' "$info" | grep -q 'rejected'; then
+    echo "FAIL --simd-info exposed rejection diagnostics"
+    FAILED=1
+else
+    echo "PASS --simd-info source location"
+fi
+
+if $NOCT --simd-info --disable-jit simd/f32.noct 2>&1 |
+    grep -q '^SIMD:'; then
+    echo "FAIL --simd-info reported without vectorization"
+    FAILED=1
+else
+    echo "PASS --simd-info success-only behavior"
+fi
+
 # Optimized bytecode must preserve the ABI/prologue vector metadata.
 tmp_dir=$(mktemp -d)
 cp simd/f32.noct "$tmp_dir/f32.noct"
-if ! $NOCT_META --compile --optimize-level=2 "$tmp_dir/f32.noct" ||
+compile_info=$($NOCT_META --compile --simd-info --optimize-level=2 \
+    "$tmp_dir/f32.noct" 2>&1)
+if ! printf '%s\n' "$compile_info" | grep -q \
+       "^SIMD: $tmp_dir/f32.noct:6: vectorized (f32x4)$" ||
    ! grep -a -q '^Vector Ops$' "$tmp_dir/f32.nb"; then
-    echo "FAIL SIMD bytecode vector metadata"
+    echo "FAIL SIMD bytecode vector metadata/info"
     FAILED=1
 else
     $NOCT_META --force-jit "$tmp_dir/f32.nb" > "$tmp_dir/out" 2>&1

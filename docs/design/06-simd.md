@@ -174,6 +174,9 @@ func blend(src, dst, n, a) {
   else-branch full loop) remain fair game for CSE.
 - D-SIMD14. **Kill switch and observability**: `NOCT_SIMD_DISABLE=1`
   in the environment skips the pass entirely;
+  the public `--simd-info` CLI option reports only successful
+  transformations as `SIMD: <file>:<line>: vectorized (<kind>x4)` to
+  stderr;
   `NOCT_SIMD_DEBUG=1` prints one line per vectorized loop to stderr
   (`SIMD: <func>: vectorized (packeds=%d sites=%d inv=%d temps=%d consts=%d depth=%d)`).
   Mirrors the NOCT_CSE_DEBUG precedent.  The debug line is load-bearing

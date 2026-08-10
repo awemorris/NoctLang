@@ -196,6 +196,11 @@ parse_options(
 			file_arg++;
 			continue;
 		}
+		if (strcmp(argv[i], "--simd-info") == 0) {
+			config.simd_info = true;
+			file_arg++;
+			continue;
+		}
 		if (strncmp(argv[i], "--gc-nursery-size=", 18) == 0) {
 			config.gc_nursery_size = (size_t)atoi(argv[i] + 18);
 			file_arg++;

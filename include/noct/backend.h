@@ -23,6 +23,11 @@ NOCT_DLL
 void
 noct_bcback_set_optimize_level(int level);
 
+/* Enable reports for successfully vectorized loops. */
+NOCT_DLL
+void
+noct_bcback_set_simd_info(bool enable);
+
 NOCT_DLL
 bool
 noct_bcback_start(
@@ -48,6 +53,11 @@ noct_bcback_finalize(void);
 NOCT_DLL
 void
 noct_cback_set_optimize_level(int level);
+
+/* Enable reports for successfully vectorized loops. */
+NOCT_DLL
+void
+noct_cback_set_simd_info(bool enable);
 
 NOCT_DLL
 bool

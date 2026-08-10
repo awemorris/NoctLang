@@ -29,6 +29,7 @@ noct_set_default_config(
 	config->jit_enable             = true;
 	config->jit_threshold          = JIT_DEFAULT_THRESHOLD;
 	config->optimize_level         = 0;
+	config->simd_info              = false;
 #if defined(NOCT_USE_JIT)
 	config->jit_code_size          = JIT_CODE_MAX;
 #else

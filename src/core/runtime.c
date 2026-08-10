@@ -390,7 +390,9 @@ rt_register_source(
 		for (i = 0; i < func_count; i++) {
 			/* Run the HIR optimizer (ABCE; no-op below level 2). */
 			hfunc = hir_get_function(i);
-			if (!hir_optimize_func(hfunc, env->vm->config.optimize_level)) {
+			if (!hir_optimize_func(hfunc,
+					       env->vm->config.optimize_level,
+					       env->vm->config.simd_info)) {
 				rt_error(env, "%s", hir_get_error_message());
 				break;
 			}
