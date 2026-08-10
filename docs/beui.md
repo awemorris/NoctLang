@@ -27,6 +27,8 @@ degrade rather than fail to load.
 
 Opens the display and returns 1 on success, 0 when no display is
 available. Calling it again while open succeeds and changes nothing.
+The default depth is 8 bits per pixel on Cirrus hardware; targets with
+no Cirrus display fall back to their native backend, such as the PC-98 GDC.
 
 ```
 if (!BeUI.init()) {
@@ -34,6 +36,14 @@ if (!BeUI.init()) {
     return 1;
 }
 ```
+
+### BeUI.initWithHint(bitsPerPixel)
+
+Opens the display while hinting that 8 or 24 bits per pixel is preferred.
+The hint is not a requirement: if that depth or the Cirrus display is not
+available, BeUI may fall back to another depth or backend. A BMP viewer can
+request full color with `BeUI.initWithHint(24)` without changing the default
+mode used by other applications.
 
 ### BeUI.close()
 
@@ -122,6 +132,16 @@ BeUI.destroyImage(image);
 ### BeUI.drawImage(image, x, y)
 
 Draws a loaded image.
+
+### BeUI.getImageWidth(image) / BeUI.getImageHeight(image)
+
+Returns the decoded image size in pixels.
+
+### BeUI.drawImageRegion(image, sourceX, sourceY, width, height, x, y)
+
+Draws a rectangular part of a loaded image. The source rectangle and the
+destination rectangle must both fit completely inside the image and display,
+respectively. This is useful for scrolling a picture larger than the display.
 
 ### BeUI.drawImagePattern(image, x, y, pattern)
 

@@ -56,12 +56,19 @@ noct_beui_bind(const struct noct_beui_hal *hal)
 int
 noct_beui_init(void)
 {
+	return noct_beui_init_with_hint(0);
+}
+
+int
+noct_beui_init_with_hint(unsigned preferred_bits_per_pixel)
+{
 	if (state.display_open)
 		return 1;
 	if (state.hal == NULL || state.hal->display.enter == NULL ||
 	    state.hal->display.leave == NULL)
 		return 0;
 	memset(&state.display, 0, sizeof(state.display));
+	state.display.preferred_bits_per_pixel = preferred_bits_per_pixel;
 	if (!state.hal->display.enter(state.hal->display.context,
 				      &state.display))
 		return 0;
@@ -175,29 +182,62 @@ noct_beui_pattern_fill(const struct noct_beui_rect *rect, uint32_t color,
 					       color, pattern);
 }
 
-int
-noct_beui_draw_image(unsigned x, unsigned y,
-		       const struct noct_beui_image *image)
+static int
+image_valid(const struct noct_beui_image *image)
 {
-	size_t minimum_stride;
-
-	if (!state.display_open || image == NULL || image->pixels == NULL ||
+	if (image == NULL || image->pixels == NULL ||
 	    image->width == 0 || image->height == 0 ||
 	    (image->format != NOCT_BEUI_IMAGE_INDEX8 &&
 	     image->format != NOCT_BEUI_IMAGE_RGB24) ||
 	    (image->format == NOCT_BEUI_IMAGE_INDEX8 &&
-	     (image->palette_size == 0 || image->palette_size > 256)) ||
+	     (image->palette_size == 0 || image->palette_size > 256)))
+		return 0;
+	if (image->format == NOCT_BEUI_IMAGE_RGB24)
+		return image->stride / 3U >= image->width;
+	return image->stride >= image->width;
+}
+
+int
+noct_beui_draw_image(unsigned x, unsigned y,
+		       const struct noct_beui_image *image)
+{
+	if (!state.display_open || !image_valid(image) ||
 	    x >= state.display.width || y >= state.display.height ||
 	    image->width > state.display.width - x ||
 	    image->height > state.display.height - y ||
 	    state.hal->display.draw_image == NULL)
 		return 0;
-	minimum_stride = image->format == NOCT_BEUI_IMAGE_RGB24 ?
-		(size_t)image->width * 3U : image->width;
-	if (image->stride < minimum_stride)
-		return 0;
 	return state.hal->display.draw_image(state.hal->display.context, x, y,
 					     image);
+}
+
+int
+noct_beui_draw_image_region(const struct noct_beui_image *image,
+			      unsigned source_x, unsigned source_y,
+			      unsigned width, unsigned height,
+			      unsigned destination_x,
+			      unsigned destination_y)
+{
+	struct noct_beui_image region;
+	size_t pixel_size;
+	size_t offset;
+
+	if (!image_valid(image) || width == 0 || height == 0 ||
+	    source_x >= image->width || source_y >= image->height ||
+	    width > image->width - source_x ||
+	    height > image->height - source_y ||
+	    source_y > (size_t)-1 / image->stride)
+		return 0;
+	pixel_size = image->format == NOCT_BEUI_IMAGE_RGB24 ? 3U : 1U;
+	offset = (size_t)source_y * image->stride;
+	if (source_x > ((size_t)-1 - offset) / pixel_size)
+		return 0;
+	offset += (size_t)source_x * pixel_size;
+	region = *image;
+	region.width = width;
+	region.height = height;
+	region.pixels += offset;
+	return noct_beui_draw_image(destination_x, destination_y, &region);
 }
 
 int
@@ -205,22 +245,11 @@ noct_beui_draw_image_pattern(unsigned x, unsigned y,
 			       const struct noct_beui_image *image,
 			       uint64_t pattern)
 {
-	size_t minimum_stride;
-
-	if (!state.display_open || image == NULL || image->pixels == NULL ||
-	    image->width == 0 || image->height == 0 ||
-	    (image->format != NOCT_BEUI_IMAGE_INDEX8 &&
-	     image->format != NOCT_BEUI_IMAGE_RGB24) ||
-	    (image->format == NOCT_BEUI_IMAGE_INDEX8 &&
-	     (image->palette_size == 0 || image->palette_size > 256)) ||
+	if (!state.display_open || !image_valid(image) ||
 	    x >= state.display.width || y >= state.display.height ||
 	    image->width > state.display.width - x ||
 	    image->height > state.display.height - y ||
 	    state.hal->display.draw_image_pattern == NULL)
-		return 0;
-	minimum_stride = image->format == NOCT_BEUI_IMAGE_RGB24 ?
-		(size_t)image->width * 3U : image->width;
-	if (image->stride < minimum_stride)
 		return 0;
 	return state.hal->display.draw_image_pattern(
 		state.hal->display.context, x, y, image, pattern);

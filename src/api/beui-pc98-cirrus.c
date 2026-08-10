@@ -8,7 +8,7 @@
  * BeUI NEC PC-9821 Core-Graph / Cirrus GD5440 display backend, imported
  * from Boots.  The register sequence is adapted from StratoHAL
  * 98disp_cirrus.c at commit 76e909577bdf4629f11e473539b446a948fef830 and
- * is deliberately limited to the verified Core-Graph path at 640x480x8.
+ * is deliberately limited to the Core-Graph path at 640x480x8/24.
  * Port I/O and the linear framebuffer are injected by the embedder so
  * the driver stays compiler and host neutral.
  */
@@ -172,7 +172,8 @@ coregraph_gate_leave(struct noct_beui_pc98_cirrus *backend)
 }
 
 static void
-coregraph_mode_640x480x8(struct noct_beui_pc98_cirrus *backend)
+coregraph_mode_640x480(struct noct_beui_pc98_cirrus *backend,
+		       unsigned bits_per_pixel)
 {
 	static const uint8_t seq_index[] = {
 		0x00, 0x01, 0x02, 0x03, 0x04, 0x07, 0x08,
@@ -205,16 +206,26 @@ coregraph_mode_640x480x8(struct noct_beui_pc98_cirrus *backend)
 	gfx_write(backend, 0x31U, 0);
 	seq_write(backend, 0x06U, 0x12U);
 	seq_write(backend, 0x12U, 0);
-	for (i = 0; i < sizeof(seq_index); i++)
-		seq_write(backend, seq_index[i], seq_value[i]);
+	for (i = 0; i < sizeof(seq_index); i++) {
+		uint8_t value = seq_value[i];
+
+		if (seq_index[i] == 0x07U && bits_per_pixel == 24U)
+			value = 0x15U;
+		seq_write(backend, seq_index[i], value);
+	}
 	seq_write(backend, 0x0fU,
 		  (uint8_t)((seq_read(backend, 0x0fU) & 0xdfU) | 0x20U));
 	out8(backend, CIRRUS_IO + 2U, 0xe3U);
 	gfx_write(backend, 0x06U, 0x05U);
 	seq_write(backend, 0x00U, 0x03U);
 	crtc_write(backend, 0x11U, 0x20U);
-	for (i = 0; i < sizeof(crtc); i++)
-		crtc_write(backend, (uint8_t)i, crtc[i]);
+	for (i = 0; i < sizeof(crtc); i++) {
+		uint8_t value = crtc[i];
+
+		if (i == 0x13U && bits_per_pixel == 24U)
+			value = 0xf0U;
+		crtc_write(backend, (uint8_t)i, value);
+	}
 	for (i = 0; i < sizeof(graphics); i++)
 		gfx_write(backend, (uint8_t)i, graphics[i]);
 	(void)in8(backend, CIRRUS_STATUS);
@@ -224,7 +235,7 @@ coregraph_mode_640x480x8(struct noct_beui_pc98_cirrus *backend)
 	}
 	(void)in8(backend, CIRRUS_STATUS);
 	out8(backend, CIRRUS_IO, 0x20U);
-	hidden_dac_write(backend, 0x20U);
+	hidden_dac_write(backend, bits_per_pixel == 24U ? 0xc5U : 0x20U);
 	out8(backend, CIRRUS_IO + 6U, 0xffU);
 	gfx_write(backend, 0x09U, 0);
 	gfx_write(backend, 0x0aU, 0);
@@ -235,7 +246,8 @@ coregraph_mode_640x480x8(struct noct_beui_pc98_cirrus *backend)
 		  (uint8_t)(seq_read(backend, 0x18U) & 0xbfU));
 	gfx_write(backend, 0x31U, 0x04U);
 	gfx_write(backend, 0x31U, 0);
-	load_rgb332_palette(backend);
+	if (bits_per_pixel == 8U)
+		load_rgb332_palette(backend);
 	seq_write(backend, 0x01U, 0x21U);
 }
 
@@ -256,9 +268,19 @@ pattern_bit(uint64_t pattern, unsigned x, unsigned y)
 
 static void
 write_pixel(struct noct_beui_pc98_cirrus *backend, unsigned x, unsigned y,
-	    uint8_t color)
+	    uint32_t color)
 {
-	backend->framebuffer[y * NOCT_BEUI_CIRRUS_STRIDE + x] = color;
+	volatile uint8_t *pixel;
+
+	if (backend->bits_per_pixel == 8U) {
+		backend->framebuffer[y * NOCT_BEUI_CIRRUS_STRIDE_8 + x] =
+			rgb332(color);
+		return;
+	}
+	pixel = backend->framebuffer + y * NOCT_BEUI_CIRRUS_STRIDE_24 + x * 3U;
+	pixel[0] = (uint8_t)color;
+	pixel[1] = (uint8_t)(color >> 8);
+	pixel[2] = (uint8_t)(color >> 16);
 }
 
 static int
@@ -267,12 +289,19 @@ cirrus_enter(void *context, struct noct_beui_display_info *info)
 	struct noct_beui_pc98_cirrus *backend = context;
 	uint8_t relay_setup;
 	uint8_t chip;
+	unsigned bits_per_pixel;
+	unsigned stride;
+	unsigned visible_bytes;
 	unsigned i;
 
 	if (backend == NULL || info == NULL || backend->port_in8 == NULL ||
 	    backend->port_out8 == NULL || backend->framebuffer == NULL ||
 	    !coregraph_id_present(backend))
 		return 0;
+	bits_per_pixel = info->preferred_bits_per_pixel == 24U ? 24U : 8U;
+	stride = bits_per_pixel == 24U ? NOCT_BEUI_CIRRUS_STRIDE_24 :
+		NOCT_BEUI_CIRRUS_STRIDE_8;
+	visible_bytes = stride * NOCT_BEUI_CIRRUS_HEIGHT;
 	backend->saved_sleep = in8(backend, CIRRUS_SLEEP);
 	backend->saved_window = wab_read(backend, WAB_REG_WINDOW);
 	backend->saved_linear = wab_read(backend, WAB_REG_LINEAR);
@@ -290,15 +319,16 @@ cirrus_enter(void *context, struct noct_beui_display_info *info)
 	if (wab_read(backend, WAB_REG_LINEAR) != 0xf0U)
 		goto fail;
 	coregraph_gate_enter(backend);
-	coregraph_mode_640x480x8(backend);
-	for (i = 0; i < NOCT_BEUI_CIRRUS_VISIBLE_BYTES; i++)
+	coregraph_mode_640x480(backend, bits_per_pixel);
+	for (i = 0; i < visible_bytes; i++)
 		backend->framebuffer[i] = 0;
 	seq_write(backend, 0x01U, 0x01U);
+	backend->bits_per_pixel = (uint8_t)bits_per_pixel;
 	backend->active = 1;
 	info->width = NOCT_BEUI_CIRRUS_WIDTH;
 	info->height = NOCT_BEUI_CIRRUS_HEIGHT;
-	info->bits_per_pixel = 8;
-	info->stride = NOCT_BEUI_CIRRUS_STRIDE;
+	info->bits_per_pixel = bits_per_pixel;
+	info->stride = stride;
 	return 1;
 
 fail:
@@ -325,6 +355,7 @@ cirrus_leave(void *context)
 	 * would immediately select and wake Cirrus again, leaving later text-VRAM
 	 * output invisible.  Saved values are only for the failed-enter rollback. */
 	backend->active = 0;
+	backend->bits_per_pixel = 0;
 }
 
 static int
@@ -332,16 +363,31 @@ cirrus_fill(void *context, const struct noct_beui_rect *rect,
 	    uint32_t color)
 {
 	struct noct_beui_pc98_cirrus *backend = context;
-	uint8_t pixel = rgb332(color);
 	unsigned y;
 
+	if (backend->bits_per_pixel == 8U) {
+		uint8_t pixel = rgb332(color);
+
+		for (y = rect->y; y < rect->y + rect->height; y++) {
+			volatile uint8_t *row = backend->framebuffer +
+				y * NOCT_BEUI_CIRRUS_STRIDE_8 + rect->x;
+			unsigned x;
+
+			for (x = 0; x < rect->width; x++)
+				row[x] = pixel;
+		}
+		return 1;
+	}
 	for (y = rect->y; y < rect->y + rect->height; y++) {
 		volatile uint8_t *row = backend->framebuffer +
-			y * NOCT_BEUI_CIRRUS_STRIDE + rect->x;
+			y * NOCT_BEUI_CIRRUS_STRIDE_24 + rect->x * 3U;
 		unsigned x;
 
-		for (x = 0; x < rect->width; x++)
-			row[x] = pixel;
+		for (x = 0; x < rect->width; x++) {
+			row[x * 3U] = (uint8_t)color;
+			row[x * 3U + 1U] = (uint8_t)(color >> 8);
+			row[x * 3U + 2U] = (uint8_t)(color >> 16);
+		}
 	}
 	return 1;
 }
@@ -360,12 +406,11 @@ cirrus_line(void *context, unsigned x0, unsigned y0, unsigned x1,
 	int delta_y = target_y >= y ? y - target_y : target_y - y;
 	int step_y = y < target_y ? 1 : -1;
 	int error = delta_x + delta_y;
-	uint8_t pixel = rgb332(color);
 
 	for (;;) {
 		int twice_error;
 
-		write_pixel(backend, (unsigned)x, (unsigned)y, pixel);
+		write_pixel(backend, (unsigned)x, (unsigned)y, color);
 		if (x == target_x && y == target_y)
 			break;
 		twice_error = error * 2;
@@ -386,7 +431,6 @@ cirrus_pattern_fill(void *context, const struct noct_beui_rect *rect,
 		    uint32_t color, uint64_t pattern)
 {
 	struct noct_beui_pc98_cirrus *backend = context;
-	uint8_t pixel = rgb332(color);
 	unsigned y;
 
 	for (y = 0; y < rect->height; y++) {
@@ -395,7 +439,7 @@ cirrus_pattern_fill(void *context, const struct noct_beui_rect *rect,
 		for (x = 0; x < rect->width; x++)
 			if (pattern_bit(pattern, x, y))
 				write_pixel(backend, rect->x + x, rect->y + y,
-					    pixel);
+					    color);
 	}
 	return 1;
 }
@@ -429,7 +473,7 @@ cirrus_draw_image_common(void *context, unsigned destination_x,
 				      ((uint32_t)source[1] << 8) | source[2];
 			}
 			write_pixel(backend, destination_x + x,
-				    destination_y + y, rgb332(rgb));
+				    destination_y + y, rgb);
 		}
 	}
 	return 1;

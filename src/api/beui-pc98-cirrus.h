@@ -8,7 +8,7 @@
  * BeUI NEC PC-9821 Core-Graph / Cirrus GD5440 display backend, imported
  * from Boots.  The register sequence is adapted from StratoHAL
  * 98disp_cirrus.c at commit 76e909577bdf4629f11e473539b446a948fef830 and
- * is deliberately limited to the verified Core-Graph path at 640x480x8.
+ * is deliberately limited to the Core-Graph path at 640x480x8/24.
  * Port I/O and the linear framebuffer are injected by the embedder so
  * the driver stays compiler and host neutral.
  */
@@ -23,9 +23,8 @@
 
 #define NOCT_BEUI_CIRRUS_WIDTH 640U
 #define NOCT_BEUI_CIRRUS_HEIGHT 480U
-#define NOCT_BEUI_CIRRUS_STRIDE 640U
-#define NOCT_BEUI_CIRRUS_VISIBLE_BYTES \
-	(NOCT_BEUI_CIRRUS_STRIDE * NOCT_BEUI_CIRRUS_HEIGHT)
+#define NOCT_BEUI_CIRRUS_STRIDE_8 NOCT_BEUI_CIRRUS_WIDTH
+#define NOCT_BEUI_CIRRUS_STRIDE_24 (NOCT_BEUI_CIRRUS_WIDTH * 3U)
 
 struct noct_beui_pc98_cirrus {
 	void *io_context;
@@ -36,6 +35,7 @@ struct noct_beui_pc98_cirrus {
 	uint8_t saved_window;
 	uint8_t saved_linear;
 	uint8_t saved_relay;
+	uint8_t bits_per_pixel;
 	uint8_t active;
 };
 

@@ -31,6 +31,8 @@ struct noct_beui_rect {
 };
 
 struct noct_beui_display_info {
+	/* Input hint to enter(); zero means the backend's default depth. */
+	unsigned preferred_bits_per_pixel;
 	unsigned width;
 	unsigned height;
 	unsigned bits_per_pixel;
@@ -199,6 +201,7 @@ enum noct_beui_key_code {
 /* Core lifecycle and drawing; see src/api/beui-core.c. */
 int noct_beui_bind(const struct noct_beui_hal *hal);
 int noct_beui_init(void);
+int noct_beui_init_with_hint(unsigned preferred_bits_per_pixel);
 void noct_beui_close(void);
 void noct_beui_cleanup(void);
 int noct_beui_is_open(void);
@@ -210,6 +213,11 @@ int noct_beui_pattern_fill(const struct noct_beui_rect *rect, uint32_t color,
 			    uint64_t pattern);
 int noct_beui_draw_image(unsigned x, unsigned y,
 			  const struct noct_beui_image *image);
+int noct_beui_draw_image_region(const struct noct_beui_image *image,
+				 unsigned source_x, unsigned source_y,
+				 unsigned width, unsigned height,
+				 unsigned destination_x,
+				 unsigned destination_y);
 int noct_beui_draw_image_pattern(unsigned x, unsigned y,
 				  const struct noct_beui_image *image,
 				  uint64_t pattern);

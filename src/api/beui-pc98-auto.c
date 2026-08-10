@@ -5,8 +5,9 @@
  * Copyright (c) 2025, 2026, Awe Morris
  *
  * BeUI PC-98 display selection, imported from Boots.  Probing prefers
- * the Core-Graph / Cirrus board at 640x480x8 and falls back to the
- * always-present GDC at 640x400x4, so one HAL covers both machines.
+ * the Core-Graph / Cirrus board at 640x480x8 by default (or 24bpp when
+ * hinted) and falls back to the always-present GDC at 640x400x4, so one
+ * HAL covers both machines.
  */
 
 #include "beui-pc98-auto.h"

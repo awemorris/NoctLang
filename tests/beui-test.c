@@ -35,13 +35,20 @@ struct mock_hal {
 	int pointer_result;
 	int poll_events_result;
 	unsigned enter_count;
+	unsigned preferred_bits_per_pixel;
 	unsigned leave_count;
 	unsigned pointer_start_count;
 	unsigned pointer_stop_count;
 	unsigned pointer_poll_count;
 	unsigned poll_events_count;
 	unsigned flush_count;
+	unsigned draw_image_count;
 	unsigned drain_count;
+	unsigned image_x;
+	unsigned image_y;
+	unsigned image_width;
+	unsigned image_height;
+	const uint8_t *image_pixels;
 	unsigned pointer_x;
 	unsigned pointer_y;
 	unsigned pointer_buttons;
@@ -56,6 +63,7 @@ display_enter(void *context, struct noct_beui_display_info *info)
 	struct mock_hal *mock = context;
 
 	mock->enter_count++;
+	mock->preferred_bits_per_pixel = info->preferred_bits_per_pixel;
 	if (!mock->enter_result)
 		return 0;
 	info->width = 640;
@@ -89,6 +97,21 @@ display_flush(void *context, const struct noct_beui_rect *rectangles,
 	if (rectangles != NULL || rectangle_count != 0)
 		return 0;
 	mock->flush_count++;
+	return 1;
+}
+
+static int
+display_draw_image(void *context, unsigned x, unsigned y,
+		   const struct noct_beui_image *image)
+{
+	struct mock_hal *mock = context;
+
+	mock->draw_image_count++;
+	mock->image_x = x;
+	mock->image_y = y;
+	mock->image_width = image->width;
+	mock->image_height = image->height;
+	mock->image_pixels = image->pixels;
 	return 1;
 }
 
@@ -145,6 +168,7 @@ make_hal(struct mock_hal *mock)
 	hal.display.context = mock;
 	hal.display.enter = display_enter;
 	hal.display.leave = display_leave;
+	hal.display.draw_image = display_draw_image;
 	hal.display.flush = display_flush;
 	hal.pointer.context = mock;
 	hal.pointer.start = pointer_start;
@@ -195,6 +219,12 @@ test_lifecycle(void)
 	CHECK(!noct_beui_is_open());
 	CHECK(mock.pointer_stop_count == 1);
 	CHECK(mock.leave_count == 1);
+	CHECK(noct_beui_init_with_hint(24));
+	CHECK(mock.preferred_bits_per_pixel == 24);
+	CHECK(noct_beui_get_display_info(&info));
+	CHECK(info.preferred_bits_per_pixel == 24);
+	noct_beui_close();
+	CHECK(mock.enter_count == 2 && mock.leave_count == 2);
 
 	/* The clock works with the display closed, and sleep polls it until
 	 * the requested time has elapsed. */
@@ -299,6 +329,45 @@ test_close_reporting(void)
 	noct_beui_close();
 	CHECK(noct_beui_init());
 	CHECK(noct_beui_poll());
+	noct_beui_cleanup();
+}
+
+/* --------------------------------------------------------------- */
+/* Image drawing.                                                   */
+
+static void
+test_image_drawing(void)
+{
+	struct mock_hal mock;
+	struct noct_beui_hal hal;
+	uint8_t pixels[5U * 4U * 3U];
+	struct noct_beui_image image;
+
+	memset(&mock, 0, sizeof(mock));
+	mock.enter_result = 1;
+	mock.pointer_result = 1;
+	hal = make_hal(&mock);
+	CHECK(noct_beui_bind(&hal));
+	CHECK(noct_beui_init());
+
+	memset(&image, 0, sizeof(image));
+	image.format = NOCT_BEUI_IMAGE_RGB24;
+	image.width = 5;
+	image.height = 4;
+	image.stride = 5U * 3U;
+	image.pixels = pixels;
+	CHECK(noct_beui_draw_image_region(&image, 2, 1, 3, 2, 10, 20));
+	CHECK(mock.draw_image_count == 1);
+	CHECK(mock.image_x == 10 && mock.image_y == 20);
+	CHECK(mock.image_width == 3 && mock.image_height == 2);
+	CHECK(mock.image_pixels == pixels + 1U * 15U + 2U * 3U);
+
+	/* Empty, source-overflow, and destination-overflow rectangles are
+	 * rejected before the backend sees them. */
+	CHECK(!noct_beui_draw_image_region(&image, 0, 0, 0, 1, 0, 0));
+	CHECK(!noct_beui_draw_image_region(&image, 4, 0, 2, 1, 0, 0));
+	CHECK(!noct_beui_draw_image_region(&image, 0, 0, 1, 1, 640, 0));
+	CHECK(mock.draw_image_count == 1);
 	noct_beui_cleanup();
 }
 
@@ -497,6 +566,7 @@ main(void)
 	test_lifecycle();
 	test_pointer();
 	test_close_reporting();
+	test_image_drawing();
 	test_indexed(1);
 	test_indexed(4);
 	test_indexed(8);

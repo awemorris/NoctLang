@@ -18,6 +18,7 @@
 #include <string.h>
 
 static bool cfunc_BeUI_init(NoctEnv *env);
+static bool cfunc_BeUI_initWithHint(NoctEnv *env);
 static bool cfunc_BeUI_close(NoctEnv *env);
 static bool cfunc_BeUI_isOpen(NoctEnv *env);
 static bool cfunc_BeUI_getWidth(NoctEnv *env);
@@ -37,7 +38,10 @@ static bool cfunc_BeUI_getPointerX(NoctEnv *env);
 static bool cfunc_BeUI_getPointerY(NoctEnv *env);
 static bool cfunc_BeUI_getPointerButtons(NoctEnv *env);
 static bool cfunc_BeUI_loadImage(NoctEnv *env);
+static bool cfunc_BeUI_getImageWidth(NoctEnv *env);
+static bool cfunc_BeUI_getImageHeight(NoctEnv *env);
 static bool cfunc_BeUI_drawImage(NoctEnv *env);
+static bool cfunc_BeUI_drawImageRegion(NoctEnv *env);
 static bool cfunc_BeUI_drawImagePattern(NoctEnv *env);
 static bool cfunc_BeUI_destroyImage(NoctEnv *env);
 
@@ -51,6 +55,8 @@ struct beui_ffi_item {
 
 static struct beui_ffi_item beui_ffi_items[] = {
 	{"BeUI.init", "init", 0, {NULL}, cfunc_BeUI_init},
+	{"BeUI.initWithHint", "initWithHint", 1, {"bitsPerPixel"},
+	 cfunc_BeUI_initWithHint},
 	{"BeUI.close", "close", 0, {NULL}, cfunc_BeUI_close},
 	{"BeUI.isOpen", "isOpen", 0, {NULL}, cfunc_BeUI_isOpen},
 	{"BeUI.getWidth", "getWidth", 0, {NULL}, cfunc_BeUI_getWidth},
@@ -79,8 +85,15 @@ static struct beui_ffi_item beui_ffi_items[] = {
 	{"BeUI.getPointerButtons", "getPointerButtons", 0, {NULL},
 	 cfunc_BeUI_getPointerButtons},
 	{"BeUI.loadImage", "loadImage", 1, {"bytes"}, cfunc_BeUI_loadImage},
+	{"BeUI.getImageWidth", "getImageWidth", 1, {"image"},
+	 cfunc_BeUI_getImageWidth},
+	{"BeUI.getImageHeight", "getImageHeight", 1, {"image"},
+	 cfunc_BeUI_getImageHeight},
 	{"BeUI.drawImage", "drawImage", 3, {"image", "x", "y"},
 	 cfunc_BeUI_drawImage},
+	{"BeUI.drawImageRegion", "drawImageRegion", 7,
+	 {"image", "sourceX", "sourceY", "width", "height", "x", "y"},
+	 cfunc_BeUI_drawImageRegion},
 	{"BeUI.drawImagePattern", "drawImagePattern", 4,
 	 {"image", "x", "y", "pattern"}, cfunc_BeUI_drawImagePattern},
 	{"BeUI.destroyImage", "destroyImage", 1, {"image"},
@@ -166,6 +179,21 @@ static bool
 cfunc_BeUI_init(NoctEnv *env)
 {
 	return return_int(env, noct_beui_init() ? 1 : 0);
+}
+
+static bool
+cfunc_BeUI_initWithHint(NoctEnv *env)
+{
+	int bits_per_pixel;
+
+	if (!get_int_arg(env, 0, &bits_per_pixel) ||
+	    (bits_per_pixel != 8 && bits_per_pixel != 24)) {
+		noct_error(env,
+			   "BeUI.initWithHint expects 8 or 24 bits per pixel.");
+		return false;
+	}
+	return return_int(env,
+		noct_beui_init_with_hint((unsigned)bits_per_pixel) ? 1 : 0);
 }
 
 static bool
@@ -508,6 +536,36 @@ cleanup:
 }
 
 static bool
+cfunc_BeUI_getImageWidth(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle;
+
+	if (!get_int_arg(env, 0, &handle) ||
+	    (image = noct_beui_image_get(handle)) == NULL) {
+		noct_error(env,
+			   "BeUI.getImageWidth received an invalid handle.");
+		return false;
+	}
+	return return_int(env, (int)image->width);
+}
+
+static bool
+cfunc_BeUI_getImageHeight(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle;
+
+	if (!get_int_arg(env, 0, &handle) ||
+	    (image = noct_beui_image_get(handle)) == NULL) {
+		noct_error(env,
+			   "BeUI.getImageHeight received an invalid handle.");
+		return false;
+	}
+	return return_int(env, (int)image->height);
+}
+
+static bool
 cfunc_BeUI_drawImage(NoctEnv *env)
 {
 	const struct noct_beui_image *image;
@@ -518,6 +576,30 @@ cfunc_BeUI_drawImage(NoctEnv *env)
 	    (image = noct_beui_image_get(handle)) == NULL ||
 	    !noct_beui_draw_image((unsigned)x, (unsigned)y, image)) {
 		noct_error(env, "BeUI.drawImage failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_drawImageRegion(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle, source_x, source_y, width, height, x, y;
+
+	if (!get_int_arg(env, 0, &handle) ||
+	    !get_int_arg(env, 1, &source_x) ||
+	    !get_int_arg(env, 2, &source_y) ||
+	    !get_int_arg(env, 3, &width) ||
+	    !get_int_arg(env, 4, &height) || !get_int_arg(env, 5, &x) ||
+	    !get_int_arg(env, 6, &y) || source_x < 0 || source_y < 0 ||
+	    width <= 0 || height <= 0 || x < 0 || y < 0 ||
+	    (image = noct_beui_image_get(handle)) == NULL ||
+	    !noct_beui_draw_image_region(image, (unsigned)source_x,
+					 (unsigned)source_y, (unsigned)width,
+					 (unsigned)height, (unsigned)x,
+					 (unsigned)y)) {
+		noct_error(env, "BeUI.drawImageRegion failed.");
 		return false;
 	}
 	return return_int(env, 1);
