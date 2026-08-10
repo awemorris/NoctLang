@@ -3,11 +3,8 @@
 //
 // Run it and browse http://127.0.0.1:8080/.
 //
-//     cat framework.noct app.noct > server.noct && noct server.noct
-//
-// The framework is a plain Noct source file, so concatenating the two
-// is all the "include" this needs.
-//
+
+require framework;
 
 func main() {
     webappInit();
