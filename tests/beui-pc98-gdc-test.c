@@ -17,6 +17,7 @@
 struct mock_gdc {
 	uint8_t planes[4][NOCT_BEUI_GDC_PLANE_BYTES];
 	unsigned reset_count;
+	unsigned reset_saw_clear;
 	unsigned stop_count;
 	uint8_t commands[8];
 	unsigned command_count;
@@ -26,7 +27,15 @@ struct mock_gdc {
 static int
 display_reset(void *context)
 {
-	((struct mock_gdc *)context)->reset_count++;
+	struct mock_gdc *mock = context;
+	unsigned plane;
+
+	mock->reset_count++;
+	mock->reset_saw_clear = 1;
+	for (plane = 0; plane < 4; plane++)
+		if (mock->planes[plane][0] != 0 ||
+		    mock->planes[plane][NOCT_BEUI_GDC_PLANE_BYTES - 1U] != 0)
+			mock->reset_saw_clear = 0;
 	return 1;
 }
 
@@ -79,11 +88,13 @@ main(void)
 	memset(mock.commands, 0, sizeof(mock.commands));
 	mock.command_count = 0;
 	mock.reset_count = 0;
+	mock.reset_saw_clear = 0;
 	mock.stop_count = 0;
 	mock.mode_count = 0;
 	if (!noct_beui_pc98_gdc_make_hal(&hal, &backend) ||
 	    !noct_beui_bind(&hal) || !noct_beui_init() ||
-	    mock.reset_count != 1 || mock.mode_count != 1 ||
+	    mock.reset_count != 1 || mock.reset_saw_clear != 1 ||
+	    mock.mode_count != 1 ||
 	    mock.command_count != 1 || mock.commands[0] != 0x0c ||
 	    !noct_beui_fill(&rectangle, 0x00ff0000U))
 		return 1;

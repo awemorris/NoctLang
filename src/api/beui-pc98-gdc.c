@@ -121,12 +121,14 @@ gdc_enter(void *context, struct noct_beui_display_info *info)
 	if (backend == NULL || info == NULL || backend->display_reset == NULL ||
 	    backend->port_in8 == NULL || backend->port_out8 == NULL ||
 	    backend->planes[0] == NULL || backend->planes[1] == NULL ||
-	    backend->planes[2] == NULL || backend->planes[3] == NULL ||
+	    backend->planes[2] == NULL || backend->planes[3] == NULL)
+		return 0;
+	/* Clear every graphics plane before starting the slave GDC.  Otherwise
+	 * firmware VRAM is briefly visible between GDC_START and this clear. */
+	if (!noct_beui_pc98_gdc_clear_graphics(backend) ||
 	    !backend->display_reset(backend->bios_context))
 		return 0;
-	/* Select 16-color GDC access, clear the visible planes, then hide text. */
-	backend->port_out8(backend->io_context, 0x6a, 0x01);
-	clear_planes(backend);
+	/* Hide text only after the clean graphics display is running. */
 	if (!gdc_command(backend, 0x0c)) {
 		(void)gdc_command(backend, 0x0d);
 		return 0;
