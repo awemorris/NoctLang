@@ -28,6 +28,9 @@ struct mock_io {
 	uint8_t crtc[256];
 	uint8_t misc;
 	uint8_t sleep;
+	uint8_t *framebuffer;
+	size_t clear_bytes;
+	unsigned clear_before_relay_count;
 };
 
 static uint8_t
@@ -65,6 +68,14 @@ mock_out8(void *context, uint16_t port, uint8_t value)
 		io->wab_index = value;
 		break;
 	case 0x0fab:
+		if (io->wab_index == 3 && (value & 0x02) != 0 &&
+		    io->framebuffer != NULL && io->clear_bytes != 0) {
+			size_t i;
+
+			for (i = 0; i < io->clear_bytes; i++)
+				assert(io->framebuffer[i] == 0);
+			io->clear_before_relay_count++;
+		}
 		if (io->wab_index != 0 && io->wab_index < sizeof(io->wab))
 			io->wab[io->wab_index] = value;
 		break;
@@ -123,6 +134,8 @@ main(void)
 	io.sleep = saved_sleep;
 	io.crtc[0x27] = 0xa0;
 	io.misc = 1;
+	io.framebuffer = framebuffer;
+	io.clear_bytes = 640 * 480;
 	noct_beui_pc98_cirrus_default(&backend, mock_in8, mock_out8, &io,
 				       framebuffer);
 	assert(noct_beui_pc98_cirrus_make_hal(&hal, &backend));
@@ -134,6 +147,7 @@ main(void)
 	assert(info.bits_per_pixel == 8 && info.stride == 640);
 	assert(io.seq[0x07] == 0x11 && io.crtc[0x13] == 0x50);
 	assert(framebuffer[0] == 0 && framebuffer[640 * 480 - 1] == 0);
+	assert(io.clear_before_relay_count == 1);
 	assert(hal.display.fill(hal.display.context, &rect, 0x00ff0000));
 	assert(framebuffer[9 * 640 + 7] == 0xe0);
 	assert(framebuffer[10 * 640 + 9] == 0xe0);
@@ -144,11 +158,13 @@ main(void)
 	memset(framebuffer, 0x55, sizeof(framebuffer));
 	memset(&info, 0, sizeof(info));
 	info.preferred_bits_per_pixel = 24;
+	io.clear_bytes = 640 * 480 * 3;
 	assert(hal.display.enter(hal.display.context, &info));
 	assert(info.width == 640 && info.height == 480);
 	assert(info.bits_per_pixel == 24 && info.stride == 640 * 3);
 	assert(io.seq[0x07] == 0x15 && io.crtc[0x13] == 0xf0);
 	assert(framebuffer[0] == 0 && framebuffer[640 * 480 * 3 - 1] == 0);
+	assert(io.clear_before_relay_count == 2);
 	assert(hal.display.fill(hal.display.context, &rect, 0x00ff0000));
 	assert(framebuffer[(9 * 640 + 7) * 3] == 0x00);
 	assert(framebuffer[(9 * 640 + 7) * 3 + 1] == 0x00);

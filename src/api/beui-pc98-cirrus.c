@@ -318,10 +318,13 @@ cirrus_enter(void *context, struct noct_beui_display_info *info)
 	wab_write(backend, WAB_REG_LINEAR, 0xf0U);
 	if (wab_read(backend, WAB_REG_LINEAR) != 0xf0U)
 		goto fail;
-	coregraph_gate_enter(backend);
 	coregraph_mode_640x480(backend, bits_per_pixel);
+	/* Keep the motherboard GDC on the monitor while Cirrus is configured
+	 * and its visible framebuffer is erased.  WAB_REG_RELAY bit 1 in
+	 * coregraph_gate_enter() is the actual GDC-to-Cirrus scanout switch. */
 	for (i = 0; i < visible_bytes; i++)
 		backend->framebuffer[i] = 0;
+	coregraph_gate_enter(backend);
 	seq_write(backend, 0x01U, 0x01U);
 	backend->bits_per_pixel = (uint8_t)bits_per_pixel;
 	backend->active = 1;
