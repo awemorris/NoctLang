@@ -1309,7 +1309,9 @@ static const rt_typed_helper_t rt_vector_op_helper[] = {
         ex_vaddf32x4_helper,    /* OP_VADDF32X4   */
         ex_vsubf32x4_helper,    /* OP_VSUBF32X4   */
         ex_vmulf32x4_helper,    /* OP_VMULF32X4   */
-        ex_vdivf32x4_helper     /* OP_VDIVF32X4   */
+        ex_vdivf32x4_helper,    /* OP_VDIVF32X4   */
+        ex_vcvti32f32x4_helper, /* OP_VCVTI32F32X4 */
+        ex_vcvtf32i32x4_helper  /* OP_VCVTF32I32X4 */
 };
 
 /* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
@@ -1357,6 +1359,8 @@ rt_visit_vector_op(
                 GET_U8(&c);
                 break;
         case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 /* vd(imm8), vs(imm8) */
                 GET_U8(&a);
                 GET_U8(&b);
@@ -1688,6 +1692,8 @@ rt_visit_op(
         case OP_VSUBF32X4:
         case OP_VMULF32X4:
         case OP_VDIVF32X4:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 if (!rt_visit_vector_op(env, func, pc, op))
                         return false;
                 break;

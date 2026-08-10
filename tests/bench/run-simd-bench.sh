@@ -17,7 +17,7 @@ NOCT=${NOCT:-"$repo_dir/build-static/noct"}
 RUNS=${RUNS:-5}
 WARMUPS=${WARMUPS:-1}
 CPU=${CPU:-}
-MODES=${MODES:-"l2-nosimd l2-vscalar l2-sse2 l2-sse41"}
+MODES=${MODES:-"l2-nosimd l2-vscalar l2-sse2 l2-sse3 l2-sse41"}
 
 case "$RUNS" in
 *[!0-9]*|'') echo "RUNS must be a positive odd integer" >&2; exit 2 ;;
@@ -71,8 +71,20 @@ run_mode()
         invoke env NOCT_JIT_SIMD_MAX=sse2 "$NOCT" --force-jit \
             --optimize-level=2 "$file" >"$output"
         ;;
+    l2-sse3)
+        invoke env NOCT_JIT_SIMD_MAX=sse3 "$NOCT" --force-jit \
+            --optimize-level=2 "$file" >"$output"
+        ;;
     l2-sse41)
         invoke env NOCT_JIT_SIMD_MAX=sse41 "$NOCT" --force-jit \
+            --optimize-level=2 "$file" >"$output"
+        ;;
+    l2-neon)
+        invoke env NOCT_JIT_SIMD_MAX=neon "$NOCT" --force-jit \
+            --optimize-level=2 "$file" >"$output"
+        ;;
+    l2-altivec)
+        invoke env NOCT_JIT_SIMD_MAX=altivec "$NOCT" --force-jit \
             --optimize-level=2 "$file" >"$output"
         ;;
     *)
@@ -89,6 +101,9 @@ now_ns()
 
 cpu_name=$(sed -n 's/^model name[[:space:]]*:[[:space:]]*//p' \
     /proc/cpuinfo 2>/dev/null | head -1 || true)
+if [ -z "$cpu_name" ] && command -v sysctl >/dev/null 2>&1; then
+    cpu_name=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)
+fi
 echo "CPU: ${cpu_name:-unknown}" >&2
 echo "NOCT: $NOCT" >&2
 echo "RUNS=$RUNS WARMUPS=$WARMUPS CPU=${CPU:-unbound}" >&2

@@ -15,7 +15,7 @@
 NOCT=${NOCT:-../build-static/noct}
 NOCT_META=${NOCT_META:-$NOCT}
 
-MUST_VECTORIZE="blend remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
+MUST_VECTORIZE="blend blend2 mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
 MUST_NOT="overlap_reject u8_reject counter_value carried if_reject budget"
 
 echo 'SIMD tests:'
@@ -37,6 +37,21 @@ for tc in simd/*.noct; do
         done
     done
     echo "PASS $tc"
+done
+
+# The x86 tiers deliberately use the SSE2 instruction subset for the SSE3
+# ceiling; SSE4.1 only shortens operations such as i32 multiply/extract.
+# On non-x86 backends these ceilings safely reduce to the scalar tier.
+for tier in scalar sse2 sse3 sse41; do
+    NOCT_JIT_SIMD_MAX=$tier $NOCT --force-jit --optimize-level=2 \
+        simd/blend2.noct > out 2>&1
+    if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
+        echo "FAIL SIMD ceiling $tier"
+        diff simd/blend2.noct.out out | head -5
+        FAILED=1
+    else
+        echo "PASS SIMD ceiling $tier"
+    fi
 done
 
 for name in $MUST_VECTORIZE; do

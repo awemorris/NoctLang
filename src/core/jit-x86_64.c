@@ -21,6 +21,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
 
 /*
  * ABI Check (MS ABI or SYSV ABI)
@@ -2425,6 +2428,7 @@ jit_visit_typed_op(
 static uint32_t
 jit_detect_simd_caps(void)
 {
+#if defined(__GNUC__)
         uint32_t a, b, c, d;
 	uint32_t caps = 0;
         __asm__ __volatile__("cpuid"
@@ -2432,9 +2436,25 @@ jit_detect_simd_caps(void)
                              : "a"(1), "c"(0));
 	if ((d & (1u << 26)) != 0)
 		caps |= JIT_SIMD_CAP_SSE2;
+	if ((c & (1u << 0)) != 0)
+		caps |= JIT_SIMD_CAP_SSE3;
 	if ((c & (1u << 19)) != 0)
 		caps |= JIT_SIMD_CAP_SSE41;
 	return caps;
+#elif defined(_MSC_VER)
+	int regs[4];
+	uint32_t caps = 0;
+	__cpuidex(regs, 1, 0);
+	if (((uint32_t)regs[3] & (1u << 26)) != 0)
+		caps |= JIT_SIMD_CAP_SSE2;
+	if (((uint32_t)regs[2] & (1u << 0)) != 0)
+		caps |= JIT_SIMD_CAP_SSE3;
+	if (((uint32_t)regs[2] & (1u << 19)) != 0)
+		caps |= JIT_SIMD_CAP_SSE41;
+	return caps;
+#else
+	return 0;
+#endif
 }
 
 /* Direct scalar lowering for the forced-scalar and Win64 tiers. */
@@ -2515,6 +2535,24 @@ jit_visit_vector_scalar_op(
                         ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
                 }
                 return true;
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
+		for (lane = 0; lane < 4; lane++) {
+			uint32_t s = vbase + (uint32_t)src1 * 16 +
+				(uint32_t)lane * 4;
+			uint32_t d = vbase + (uint32_t)dst * 16 +
+				(uint32_t)lane * 4;
+			if (op == OP_VCVTI32F32X4) {
+				/* cvtsi2ssl s(%r14), xmm0; movss xmm0,d(%r14) */
+				IB(0xf3); IB(0x41); IB(0x0f); IB(0x2a); IB(0x86); ID(s);
+				IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
+			} else {
+				/* cvttss2si s(%r14),eax; mov eax,d(%r14) */
+				IB(0xf3); IB(0x41); IB(0x0f); IB(0x2c); IB(0x86); ID(s);
+				IB(0x41); IB(0x89); IB(0x86); ID(d);
+			}
+		}
+		return true;
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
         case OP_VMULI32X4:
@@ -2619,6 +2657,8 @@ jit_visit_vector_op(
                 CONSUME_IMM8(c);
                 break;
         case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 CONSUME_IMM8(a);
                 CONSUME_IMM8(b);
                 c = 0;
@@ -2702,6 +2742,12 @@ jit_visit_vector_op(
                         }
                 }
                 break;
+	case OP_VCVTI32F32X4:
+		ASM { /* cvtdq2ps xmmB,xmmA */ IB(0x0f); IB(0x5b); IB((uint8_t)(0xc0 | (a << 3) | b)); }
+		break;
+	case OP_VCVTF32I32X4:
+		ASM { /* cvttps2dq xmmB,xmmA */ IB(0xf3); IB(0x0f); IB(0x5b); IB((uint8_t)(0xc0 | (a << 3) | b)); }
+		break;
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
         case OP_VMULI32X4:
@@ -3221,6 +3267,8 @@ jit_visit_bytecode(
                 case OP_VSUBF32X4:
                 case OP_VMULF32X4:
                 case OP_VDIVF32X4:
+		case OP_VCVTI32F32X4:
+		case OP_VCVTF32I32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

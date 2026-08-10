@@ -2879,6 +2879,26 @@ jit_visit_vector_scalar_op(
                                   (uint32_t)dst * 16 + (uint32_t)lane * 4);
                 }
                 return true;
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
+		for (lane = 0; lane < 4; lane++) {
+			uint32_t s = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
+			uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+			if (op == OP_VCVTI32F32X4) {
+				LDR_W_IMM(REG_X3, REG_X5, s);
+				if (!jit_put_word(ctx, 0x1e220000 | (3u << 5)) ||
+				    !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
+						      (REG_X5 << 5)))
+					return false;
+			} else {
+				if (!jit_put_word(ctx, 0xbd400000 | ((s / 4) << 10) |
+						      (REG_X5 << 5)) ||
+				    !jit_put_word(ctx, 0x1e380003))
+					return false;
+				STR_W_IMM(REG_X3, REG_X5, d);
+			}
+		}
+		return true;
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
         case OP_VMULI32X4:
@@ -3010,6 +3030,8 @@ jit_visit_vector_op(
                 CONSUME_IMM8(c);
                 break;
         case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 CONSUME_IMM8(a);
                 CONSUME_IMM8(b);
                 c = 0;
@@ -3101,6 +3123,16 @@ jit_visit_vector_op(
                                 return false;
                 }
                 break;
+	case OP_VCVTI32F32X4:
+		if (!jit_put_word(ctx, 0x4e21d800 |
+				  ((uint32_t)b << 5) | (uint32_t)a))
+			return false;
+		break;
+	case OP_VCVTF32I32X4:
+		if (!jit_put_word(ctx, 0x4ea1b800 |
+				  ((uint32_t)b << 5) | (uint32_t)a))
+			return false;
+		break;
         case OP_VADDI32X4:
                 /* add vA.4s, vB.4s, vC.4s */
                 if (!jit_put_word(ctx, 0x4ea08400 | ((uint32_t)c << 16) |
@@ -3555,6 +3587,8 @@ jit_visit_bytecode(
                 case OP_VSUBF32X4:
                 case OP_VMULF32X4:
                 case OP_VDIVF32X4:
+		case OP_VCVTI32F32X4:
+		case OP_VCVTF32I32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

@@ -30,9 +30,10 @@ level.  Local commits are allowed for this work; **do not push**.
 - D-JSP4. Every SIMD-capable backend has a test-only maximum-tier override.
   It may lower the detected tier but never raise it.  This makes scalar and
   old-CPU paths testable on new machines.
-- D-JSP5. x86 tiers are `SCALAR`, `SSE2`, and `SSE41`.  The current fast path
+- D-JSP5. x86 tiers are `SCALAR`, `SSE2`, `SSE3`, and `SSE41`.  The current fast path
   uses SSE4.1, not SSE4.2.  SSE3 adds no instruction needed by the i32x4
-  opcode set; an SSE3-only machine therefore uses the SSE2 tier.
+  opcode set; an SSE3-only machine therefore emits the validated SSE2
+  subset while remaining a separately selectable/testable ceiling.
 - D-JSP6. Win64 uses the direct scalar tier and touches only volatile GPRs and
   xmm0, so it does not hold vector state in nonvolatile xmm6/xmm7 and needs no
   XMM prologue save.  SysV x86_64 and all x86-32 ABIs supported here treat
@@ -82,14 +83,14 @@ a C data race.  Per-build detection is cheap and deterministic.
 
 | Backend | Capability tiers | Detection |
 |---|---|---|
-| x86 / x86_64 | scalar, SSE2, SSE4.1 | CPUID leaf 1: EDX.26, ECX.19 |
+| x86 / x86_64 | scalar, SSE2, SSE3, SSE4.1 | CPUID leaf 1: EDX.26, ECX.0, ECX.19 |
 | ARMv7 | scalar, NEON | Linux `HWCAP_NEON`; conservative elsewhere |
 | ARM64 | scalar, ASIMD | ABI baseline; Linux may confirm `HWCAP_ASIMD` |
 | PPC32 / PPC64 | scalar, AltiVec | Linux `PPC_FEATURE_HAS_ALTIVEC` |
 | MIPS / RISC-V | direct scalar | no SIMD ISA in this phase |
 
 The override is read for each JIT build from `NOCT_JIT_SIMD_MAX`.  Accepted
-backend-relevant values are `scalar`, `sse2`,
+backend-relevant values are `scalar`, `sse2`, `sse3`,
 `sse41`, `neon`, and `altivec`.  A value cannot enable a feature missing from
 hardware.  `tests/run-simd.sh` launches separate processes for each tier.
 
@@ -148,6 +149,12 @@ scratch; x86-32 temporarily preserves two non-operand xmm0..7 registers in a
 No SSE3-specific sequence exists because SSE3 does not improve these two
 operations.  If SSE2 is absent, use the fully scalar tier.
 
+`VCVTI32F32X4` and `VCVTF32I32X4` implement immutable `Float.from(int)` and
+`Int.from(float)` calls inside vector loops.  x86 uses `cvtdq2ps` and
+`cvttps2dq`; the latter matches the scalar conversion's truncation toward
+zero.  The same bytecode remains portable through reference helpers and the
+direct scalar tiers.
+
 Win64 deliberately stays on the direct scalar tier.  It uses only volatile
 GPRs and xmm0 and therefore requires no XMM prologue/epilogue change.  A
 future register-mapped Win64 tier using xmm6..xmm15 must add symmetric
@@ -156,9 +163,12 @@ save/restore first.
 ## 6. ARM and PowerPC
 
 ARMv7 NEON uses q8..q15.  VLD1/VST1 handle the required unaligned accesses;
-integer arithmetic maps directly to NEON.  FP32 regions use direct scalar VFP
-because baseline ARMv7 NEON has no vector FP divide.  The complete direct
-scalar tier is selected without `HWCAP_NEON`.
+integer arithmetic and mixed i32/f32 conversion/add/subtract/multiply map
+directly to NEON.  Baseline ARMv7 NEON has no vector FP divide, so that opcode
+spills only its two operands to their canonical vector homes, performs four
+scalar VFP divides, and reloads the NEON destination.  This keeps constants
+and values coherent when integer and float opcodes are mixed.  The complete
+direct scalar tier is selected without `HWCAP_NEON`.
 
 ARM64 ASIMD remains the normal tier.  The new capability/override path exists
 so the scalar generator is tested and so nonstandard ports fail safely.
@@ -168,6 +178,17 @@ bitwise operations, and FP32 add/sub/multiply are native.  External
 load/store, splat/getlane, i32 multiply/shifts, and FP divide synchronize the
 register file and use direct scalar integer/FP instructions.  This works on
 baseline AltiVec, avoids Power8-only instructions, and is endian-neutral.
+
+An Apple M5 functional run passed the complete SIMD suite.  A short unpinned
+benchmark (three measured runs after one warmup) produced the following
+median values; these are a useful local trend, not a cross-machine score.
+
+| case | no SIMD | vector scalar | ASIMD | ASIMD vs no SIMD | ASIMD vs vector scalar |
+|---|---:|---:|---:|---:|---:|
+| alpha blend | 438.384 ms | 301.470 ms | 60.933 ms | 7.19x | 4.95x |
+| f32 affine | 744.421 ms | 163.875 ms | 112.814 ms | 6.60x | 1.45x |
+| u32 inplace | 101.454 ms | 53.100 ms | 49.304 ms | 2.06x | 1.08x |
+| u32 3-buffer | 141.853 ms | 65.056 ms | 49.306 ms | 2.88x | 1.32x |
 
 ## 7. Long-branch lowering
 
@@ -206,7 +227,8 @@ Steps 1–11 are implemented.  QEMU-user validation covers all ten JIT targets;
 forced scalar and lower feature tiers are tested separately.  The selected
 QEMU CPU models advertise and execute ARM NEON/ASIMD and PowerPC AltiVec, so
 this is sufficient for functional validation.  The project owner's M5 Mac
-and POWER8 machines remain useful only for meaningful performance numbers.
+has also passed the functional suite and supplied the sample above; POWER8
+remains useful only for meaningful AltiVec performance numbers.
 
 Each gate is committed locally only after `git diff --check`, relevant native
 suites, all available cross builds, and forced lower-tier output comparison.

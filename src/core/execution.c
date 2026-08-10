@@ -2965,9 +2965,12 @@ noct_ex_checktype_helper(
 	struct rt_value *val;
 	const char *type_name;
 	int packed_type;
+	bool is_return;
 	bool restricted;
 
 	val = &env->frame->tmpvar[slot];
+	is_return = (value_type & TYPECHECK_RETURN_FLAG) != 0;
+	value_type &= ~TYPECHECK_RETURN_FLAG;
 	packed_type = -1;
 	restricted = false;
 	if (value_type >= TYPECHECK_PACKED_BASE &&
@@ -2999,7 +3002,9 @@ noct_ex_checktype_helper(
 			return true;
 		type_name = restricted ? rpacked_name[packed_type] :
 			packed_name[packed_type];
-		rt_error(env, N_TR("%s(): argument type mismatch (expected %s)."),
+		rt_error(env, is_return ?
+			 N_TR("%s(): return type mismatch (expected %s).") :
+			 N_TR("%s(): argument type mismatch (expected %s)."),
 			 env->frame->func != NULL ? env->frame->func->name : "?",
 			 type_name);
 		return false;
@@ -3010,9 +3015,11 @@ noct_ex_checktype_helper(
 	/* Allow harmless widenings: int literals are int-tagged and
 	   floating literals are float-tagged, so a long/double annotation
 	   must accept them. */
-	if (value_type == NOCT_VALUE_LONG && val->type == NOCT_VALUE_INT)
+	if (!is_return && value_type == NOCT_VALUE_LONG &&
+	    val->type == NOCT_VALUE_INT)
 		return true;
-	if (value_type == NOCT_VALUE_DOUBLE && val->type == NOCT_VALUE_FLOAT)
+	if (!is_return && value_type == NOCT_VALUE_DOUBLE &&
+	    val->type == NOCT_VALUE_FLOAT)
 		return true;
 
 	switch (value_type) {
@@ -3028,7 +3035,9 @@ noct_ex_checktype_helper(
 	default:		type_name = "unknown";	break;
 	}
 
-	rt_error(env, N_TR("%s(): argument type mismatch (expected %s)."),
+	rt_error(env, is_return ?
+		 N_TR("%s(): return type mismatch (expected %s).") :
+		 N_TR("%s(): argument type mismatch (expected %s)."),
 		 env->frame->func != NULL ? env->frame->func->name : "?",
 		 type_name);
 	return false;
@@ -3542,3 +3551,33 @@ RT_VALF(noct_ex_vmulf32x4_helper, x.f[k] * y.f[k])
 RT_VALF(noct_ex_vdivf32x4_helper, x.f[k] / y.f[k])
 
 #undef RT_VALF
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcvti32f32x4_helper(NoctEnv *env, int vd, int va, int unused)
+{
+	union rt_vlanes x;
+	int k;
+	UNUSED_PARAMETER(unused);
+	memcpy(&x, env->vreg[va], 16);
+	for (k = 0; k < 4; k++)
+		x.f[k] = (float)x.i[k];
+	memcpy(env->vreg[vd], &x, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcvtf32i32x4_helper(NoctEnv *env, int vd, int va, int unused)
+{
+	union rt_vlanes x;
+	int k;
+	UNUSED_PARAMETER(unused);
+	memcpy(&x, env->vreg[va], 16);
+	for (k = 0; k < 4; k++)
+		x.i[k] = (int32_t)x.f[k];
+	memcpy(env->vreg[vd], &x, 16);
+	return true;
+}

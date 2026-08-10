@@ -15,6 +15,8 @@
 /* OP_CHECKTYPE imm8 encoding for element-specific packed annotations. */
 #define TYPECHECK_PACKED_BASE	16
 #define TYPECHECK_RPACKED_BASE	32
+/* OP_CHECKTYPE performs an exact return check and uses return diagnostics. */
+#define TYPECHECK_RETURN_FLAG	128
 
 enum bytecode {
 	/* no operation */
@@ -196,10 +198,12 @@ enum bytecode {
 	OP_VSUBF32X4,		/* 0x65: 101: vd = va - vb */
 	OP_VMULF32X4,		/* 0x66: 102: vd = va * vb */
 	OP_VDIVF32X4,		/* 0x67: 103: vd = va / vb */
+	OP_VCVTI32F32X4,	/* 0x68: 104: vd.f = (float)va.i */
+	OP_VCVTF32I32X4,	/* 0x69: 105: vd.i = (int32_t)va.f */
 
 	/* ABCE float32 scalar remainder/reference operations. */
-	OP_PLOADF32,		/* 0x68: 104: dst(float) = base[ofs] */
-	OP_PSTOREF32,		/* 0x69: 105: base[ofs] = src(float) */
+	OP_PLOADF32,		/* 0x6a: 106: dst(float) = base[ofs] */
+	OP_PSTOREF32,		/* 0x6b: 107: base[ofs] = src(float) */
 };
 
 #endif

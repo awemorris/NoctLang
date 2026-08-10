@@ -2715,6 +2715,18 @@ jit_visit_vector_scalar_op(
 			STR(REG_R2, REG_R4, dst * 16 + lane * 4);
 		}
 		return true;
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
+		for (lane = 0; lane < 4; lane++) {
+			LDR(REG_R2, REG_R4, src1 * 16 + lane * 4);
+			if (!jit_put_word(ctx, 0xee002a10) ||
+			    !jit_put_word(ctx, op == OP_VCVTI32F32X4 ?
+						 0xeeb80ac0 : 0xeebd0ac0) ||
+			    !jit_put_word(ctx, 0xee102a10))
+				return false;
+			STR(REG_R2, REG_R4, dst * 16 + lane * 4);
+		}
+		return true;
 	case OP_VADDI32X4:
 	case OP_VSUBI32X4:
 	case OP_VMULI32X4:
@@ -2824,6 +2836,8 @@ jit_visit_vector_op(
                 CONSUME_IMM8(src2);
                 break;
         case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 CONSUME_IMM8(dst);
                 CONSUME_IMM8(src1);
                 src2 = 0;
@@ -2835,12 +2849,10 @@ jit_visit_vector_op(
                 break;
         }
 
-	if (op != OP_VMOV128)
-		ctx->vector_kind = op >= OP_VLOADF32X4 ? 2 : 1;
-	if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) != 0 &&
-	    ctx->vector_kind == 1) {
+	if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) != 0) {
 		switch (op) {
 		case OP_VLOADI32X4:
+		case OP_VLOADF32X4:
 		{
 			int base = src1 * (int)sizeof(struct rt_value);
 			int ofs = src2 * (int)sizeof(struct rt_value);
@@ -2858,6 +2870,7 @@ jit_visit_vector_op(
 			return true;
 		}
 		case OP_VSTOREI32X4:
+		case OP_VSTOREF32X4:
 		{
 			int base = dst * (int)sizeof(struct rt_value);
 			int ofs = src1 * (int)sizeof(struct rt_value);
@@ -2875,6 +2888,7 @@ jit_visit_vector_op(
 			return true;
 		}
 		case OP_VSPLATI32:
+		case OP_VSPLATF32:
 		{
 			uint32_t dd = (uint32_t)(16 + dst * 2);
 			int src = src1 * (int)sizeof(struct rt_value);
@@ -2886,6 +2900,7 @@ jit_visit_vector_op(
 			return true;
 		}
 		case OP_VGETLANEI32:
+		case OP_VGETLANEF32:
 		{
 			uint32_t dd = (uint32_t)(16 + src1 * 2 + src2 / 2);
 			int d = dst * (int)sizeof(struct rt_value);
@@ -2895,7 +2910,8 @@ jit_visit_vector_op(
 					  ((dd & 15u) << 16)))
 				return false;
 			ASM {
-				MOVW(REG_R2, NOCT_VALUE_INT);
+				MOVW(REG_R2, op == OP_VGETLANEF32 ?
+					     NOCT_VALUE_FLOAT : NOCT_VALUE_INT);
 				STR(REG_R2, REG_R12, d);
 				STR(REG_R3, REG_R12, d + 8);
 			}
@@ -2907,6 +2923,55 @@ jit_visit_vector_op(
 							 dst, src1, src1)))
 				return false;
 			return true;
+		case OP_VCVTI32F32X4:
+			return jit_put_word(ctx,
+				jit_neon_q2_imm(0xf3bb0640, dst, src1, 0));
+		case OP_VCVTF32I32X4:
+			return jit_put_word(ctx,
+				jit_neon_q2_imm(0xf3bb0740, dst, src1, 0));
+		case OP_VADDF32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf2000d40,
+						       dst, src1, src2));
+		case OP_VSUBF32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf2200d40,
+						       dst, src1, src2));
+		case OP_VMULF32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf3000d50,
+						       dst, src1, src2));
+		case OP_VDIVF32X4:
+		{
+			/* ARMv7 NEON has no vector divide.  Spill just the two
+			 * operands to their canonical homes, perform the four VFP
+			 * divides, then reload the native destination register. */
+			int source[2] = { src1, src2 };
+			int k;
+			uint32_t dd;
+			if (!jit_put_scalar_vreg_base(ctx, REG_R4))
+				return false;
+			for (k = 0; k < 2; k++) {
+				dd = (uint32_t)(16 + source[k] * 2);
+				ASM {
+					MOVW(REG_R2, (uint32_t)(source[k] * 16));
+					ADD(REG_R2, REG_R4, REG_R2);
+				}
+				if (!jit_put_word(ctx, 0xf4000a0f |
+						  ((dd & 16u) << 18) |
+						  ((dd & 15u) << 12) |
+						  (2u << 16)))
+					return false;
+			}
+			if (!jit_visit_vector_scalar_op(ctx, op, dst, src1, src2))
+				return false;
+			dd = (uint32_t)(16 + dst * 2);
+			ASM {
+				MOVW(REG_R2, (uint32_t)(dst * 16));
+				ADD(REG_R2, REG_R4, REG_R2);
+			}
+			return jit_put_word(ctx, 0xf4200a0f |
+					    ((dd & 16u) << 18) |
+					    ((dd & 15u) << 12) |
+					    (2u << 16));
+		}
 		case OP_VADDI32X4:
 			return jit_put_word(ctx, jit_neon_q3(0xf2200840,
 							       dst, src1, src2));
@@ -3318,6 +3383,8 @@ jit_visit_bytecode(
         case OP_VSUBF32X4:
         case OP_VMULF32X4:
         case OP_VDIVF32X4:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

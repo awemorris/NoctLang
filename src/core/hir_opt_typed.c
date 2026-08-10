@@ -109,6 +109,12 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		}
 	case HIR_EXPR_PAR:
 		return tp_eval_expr(ctx, e->val.unary.expr, in_region);
+	case HIR_EXPR_NEG:
+		a = tp_eval_expr(ctx, e->val.unary.expr, in_region);
+		return a == TP_INT || a == TP_FLOAT ? a : TP_UNKNOWN;
+	case HIR_EXPR_NOT:
+		a = tp_eval_expr(ctx, e->val.unary.expr, in_region);
+		return a == TP_INT ? TP_INT : TP_UNKNOWN;
 	case HIR_EXPR_CAPTURE:
 		return tp_eval_expr(ctx, e->val.capture.expr, in_region);
 	case HIR_EXPR_PLUS:
@@ -122,6 +128,10 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		if (a == TP_INT && b == TP_INT)
 			return TP_INT;
 		if (a == TP_FLOAT && b == TP_FLOAT)
+			return TP_FLOAT;
+		/* Noct's mixed numeric arithmetic promotes int to float. */
+		if ((a == TP_INT && b == TP_FLOAT) ||
+		    (a == TP_FLOAT && b == TP_INT))
 			return TP_FLOAT;
 		return TP_UNKNOWN;
 	case HIR_EXPR_MOD:
@@ -161,6 +171,15 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		return TP_INT;
 	case HIR_EXPR_PLOADF32:
 		return TP_FLOAT;
+	case HIR_EXPR_CALL:
+		switch (hir_get_intrinsic_call(e)) {
+		case HIR_INTRINSIC_INT_FROM:
+			return TP_INT;
+		case HIR_INTRINSIC_FLOAT_FROM:
+			return TP_FLOAT;
+		default:
+			return TP_UNKNOWN;
+		}
 	default:
 		/* PLOAD64/PBASE (long), NEG, NOT, LAND, LOR, DOT,
 		   SUBSCR, CALL, THISCALL, ARRAY, DICT, NEW, ... */

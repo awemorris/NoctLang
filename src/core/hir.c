@@ -469,6 +469,32 @@ static void hir_free_block(struct hir_block *b);
 static void hir_free_stmt(struct hir_stmt *s);
 static void hir_free_expr(struct hir_expr *e);
 static void hir_free_term(struct hir_term *t);
+
+int
+hir_get_intrinsic_call(const struct hir_expr *expr)
+{
+	const struct hir_expr *fn;
+	const struct hir_expr *obj;
+	const char *pkg;
+
+	if (expr == NULL || expr->type != HIR_EXPR_CALL ||
+	    expr->val.call.arg_count != 1)
+		return HIR_INTRINSIC_NONE;
+	fn = expr->val.call.func;
+	if (fn == NULL || fn->type != HIR_EXPR_DOT ||
+	    strcmp(fn->val.dot.symbol, "from") != 0)
+		return HIR_INTRINSIC_NONE;
+	obj = fn->val.dot.obj;
+	if (obj == NULL || obj->type != HIR_EXPR_TERM ||
+	    obj->val.term.term->type != HIR_TERM_SYMBOL)
+		return HIR_INTRINSIC_NONE;
+	pkg = obj->val.term.term->val.symbol;
+	if (strcmp(pkg, "Int") == 0)
+		return HIR_INTRINSIC_INT_FROM;
+	if (strcmp(pkg, "Float") == 0)
+		return HIR_INTRINSIC_FLOAT_FROM;
+	return HIR_INTRINSIC_NONE;
+}
 static void hir_free_local(struct hir_local *local);
 static void hir_fatal(int line, const char *msg);
 static void hir_free(void *p);
@@ -530,6 +556,7 @@ hir_build(void)
 		struct ast_func afunc;
 		afunc.name = hir_anon_func_name[i];
 		afunc.param_list = hir_anon_func_param_list[i];
+		afunc.return_type_name = NULL;
 		afunc.stmt_list = hir_anon_func_stmt_list[i];
 		afunc.next = NULL;
 		if (!hir_visit_func(&afunc))
@@ -657,7 +684,25 @@ hir_visit_func(
 		}
 
 		/* Parse the parameters. */
-		hir_visit_param_list(func_block, afunc);
+		if (!hir_visit_param_list(func_block, afunc))
+			break;
+
+		/* Resolve the optional return type.  Restrict is an input
+		   alias contract and is meaningless on a returned value. */
+		{
+			bool return_restricted;
+
+			if (!hir_check_type_annotation(0,
+					       afunc->return_type_name,
+					       &func_block->val.func.return_type,
+					       &func_block->val.func.return_packed_type,
+					       &return_restricted))
+				break;
+			if (return_restricted) {
+				hir_fatal(0, N_TR("A restricted packed type is only valid for a parameter."));
+				break;
+			}
+		}
 
 		/* Alloc an end block. */
 		end_block = hir_malloc(sizeof(struct hir_block));
@@ -865,6 +910,7 @@ hir_visit_stmt_list(
 			/* Go to HIR_BLOCK_END. */
 			(*cur_block)->succ = p_search->succ;
 			(*cur_block)->stop = true;
+			(*cur_block)->is_return_edge = true;
 			break;
 		default:
 			assert(NEVER_COME_HERE);
@@ -3244,6 +3290,13 @@ hir_optimize_func(
 	if (level < 2)
 		return true;
 
+	/*
+	 * Seed ABCE/SIMD with function-wide scalar facts.  Conversion
+	 * intrinsics and mixed numeric promotion are useful before loop
+	 * versioning; the final pass below refreshes facts after CSE.
+	 */
+	if (!hir_opt_typed_func(func_block))
+		return false;
 	if (!hir_opt_abce_func(func_block))
 		return false;
 	/* SIMD right after ABCE (it consumes the fast-loop marks). */

@@ -162,6 +162,12 @@ noct_bcback_translate(
 						lfunc->param_restricted[j] ? 1 : 0);
 			}
 		}
+		if (lfunc->return_type >= 0) {
+			fprintf(fp, "Return Type\n");
+			fprintf(fp, "%d\n", lfunc->return_type);
+			fprintf(fp, "%d\n", lfunc->return_packed_type);
+			fprintf(fp, "%d\n", lfunc->return_type_checked ? 1 : 0);
+		}
 		if (lfunc->has_vector_ops) {
 			fprintf(fp, "Vector Ops\n");
 			fprintf(fp, "1\n");

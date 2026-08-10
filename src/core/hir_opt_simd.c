@@ -58,6 +58,9 @@
 #define SIMD_MAX_LOCALS		8	/* INV + TEMP locals in body    */
 #define SIMD_MAX_LOOPS		16
 
+/* Minimum estimated scalar work before entering a vector strip. */
+#define SIMD_MIN_WORK		32
+
 /* Index shapes (mirrors the ABCE affine shapes). */
 enum simd_shape {
 	SIMD_SHAPE_I,
@@ -96,12 +99,15 @@ struct simd_ctx {
 
 	/* Planner sets (must stay in sync with lir.c's planner). */
 	uint32_t consts[SIMD_MAX_CONSTS];	/* int value or float bits */
+	uint8_t const_type[SIMD_MAX_CONSTS];
 	int const_count;
 	const char *inv[SIMD_MAX_LOCALS];
 	int inv_count;
 	const char *temp[SIMD_MAX_LOCALS];
 	int temp_count;
 	int max_depth;
+	int body_cost;
+	int min_trip;
 	bool kind_set;
 	bool is_float;
 
@@ -321,8 +327,29 @@ simd_clone_expr(struct hir_expr *e)
 		return n;
 	}
 	case HIR_EXPR_PAR:
+	case HIR_EXPR_NEG:
 		n->val.unary.expr = simd_clone_expr(e->val.unary.expr);
 		if (n->val.unary.expr == NULL)
+			return NULL;
+		return n;
+	case HIR_EXPR_CALL:
+	{
+		uint32_t i;
+		n->val.call.func = simd_clone_expr(e->val.call.func);
+		if (n->val.call.func == NULL)
+			return NULL;
+		n->val.call.arg_count = e->val.call.arg_count;
+		for (i = 0; i < e->val.call.arg_count; i++) {
+			n->val.call.arg[i] = simd_clone_expr(e->val.call.arg[i]);
+			if (n->val.call.arg[i] == NULL)
+				return NULL;
+		}
+		return n;
+	}
+	case HIR_EXPR_DOT:
+		n->val.dot.obj = simd_clone_expr(e->val.dot.obj);
+		n->val.dot.symbol = hir_strdup(e->val.dot.symbol);
+		if (n->val.dot.obj == NULL || n->val.dot.symbol == NULL)
 			return NULL;
 		return n;
 	default:
@@ -368,6 +395,253 @@ simd_clone_stmt_list(struct hir_stmt *head)
 	return nh;
 }
 
+#define SIMD_INLINE_MAX 32
+
+static bool
+simd_inline_pure(struct hir_expr *e)
+{
+	uint32_t i;
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		return e->val.term.term->type == HIR_TERM_INT ||
+		       e->val.term.term->type == HIR_TERM_FLOAT ||
+		       e->val.term.term->type == HIR_TERM_SYMBOL;
+	case HIR_EXPR_PAR:
+	case HIR_EXPR_NEG:
+		return simd_inline_pure(e->val.unary.expr);
+	case HIR_EXPR_CALL:
+		if (hir_get_intrinsic_call(e) == HIR_INTRINSIC_NONE ||
+		    e->val.call.arg_count != 1)
+			return false;
+		for (i = 0; i < e->val.call.arg_count; i++) {
+			if (!simd_inline_pure(e->val.call.arg[i]))
+				return false;
+		}
+		return true;
+	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PLOADF32:
+	case HIR_EXPR_PLUS:
+	case HIR_EXPR_MINUS:
+	case HIR_EXPR_MUL:
+	case HIR_EXPR_DIV:
+	case HIR_EXPR_AND:
+	case HIR_EXPR_OR:
+	case HIR_EXPR_XOR:
+	case HIR_EXPR_SHL:
+	case HIR_EXPR_SHR:
+		return simd_inline_pure(e->val.binary.expr[0]) &&
+		       simd_inline_pure(e->val.binary.expr[1]);
+	default:
+		return false;
+	}
+}
+
+static struct hir_expr *
+simd_expand_expr(struct hir_expr *e, const char **names,
+		 struct hir_expr **defs, int count)
+{
+	struct hir_expr *n;
+	uint32_t i;
+
+	if (e->type == HIR_EXPR_TERM &&
+	    e->val.term.term->type == HIR_TERM_SYMBOL) {
+		for (i = 0; i < (uint32_t)count; i++) {
+			if (strcmp(names[i], e->val.term.term->val.symbol) == 0)
+				return simd_clone_expr(defs[i]);
+		}
+	}
+	n = simd_clone_expr(e);
+	if (n == NULL)
+		return NULL;
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		return n;
+	case HIR_EXPR_PAR:
+	case HIR_EXPR_NEG:
+		n->val.unary.expr = simd_expand_expr(e->val.unary.expr,
+						names, defs, count);
+		return n->val.unary.expr != NULL ? n : NULL;
+	case HIR_EXPR_CALL:
+		for (i = 0; i < e->val.call.arg_count; i++) {
+			n->val.call.arg[i] = simd_expand_expr(e->val.call.arg[i],
+							 names, defs, count);
+			if (n->val.call.arg[i] == NULL)
+				return NULL;
+		}
+		return n;
+	default:
+		n->val.binary.expr[0] = simd_expand_expr(e->val.binary.expr[0],
+							names, defs, count);
+		n->val.binary.expr[1] = simd_expand_expr(e->val.binary.expr[1],
+							names, defs, count);
+		return n->val.binary.expr[0] != NULL &&
+		       n->val.binary.expr[1] != NULL ? n : NULL;
+	}
+}
+
+static bool simd_live_chain(struct hir_block *head, const char *sym);
+
+static bool
+simd_live_expr(struct hir_expr *e, const char *sym)
+{
+	uint32_t i;
+	if (e == NULL)
+		return false;
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		return e->val.term.term->type == HIR_TERM_SYMBOL &&
+		       strcmp(e->val.term.term->val.symbol, sym) == 0;
+	case HIR_EXPR_PAR:
+	case HIR_EXPR_NEG:
+	case HIR_EXPR_NOT:
+	case HIR_EXPR_PLEN:
+	case HIR_EXPR_PBASE:
+		return simd_live_expr(e->val.unary.expr, sym);
+	case HIR_EXPR_CAPTURE:
+		return strcmp(e->val.capture.symbol, sym) == 0 ||
+		       simd_live_expr(e->val.capture.expr, sym);
+	case HIR_EXPR_DOT:
+		return simd_live_expr(e->val.dot.obj, sym);
+	case HIR_EXPR_CALL:
+		if (simd_live_expr(e->val.call.func, sym))
+			return true;
+		for (i = 0; i < e->val.call.arg_count; i++)
+			if (simd_live_expr(e->val.call.arg[i], sym))
+				return true;
+		return false;
+	case HIR_EXPR_THISCALL:
+		if (simd_live_expr(e->val.thiscall.obj, sym))
+			return true;
+		for (i = 0; i < e->val.thiscall.arg_count; i++)
+			if (simd_live_expr(e->val.thiscall.arg[i], sym))
+				return true;
+		return false;
+	case HIR_EXPR_ARRAY:
+		for (i = 0; i < e->val.array.elem_count; i++)
+			if (simd_live_expr(e->val.array.elem[i], sym))
+				return true;
+		return false;
+	case HIR_EXPR_DICT:
+		for (i = 0; i < e->val.dict.kv_count; i++)
+			if (simd_live_expr(e->val.dict.value[i], sym))
+				return true;
+		return false;
+	case HIR_EXPR_NEW:
+		return simd_live_expr(e->val.new_.init, sym);
+	default:
+		return simd_live_expr(e->val.binary.expr[0], sym) ||
+		       simd_live_expr(e->val.binary.expr[1], sym);
+	}
+}
+
+static bool
+simd_live_chain(struct hir_block *head, const char *sym)
+{
+	struct hir_block *b;
+	struct hir_block *c;
+	struct hir_stmt *s;
+	for (b = head; b != NULL; b = b->succ) {
+		switch (b->type) {
+		case HIR_BLOCK_BASIC:
+			for (s = b->val.basic.stmt_list; s != NULL; s = s->next)
+				if (simd_live_expr(s->lhs, sym) ||
+				    simd_live_expr(s->rhs, sym))
+					return true;
+			break;
+		case HIR_BLOCK_IF:
+			for (c = b; c != NULL; c = c->val.if_.chain_next)
+				if (simd_live_expr(c->val.if_.cond, sym) ||
+				    simd_live_chain(c->val.if_.inner, sym))
+					return true;
+			break;
+		case HIR_BLOCK_FOR:
+			if (simd_live_expr(b->val.for_.start, sym) ||
+			    simd_live_expr(b->val.for_.stop, sym) ||
+			    simd_live_expr(b->val.for_.collection, sym) ||
+			    simd_live_chain(b->val.for_.inner, sym))
+				return true;
+			break;
+		case HIR_BLOCK_WHILE:
+			if (simd_live_expr(b->val.while_.cond, sym) ||
+			    simd_live_chain(b->val.while_.inner, sym))
+				return true;
+			break;
+		default:
+			break;
+		}
+		if (b->stop)
+			break;
+	}
+	return false;
+}
+
+/*
+ * Collapse a straight-line, pure, single-store body into the final store.
+ * The caller keeps the original list and restores it on SIMD rejection.
+ */
+static struct hir_stmt *
+simd_inline_temps(struct hir_block *loop)
+{
+	struct hir_block *body = loop->val.for_.inner;
+	struct hir_block *post;
+	const char *names[SIMD_INLINE_MAX];
+	struct hir_expr *defs[SIMD_INLINE_MAX];
+	struct hir_stmt *s;
+	struct hir_stmt *last = NULL;
+	struct hir_stmt *out;
+	int count = 0;
+	int i;
+
+	if (body == NULL || body->type != HIR_BLOCK_BASIC || !body->stop)
+		return NULL;
+	for (s = body->val.basic.stmt_list; s != NULL; s = s->next) {
+		last = s;
+		if (s->next == NULL)
+			break;
+		if (s->lhs == NULL || s->lhs->type != HIR_EXPR_TERM ||
+		    s->lhs->val.term.term->type != HIR_TERM_SYMBOL ||
+		    !simd_inline_pure(s->rhs) || count >= SIMD_INLINE_MAX)
+			return NULL;
+		for (i = 0; i < count; i++) {
+			if (strcmp(names[i],
+				   s->lhs->val.term.term->val.symbol) == 0)
+				return NULL;
+		}
+		names[count] = s->lhs->val.term.term->val.symbol;
+		defs[count] = simd_expand_expr(s->rhs, names, defs, count);
+		if (defs[count] == NULL)
+			return NULL;
+		count++;
+	}
+	if (count == 0 || last == NULL || last->lhs == NULL ||
+	    (last->lhs->type != HIR_EXPR_PSTORE32 &&
+	     last->lhs->type != HIR_EXPR_PSTOREF32) ||
+	    !simd_inline_pure(last->rhs))
+		return NULL;
+	/* FAST -> FEXIT -> X1 -> G2 -> X2 -> original successor. */
+	post = loop->succ;
+	if (post != NULL) post = post->succ;
+	if (post != NULL) post = post->succ;
+	if (post != NULL) post = post->succ;
+	if (post != NULL) post = post->succ;
+	for (i = 0; i < count; i++) {
+		if (simd_live_chain(post, names[i]))
+			return NULL;
+	}
+	out = hir_malloc(sizeof(*out));
+	if (out == NULL) {
+		hir_out_of_memory();
+		return NULL;
+	}
+	memset(out, 0, sizeof(*out));
+	out->line = last->line;
+	out->lhs = simd_clone_expr(last->lhs);
+	out->rhs = simd_expand_expr(last->rhs, names, defs, count);
+	if (out->lhs == NULL || out->rhs == NULL)
+		return NULL;
+	return out;
+}
+
 /*
  * ------------------------------------------------------------------
  * Eligibility (design 06, E1..E9).
@@ -386,6 +660,69 @@ simd_is_local(struct simd_ctx *ctx, const char *name)
 	return false;
 }
 
+static int
+simd_local_type(struct simd_ctx *ctx, const char *name)
+{
+	struct hir_local *local = ctx->func->val.func.local;
+	while (local != NULL) {
+		if (strcmp(local->symbol, name) == 0)
+			return local->proven_type;
+		local = local->next;
+	}
+	return -1;
+}
+
+static int
+simd_expr_type(struct simd_ctx *ctx, struct hir_expr *e)
+{
+	int a, b;
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		if (e->val.term.term->type == HIR_TERM_INT)
+			return NOCT_VALUE_INT;
+		if (e->val.term.term->type == HIR_TERM_FLOAT)
+			return NOCT_VALUE_FLOAT;
+		if (e->val.term.term->type == HIR_TERM_SYMBOL)
+			return simd_local_type(ctx, e->val.term.term->val.symbol);
+		return -1;
+	case HIR_EXPR_PAR:
+		return simd_expr_type(ctx, e->val.unary.expr);
+	case HIR_EXPR_PLOAD32:
+		return NOCT_VALUE_INT;
+	case HIR_EXPR_PLOADF32:
+		return NOCT_VALUE_FLOAT;
+	case HIR_EXPR_CALL:
+		switch (hir_get_intrinsic_call(e)) {
+		case HIR_INTRINSIC_INT_FROM: return NOCT_VALUE_INT;
+		case HIR_INTRINSIC_FLOAT_FROM: return NOCT_VALUE_FLOAT;
+		default: return -1;
+		}
+	case HIR_EXPR_PLUS:
+	case HIR_EXPR_MINUS:
+	case HIR_EXPR_MUL:
+	case HIR_EXPR_DIV:
+		a = simd_expr_type(ctx, e->val.binary.expr[0]);
+		b = simd_expr_type(ctx, e->val.binary.expr[1]);
+		if (a == NOCT_VALUE_FLOAT || b == NOCT_VALUE_FLOAT)
+			return (a == NOCT_VALUE_INT || a == NOCT_VALUE_FLOAT) &&
+			       (b == NOCT_VALUE_INT || b == NOCT_VALUE_FLOAT) ?
+			       NOCT_VALUE_FLOAT : -1;
+		return a == NOCT_VALUE_INT && b == NOCT_VALUE_INT ?
+			NOCT_VALUE_INT : -1;
+	case HIR_EXPR_AND:
+	case HIR_EXPR_OR:
+	case HIR_EXPR_XOR:
+	case HIR_EXPR_SHL:
+	case HIR_EXPR_SHR:
+		a = simd_expr_type(ctx, e->val.binary.expr[0]);
+		b = simd_expr_type(ctx, e->val.binary.expr[1]);
+		return a == NOCT_VALUE_INT && b == NOCT_VALUE_INT ?
+			NOCT_VALUE_INT : -1;
+	default:
+		return -1;
+	}
+}
+
 static struct simd_base *
 simd_find_base(struct simd_ctx *ctx, const char *sym)
 {
@@ -398,16 +735,17 @@ simd_find_base(struct simd_ctx *ctx, const char *sym)
 }
 
 static bool
-simd_note_const(struct simd_ctx *ctx, uint32_t v)
+simd_note_const(struct simd_ctx *ctx, uint32_t v, int type)
 {
 	int i;
 	for (i = 0; i < ctx->const_count; i++) {
-		if (ctx->consts[i] == v)
+		if (ctx->consts[i] == v && ctx->const_type[i] == type)
 			return true;
 	}
 	if (ctx->const_count >= SIMD_MAX_CONSTS)
 		return false;
-	ctx->consts[ctx->const_count++] = v;
+	ctx->consts[ctx->const_count] = v;
+	ctx->const_type[ctx->const_count++] = (uint8_t)type;
 	return true;
 }
 
@@ -502,8 +840,8 @@ simd_note_site(struct simd_ctx *ctx, struct hir_expr *site, bool is_store)
 	if (!ctx->kind_set) {
 		ctx->kind_set = true;
 		ctx->is_float = is_float;
-	} else if (ctx->is_float != is_float) {
-		return false;
+	} else if (is_float) {
+		ctx->is_float = true;
 	}
 
 	if (site->val.binary.expr[0]->type != HIR_EXPR_TERM ||
@@ -544,7 +882,17 @@ simd_expr_reads(struct hir_expr *e, const char *sym)
 		return e->val.term.term->type == HIR_TERM_SYMBOL &&
 			strcmp(e->val.term.term->val.symbol, sym) == 0;
 	case HIR_EXPR_PAR:
+	case HIR_EXPR_NEG:
 		return simd_expr_reads(e->val.unary.expr, sym);
+	case HIR_EXPR_CALL:
+	{
+		uint32_t i;
+		for (i = 0; i < e->val.call.arg_count; i++) {
+			if (simd_expr_reads(e->val.call.arg[i], sym))
+				return true;
+		}
+		return false;
+	}
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
 		return false;	/* base/index are not vector operands */
@@ -576,23 +924,24 @@ simd_check_expr(struct simd_ctx *ctx, struct hir_expr *e)
 {
 	int l, r;
 
+	/* Terms and parentheses are free; every other node is one unit. */
+	if (e->type != HIR_EXPR_TERM && e->type != HIR_EXPR_PAR)
+		ctx->body_cost++;
+
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		switch (e->val.term.term->type) {
 		case HIR_TERM_INT:
-			if (ctx->kind_set && ctx->is_float)
-				SIMD_REJECT_I("E4 int const in f32");
 			if (!simd_note_const(ctx,
-					     (uint32_t)e->val.term.term->val.i))
+					     (uint32_t)e->val.term.term->val.i,
+					     NOCT_VALUE_INT))
 				SIMD_REJECT_I("E8 const cap");
 			return 0;
 		case HIR_TERM_FLOAT:
 		{
 			uint32_t bits;
-			if (ctx->kind_set && !ctx->is_float)
-				SIMD_REJECT_I("E4 float const in i32");
 			memcpy(&bits, &e->val.term.term->val.f, sizeof(bits));
-			if (!simd_note_const(ctx, bits))
+			if (!simd_note_const(ctx, bits, NOCT_VALUE_FLOAT))
 				SIMD_REJECT_I("E8 const cap");
 			return 0;
 		}
@@ -619,6 +968,11 @@ simd_check_expr(struct simd_ctx *ctx, struct hir_expr *e)
 		}
 	case HIR_EXPR_PAR:
 		return simd_check_expr(ctx, e->val.unary.expr);
+	case HIR_EXPR_CALL:
+		if (e->val.call.arg_count != 1 ||
+		    hir_get_intrinsic_call(e) == HIR_INTRINSIC_NONE)
+			SIMD_REJECT_I("E4 call");
+		return simd_check_expr(ctx, e->val.call.arg[0]);
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
 		if (!simd_note_site(ctx, e, false))
@@ -648,11 +1002,11 @@ simd_check_expr(struct simd_ctx *ctx, struct hir_expr *e)
 		r = simd_check_expr(ctx, e->val.binary.expr[1]);
 		if (r < 0)
 			return -1;
-		if (ctx->is_float) {
-			if (e->type == HIR_EXPR_AND || e->type == HIR_EXPR_OR ||
-			    e->type == HIR_EXPR_XOR)
-				SIMD_REJECT_I("E4 f32 bitwise");
-		} else if (e->type == HIR_EXPR_DIV) {
+		if (simd_expr_type(ctx, e) < 0 && !ctx->kind_set)
+			SIMD_REJECT_I("E4 mixed types");
+		if (e->type == HIR_EXPR_DIV &&
+		    (simd_expr_type(ctx, e) == NOCT_VALUE_INT ||
+		     (simd_expr_type(ctx, e) < 0 && !ctx->is_float))) {
 			SIMD_REJECT_I("E4 i32 divide");
 		}
 		lterm = simd_strip_par(e->val.binary.expr[0])->type == HIR_EXPR_TERM;
@@ -678,7 +1032,9 @@ simd_check_expr(struct simd_ctx *ctx, struct hir_expr *e)
 		l = simd_check_expr(ctx, e->val.binary.expr[0]);
 		if (l < 0)
 			return -1;
-		if (ctx->is_float)
+		if (simd_expr_type(ctx, e) != NOCT_VALUE_INT &&
+		    !(simd_expr_type(ctx, e) < 0 && ctx->kind_set &&
+		      !ctx->is_float))
 			SIMD_REJECT_I("E4 f32 shift");
 		/* Shift is applied in place on the destination. */
 		return l;
@@ -711,6 +1067,7 @@ simd_check_body(struct simd_ctx *ctx, struct hir_block *body)
 			if (simd_find_base(ctx, sym) != NULL)
 				SIMD_REJECT("E3 base assign");
 			d = simd_check_expr(ctx, stmt->rhs);
+			ctx->body_cost++; /* vector temporary assignment */
 			if (d < 0)
 				return false;
 			/* If the RHS reads the assigned temp, the value
@@ -736,6 +1093,7 @@ simd_check_body(struct simd_ctx *ctx, struct hir_block *body)
 			if (!simd_note_site(ctx, stmt->lhs, true))
 				SIMD_REJECT("E7 store site");
 			d = simd_check_expr(ctx, stmt->rhs);
+			ctx->body_cost++; /* packed store */
 			if (d < 0)
 				return false;
 			/* A non-term store value is built in one slot. */
@@ -762,6 +1120,13 @@ simd_check_body(struct simd_ctx *ctx, struct hir_block *body)
 	if (ctx->const_count + ctx->inv_count + ctx->temp_count +
 	    ctx->max_depth > SIMD_VREG_MAX)
 		SIMD_REJECT("E8 vreg budget");
+
+	/* Round ceil(min-work/body-cost) up to a complete four-lane group. */
+	ctx->min_trip = (SIMD_MIN_WORK + ctx->body_cost - 1) /
+		ctx->body_cost;
+	if (ctx->min_trip < 4)
+		ctx->min_trip = 4;
+	ctx->min_trip = (ctx->min_trip + 3) & ~3;
 
 	return true;
 }
@@ -866,6 +1231,15 @@ simd_rewrite_expr(struct simd_ctx *ctx, struct hir_expr *e)
 		return true;
 	case HIR_EXPR_PAR:
 		return simd_rewrite_expr(ctx, e->val.unary.expr);
+	case HIR_EXPR_CALL:
+	{
+		uint32_t i;
+		for (i = 0; i < e->val.call.arg_count; i++) {
+			if (!simd_rewrite_expr(ctx, e->val.call.arg[i]))
+				return false;
+		}
+		return true;
+	}
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PSTORE32:
 	case HIR_EXPR_PLOADF32:
@@ -1009,12 +1383,21 @@ simd_vectorize(struct simd_ctx *ctx)
 		}
 	}
 
-	/* $vg = (0 <= $lo) && ($lo < $mid) && <disjointness terms> */
+	/* $vg = (0 <= $lo) && ($lo < $mid) &&
+	 *       ($mid - $lo >= min_trip) && <disjointness terms> */
 	vg = simd_mk_binary(HIR_EXPR_LAND,
 		simd_mk_binary(HIR_EXPR_LTE, simd_mk_int(0),
 			       simd_mk_sym(ctx->lo_name)),
 		simd_mk_binary(HIR_EXPR_LT, simd_mk_sym(ctx->lo_name),
 			       simd_mk_sym(ctx->mid_name)));
+	if (vg == NULL)
+		return false;
+	vg = simd_mk_binary(HIR_EXPR_LAND, vg,
+		simd_mk_binary(HIR_EXPR_GTE,
+			simd_mk_binary(HIR_EXPR_MINUS,
+				simd_mk_sym(ctx->mid_name),
+				simd_mk_sym(ctx->lo_name)),
+			simd_mk_int(ctx->min_trip)));
 	if (vg == NULL)
 		return false;
 	for (i = 0; i < ctx->base_count; i++) {
@@ -1203,6 +1586,8 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 
 	for (i = 0; i < loop_count; i++) {
 		struct simd_ctx *ctx;
+		struct hir_stmt *original_body;
+		struct hir_stmt *inlined_body;
 
 		ctx = hir_malloc(sizeof(struct simd_ctx));
 		if (ctx == NULL) {
@@ -1213,10 +1598,15 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 		ctx->func = func_block;
 		ctx->loop = loops[i];
 		ctx->counter = loops[i]->val.for_.counter_symbol;
+		original_body = loops[i]->val.for_.inner->val.basic.stmt_list;
+		inlined_body = simd_inline_temps(loops[i]);
+		if (inlined_body != NULL)
+			loops[i]->val.for_.inner->val.basic.stmt_list = inlined_body;
 
 		simd_reject_reason = "?";
 		if (!simd_check_body(ctx, loops[i]->val.for_.inner) ||
 		    !simd_find_environment(ctx)) {
+			loops[i]->val.for_.inner->val.basic.stmt_list = original_body;
 			if (getenv("NOCT_SIMD_DEBUG") != NULL)
 				fprintf(stderr,
 					"SIMD: %s:%d: rejected (%s)\n",
@@ -1237,6 +1627,8 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 				}
 			}
 			if (simd_count_locals(ctx) + adds > 112) {
+				loops[i]->val.for_.inner->val.basic.stmt_list =
+					original_body;
 				if (getenv("NOCT_SIMD_DEBUG") != NULL)
 					fprintf(stderr,
 						"SIMD: %s:%d: rejected (frame)\n",
@@ -1256,11 +1648,12 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 
 		if (getenv("NOCT_SIMD_DEBUG") != NULL)
 			fprintf(stderr,
-				"SIMD: %s:%d: vectorized (bases=%d consts=%d inv=%d temps=%d depth=%d)\n",
+				"SIMD: %s:%d: vectorized (bases=%d consts=%d inv=%d temps=%d depth=%d cost=%d mintrip=%d)\n",
 				hir_file_name, loops[i]->line,
 				ctx->base_count, ctx->const_count,
 				ctx->inv_count, ctx->temp_count,
-				ctx->max_depth);
+				ctx->max_depth, ctx->body_cost,
+				ctx->min_trip);
 	}
 
 	return true;

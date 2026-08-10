@@ -104,6 +104,8 @@
 #define ex_vsubf32x4_helper noct_ex_vsubf32x4_helper
 #define ex_vmulf32x4_helper noct_ex_vmulf32x4_helper
 #define ex_vdivf32x4_helper noct_ex_vdivf32x4_helper
+#define ex_vcvti32f32x4_helper noct_ex_vcvti32f32x4_helper
+#define ex_vcvtf32i32x4_helper noct_ex_vcvtf32i32x4_helper
 #define ex_ploadf32_helper noct_ex_ploadf32_helper
 #define ex_pstoref32_helper noct_ex_pstoref32_helper
 

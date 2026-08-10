@@ -476,6 +476,9 @@ rt_register_lir(
 		func->param_packed_type[i] = lir->param_packed_type[i];
 		func->param_restricted[i] = lir->param_restricted[i];
 	}
+	func->return_type = lir->return_type;
+	func->return_packed_type = lir->return_packed_type;
+	func->return_type_checked = lir->return_type_checked;
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_name[i] = noct_strdup(lir->param_name[i]);
 		if (func->param_name[i] == NULL) {
@@ -627,6 +630,8 @@ rt_register_bytecode_function(
 
 	memset(&lfunc, 0, sizeof(lfunc));
 	lfunc.file_name = file_name;
+	lfunc.return_type = -1;
+	lfunc.return_packed_type = -1;
 	for (i = 0; i < LIR_PARAM_SIZE; i++) {
 		lfunc.param_type[i] = -1;
 		lfunc.param_packed_type[i] = -1;
@@ -717,6 +722,21 @@ rt_register_bytecode_function(
 			}
 			if (i != lfunc.param_count)
 				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Return Type") == 0) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			lfunc.return_type = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			lfunc.return_packed_type = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			lfunc.return_type_checked = atoi(line) != 0;
 			line = rt_read_bytecode_line(data, size, pos);
 		}
 		if (line != NULL && strcmp(line, "Vector Ops") == 0) {
@@ -832,6 +852,9 @@ rt_register_cfunc(
 		return false;
 	}
 	func->param_count = param_count;
+	func->return_type = -1;
+	func->return_packed_type = -1;
+	func->return_type_checked = false;
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		func->param_type[i] = -1;
 		func->param_packed_type[i] = -1;
@@ -2274,6 +2297,30 @@ rt_set_global(
 		return false;
 
 	return true;
+}
+
+/* Mark an already-registered global binding immutable. */
+bool
+rt_mark_global_const(
+	struct rt_env *env,
+	const char *name)
+{
+	uint32_t i;
+
+	ACQUIRE_GLOBAL();
+	for (i = 0; i < env->vm->global_alloc_size; i++) {
+		if (env->vm->global[i].name == NULL ||
+		    env->vm->global[i].is_removed)
+			continue;
+		if (strcmp(env->vm->global[i].name, name) == 0) {
+			env->vm->global[i].is_const = true;
+			RELEASE_GLOBAL();
+			return true;
+		}
+	}
+	RELEASE_GLOBAL();
+	rt_error(env, N_TR("Symbol \"%s\" not found."), name);
+	return false;
 }
 
 /*

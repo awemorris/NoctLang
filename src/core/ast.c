@@ -47,7 +47,7 @@
 static struct ast_func_list *ast_func_list;
 
 /* Early declarations (also declared in the parser prologue). */
-struct ast_func *ast_accept_func(char *name, struct ast_param_list *param_list, struct ast_stmt_list *stmt_list);
+struct ast_func *ast_accept_func(char *name, struct ast_param_list *param_list, char *return_type_name, struct ast_stmt_list *stmt_list);
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *func_list, struct ast_func *func);
 struct ast_expr *ast_accept_term_expr(struct ast_term *term);
 struct ast_term *ast_accept_symbol_term(char *symbol);
@@ -162,7 +162,7 @@ ast_build(
 			return false;
 		}
 		snprintf(init_name, len, "$init.%s", ast_file_name);
-		init_func = ast_accept_func(init_name, NULL, ast_init_stmt_list);
+		init_func = ast_accept_func(init_name, NULL, NULL, ast_init_stmt_list);
 		if (init_func == NULL)
 			return false;
 		if (ast_accept_func_list(ast_func_list, init_func) == NULL)
@@ -371,6 +371,7 @@ struct ast_func *
 ast_accept_func(
 	char *name,
 	struct ast_param_list *param_list,
+	char *return_type_name,
 	struct ast_stmt_list *stmt_list)
 {
 	struct ast_func *f;
@@ -386,6 +387,7 @@ ast_accept_func(
 	memset(f, 0, sizeof(struct ast_func));
 	f->name = name;
 	f->param_list = param_list;
+	f->return_type_name = return_type_name;
 	f->stmt_list = stmt_list;
 
 	return f;

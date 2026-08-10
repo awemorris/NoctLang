@@ -1505,7 +1505,9 @@ cback_visit_vector_op(
 		"noct_ex_vaddf32x4_helper",
 		"noct_ex_vsubf32x4_helper",
 		"noct_ex_vmulf32x4_helper",
-		"noct_ex_vdivf32x4_helper"
+		"noct_ex_vdivf32x4_helper",
+		"noct_ex_vcvti32f32x4_helper",
+		"noct_ex_vcvtf32i32x4_helper"
 	};
 	int a, b, c;
 
@@ -1535,6 +1537,8 @@ cback_visit_vector_op(
 		GET_U8(&c);
 		break;
 	case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
 		GET_U8(&a);
 		GET_U8(&b);
 		c = 0;
@@ -1864,6 +1868,8 @@ cback_visit_op(
 	case OP_VSUBF32X4:
 	case OP_VMULF32X4:
 	case OP_VDIVF32X4:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
 		if (!cback_visit_vector_op(func, pc, op))
 			return false;
 		break;

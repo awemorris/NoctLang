@@ -120,6 +120,8 @@ jit_detect_simd_caps(void)
                              : "a"(1), "c"(0));
 	if ((d & (1u << 26)) != 0)
 		caps |= JIT_SIMD_CAP_SSE2;
+	if ((c & (1u << 0)) != 0)
+		caps |= JIT_SIMD_CAP_SSE3;
 	if ((c & (1u << 19)) != 0)
 		caps |= JIT_SIMD_CAP_SSE41;
 	return caps;
@@ -135,6 +137,8 @@ jit_detect_simd_caps(void)
         __cpuid(regs, 1);
         if (((uint32_t)regs[3] & (1u << 26)) != 0)
                 caps |= JIT_SIMD_CAP_SSE2;
+	if (((uint32_t)regs[2] & (1u << 0)) != 0)
+		caps |= JIT_SIMD_CAP_SSE3;
         if (((uint32_t)regs[2] & (1u << 19)) != 0)
                 caps |= JIT_SIMD_CAP_SSE41;
         return caps;
@@ -2290,6 +2294,32 @@ jit_visit_vector_scalar_op(
                         ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
                 }
                 return true;
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
+		ASM { IB(0x8b); IB(0x45); IB(0xf8); }
+		for (lane = 0; lane < 4; lane++) {
+			uint32_t s = vbase + (uint32_t)src1 * 16 +
+				(uint32_t)lane * 4;
+			uint32_t d = vbase + (uint32_t)dst * 16 +
+				(uint32_t)lane * 4;
+			if (op == OP_VCVTI32F32X4) {
+				IB(0xdb); IB(0x80); ID(s); /* fild m32 */
+				IB(0xd9); IB(0x98); ID(d); /* fstp m32 */
+			} else {
+				/* Temporarily select x87 round-toward-zero. */
+				IB(0x83); IB(0xec); IB(0x08);
+				IB(0xd9); IB(0x3c); IB(0x24);
+				IB(0x0f); IB(0xb7); IB(0x0c); IB(0x24);
+				IB(0x80); IB(0xcd); IB(0x0c);
+				IB(0x66); IB(0x89); IB(0x4c); IB(0x24); IB(0x02);
+				IB(0xd9); IB(0x6c); IB(0x24); IB(0x02);
+				IB(0xd9); IB(0x80); ID(s);
+				IB(0xdb); IB(0x98); ID(d);
+				IB(0xd9); IB(0x2c); IB(0x24);
+				IB(0x83); IB(0xc4); IB(0x08);
+			}
+		}
+		return true;
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
         case OP_VMULI32X4:
@@ -2389,6 +2419,8 @@ jit_visit_vector_op(
                 CONSUME_IMM8(src2);
                 break;
         case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 CONSUME_IMM8(dst);
                 CONSUME_IMM8(src1);
                 src2 = 0;
@@ -2484,6 +2516,12 @@ jit_visit_vector_op(
 			ASM { IB(0x66); IB(0x0f); IB(0x6f);
 			      IB((uint8_t)(0xc0 | (dst << 3) | src1)); }
 		}
+		break;
+	case OP_VCVTI32F32X4:
+		ASM { IB(0x0f); IB(0x5b); IB((uint8_t)(0xc0 | (dst << 3) | src1)); }
+		break;
+	case OP_VCVTF32I32X4:
+		ASM { IB(0xf3); IB(0x0f); IB(0x5b); IB((uint8_t)(0xc0 | (dst << 3) | src1)); }
 		break;
 	case OP_VADDI32X4:
 	case OP_VSUBI32X4:
@@ -2981,6 +3019,8 @@ jit_visit_bytecode(
         case OP_VSUBF32X4:
         case OP_VMULF32X4:
         case OP_VDIVF32X4:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

@@ -2364,6 +2364,14 @@ jit_put_altivec_op(struct jit_context *ctx, int op, int dst, int src1, int src2)
                               ((uint32_t)8 << 11) |
                               ((uint32_t)src2 << 6)));
                 return true;
+	case OP_VCVTI32F32X4:
+		IW(jit_ppc_iw(0x1000034a | ((uint32_t)dst << 21) |
+			      ((uint32_t)src1 << 11)));
+		return true;
+	case OP_VCVTF32I32X4:
+		IW(jit_ppc_iw(0x100003ca | ((uint32_t)dst << 21) |
+			      ((uint32_t)src1 << 11)));
+		return true;
         default:
                 return false;
         }
@@ -2384,6 +2392,8 @@ jit_altivec_supports_op(int op)
         case OP_VADDF32X4:
         case OP_VSUBF32X4:
         case OP_VMULF32X4:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 return true;
         default:
                 return false;
@@ -2489,6 +2499,12 @@ jit_put_vector_scalar_op(struct jit_context *ctx, int op,
                                       ((uint32_t)dst * 16 + (uint32_t)lane * 4)));
                 }
                 return true;
+	case OP_VCVTI32F32X4:
+		ASM_BINARY_OP(noct_ex_vcvti32f32x4_helper);
+		return true;
+	case OP_VCVTF32I32X4:
+		ASM_BINARY_OP(noct_ex_vcvtf32i32x4_helper);
+		return true;
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
         case OP_VMULI32X4:
@@ -2590,6 +2606,8 @@ jit_visit_vector_op(
                 CONSUME_IMM8(src2);
                 break;
         case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 CONSUME_IMM8(dst);
                 CONSUME_IMM8(src1);
                 src2 = 0;
@@ -2973,6 +2991,8 @@ jit_visit_bytecode(
         case OP_VSUBF32X4:
         case OP_VMULF32X4:
         case OP_VDIVF32X4:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

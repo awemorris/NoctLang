@@ -31,7 +31,7 @@ void ast_free(void *p);
 
 /* Internal: called back from the parser. */
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);
-struct ast_func *ast_accept_func(char *name, struct ast_param_list *param_list, struct ast_stmt_list *stmt_list);
+struct ast_func *ast_accept_func(char *name, struct ast_param_list *param_list, char *return_type_name, struct ast_stmt_list *stmt_list);
 bool ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let);
 bool ast_accept_toplevel_class(int line, char *name, struct ast_kv_list *kv_list);
 struct ast_param_list *ast_accept_param_list(struct ast_param_list *param_list, char *name);
@@ -276,13 +276,23 @@ toplevel_decl	: TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		;
 func		: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func($2, $4, $6);
+			$$ = ast_accept_func($2, $4, NULL, $6);
 			debug("func: func name(param_list) { stmt_list }");
 		}
 		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func($2, NULL, $5);
+			$$ = ast_accept_func($2, NULL, NULL, $5);
 			debug("func: func name() { stmt_list }");
+		}
+		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR TOKEN_COLON type_name TOKEN_LBLK stmt_list TOKEN_RBLK
+		{
+			$$ = ast_accept_func($2, $4, $7, $9);
+			debug("func: func name(param_list): type { stmt_list }");
+		}
+		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR TOKEN_COLON type_name TOKEN_LBLK stmt_list TOKEN_RBLK
+		{
+			$$ = ast_accept_func($2, NULL, $6, $8);
+			debug("func: func name(): type { stmt_list }");
 		}
 		;
 param_list	: TOKEN_SYMBOL

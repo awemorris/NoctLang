@@ -126,6 +126,7 @@ static bool lir_visit_while_block(struct hir_block *block);
 static bool lir_visit_stmt(struct hir_block *block, struct hir_stmt *stmt);
 static bool lir_check_lhs_local(struct hir_block *block, struct hir_expr *lhs, int *rhs_tmpvar);
 static bool lir_visit_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
+static int lir_expr_proven_type(struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_abce_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_abce_typetest_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
 static bool lir_visit_unary_expr(int dst_tmpvar, struct hir_expr *expr, struct hir_block *block);
@@ -164,6 +165,56 @@ static bool lir_put_u64(uint64_t b);
 static void patch_block_address(void);
 static void lir_fatal(const char *msg, ...);
 static void lir_out_of_memory(void);
+
+/* Encode a declared type for OP_CHECKTYPE. */
+static int
+lir_typecheck_code(
+	int type,
+	int packed_type,
+	bool restricted,
+	bool is_return)
+{
+	int code;
+
+	code = type;
+	if (type == NOCT_VALUE_PACKED &&
+	    packed_type >= 0 && packed_type != NOCT_PACKED_ANY)
+		code = (restricted ? TYPECHECK_RPACKED_BASE :
+			TYPECHECK_PACKED_BASE) + packed_type;
+	if (is_return)
+		code |= TYPECHECK_RETURN_FLAG;
+	return code;
+}
+
+static struct hir_block *
+lir_root_func(struct hir_block *block)
+{
+	while (block != NULL && block->type != HIR_BLOCK_FUNC)
+		block = block->parent;
+	return block;
+}
+
+static bool
+lir_emit_return_check(struct hir_block *block)
+{
+	struct hir_block *func;
+	int code;
+
+	func = lir_root_func(block);
+	assert(func != NULL);
+	if (lir_optimize_level < 2 || func->val.func.return_type < 0)
+		return true;
+	code = lir_typecheck_code(func->val.func.return_type,
+				  func->val.func.return_packed_type,
+				  false, true);
+	if (!lir_put_opcode(OP_CHECKTYPE))
+		return false;
+	if (!lir_put_tmpvar(0))
+		return false;
+	if (!lir_put_imm8((uint8_t)code))
+		return false;
+	return true;
+}
 
 /*
  * Build a LIR function from a HIR function.
@@ -226,14 +277,10 @@ lir_build(
 
 			if (hir_func->val.func.param_type[k] < 0)
 				continue;
-			check_type = hir_func->val.func.param_type[k];
-			if (check_type == NOCT_VALUE_PACKED &&
-			    hir_func->val.func.param_packed_type[k] >= 0 &&
-			    hir_func->val.func.param_packed_type[k] != NOCT_PACKED_ANY)
-				check_type =
-					(hir_func->val.func.param_restricted[k] ?
-					 TYPECHECK_RPACKED_BASE : TYPECHECK_PACKED_BASE) +
-					hir_func->val.func.param_packed_type[k];
+			check_type = lir_typecheck_code(
+				hir_func->val.func.param_type[k],
+				hir_func->val.func.param_packed_type[k],
+				hir_func->val.func.param_restricted[k], false);
 			if (!lir_put_opcode(OP_CHECKTYPE))
 				return false;
 			if (!lir_put_tmpvar((uint16_t)k))
@@ -247,7 +294,8 @@ lir_build(
 	cur_block = hir_func->val.func.inner;
 	while (cur_block != NULL) {
 		/* Visit a block. */
-		lir_visit_block(cur_block);
+		if (!lir_visit_block(cur_block))
+			return false;
 
 		/* Move to a next. */
 		if (cur_block->stop) {
@@ -289,6 +337,11 @@ lir_build(
 		(*lir_func)->param_restricted[i] =
 			hir_func->val.func.param_restricted[i];
 	}
+	(*lir_func)->return_type = hir_func->val.func.return_type;
+	(*lir_func)->return_packed_type =
+		hir_func->val.func.return_packed_type;
+	(*lir_func)->return_type_checked =
+		lir_optimize_level >= 2 && (*lir_func)->return_type >= 0;
 	for (i = 0; i < hir_func->val.func.param_count; i++) {
 		(*lir_func)->param_name[i] = noct_strdup(hir_func->val.func.param_name[i]);
 		if ((*lir_func)->param_name[i] == NULL) {
@@ -425,6 +478,14 @@ lir_visit_basic_block(
 		if (!lir_visit_stmt(block, stmt))
 			return false;
 		stmt = stmt->next;
+	}
+
+	/* A source-level fallthrough has no return operand to prove.  Check
+	   the existing implicit return slot only on that edge. */
+	if (block->succ != NULL && block->succ->type == HIR_BLOCK_END &&
+	    !block->is_return_edge) {
+		if (!lir_emit_return_check(block))
+			return false;
 	}
 
 	/*
@@ -664,14 +725,70 @@ struct vfor_plan {
 	int counter_tmpvar;
 
 	uint32_t consts[VFOR_MAX_CONSTS];	/* int value or float bits */
+	uint8_t const_type[VFOR_MAX_CONSTS];
 	int const_count;
 	const char *inv[VFOR_MAX_LOCALS];
+	uint8_t inv_type[VFOR_MAX_LOCALS];
 	int inv_count;
 	const char *temp[VFOR_MAX_LOCALS];
+	uint8_t temp_type[VFOR_MAX_LOCALS];
 	int temp_count;
 	int stack_base;
 	bool is_float;
 };
+
+static struct hir_expr *lir_vfor_strip_par(struct hir_expr *e);
+
+static int
+lir_vfor_local_type(struct vfor_plan *plan, const char *sym)
+{
+	struct hir_block *b = plan->loop;
+	struct hir_local *local;
+	while (b->parent != NULL)
+		b = b->parent;
+	if (b->type != HIR_BLOCK_FUNC)
+		return -1;
+	local = b->val.func.local;
+	while (local != NULL) {
+		if (strcmp(local->symbol, sym) == 0)
+			return local->proven_type;
+		local = local->next;
+	}
+	return -1;
+}
+
+static int
+lir_vfor_expr_type(struct vfor_plan *plan, struct hir_expr *e)
+{
+	int a, b;
+	e = lir_vfor_strip_par(e);
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		if (e->val.term.term->type == HIR_TERM_INT)
+			return NOCT_VALUE_INT;
+		if (e->val.term.term->type == HIR_TERM_FLOAT)
+			return NOCT_VALUE_FLOAT;
+		if (e->val.term.term->type == HIR_TERM_SYMBOL)
+			return lir_vfor_local_type(plan,
+				e->val.term.term->val.symbol);
+		return -1;
+	case HIR_EXPR_PLOAD32: return NOCT_VALUE_INT;
+	case HIR_EXPR_PLOADF32: return NOCT_VALUE_FLOAT;
+	case HIR_EXPR_CALL:
+		return hir_get_intrinsic_call(e) == HIR_INTRINSIC_INT_FROM ?
+			NOCT_VALUE_INT : NOCT_VALUE_FLOAT;
+	case HIR_EXPR_PLUS:
+	case HIR_EXPR_MINUS:
+	case HIR_EXPR_MUL:
+	case HIR_EXPR_DIV:
+		a = lir_vfor_expr_type(plan, e->val.binary.expr[0]);
+		b = lir_vfor_expr_type(plan, e->val.binary.expr[1]);
+		return a == NOCT_VALUE_FLOAT || b == NOCT_VALUE_FLOAT ?
+			NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
+	default:
+		return NOCT_VALUE_INT;
+	}
+}
 
 static struct hir_expr *
 lir_vfor_strip_par(struct hir_expr *e)
@@ -690,12 +807,14 @@ lir_vfor_term_vreg(struct vfor_plan *plan, struct hir_expr *e)
 
 	if (t->type == HIR_TERM_INT || t->type == HIR_TERM_FLOAT) {
 		uint32_t bits;
+		int type = t->type == HIR_TERM_INT ?
+			NOCT_VALUE_INT : NOCT_VALUE_FLOAT;
 		if (t->type == HIR_TERM_INT)
 			bits = (uint32_t)t->val.i;
 		else
 			memcpy(&bits, &t->val.f, sizeof(bits));
 		for (i = 0; i < plan->const_count; i++) {
-			if (plan->consts[i] == bits)
+			if (plan->consts[i] == bits && plan->const_type[i] == type)
 				return i;
 		}
 		return -1;
@@ -724,20 +843,21 @@ lir_vfor_collect(struct vfor_plan *plan, struct hir_expr *e)
 		if (e->val.term.term->type == HIR_TERM_INT ||
 		    e->val.term.term->type == HIR_TERM_FLOAT) {
 			uint32_t v;
-			if (plan->is_float !=
-			    (e->val.term.term->type == HIR_TERM_FLOAT))
-				return false;
-			if (plan->is_float)
+			int type = e->val.term.term->type == HIR_TERM_FLOAT ?
+				NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
+			if (type == NOCT_VALUE_FLOAT)
 				memcpy(&v, &e->val.term.term->val.f, sizeof(v));
 			else
 				v = (uint32_t)e->val.term.term->val.i;
 			for (i = 0; i < plan->const_count; i++) {
-				if (plan->consts[i] == v)
+				if (plan->consts[i] == v &&
+				    plan->const_type[i] == type)
 					return true;
 			}
 			if (plan->const_count >= VFOR_MAX_CONSTS)
 				return false;
-			plan->consts[plan->const_count++] = v;
+			plan->consts[plan->const_count] = v;
+			plan->const_type[plan->const_count++] = (uint8_t)type;
 			return true;
 		}
 		if (e->val.term.term->type == HIR_TERM_SYMBOL) {
@@ -752,12 +872,17 @@ lir_vfor_collect(struct vfor_plan *plan, struct hir_expr *e)
 			}
 			if (plan->inv_count >= VFOR_MAX_LOCALS)
 				return false;
-			plan->inv[plan->inv_count++] = sym;
+			plan->inv[plan->inv_count] = sym;
+			plan->inv_type[plan->inv_count++] =
+				(uint8_t)lir_vfor_local_type(plan, sym);
 			return true;
 		}
 		return false;
 	case HIR_EXPR_PAR:
 		return lir_vfor_collect(plan, e->val.unary.expr);
+	case HIR_EXPR_CALL:
+		return e->val.call.arg_count == 1 &&
+		       lir_vfor_collect(plan, e->val.call.arg[0]);
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
 		/* Base local + bare-counter index: no vreg operands. */
@@ -816,6 +941,15 @@ lir_vfor_expr_reads(struct hir_expr *e, const char *sym)
 			strcmp(e->val.term.term->val.symbol, sym) == 0;
 	case HIR_EXPR_PAR:
 		return lir_vfor_expr_reads(e->val.unary.expr, sym);
+	case HIR_EXPR_CALL:
+	{
+		uint32_t i;
+		for (i = 0; i < e->val.call.arg_count; i++) {
+			if (lir_vfor_expr_reads(e->val.call.arg[i], sym))
+				return true;
+		}
+		return false;
+	}
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
 		return false;
@@ -858,10 +992,30 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 	{
 		int base_tmpvar = lir_get_local_index(plan->loop,
 			e->val.binary.expr[0]->val.term.term->val.symbol);
-		return lir_vfor_put3(plan->is_float ? OP_VLOADF32X4 : OP_VLOADI32X4,
+		return lir_vfor_put3(e->type == HIR_EXPR_PLOADF32 ?
+				     OP_VLOADF32X4 : OP_VLOADI32X4,
 				     1, dst,
 				     0, base_tmpvar,
 				     0, plan->counter_tmpvar, 1);
+	}
+	case HIR_EXPR_CALL:
+	{
+		struct hir_expr *arg = lir_vfor_strip_par(e->val.call.arg[0]);
+		int src;
+		if (arg->type == HIR_EXPR_TERM) {
+			src = lir_vfor_term_vreg(plan, arg);
+			if (src < 0) {
+				lir_fatal("SIMD: unplanned conversion operand.");
+				return false;
+			}
+		} else {
+			if (!lir_vfor_expr(plan, dst, sp, arg))
+				return false;
+			src = dst;
+		}
+		op = hir_get_intrinsic_call(e) == HIR_INTRINSIC_FLOAT_FROM ?
+			OP_VCVTI32F32X4 : OP_VCVTF32I32X4;
+		return lir_vfor_put3(op, 1, dst, 1, src, 0, 0, 0);
 	}
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:
@@ -903,9 +1057,9 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 		int va, vb;
 
 		switch (e->type) {
-		case HIR_EXPR_PLUS:  op = plan->is_float ? OP_VADDF32X4 : OP_VADDI32X4; break;
-		case HIR_EXPR_MINUS: op = plan->is_float ? OP_VSUBF32X4 : OP_VSUBI32X4; break;
-		case HIR_EXPR_MUL:   op = plan->is_float ? OP_VMULF32X4 : OP_VMULI32X4; break;
+		case HIR_EXPR_PLUS:  op = lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT ? OP_VADDF32X4 : OP_VADDI32X4; break;
+		case HIR_EXPR_MINUS: op = lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT ? OP_VSUBF32X4 : OP_VSUBI32X4; break;
+		case HIR_EXPR_MUL:   op = lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT ? OP_VMULF32X4 : OP_VMULI32X4; break;
 		case HIR_EXPR_DIV:   op = OP_VDIVF32X4; break;
 		case HIR_EXPR_AND:   op = OP_VAND128;   break;
 		case HIR_EXPR_OR:    op = OP_VOR128;    break;
@@ -1014,7 +1168,9 @@ lir_visit_vfor_block(
 					lir_fatal("SIMD: too many temps.");
 					return false;
 				}
-				plan.temp[plan.temp_count++] = sym;
+				plan.temp[plan.temp_count] = sym;
+				plan.temp_type[plan.temp_count++] =
+					(uint8_t)lir_vfor_expr_type(&plan, stmt->rhs);
 			}
 			if (!lir_vfor_collect(&plan, stmt->rhs))
 				return false;
@@ -1070,13 +1226,15 @@ lir_visit_vfor_block(
 		if (!lir_increment_tmpvar(&scratch_tmpvar))
 			return false;
 		for (i = 0; i < plan.const_count; i++) {
-			if (!lir_put_opcode(plan.is_float ? OP_FCONST : OP_ICONST))
+			if (!lir_put_opcode(plan.const_type[i] == NOCT_VALUE_FLOAT ?
+					    OP_FCONST : OP_ICONST))
 				return false;
 			if (!lir_put_tmpvar((uint16_t)scratch_tmpvar))
 				return false;
 			if (!lir_put_imm32((uint32_t)plan.consts[i]))
 				return false;
-			if (!lir_vfor_put3(plan.is_float ? OP_VSPLATF32 : OP_VSPLATI32,
+			if (!lir_vfor_put3(plan.const_type[i] == NOCT_VALUE_FLOAT ?
+					   OP_VSPLATF32 : OP_VSPLATI32,
 					   1, i,
 					   0, scratch_tmpvar, 0, 0, 0))
 				return false;
@@ -1085,7 +1243,8 @@ lir_visit_vfor_block(
 	}
 	for (i = 0; i < plan.inv_count; i++) {
 		int idx = lir_get_local_index(block, plan.inv[i]);
-		if (!lir_vfor_put3(plan.is_float ? OP_VSPLATF32 : OP_VSPLATI32,
+		if (!lir_vfor_put3(plan.inv_type[i] == NOCT_VALUE_FLOAT ?
+				   OP_VSPLATF32 : OP_VSPLATI32,
 				   1, plan.const_count + i,
 				   0, idx, 0, 0, 0))
 			return false;
@@ -1170,7 +1329,8 @@ lir_visit_vfor_block(
 					return false;
 				vs = plan.stack_base;
 			}
-			if (!lir_vfor_put3(plan.is_float ? OP_VSTOREF32X4 : OP_VSTOREI32X4,
+			if (!lir_vfor_put3(stmt->lhs->type == HIR_EXPR_PSTOREF32 ?
+					   OP_VSTOREF32X4 : OP_VSTOREI32X4,
 					   0, base_tmpvar,
 					   0, plan.counter_tmpvar,
 					   1, vs, 1))
@@ -1204,7 +1364,8 @@ lir_visit_vfor_block(
 	}
 	for (i = 0; i < plan.temp_count; i++) {
 		int idx = lir_get_local_index(block, plan.temp[i]);
-		if (!lir_vfor_put3(plan.is_float ? OP_VGETLANEF32 : OP_VGETLANEI32,
+		if (!lir_vfor_put3(plan.temp_type[i] == NOCT_VALUE_FLOAT ?
+				   OP_VGETLANEF32 : OP_VGETLANEI32,
 				   0, idx,
 				   1, plan.const_count + plan.inv_count + i,
 				   1, 3, 1))
@@ -1680,6 +1841,7 @@ lir_visit_stmt(
 {
 	int rhs_tmpvar, obj_tmpvar, access_tmpvar;
 	bool is_lhs_local;
+	bool is_return;
 
 	assert(stmt != NULL);
 	assert(stmt->rhs != NULL);
@@ -1694,6 +1856,10 @@ lir_visit_stmt(
 
 	/* Check whether LHS is a local variable. */
 	is_lhs_local = lir_check_lhs_local(parent, stmt->lhs, &rhs_tmpvar);
+	is_return = is_lhs_local && stmt->lhs != NULL &&
+		stmt->lhs->type == HIR_EXPR_TERM &&
+		stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL &&
+		strcmp(stmt->lhs->val.term.term->val.symbol, "$return") == 0;
 
 	/* Prepare a tmpvar for RHS if LHS is not an explicit local variable. */
 	if (!is_lhs_local) {
@@ -1704,6 +1870,26 @@ lir_visit_stmt(
 	/* Visit RHS. */
 	if (!lir_visit_expr(rhs_tmpvar, stmt->rhs, parent))
 		return false;
+
+	/* Level-2 return contracts are checked per edge.  A proven mismatch
+	   is a compile error; an unknown value gets an exact runtime check. */
+	if (is_return && lir_optimize_level >= 2) {
+		struct hir_block *func;
+		int proven;
+
+		func = lir_root_func(parent);
+		assert(func != NULL);
+		if (func->val.func.return_type >= 0) {
+			proven = lir_expr_proven_type(stmt->rhs, parent);
+			if (proven >= 0 && proven != func->val.func.return_type) {
+				lir_error_line = stmt->line;
+				lir_fatal(N_TR("Return operand does not match the declared type."));
+				return false;
+			}
+			if (proven < 0 && !lir_emit_return_check(parent))
+				return false;
+		}
+	}
 
 	/* Visit LHS if LHS is not an explicit local variable. */
 	if (stmt->lhs != NULL && !is_lhs_local) {
@@ -2285,8 +2471,18 @@ lir_expr_proven_type(
 		switch (expr->val.term.term->type) {
 		case HIR_TERM_INT:
 			return TYPED_INT;
+		case HIR_TERM_LONG:
+			return NOCT_VALUE_LONG;
 		case HIR_TERM_FLOAT:
 			return TYPED_FLOAT;
+		case HIR_TERM_DOUBLE:
+			return NOCT_VALUE_DOUBLE;
+		case HIR_TERM_STRING:
+			return NOCT_VALUE_STRING;
+		case HIR_TERM_EMPTY_ARRAY:
+			return NOCT_VALUE_ARRAY;
+		case HIR_TERM_EMPTY_DICT:
+			return NOCT_VALUE_DICT;
 		case HIR_TERM_SYMBOL:
 			return lir_symbol_proven_type(
 				expr->val.term.term->val.symbol, block);
@@ -2344,6 +2540,19 @@ lir_expr_proven_type(
 		return TYPED_INT;
 	case HIR_EXPR_PLOADF32:
 		return TYPED_FLOAT;
+	case HIR_EXPR_CALL:
+		switch (hir_get_intrinsic_call(expr)) {
+		case HIR_INTRINSIC_INT_FROM:
+			return TYPED_INT;
+		case HIR_INTRINSIC_FLOAT_FROM:
+			return TYPED_FLOAT;
+		default:
+			return TYPED_UNKNOWN;
+		}
+	case HIR_EXPR_ARRAY:
+		return NOCT_VALUE_ARRAY;
+	case HIR_EXPR_DICT:
+		return NOCT_VALUE_DICT;
 	default:
 		/* PLOAD64/PBASE (long), NEG, NOT, LAND, LOR, DOT,
 		   SUBSCR, CALL, ... */
@@ -3278,7 +3487,7 @@ static bool
 lir_put_opcode(
 	uint8_t opcode)
 {
-	if (opcode >= OP_VLOADI32X4 && opcode <= OP_VDIVF32X4)
+	if (opcode >= OP_VLOADI32X4 && opcode <= OP_VCVTF32I32X4)
 		has_vector_ops = true;
 	if (!lir_put_u8(opcode))
 		return false;
@@ -4098,6 +4307,8 @@ lir_dump(
 		case OP_VSUBF32X4:
 		case OP_VMULF32X4:
 		case OP_VDIVF32X4:
+		case OP_VCVTI32F32X4:
+		case OP_VCVTF32I32X4:
 		{
 			/* 128-bit SIMD (design 06); operand shapes vary. */
 			static const char *vec_name[] = {
@@ -4108,7 +4319,8 @@ lir_dump(
 				"VSHLI32X4", "VSHRI32X4",
 				"VLOADF32X4", "VSTOREF32X4", "VSPLATF32",
 				"VGETLANEF32", "VADDF32X4", "VSUBF32X4",
-				"VMULF32X4", "VDIVF32X4"
+				"VMULF32X4", "VDIVF32X4",
+				"VCVTI32F32X4", "VCVTF32I32X4"
 			};
 			const char *nm = vec_name[opcode - OP_VLOADI32X4];
 			uint16_t t1;
@@ -4138,6 +4350,8 @@ lir_dump(
 				printf("%04d: %s(dst:%d, vs:%d, lane:%d)\n", ofs, nm, t1, i1, i2);
 				break;
 			case OP_VMOV128:
+			case OP_VCVTI32F32X4:
+			case OP_VCVTF32I32X4:
 				IMM1(i1); IMM1(i2);
 				printf("%04d: %s(vd:%d, vs:%d)\n", ofs, nm, i1, i2);
 				break;

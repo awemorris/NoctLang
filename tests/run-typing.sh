@@ -46,6 +46,30 @@ else
     echo "PASS packed/restrict bytecode round trip"
 fi
 
+# Return annotations use an optional bytecode section.  Compile and reload it
+# explicitly so the strict line-sequence reader stays backward compatible.
+cp typing/return_annotation.noct "$TMP_DIR/return_roundtrip.noct"
+$NOCT --compile "$TMP_DIR/return_roundtrip.noct"
+$NOCT --disable-jit "$TMP_DIR/return_roundtrip.nb" > "$OUT" 2>&1
+if ! diff -q typing/return_annotation.noct.out "$OUT" > /dev/null 2>&1; then
+    echo "FAIL return annotation bytecode round trip"
+    diff typing/return_annotation.noct.out "$OUT" | head -5
+    FAILED=1
+else
+    echo "PASS return annotation bytecode round trip"
+fi
+
+cp typing/return_unknown.noct "$TMP_DIR/return_checked_roundtrip.noct"
+$NOCT --compile --optimize-level=2 "$TMP_DIR/return_checked_roundtrip.noct"
+$NOCT --disable-jit "$TMP_DIR/return_checked_roundtrip.nb" > "$OUT" 2>&1
+if ! diff -q typing/return_unknown.noct.out2 "$OUT" > /dev/null 2>&1; then
+    echo "FAIL checked return bytecode round trip"
+    diff typing/return_unknown.noct.out2 "$OUT" | head -5
+    FAILED=1
+else
+    echo "PASS checked return bytecode round trip"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
     echo 'Typing tests failed.'
     exit 1

@@ -174,9 +174,10 @@ jit_get_code_size(
 
 /* Runtime SIMD capabilities, detected independently by each JIT backend. */
 #define JIT_SIMD_CAP_SSE2	(1u << 0)
-#define JIT_SIMD_CAP_SSE41	(1u << 1)
-#define JIT_SIMD_CAP_NEON	(1u << 2)
-#define JIT_SIMD_CAP_ALTIVEC	(1u << 3)
+#define JIT_SIMD_CAP_SSE3	(1u << 1)
+#define JIT_SIMD_CAP_SSE41	(1u << 2)
+#define JIT_SIMD_CAP_NEON	(1u << 3)
+#define JIT_SIMD_CAP_ALTIVEC	(1u << 4)
 
 /* Test/user ceiling.  It can remove detected features, never add them. */
 static INLINE uint32_t
@@ -190,8 +191,11 @@ jit_apply_simd_max(uint32_t detected)
 		return 0;
 	if (strcmp(max, "sse2") == 0)
 		return detected & JIT_SIMD_CAP_SSE2;
+	if (strcmp(max, "sse3") == 0)
+		return detected & (JIT_SIMD_CAP_SSE2 | JIT_SIMD_CAP_SSE3);
 	if (strcmp(max, "sse41") == 0)
-		return detected & (JIT_SIMD_CAP_SSE2 | JIT_SIMD_CAP_SSE41);
+		return detected & (JIT_SIMD_CAP_SSE2 | JIT_SIMD_CAP_SSE3 |
+				   JIT_SIMD_CAP_SSE41);
 	if (strcmp(max, "neon") == 0)
 		return detected & JIT_SIMD_CAP_NEON;
 	if (strcmp(max, "altivec") == 0)

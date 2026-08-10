@@ -38,6 +38,11 @@ struct lir_func {
 	int param_packed_type[LIR_PARAM_SIZE];
 	/* rpacked* source annotation. */
 	bool param_restricted[LIR_PARAM_SIZE];
+	/* Optional declared return tag and packed element kind. */
+	int return_type;
+	int return_packed_type;
+	/* The bytecode enforces the declared return type on every edge. */
+	bool return_type_checked;
 	/* Bytecode contains at least one OP_V* instruction. */
 	bool has_vector_ops;
 	uint32_t tmpvar_size;

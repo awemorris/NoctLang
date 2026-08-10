@@ -2681,6 +2681,12 @@ jit_put_vector_scalar_op(struct jit_context *ctx, int op,
 			SW(REG_T2, dst * 16 + lane * 4, REG_T4);
 		}
 		return true;
+	case OP_VCVTI32F32X4:
+		ASM_BINARY_OP(noct_ex_vcvti32f32x4_helper);
+		return true;
+	case OP_VCVTF32I32X4:
+		ASM_BINARY_OP(noct_ex_vcvtf32i32x4_helper);
+		return true;
 	case OP_VADDI32X4:
 	case OP_VSUBI32X4:
 	case OP_VMULI32X4:
@@ -2785,6 +2791,8 @@ jit_visit_vector_op(
                 CONSUME_IMM8(src2);
                 break;
         case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                 CONSUME_IMM8(dst);
                 CONSUME_IMM8(src1);
                 src2 = 0;
@@ -3147,6 +3155,8 @@ jit_visit_bytecode(
         case OP_VSUBF32X4:
         case OP_VMULF32X4:
         case OP_VDIVF32X4:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

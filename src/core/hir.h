@@ -88,6 +88,13 @@ enum hir_expr_type {
 	HIR_EXPR_CAPTURE,	/* unary + home local symbol                      */
 };
 
+/* Calls which the runtime guarantees cannot be rebound. */
+enum hir_intrinsic_id {
+	HIR_INTRINSIC_NONE,
+	HIR_INTRINSIC_INT_FROM,
+	HIR_INTRINSIC_FLOAT_FROM,
+};
+
 /* HIR Term Type */
 enum hir_term_type {
 	HIR_TERM_SYMBOL,
@@ -127,6 +134,9 @@ struct hir_block {
 	/* Is a tail of siblings? */
 	bool stop;
 
+	/* The terminating edge is an explicit source-level return. */
+	bool is_return_edge;
+
 	/* Bytecode address. */
 	uint32_t addr;
 
@@ -158,6 +168,10 @@ struct hir_block {
 
 			/* rpacked* source annotation. */
 			bool param_restricted[HIR_PARAM_SIZE];
+
+			/* Optional declared return tag and packed element kind. */
+			int return_type;
+			int return_packed_type;
 
 			/* File name. */
 			char *file_name;
@@ -463,6 +477,11 @@ hir_get_error_line(void);
  */
 const char *
 hir_get_error_message(void);
+
+/* Return an immutable intrinsic ID for a call expression. */
+int
+hir_get_intrinsic_call(
+	const struct hir_expr *expr);
 
 /*
  * Debug dump.

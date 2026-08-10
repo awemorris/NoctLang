@@ -205,6 +205,18 @@ rt_register_intrinsics(
 			return false;
 	}
 
+	/* These two calls are recognized by the optimizer.  Freeze both
+	   the member dictionary and its global binding so name-based
+	   recognition remains sound for the lifetime of the VM. */
+	if (!rt_get_global(env, "Int", &pkg) ||
+	    !om_freeze_dict(env, &pkg) ||
+	    !rt_mark_global_const(env, "Int"))
+		return false;
+	if (!rt_get_global(env, "Float", &pkg) ||
+	    !om_freeze_dict(env, &pkg) ||
+	    !rt_mark_global_const(env, "Float"))
+		return false;
+
 	return true;
 }
 

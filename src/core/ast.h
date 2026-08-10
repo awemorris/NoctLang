@@ -99,6 +99,9 @@ struct ast_func {
 	/* Parameter list. */
 	struct ast_param_list *param_list;
 
+	/* Optional return type annotation. */
+	char *return_type_name;
+
 	/* Statement list */
 	struct ast_stmt_list *stmt_list;
 

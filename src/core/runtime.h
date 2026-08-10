@@ -194,6 +194,11 @@ struct rt_func {
 	/* rpacked* source annotation. */
 	bool param_restricted[NOCT_ARG_MAX];
 
+	/* Optional declared return type contract. */
+	int return_type;
+	int return_packed_type;
+	bool return_type_checked;
+
 	char *file_name;
 
 	/* Bytecode for a function. (if not a cfunc) */
@@ -829,6 +834,12 @@ rt_set_global(
 	struct rt_env *env,
 	const char *name,
 	struct rt_value *val);
+
+/* Mark an existing global binding immutable. */
+bool
+rt_mark_global_const(
+	struct rt_env *env,
+	const char *name);
 
 /* Set a global variable. (hash version) */
 bool

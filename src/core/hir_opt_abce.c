@@ -55,8 +55,8 @@
 
 /* Limits. */
 #define ABCE_MAX_BLOCKS		64	/* cloneable blocks in a body    */
-#define ABCE_MAX_SITES		4	/* guarded subscript sites       */
-#define ABCE_MAX_GUARDS		8	/* TYPEIS-guarded local reads    */
+#define ABCE_MAX_SITES		16	/* guarded subscript sites      */
+#define ABCE_MAX_GUARDS		32	/* TYPEIS-guarded local reads   */
 #define ABCE_GUARD_INT		1	/* affine-index local            */
 #define ABCE_GUARD_BODY		2	/* scalar value local            */
 #define ABCE_BODY_UNKNOWN	0
@@ -79,6 +79,8 @@ struct abce_site {
 	bool u_is_const;
 	int u_const;		/* if u_is_const */
 	const char *u_name;	/* if !u_is_const (invariant local) */
+	struct hir_expr *u_expr;	/* non-trivial loop-invariant expr */
+	char hoist_name[32];	/* canonical local for u_expr */
 	int packed_index;	/* owner packed (ctx->packed[]) */
 };
 
@@ -253,14 +255,17 @@ struct abce_ctx {
 	int packed_bet[ABCE_MAX_PACKED];	/* NOCT_PACKED_* per packed */
 	int packed_count;
 	const char *assigned[ABCE_MAX_ASSIGNED];
+	int assigned_type[ABCE_MAX_ASSIGNED];
 	int assigned_count;
 	const char *guards[ABCE_MAX_GUARDS];	/* locals protected by TYPEIS */
 	uint8_t guard_req[ABCE_MAX_GUARDS];	/* ABCE_GUARD_* bit mask */
+	uint8_t guard_type[ABCE_MAX_GUARDS];	/* NOCT_VALUE_INT/FLOAT */
 	int guard_count;
 	int body_kind;			/* ABCE_BODY_* */
 	bool saw_int_term;
 	bool saw_float_term;
 	bool saw_int_only_op;
+	bool mixed_numeric;
 	struct abce_site sites[ABCE_MAX_SITES];
 	int site_count;
 	/* Clone map. */
@@ -445,12 +450,14 @@ abce_is_local(struct abce_ctx *ctx, const char *name)
 }
 
 static bool
-abce_add_guard(struct abce_ctx *ctx, const char *name, uint8_t req)
+abce_add_guard(struct abce_ctx *ctx, const char *name, uint8_t req, int type)
 {
 	int i;
 
 	for (i = 0; i < ctx->guard_count; i++) {
 		if (strcmp(ctx->guards[i], name) == 0) {
+			if (ctx->guard_type[i] != type)
+				return false;
 			ctx->guard_req[i] |= req;
 			return true;
 		}
@@ -459,8 +466,28 @@ abce_add_guard(struct abce_ctx *ctx, const char *name, uint8_t req)
 		return false;	/* over the cap: ineligible */
 	ctx->guards[ctx->guard_count] = name;
 	ctx->guard_req[ctx->guard_count] = req;
+	ctx->guard_type[ctx->guard_count] = (uint8_t)type;
 	ctx->guard_count++;
 	return true;
+}
+
+static int
+abce_local_type(struct abce_ctx *ctx, const char *name)
+{
+	struct hir_local *local = ctx->func_block->val.func.local;
+	int i;
+
+	for (i = 0; i < ctx->assigned_count; i++) {
+		if (strcmp(ctx->assigned[i], name) == 0)
+			return ctx->assigned_type[i];
+	}
+
+	while (local != NULL) {
+		if (strcmp(local->symbol, name) == 0)
+			return local->proven_type;
+		local = local->next;
+	}
+	return -1;
 }
 
 /* Pick the guarded element type for a packed local. */
@@ -488,8 +515,21 @@ abce_add_assigned(struct abce_ctx *ctx, const char *name)
 	}
 	if (ctx->assigned_count >= ABCE_MAX_ASSIGNED)
 		return false;
-	ctx->assigned[ctx->assigned_count++] = name;
+	ctx->assigned[ctx->assigned_count] = name;
+	ctx->assigned_type[ctx->assigned_count++] = -1;
 	return true;
+}
+
+static void
+abce_set_assigned_type(struct abce_ctx *ctx, const char *name, int type)
+{
+	int i;
+	for (i = 0; i < ctx->assigned_count; i++) {
+		if (strcmp(ctx->assigned[i], name) == 0) {
+			ctx->assigned_type[i] = type;
+			return;
+		}
+	}
 }
 
 static bool
@@ -502,6 +542,55 @@ abce_is_assigned(struct abce_ctx *ctx, const char *name)
 			return true;
 	}
 	return false;
+}
+
+static bool
+abce_expr_equal(struct hir_expr *a, struct hir_expr *b)
+{
+	if (a == NULL || b == NULL || a->type != b->type)
+		return false;
+	if (a->type == HIR_EXPR_TERM) {
+		struct hir_term *ta = a->val.term.term;
+		struct hir_term *tb = b->val.term.term;
+		if (ta->type != tb->type)
+			return false;
+		if (ta->type == HIR_TERM_INT)
+			return ta->val.i == tb->val.i;
+		if (ta->type == HIR_TERM_SYMBOL)
+			return strcmp(ta->val.symbol, tb->val.symbol) == 0;
+		return false;
+	}
+	if (a->type == HIR_EXPR_PAR)
+		return abce_expr_equal(a->val.unary.expr, b->val.unary.expr);
+	return abce_expr_equal(a->val.binary.expr[0], b->val.binary.expr[0]) &&
+	       abce_expr_equal(a->val.binary.expr[1], b->val.binary.expr[1]);
+}
+
+/* Pure int expression whose local reads are invariant in this loop. */
+static bool
+abce_check_invariant_u(struct abce_ctx *ctx, struct hir_expr *e)
+{
+	if (e->type == HIR_EXPR_TERM) {
+		if (e->val.term.term->type == HIR_TERM_INT)
+			return true;
+		if (e->val.term.term->type != HIR_TERM_SYMBOL)
+			return false;
+		if (strcmp(e->val.term.term->val.symbol, ctx->counter) == 0 ||
+		    !abce_is_local(ctx, e->val.term.term->val.symbol) ||
+		    abce_is_assigned(ctx, e->val.term.term->val.symbol))
+			return false;
+		return abce_add_guard(ctx, e->val.term.term->val.symbol,
+				      ABCE_GUARD_INT, NOCT_VALUE_INT);
+	}
+	if (e->type == HIR_EXPR_PAR)
+		return abce_check_invariant_u(ctx, e->val.unary.expr);
+	if (e->type != HIR_EXPR_PLUS && e->type != HIR_EXPR_MINUS &&
+	    e->type != HIR_EXPR_MUL && e->type != HIR_EXPR_AND &&
+	    e->type != HIR_EXPR_OR && e->type != HIR_EXPR_XOR &&
+	    e->type != HIR_EXPR_SHL && e->type != HIR_EXPR_SHR)
+		return false;
+	return abce_check_invariant_u(ctx, e->val.binary.expr[0]) &&
+	       abce_check_invariant_u(ctx, e->val.binary.expr[1]);
 }
 
 /* Register a subscript site; validate the affine shape. */
@@ -564,33 +653,37 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 	} else if (f->type == HIR_EXPR_PLUS || f->type == HIR_EXPR_MINUS) {
 		a = f->val.binary.expr[0];
 		b = f->val.binary.expr[1];
-		if (a->type != HIR_EXPR_TERM || b->type != HIR_EXPR_TERM)
-			return false;
-		if (a->val.term.term->type == HIR_TERM_SYMBOL &&
+		if (a->type == HIR_EXPR_TERM &&
+		    a->val.term.term->type == HIR_TERM_SYMBOL &&
 		    strcmp(a->val.term.term->val.symbol, ctx->counter) == 0) {
 			/* i + u  or  i - u */
 			site.shape = (f->type == HIR_EXPR_PLUS) ?
 				ABCE_SHAPE_I_PLUS_U : ABCE_SHAPE_I_MINUS_U;
-			if (b->val.term.term->type == HIR_TERM_INT) {
+			if (b->type == HIR_EXPR_TERM &&
+			    b->val.term.term->type == HIR_TERM_INT) {
 				site.u_is_const = true;
 				site.u_const = b->val.term.term->val.i;
-			} else if (b->val.term.term->type == HIR_TERM_SYMBOL) {
+			} else if (b->type == HIR_EXPR_TERM &&
+				   b->val.term.term->type == HIR_TERM_SYMBOL) {
 				site.u_name = b->val.term.term->val.symbol;
 			} else {
-				return false;
+				site.u_expr = b;
 			}
 		} else if (f->type == HIR_EXPR_PLUS &&
+			   b->type == HIR_EXPR_TERM &&
 			   b->val.term.term->type == HIR_TERM_SYMBOL &&
 			   strcmp(b->val.term.term->val.symbol, ctx->counter) == 0) {
 			/* u + i */
 			site.shape = ABCE_SHAPE_U_PLUS_I;
-			if (a->val.term.term->type == HIR_TERM_INT) {
+			if (a->type == HIR_EXPR_TERM &&
+			    a->val.term.term->type == HIR_TERM_INT) {
 				site.u_is_const = true;
 				site.u_const = a->val.term.term->val.i;
-			} else if (a->val.term.term->type == HIR_TERM_SYMBOL) {
+			} else if (a->type == HIR_EXPR_TERM &&
+				   a->val.term.term->type == HIR_TERM_SYMBOL) {
 				site.u_name = a->val.term.term->val.symbol;
 			} else {
-				return false;
+				site.u_expr = a;
 			}
 		} else {
 			return false;
@@ -600,7 +693,8 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 				return false;	/* i+i: coefficient 2 */
 			if (!abce_is_local(ctx, site.u_name))
 				return false;	/* global: not invariant */
-			if (!abce_add_guard(ctx, site.u_name, ABCE_GUARD_INT))
+			if (!abce_add_guard(ctx, site.u_name, ABCE_GUARD_INT,
+					    NOCT_VALUE_INT))
 				return false;
 		}
 	} else {
@@ -621,6 +715,9 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 		if (!site.u_is_const && site.u_name != NULL &&
 		    o->u_name != NULL &&
 		    strcmp(o->u_name, site.u_name) == 0)
+			return true;
+		if (!site.u_is_const && site.u_expr != NULL &&
+		    o->u_expr != NULL && abce_expr_equal(o->u_expr, site.u_expr))
 			return true;
 		if (site.shape == ABCE_SHAPE_I)
 			return true;
@@ -643,10 +740,11 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 		switch (t->type) {
 		case HIR_TERM_INT:
 			ctx->saw_int_term = true;
-			return ctx->body_kind != ABCE_BODY_F32;
+			return true;
 		case HIR_TERM_FLOAT:
 			ctx->saw_float_term = true;
-			return ctx->body_kind != ABCE_BODY_INT;
+			ctx->mixed_numeric = true;
+			return true;
 		case HIR_TERM_LONG:
 		case HIR_TERM_DOUBLE:
 			return false;
@@ -655,8 +753,19 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 				return true;
 			if (!abce_is_local(ctx, t->val.symbol))
 				return false;	/* global read */
-			/* Value locals are guarded according to the body kind. */
-			return abce_add_guard(ctx, t->val.symbol, ABCE_GUARD_BODY);
+			/* A value defined earlier in this straight-line walk is
+			   re-established by the fast body and needs no entry guard. */
+			if (abce_is_assigned(ctx, t->val.symbol))
+				return true;
+			{
+				int type = abce_local_type(ctx, t->val.symbol);
+				if (type != NOCT_VALUE_INT && type != NOCT_VALUE_FLOAT)
+					return false;
+				if (type == NOCT_VALUE_FLOAT)
+					ctx->mixed_numeric = true;
+				return abce_add_guard(ctx, t->val.symbol,
+						      ABCE_GUARD_BODY, type);
+			}
 		default:
 			/* STRING / EMPTY_ARRAY / EMPTY_DICT allocate. */
 			return false;
@@ -666,9 +775,13 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 		return abce_check_expr(ctx, expr->val.unary.expr);
 	case HIR_EXPR_NOT:
 		ctx->saw_int_only_op = true;
-		if (ctx->body_kind == ABCE_BODY_F32)
-			return false;
 		return abce_check_expr(ctx, expr->val.unary.expr);
+	case HIR_EXPR_CALL:
+		if (expr->val.call.arg_count != 1 ||
+		    hir_get_intrinsic_call(expr) == HIR_INTRINSIC_NONE)
+			return false;
+		ctx->mixed_numeric = true;
+		return abce_check_expr(ctx, expr->val.call.arg[0]);
 	case HIR_EXPR_LT:
 	case HIR_EXPR_LTE:
 	case HIR_EXPR_GT:
@@ -692,20 +805,89 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 		    expr->type != HIR_EXPR_MUL &&
 		    expr->type != HIR_EXPR_DIV) {
 			ctx->saw_int_only_op = true;
-			if (ctx->body_kind == ABCE_BODY_F32)
-				return false;
 		}
 		if (!abce_check_expr(ctx, expr->val.binary.expr[0]))
 			return false;
 		if (!abce_check_expr(ctx, expr->val.binary.expr[1]))
 			return false;
-		return !(ctx->body_kind == ABCE_BODY_F32 &&
-			 ctx->saw_int_only_op);
+		return true;
 	case HIR_EXPR_SUBSCR:
 		return abce_check_site(ctx, expr);
 	default:
 		/* DOT, CALL, THISCALL, ARRAY, DICT, NEW, ... */
 		return false;
+	}
+}
+
+/* Exact scalar tag required by raw PSTORE lowering. */
+static int
+abce_expr_type(struct abce_ctx *ctx, struct hir_expr *expr)
+{
+	int a, b;
+
+	switch (expr->type) {
+	case HIR_EXPR_TERM:
+		if (expr->val.term.term->type == HIR_TERM_INT)
+			return NOCT_VALUE_INT;
+		if (expr->val.term.term->type == HIR_TERM_FLOAT)
+			return NOCT_VALUE_FLOAT;
+		if (expr->val.term.term->type == HIR_TERM_SYMBOL)
+			return abce_local_type(ctx,
+				expr->val.term.term->val.symbol);
+		return -1;
+	case HIR_EXPR_PAR:
+		return abce_expr_type(ctx, expr->val.unary.expr);
+	case HIR_EXPR_NEG:
+		a = abce_expr_type(ctx, expr->val.unary.expr);
+		return a == NOCT_VALUE_INT || a == NOCT_VALUE_FLOAT ? a : -1;
+	case HIR_EXPR_PLOAD8U:
+	case HIR_EXPR_PLOAD8S:
+	case HIR_EXPR_PLOAD16U:
+	case HIR_EXPR_PLOAD16S:
+	case HIR_EXPR_PLOAD32:
+		return NOCT_VALUE_INT;
+	case HIR_EXPR_PLOADF32:
+		return NOCT_VALUE_FLOAT;
+	case HIR_EXPR_SUBSCR:
+		if (expr->val.binary.expr[0]->type == HIR_EXPR_TERM &&
+		    expr->val.binary.expr[0]->val.term.term->type ==
+			HIR_TERM_SYMBOL) {
+			int bet = abce_bet_for_symbol(ctx,
+				expr->val.binary.expr[0]->val.term.term->val.symbol);
+			return bet == NOCT_PACKED_FLOAT32 ?
+				NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
+		}
+		return -1;
+	case HIR_EXPR_CALL:
+		switch (hir_get_intrinsic_call(expr)) {
+		case HIR_INTRINSIC_INT_FROM: return NOCT_VALUE_INT;
+		case HIR_INTRINSIC_FLOAT_FROM: return NOCT_VALUE_FLOAT;
+		default: return -1;
+		}
+	case HIR_EXPR_PLUS:
+	case HIR_EXPR_MINUS:
+	case HIR_EXPR_MUL:
+	case HIR_EXPR_DIV:
+		a = abce_expr_type(ctx, expr->val.binary.expr[0]);
+		b = abce_expr_type(ctx, expr->val.binary.expr[1]);
+		if (a == NOCT_VALUE_FLOAT || b == NOCT_VALUE_FLOAT)
+			return (a == NOCT_VALUE_INT || a == NOCT_VALUE_FLOAT) &&
+			       (b == NOCT_VALUE_INT || b == NOCT_VALUE_FLOAT) ?
+			       NOCT_VALUE_FLOAT : -1;
+		return a == NOCT_VALUE_INT && b == NOCT_VALUE_INT ?
+			NOCT_VALUE_INT : -1;
+	case HIR_EXPR_MOD:
+	case HIR_EXPR_AND:
+	case HIR_EXPR_OR:
+	case HIR_EXPR_XOR:
+	case HIR_EXPR_SHL:
+	case HIR_EXPR_SHR:
+		a = abce_expr_type(ctx, expr->val.binary.expr[0]);
+		b = abce_expr_type(ctx, expr->val.binary.expr[1]);
+		return a == NOCT_VALUE_INT && b == NOCT_VALUE_INT ?
+			NOCT_VALUE_INT : -1;
+	default:
+		return -1;
 	}
 }
 
@@ -723,19 +905,29 @@ abce_check_stmt(struct abce_ctx *ctx, struct hir_stmt *stmt)
 			return false;
 		name = stmt->lhs->val.term.term->val.symbol;
 		if (strcmp(name, ctx->counter) == 0)
-			return false;	/* counter assigned in body */
+			return false;
 		if (strcmp(name, "$return") != 0) {
 			if (!abce_is_local(ctx, name))
-				return false;	/* global write */
+				return false;
 			if (!abce_add_assigned(ctx, name))
 				return false;
 		}
-		return abce_check_expr(ctx, stmt->rhs);
+		if (!abce_check_expr(ctx, stmt->rhs))
+			return false;
+		abce_set_assigned_type(ctx, name,
+				       abce_expr_type(ctx, stmt->rhs));
+		return true;
 	}
 	if (stmt->lhs->type == HIR_EXPR_SUBSCR) {
 		if (!abce_check_site(ctx, stmt->lhs))
 			return false;
-		return abce_check_expr(ctx, stmt->rhs);
+		if (!abce_check_expr(ctx, stmt->rhs))
+			return false;
+		if (abce_expr_type(ctx, stmt->rhs) !=
+		    (ctx->body_kind == ABCE_BODY_F32 ?
+		     NOCT_VALUE_FLOAT : NOCT_VALUE_INT))
+			return false;
+		return true;
 	}
 	/* DOT store or anything else. */
 	return false;
@@ -829,23 +1021,13 @@ abce_check_eligibility(struct abce_ctx *ctx)
 		    ctx->sites[i].u_name != NULL &&
 		    abce_is_assigned(ctx, ctx->sites[i].u_name))
 			return false;
+		if (ctx->sites[i].u_expr != NULL &&
+		    !abce_check_invariant_u(ctx, ctx->sites[i].u_expr))
+			return false;
 	}
 
-	/* Raw stores require a homogeneous scalar representation. */
-	if (ctx->body_kind == ABCE_BODY_F32) {
-		if (ctx->saw_int_term || ctx->saw_int_only_op)
-			return false;
-	} else if (ctx->body_kind == ABCE_BODY_INT) {
-		if (ctx->saw_float_term)
-			return false;
-	} else {
+	if (ctx->body_kind == ABCE_BODY_UNKNOWN)
 		return false;
-	}
-	for (i = 0; i < ctx->guard_count; i++) {
-		if (ctx->body_kind == ABCE_BODY_F32 &&
-		    ctx->guard_req[i] == (ABCE_GUARD_INT | ABCE_GUARD_BODY))
-			return false;
-	}
 
 	/*
 	 * Multi-packed loops reject 64-bit bets outright: a PLOAD64
@@ -1180,6 +1362,44 @@ abce_packed_subscr_index(struct abce_ctx *ctx, struct hir_expr *e)
 }
 
 static bool
+abce_canonicalize_index(struct abce_ctx *ctx, int packed_index,
+			struct hir_expr *f)
+{
+	int i;
+
+	for (i = 0; i < ctx->site_count; i++) {
+		struct abce_site *site = &ctx->sites[i];
+		struct hir_expr *u = NULL;
+		struct hir_expr *n;
+		if (site->packed_index != packed_index ||
+		    site->u_expr == NULL || site->hoist_name[0] == '\0')
+			continue;
+		if (f->type != HIR_EXPR_PLUS && f->type != HIR_EXPR_MINUS)
+			continue;
+		if (site->shape == ABCE_SHAPE_I_PLUS_U ||
+		    site->shape == ABCE_SHAPE_I_MINUS_U)
+			u = f->val.binary.expr[1];
+		else if (site->shape == ABCE_SHAPE_U_PLUS_I)
+			u = f->val.binary.expr[0];
+		if (u == NULL || !abce_expr_equal(u, site->u_expr))
+			continue;
+		if (site->shape == ABCE_SHAPE_U_PLUS_I)
+			n = abce_mk_binary(HIR_EXPR_PLUS,
+				abce_mk_expr_symbol(site->hoist_name),
+				abce_mk_expr_symbol(ctx->counter));
+		else
+			n = abce_mk_binary(f->type,
+				abce_mk_expr_symbol(ctx->counter),
+				abce_mk_expr_symbol(site->hoist_name));
+		if (n == NULL)
+			return false;
+		*f = *n;
+		return true;
+	}
+	return true;
+}
+
+static bool
 abce_rewrite_expr(struct abce_ctx *ctx, struct hir_expr *e)
 {
 	uint32_t i;
@@ -1197,6 +1417,9 @@ abce_rewrite_expr(struct abce_ctx *ctx, struct hir_expr *e)
 			e->type = abce_load_kind(ctx->packed_bet[k]);
 			e->val.binary.expr[0] = base_term;
 			/* expr[1] (the offset) stays. */
+			if (!abce_canonicalize_index(ctx, k,
+						      e->val.binary.expr[1]))
+				return false;
 			return abce_rewrite_expr(ctx, e->val.binary.expr[1]);
 		}
 	}
@@ -1251,6 +1474,9 @@ abce_rewrite_block(struct abce_ctx *ctx, struct hir_block *b)
 					return false;
 				stmt->lhs->type = abce_store_kind(ctx->packed_bet[k]);
 				stmt->lhs->val.binary.expr[0] = base_term;
+				if (!abce_canonicalize_index(ctx, k,
+							      stmt->lhs->val.binary.expr[1]))
+					return false;
 				if (!abce_rewrite_expr(ctx, stmt->lhs->val.binary.expr[1]))
 					return false;
 			} else if (stmt->lhs != NULL) {
@@ -1300,6 +1526,8 @@ abce_mk_endpoint(struct abce_ctx *ctx, struct abce_site *site, bool at_hi)
 
 	if (site->u_is_const)
 		uexpr = abce_mk_expr_int(site->u_const);
+	else if (site->u_expr != NULL)
+		uexpr = abce_clone_expr(site->u_expr);
 	else
 		uexpr = abce_mk_expr_symbol(site->u_name);
 	if (uexpr == NULL)
@@ -1335,10 +1563,7 @@ abce_mk_guard(struct abce_ctx *ctx)
 
 	/* TYPEIS(v, int/float) for every guarded local. */
 	for (i = 0; i < ctx->guard_count; i++) {
-		int type = NOCT_VALUE_INT;
-		if ((ctx->guard_req[i] & ABCE_GUARD_BODY) != 0 &&
-		    ctx->body_kind == ABCE_BODY_F32)
-			type = NOCT_VALUE_FLOAT;
+		int type = ctx->guard_type[i];
 		e = abce_mk_binary(HIR_EXPR_TYPEIS,
 				   abce_mk_expr_symbol(ctx->guards[i]),
 				   abce_mk_expr_int(type));
@@ -1436,6 +1661,24 @@ abce_version_loop(struct abce_ctx *ctx)
 		snprintf(ctx->base_name[i], sizeof(ctx->base_name[i]),
 			 "$abce%d_base%d", abce_loop_seq, i);
 	}
+	for (i = 0; i < ctx->site_count; i++) {
+		int j;
+		if (ctx->sites[i].u_expr == NULL)
+			continue;
+		for (j = 0; j < i; j++) {
+			if (ctx->sites[j].u_expr != NULL &&
+			    abce_expr_equal(ctx->sites[j].u_expr,
+					    ctx->sites[i].u_expr)) {
+				strcpy(ctx->sites[i].hoist_name,
+				       ctx->sites[j].hoist_name);
+				break;
+			}
+		}
+		if (j == i)
+			snprintf(ctx->sites[i].hoist_name,
+				 sizeof(ctx->sites[i].hoist_name),
+				 "$abce%d_off%d", abce_loop_seq, i);
+	}
 	snprintf(ctx->g_name, sizeof(ctx->g_name), "$abce%d_g", abce_loop_seq);
 	abce_loop_seq++;
 	if (!hir_add_local(F, ctx->lo_name))
@@ -1444,6 +1687,18 @@ abce_version_loop(struct abce_ctx *ctx)
 		return false;
 	for (i = 0; i < ctx->packed_count; i++) {
 		if (!hir_add_local(F, ctx->base_name[i]))
+			return false;
+	}
+	for (i = 0; i < ctx->site_count; i++) {
+		int j;
+		if (ctx->sites[i].u_expr == NULL)
+			continue;
+		for (j = 0; j < i; j++) {
+			if (strcmp(ctx->sites[j].hoist_name,
+				   ctx->sites[i].hoist_name) == 0)
+				break;
+		}
+		if (j == i && !hir_add_local(F, ctx->sites[i].hoist_name))
 			return false;
 	}
 	if (!hir_add_local(F, ctx->g_name))
@@ -1508,7 +1763,8 @@ abce_version_loop(struct abce_ctx *ctx)
 	 * suppresses the flag.  The SLOW loop (guard false) must never
 	 * be flagged.
 	 */
-	FAST->val.for_.typed_int_region = ctx->body_kind == ABCE_BODY_INT;
+	FAST->val.for_.typed_int_region =
+		ctx->body_kind == ABCE_BODY_INT && !ctx->mixed_numeric;
 	for (i = 0; i < ctx->packed_count; i++) {
 		if (ctx->packed_bet[i] == NOCT_PACKED_INT64 ||
 		    ctx->packed_bet[i] == NOCT_PACKED_UINT64)
@@ -1563,6 +1819,28 @@ abce_version_loop(struct abce_ctx *ctx)
 			else
 				tail->next = s_base;
 			tail = s_base;
+		}
+		/* Canonicalize non-trivial invariant offsets only after the
+		   TYPEIS guard has succeeded. */
+		for (i = 0; i < ctx->site_count; i++) {
+			struct hir_stmt *s_off;
+			int j;
+			if (ctx->sites[i].u_expr == NULL)
+				continue;
+			for (j = 0; j < i; j++) {
+				if (strcmp(ctx->sites[j].hoist_name,
+					   ctx->sites[i].hoist_name) == 0)
+					break;
+			}
+			if (j != i)
+				continue;
+			s_off = abce_mk_assign_stmt(line,
+				abce_mk_expr_symbol(ctx->sites[i].hoist_name),
+				abce_clone_expr(ctx->sites[i].u_expr));
+			if (s_off == NULL)
+				return false;
+			tail->next = s_off;
+			tail = s_off;
 		}
 	}
 	B1->succ = FAST;
@@ -1640,6 +1918,10 @@ abce_verify_fast_expr(struct hir_expr *e)
 		assert(e->val.term.term->type != HIR_TERM_EMPTY_DICT);
 		break;
 	case HIR_EXPR_CALL:
+		assert(hir_get_intrinsic_call(e) != HIR_INTRINSIC_NONE);
+		assert(e->val.call.arg_count == 1);
+		abce_verify_fast_expr(e->val.call.arg[0]);
+		break;
 	case HIR_EXPR_THISCALL:
 	case HIR_EXPR_NEW:
 	case HIR_EXPR_ARRAY:
