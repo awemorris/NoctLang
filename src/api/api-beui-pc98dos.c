@@ -31,8 +31,7 @@
 #include <noct/noct.h>
 #include <noct/beui.h>
 
-#include "beui-pc98-gdc.h"
-#include "beui-pc98-glyph.h"
+#include "beui-pc98-auto.h"
 
 #include <conio.h>
 #include <i86.h>
@@ -54,8 +53,10 @@
 #define BIOS_SYSTEM_CLOCK_FLAG 0x501U
 #define BIOS_KEY_STATE_TABLE 0x52aU
 
-static struct noct_beui_pc98_gdc gdc_backend;
-static struct noct_beui_pc98_glyph glyph_backend;
+/* The Core-Graph aperture the Cirrus backend expects at board level. */
+#define CIRRUS_PHYSICAL_APERTURE 0xf0000000UL
+
+static struct noct_beui_pc98_auto auto_backend;
 static struct noct_beui_hal pc98dos_hal;
 
 static struct {
@@ -274,20 +275,49 @@ input_drain(void *context)
 }
 
 /* ------------------------------------------------------------------- */
+/* Core-Graph aperture.                                                */
+
+/*
+ * Protected mode under DOS/4GW does not map the board aperture, so ask
+ * DPMI (INT 31h, AX=0800h "Physical Address Mapping") for a linear view
+ * of it.  DOS/4GW runs a zero-based flat model, so the linear address it
+ * returns is usable as a near pointer.  A machine without the board — or
+ * a DPMI host that refuses the mapping — yields NULL, and the display
+ * selector then falls back to the GDC.
+ */
+static volatile uint8_t *
+map_cirrus_aperture(void)
+{
+	union REGS regs;
+	unsigned long size = NOCT_BEUI_CIRRUS_VISIBLE_BYTES;
+	unsigned long linear;
+
+	memset(&regs, 0, sizeof(regs));
+	regs.w.ax = 0x0800;
+	regs.w.bx = (unsigned short)(CIRRUS_PHYSICAL_APERTURE >> 16);
+	regs.w.cx = (unsigned short)(CIRRUS_PHYSICAL_APERTURE & 0xffff);
+	regs.w.si = (unsigned short)(size >> 16);
+	regs.w.di = (unsigned short)(size & 0xffff);
+	int386(0x31, &regs, &regs);
+	if (regs.w.cflag != 0)
+		return NULL;
+	linear = ((unsigned long)regs.w.bx << 16) | regs.w.cx;
+	if (linear == 0)
+		return NULL;
+	return (volatile uint8_t *)linear;
+}
+
+/* ------------------------------------------------------------------- */
 
 NOCT_DLL
 bool
 noct_register_api_beui_pc98dos(NoctEnv *env)
 {
 	memset(&pc98dos_hal, 0, sizeof(pc98dos_hal));
-	noct_beui_pc98_gdc_default(&gdc_backend, display_reset, display_stop,
-				   NULL, port_in8, port_out8, NULL);
-	if (!noct_beui_pc98_gdc_make_hal(&pc98dos_hal, &gdc_backend))
-		return false;
-	noct_beui_pc98_glyph_default(&glyph_backend, &pc98dos_hal.display,
-				     port_in8, port_out8, NULL);
-	if (!noct_beui_pc98_glyph_make_hal(&pc98dos_hal.glyph,
-					   &glyph_backend))
+	noct_beui_pc98_auto_default(&auto_backend, display_reset, display_stop,
+				    NULL, port_in8, port_out8, NULL,
+				    map_cirrus_aperture());
+	if (!noct_beui_pc98_auto_make_hal(&pc98dos_hal, &auto_backend))
 		return false;
 	pc98dos_hal.clock.context = NULL;
 	pc98dos_hal.clock.milliseconds = clock_milliseconds;

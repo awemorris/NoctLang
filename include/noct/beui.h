@@ -57,9 +57,21 @@ struct noct_beui_image {
 	unsigned palette_size;
 };
 
+enum noct_beui_pointer_button {
+	NOCT_BEUI_BUTTON_LEFT = 1U << 0,
+	NOCT_BEUI_BUTTON_RIGHT = 1U << 1,
+	NOCT_BEUI_BUTTON_MIDDLE = 1U << 2
+};
+
+/*
+ * Pointer positions are absolute display coordinates.  Targets whose
+ * hardware reports motion deltas (the PC-98 bus mouse) integrate and
+ * clamp inside their backend, so scripts see one coordinate space on
+ * every host.
+ */
 struct noct_beui_pointer_event {
-	int delta_x;
-	int delta_y;
+	unsigned x;
+	unsigned y;
 	unsigned buttons;
 };
 
@@ -67,6 +79,13 @@ struct noct_beui_display_hal {
 	void *context;
 	int (*enter)(void *context, struct noct_beui_display_info *info);
 	void (*leave)(void *context);
+	/*
+	 * Optional.  Services the host window system and reports whether
+	 * the display is still alive: 1 to continue, 0 once the user has
+	 * asked to close it, negative on error.  Targets that own the
+	 * whole machine leave this NULL and never close.
+	 */
+	int (*poll_events)(void *context);
 	int (*fill)(void *context, const struct noct_beui_rect *rect,
 		    uint32_t color);
 	int (*line)(void *context, unsigned x0, unsigned y0, unsigned x1,
@@ -90,6 +109,12 @@ struct noct_beui_glyph_hal {
 		    uint32_t foreground, uint32_t background);
 };
 
+/*
+ * poll() reports the current absolute pointer state: 1 when the event
+ * was filled in, 0 when nothing has changed since the last call, and a
+ * negative value on error.  start() receives the display geometry so
+ * relative-motion hardware can clamp to the visible area.
+ */
 struct noct_beui_pointer_hal {
 	void *context;
 	int (*start)(void *context,
@@ -192,12 +217,42 @@ int noct_beui_measure_text(const char *text, unsigned *width,
 			    unsigned *height);
 int noct_beui_draw_text(const char *text, unsigned x, unsigned y,
 			 uint32_t foreground, uint32_t background);
+/*
+ * Services the backends and reports whether the display is still alive:
+ * 1 to keep running, 0 once it has closed.  Scripts drive their main
+ * loop from it, so a closed window ends the loop instead of raising.
+ */
 int noct_beui_poll(void);
 int noct_beui_flush(void);
 int noct_beui_get_milliseconds(uint64_t *milliseconds);
 int noct_beui_sleep(unsigned milliseconds);
 int noct_beui_is_key_down(int key);
 void noct_beui_drain_input(void);
+/* Last known absolute pointer state; 0 when no pointer is available. */
+int noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
+
+/*
+ * Image decoding and the handle registry; see src/api/beui-image.c.
+ *
+ * Only uncompressed Windows BMP with 1, 4, 8, or 24 bits per pixel is
+ * decoded.  BMP is used instead of PNG so freestanding hosts such as the
+ * Boots pre-boot environment need no DEFLATE implementation.
+ */
+int noct_beui_bmp_measure(const void *data, size_t size,
+			   enum noct_beui_image_format *format,
+			   unsigned *width, unsigned *height,
+			   size_t *pixel_bytes);
+int noct_beui_bmp_decode(const void *data, size_t size, void *pixel_storage,
+			  size_t pixel_capacity, struct noct_beui_image *image);
+
+/*
+ * Decodes a BMP into a registry entry and returns its handle, or 0 on
+ * failure.  Handles stay valid until noct_beui_image_destroy() or
+ * noct_beui_cleanup().
+ */
+int noct_beui_image_load_bmp(const void *data, size_t size);
+const struct noct_beui_image *noct_beui_image_get(int handle);
+int noct_beui_image_destroy(int handle);
 
 /*
  * Register the "BeUI.*" API and the "Key" dictionary against a HAL.

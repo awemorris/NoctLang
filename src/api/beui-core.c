@@ -11,7 +11,22 @@
 
 #include <noct/beui.h>
 
+#include <stdlib.h>
 #include <string.h>
+
+/*
+ * A decoded image lives until the script destroys it or the VM shuts
+ * down.  Pixels are appended to the entry so one allocation covers both.
+ */
+struct noct_beui_image_entry {
+	struct noct_beui_image_entry *next;
+	int handle;
+	struct noct_beui_image image;
+	uint8_t pixels[1];
+};
+
+#define NOCT_BEUI_IMAGE_SOURCE_MAX (2U * 1024U * 1024U)
+#define NOCT_BEUI_IMAGE_PIXELS_MAX (2U * 1024U * 1024U)
 
 struct noct_beui_state {
 	const struct noct_beui_hal *hal;
@@ -19,6 +34,12 @@ struct noct_beui_state {
 	int display_open;
 	int pointer_open;
 	int audio_open;
+	int close_requested;
+	unsigned pointer_x;
+	unsigned pointer_y;
+	unsigned pointer_buttons;
+	struct noct_beui_image_entry *images;
+	int next_image_handle;
 };
 
 static struct noct_beui_state state;
@@ -45,8 +66,13 @@ noct_beui_init(void)
 				      &state.display))
 		return 0;
 	state.display_open = 1;
+	state.close_requested = 0;
+	state.pointer_buttons = 0;
 	if (state.display.width == 0 || state.display.height == 0)
 		goto fail;
+	/* A pointer starts centred so scripts never read a stale origin. */
+	state.pointer_x = state.display.width / 2U;
+	state.pointer_y = state.display.height / 2U;
 	if (state.hal->pointer.start != NULL) {
 		if (!state.hal->pointer.start(state.hal->pointer.context,
 					      &state.display))
@@ -82,7 +108,15 @@ noct_beui_close(void)
 void
 noct_beui_cleanup(void)
 {
+	struct noct_beui_image_entry *entry = state.images;
+
 	noct_beui_close();
+	while (entry != NULL) {
+		struct noct_beui_image_entry *next = entry->next;
+
+		free(entry);
+		entry = next;
+	}
 	memset(&state, 0, sizeof(state));
 }
 
@@ -316,17 +350,53 @@ noct_beui_poll(void)
 {
 	struct noct_beui_pointer_event event;
 
-	if (!state.display_open)
+	if (!state.display_open || state.close_requested)
 		return 0;
+	if (state.hal->display.poll_events != NULL &&
+	    state.hal->display.poll_events(state.hal->display.context) != 1) {
+		/* A closed window is sticky: every later poll reports it, so a
+		 * script loop ends on the iteration after the user closes it. */
+		state.close_requested = 1;
+		return 0;
+	}
 	noct_beui_drain_input();
 	if (state.pointer_open && state.hal->pointer.poll != NULL) {
+		int updated;
+
 		memset(&event, 0, sizeof(event));
-		if (state.hal->pointer.poll(state.hal->pointer.context, &event) < 0)
+		updated = state.hal->pointer.poll(state.hal->pointer.context,
+						  &event);
+		if (updated < 0) {
+			state.close_requested = 1;
 			return 0;
+		}
+		if (updated > 0) {
+			state.pointer_x = event.x < state.display.width ?
+				event.x : state.display.width - 1U;
+			state.pointer_y = event.y < state.display.height ?
+				event.y : state.display.height - 1U;
+			state.pointer_buttons = event.buttons;
+		}
 	}
 	if (state.audio_open && state.hal->audio.poll != NULL &&
-	    !state.hal->audio.poll(state.hal->audio.context))
+	    !state.hal->audio.poll(state.hal->audio.context)) {
+		state.close_requested = 1;
 		return 0;
+	}
+	return 1;
+}
+
+int
+noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons)
+{
+	if (!state.display_open || !state.pointer_open)
+		return 0;
+	if (x != NULL)
+		*x = state.pointer_x;
+	if (y != NULL)
+		*y = state.pointer_y;
+	if (buttons != NULL)
+		*buttons = state.pointer_buttons;
 	return 1;
 }
 
@@ -362,7 +432,10 @@ noct_beui_sleep(unsigned milliseconds)
 	 * audio, and type-ahead backends serviced while the script idles. */
 	do {
 		noct_beui_drain_input();
-		(void)noct_beui_poll();
+		/* A window closed mid-sleep ends the wait; the script sees it
+		 * on its next BeUI.poll(). */
+		if (state.display_open && !noct_beui_poll())
+			break;
 		if (!noct_beui_get_milliseconds(&now))
 			return 0;
 	} while (now - start < milliseconds);
@@ -382,4 +455,67 @@ noct_beui_drain_input(void)
 {
 	if (state.hal != NULL && state.hal->input.drain != NULL)
 		state.hal->input.drain(state.hal->input.context);
+}
+
+int
+noct_beui_image_load_bmp(const void *data, size_t size)
+{
+	struct noct_beui_image_entry *entry;
+	enum noct_beui_image_format format;
+	unsigned width;
+	unsigned height;
+	size_t pixel_size;
+
+	if (data == NULL || size == 0 || size > NOCT_BEUI_IMAGE_SOURCE_MAX ||
+	    !noct_beui_bmp_measure(data, size, &format, &width, &height,
+				   &pixel_size) ||
+	    pixel_size == 0 || pixel_size > NOCT_BEUI_IMAGE_PIXELS_MAX)
+		return 0;
+	entry = malloc(offsetof(struct noct_beui_image_entry, pixels) +
+		       pixel_size);
+	if (entry == NULL)
+		return 0;
+	if (!noct_beui_bmp_decode(data, size, entry->pixels, pixel_size,
+				  &entry->image)) {
+		free(entry);
+		return 0;
+	}
+	if (state.next_image_handle <= 0)
+		state.next_image_handle = 1;
+	entry->handle = state.next_image_handle++;
+	entry->next = state.images;
+	state.images = entry;
+	return entry->handle;
+}
+
+const struct noct_beui_image *
+noct_beui_image_get(int handle)
+{
+	struct noct_beui_image_entry *entry;
+
+	if (handle <= 0)
+		return NULL;
+	for (entry = state.images; entry != NULL; entry = entry->next)
+		if (entry->handle == handle)
+			return &entry->image;
+	return NULL;
+}
+
+int
+noct_beui_image_destroy(int handle)
+{
+	struct noct_beui_image_entry **link;
+
+	if (handle <= 0)
+		return 0;
+	for (link = &state.images; *link != NULL; link = &(*link)->next) {
+		struct noct_beui_image_entry *entry = *link;
+
+		if (entry->handle != handle)
+			continue;
+		*link = entry->next;
+		free(entry);
+		return 1;
+	}
+	return 0;
 }

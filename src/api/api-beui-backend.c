@@ -33,6 +33,13 @@ static bool cfunc_BeUI_drawText(NoctEnv *env);
 static bool cfunc_BeUI_getMilliseconds(NoctEnv *env);
 static bool cfunc_BeUI_sleep(NoctEnv *env);
 static bool cfunc_BeUI_isKeyDown(NoctEnv *env);
+static bool cfunc_BeUI_getPointerX(NoctEnv *env);
+static bool cfunc_BeUI_getPointerY(NoctEnv *env);
+static bool cfunc_BeUI_getPointerButtons(NoctEnv *env);
+static bool cfunc_BeUI_loadImage(NoctEnv *env);
+static bool cfunc_BeUI_drawImage(NoctEnv *env);
+static bool cfunc_BeUI_drawImagePattern(NoctEnv *env);
+static bool cfunc_BeUI_destroyImage(NoctEnv *env);
 
 struct beui_ffi_item {
 	const char *global_name;
@@ -65,13 +72,28 @@ static struct beui_ffi_item beui_ffi_items[] = {
 	 cfunc_BeUI_getMilliseconds},
 	{"BeUI.sleep", "sleep", 1, {"milliseconds"}, cfunc_BeUI_sleep},
 	{"BeUI.isKeyDown", "isKeyDown", 1, {"key"}, cfunc_BeUI_isKeyDown},
+	{"BeUI.getPointerX", "getPointerX", 0, {NULL},
+	 cfunc_BeUI_getPointerX},
+	{"BeUI.getPointerY", "getPointerY", 0, {NULL},
+	 cfunc_BeUI_getPointerY},
+	{"BeUI.getPointerButtons", "getPointerButtons", 0, {NULL},
+	 cfunc_BeUI_getPointerButtons},
+	{"BeUI.loadImage", "loadImage", 1, {"bytes"}, cfunc_BeUI_loadImage},
+	{"BeUI.drawImage", "drawImage", 3, {"image", "x", "y"},
+	 cfunc_BeUI_drawImage},
+	{"BeUI.drawImagePattern", "drawImagePattern", 4,
+	 {"image", "x", "y", "pattern"}, cfunc_BeUI_drawImagePattern},
+	{"BeUI.destroyImage", "destroyImage", 1, {"image"},
+	 cfunc_BeUI_destroyImage},
+};
+
+struct beui_int_constant {
+	const char *name;
+	int value;
 };
 
 /* Key names shared with the Boots BeUI implementation. */
-static const struct {
-	const char *name;
-	int value;
-} beui_keys[] = {
+static const struct beui_int_constant beui_keys[] = {
 	{"Escape", NOCT_BEUI_KEY_ESCAPE},
 	{"Tab", NOCT_BEUI_KEY_TAB},
 	{"Enter", NOCT_BEUI_KEY_ENTER},
@@ -93,6 +115,13 @@ static const struct {
 	{"F9", NOCT_BEUI_KEY_F9}, {"F10", NOCT_BEUI_KEY_F10},
 	{"Space", ' '},
 	{"Shift", NOCT_BEUI_KEY_SHIFT},
+};
+
+/* Bit values returned by BeUI.getPointerButtons. */
+static const struct beui_int_constant beui_buttons[] = {
+	{"Left", NOCT_BEUI_BUTTON_LEFT},
+	{"Right", NOCT_BEUI_BUTTON_RIGHT},
+	{"Middle", NOCT_BEUI_BUTTON_MIDDLE},
 };
 
 static bool
@@ -176,14 +205,15 @@ cfunc_BeUI_getHeight(NoctEnv *env)
 	return return_int(env, (int)info.height);
 }
 
+/*
+ * Returns 1 while the display is alive and 0 once it has closed, so the
+ * canonical loop is "while (BeUI.poll()) { ... }".  Targets that own the
+ * whole machine never return 0.
+ */
 static bool
 cfunc_BeUI_poll(NoctEnv *env)
 {
-	if (!noct_beui_poll()) {
-		noct_error(env, "BeUI.poll failed.");
-		return false;
-	}
-	return return_int(env, 1);
+	return return_int(env, noct_beui_poll() ? 1 : 0);
 }
 
 static bool
@@ -403,7 +433,147 @@ cfunc_BeUI_isKeyDown(NoctEnv *env)
 }
 
 static bool
-register_key_dictionary(NoctEnv *env)
+pointer_field(NoctEnv *env, const char *api, unsigned *x, unsigned *y,
+	      unsigned *buttons)
+{
+	if (!noct_beui_get_pointer(x, y, buttons)) {
+		noct_error(env, "%s is unavailable.", api);
+		return false;
+	}
+	return true;
+}
+
+static bool
+cfunc_BeUI_getPointerX(NoctEnv *env)
+{
+	unsigned x;
+
+	if (!pointer_field(env, "BeUI.getPointerX", &x, NULL, NULL))
+		return false;
+	return return_int(env, (int)x);
+}
+
+static bool
+cfunc_BeUI_getPointerY(NoctEnv *env)
+{
+	unsigned y;
+
+	if (!pointer_field(env, "BeUI.getPointerY", NULL, &y, NULL))
+		return false;
+	return return_int(env, (int)y);
+}
+
+static bool
+cfunc_BeUI_getPointerButtons(NoctEnv *env)
+{
+	unsigned buttons;
+
+	if (!pointer_field(env, "BeUI.getPointerButtons", NULL, NULL, &buttons))
+		return false;
+	return return_int(env, (int)buttons);
+}
+
+/*
+ * BeUI.loadImage takes the file contents rather than a path: BeUI draws
+ * and the File API reads, so the graphical layer needs no filesystem of
+ * its own and behaves identically on every host.
+ */
+static bool
+cfunc_BeUI_loadImage(NoctEnv *env)
+{
+	NoctValue value;
+	void *data;
+	size_t size;
+	int handle;
+	bool ok = false;
+
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	if (!noct_get_arg_check_packed(env, 0, &value, NOCT_PACKED_UINT8) ||
+	    !noct_get_packed_size(env, &value, &size) ||
+	    !noct_get_packed_pointer(env, &value, &data)) {
+		noct_error(env, "BeUI.loadImage expects a byte array.");
+		goto cleanup;
+	}
+	handle = noct_beui_image_load_bmp(data, size);
+	if (handle == 0) {
+		noct_error(env, "BeUI.loadImage received an unsupported image.");
+		goto cleanup;
+	}
+	ok = return_int(env, handle);
+cleanup:
+	(void)noct_unpin_local(env, 1, &value);
+	return ok;
+}
+
+static bool
+cfunc_BeUI_drawImage(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle, x, y;
+
+	if (!get_int_arg(env, 0, &handle) || !get_int_arg(env, 1, &x) ||
+	    !get_int_arg(env, 2, &y) || x < 0 || y < 0 ||
+	    (image = noct_beui_image_get(handle)) == NULL ||
+	    !noct_beui_draw_image((unsigned)x, (unsigned)y, image)) {
+		noct_error(env, "BeUI.drawImage failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_drawImagePattern(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	NoctValue value;
+	int handle, x, y;
+	int64_t pattern;
+	bool ok;
+
+	if (!get_int_arg(env, 0, &handle) || !get_int_arg(env, 1, &x) ||
+	    !get_int_arg(env, 2, &y) || x < 0 || y < 0) {
+		noct_error(env,
+			   "BeUI.drawImagePattern received an invalid argument.");
+		return false;
+	}
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	ok = noct_get_arg_check_long(env, 3, &value, &pattern);
+	if (!ok) {
+		int int_pattern;
+
+		ok = noct_get_arg_check_int(env, 3, &value, &int_pattern);
+		if (ok)
+			pattern = (int64_t)(uint32_t)int_pattern;
+	}
+	(void)noct_unpin_local(env, 1, &value);
+	if (!ok || (image = noct_beui_image_get(handle)) == NULL ||
+	    !noct_beui_draw_image_pattern((unsigned)x, (unsigned)y, image,
+					  (uint64_t)pattern)) {
+		noct_error(env, "BeUI.drawImagePattern failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_destroyImage(NoctEnv *env)
+{
+	int handle;
+
+	if (!get_int_arg(env, 0, &handle) || !noct_beui_image_destroy(handle)) {
+		noct_error(env, "BeUI.destroyImage received an invalid handle.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+register_int_dictionary(NoctEnv *env, const char *name,
+			const struct beui_int_constant *entries, size_t count)
 {
 	NoctValue dictionary;
 	NoctValue scratch;
@@ -416,20 +586,19 @@ register_key_dictionary(NoctEnv *env)
 		return false;
 	if (!noct_make_empty_dict(env, &dictionary))
 		goto cleanup;
-	for (index = 0; index < sizeof(beui_keys) / sizeof(beui_keys[0]);
-	     index++)
+	for (index = 0; index < count; index++)
 		if (!noct_set_dict_elem_make_int(env, &dictionary,
-						 beui_keys[index].name,
-						 &scratch,
-						 beui_keys[index].value))
+						 entries[index].name, &scratch,
+						 entries[index].value))
 			goto cleanup;
-	if (!noct_set_global(env, "Key", &dictionary))
+	if (!noct_set_global(env, name, &dictionary))
 		goto cleanup;
 	ok = true;
 cleanup:
 	(void)noct_unpin_local(env, 2, &dictionary, &scratch);
 	return ok;
 }
+
 
 NOCT_DLL
 bool
@@ -460,7 +629,11 @@ noct_register_api_beui(NoctEnv *env, const struct noct_beui_hal *hal)
 					     &function))
 			goto cleanup;
 	}
-	if (!register_key_dictionary(env))
+	if (!register_int_dictionary(env, "Key", beui_keys,
+				     sizeof(beui_keys) / sizeof(beui_keys[0])) ||
+	    !register_int_dictionary(env, "Button", beui_buttons,
+				     sizeof(beui_buttons) /
+					     sizeof(beui_buttons[0])))
 		goto cleanup;
 	ok = true;
 cleanup:
