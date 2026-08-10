@@ -940,8 +940,7 @@ cback_visit_thiscall_op(
 {
 	int dst_tmpvar;
 	int obj_tmpvar;
-	const char *name;
-	uint32_t len, hash;
+	int func_tmpvar;
 	int arg_count;
 	int arg_tmpvar;
 	int arg[CBACK_ARG_MAX];
@@ -949,7 +948,7 @@ cback_visit_thiscall_op(
 
 	GET_TMPVAR(&dst_tmpvar);
 	GET_TMPVAR(&obj_tmpvar);
-	GET_STRING(&name, &len, &hash);
+	GET_TMPVAR(&func_tmpvar);
 	GET_U8(&arg_count);
 	for (i = 0; i < arg_count; i++) {
 		GET_TMPVAR(&arg_tmpvar);
@@ -961,7 +960,7 @@ cback_visit_thiscall_op(
 	for (i = 0; i < arg_count; i++)
 		fprintf(fp, "%d,", arg[i]);
 	fprintf(fp, "};\n");
-	fprintf(fp, "        if (!noct_ex_thiscall_helper(env, %d, %d, \"%s\", %uu, %uu, %d, arg))\n", dst_tmpvar, obj_tmpvar, name, len, hash, arg_count);
+	fprintf(fp, "        if (!noct_ex_thiscall_helper(env, %d, %d, NULL, 0, %uu, %d, arg))\n", dst_tmpvar, obj_tmpvar, (uint32_t)func_tmpvar, arg_count);
 	fprintf(fp, "            return false;\n");
 	fprintf(fp, "    }\n");
 

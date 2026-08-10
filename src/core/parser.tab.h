@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_AST_YY_PARSER_TAB_H_INCLUDED
-# define YY_AST_YY_PARSER_TAB_H_INCLUDED
+#ifndef YY_AST_YY_SRC_CORE_PARSER_TAB_H_INCLUDED
+# define YY_AST_YY_SRC_CORE_PARSER_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -114,17 +114,18 @@ extern int ast_yydebug;
     TOKEN_RETURN = 315,            /* TOKEN_RETURN  */
     TOKEN_BREAK = 316,             /* TOKEN_BREAK  */
     TOKEN_CONTINUE = 317,          /* TOKEN_CONTINUE  */
-    TOKEN_ARROW = 318,             /* TOKEN_ARROW  */
-    TOKEN_RPAR_DARROW_LBLK = 319,  /* TOKEN_RPAR_DARROW_LBLK  */
-    TOKEN_AND = 320,               /* TOKEN_AND  */
-    TOKEN_OR = 321,                /* TOKEN_OR  */
-    TOKEN_XOR = 322,               /* TOKEN_XOR  */
-    TOKEN_VAR = 323,               /* TOKEN_VAR  */
-    TOKEN_LET = 324,               /* TOKEN_LET  */
-    TOKEN_EXTEND = 325,            /* TOKEN_EXTEND  */
-    TOKEN_NOT = 326,               /* TOKEN_NOT  */
-    UNARYMINUS = 327,              /* UNARYMINUS  */
-    CALL = 328                     /* CALL  */
+    TOKEN_RPAR_DARROW_LBLK = 318,  /* TOKEN_RPAR_DARROW_LBLK  */
+    TOKEN_AND = 319,               /* TOKEN_AND  */
+    TOKEN_OR = 320,                /* TOKEN_OR  */
+    TOKEN_XOR = 321,               /* TOKEN_XOR  */
+    TOKEN_VAR = 322,               /* TOKEN_VAR  */
+    TOKEN_LET = 323,               /* TOKEN_LET  */
+    TOKEN_EXTEND = 324,            /* TOKEN_EXTEND  */
+    TOKEN_STATIC = 325,            /* TOKEN_STATIC  */
+    TOKEN_INLINE = 326,            /* TOKEN_INLINE  */
+    TOKEN_NOT = 327,               /* TOKEN_NOT  */
+    UNARYMINUS = 328,              /* UNARYMINUS  */
+    CALL = 329                     /* CALL  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -133,7 +134,7 @@ extern int ast_yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 132 "parser.y"
+#line 131 "src/core/parser.y"
 
 	int ival;
 	int64_t lval;
@@ -152,7 +153,7 @@ union YYSTYPE
 	struct ast_kv_list *kv_list;
 	struct ast_kv *kv;
 
-#line 156 "parser.tab.h"
+#line 157 "src/core/parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -181,10 +182,10 @@ extern YYLTYPE ast_yylloc;
 int ast_yyparse (void *scanner);
 
 /* "%code provides" blocks.  */
-#line 128 "parser.y"
+#line 127 "src/core/parser.y"
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 
-#line 189 "parser.tab.h"
+#line 190 "src/core/parser.tab.h"
 
-#endif /* !YY_AST_YY_PARSER_TAB_H_INCLUDED  */
+#endif /* !YY_AST_YY_SRC_CORE_PARSER_TAB_H_INCLUDED  */

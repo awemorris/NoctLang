@@ -1,0 +1,17 @@
+case,mode,median_ms,min_ms,max_ms
+alpha-blend,l2-nosimd,778.412,771.505,784.943
+alpha-blend,l2-vscalar,275.386,270.729,278.624
+alpha-blend,l2-sse2,113.960,109.001,115.943
+alpha-blend,l2-sse41,80.401,76.338,92.598
+f32-affine,l2-nosimd,2476.885,2458.213,2499.024
+f32-affine,l2-vscalar,2496.708,2476.587,2522.908
+f32-affine,l2-sse2,2523.849,2487.812,2546.497
+f32-affine,l2-sse41,2486.405,2445.538,3731.833
+u32-inplace,l2-nosimd,232.280,231.573,245.165
+u32-inplace,l2-vscalar,75.335,74.363,76.345
+u32-inplace,l2-sse2,53.899,52.488,54.593
+u32-inplace,l2-sse41,53.756,52.809,55.356
+u32-3buffer,l2-nosimd,219.593,217.881,221.035
+u32-3buffer,l2-vscalar,117.386,116.484,117.878
+u32-3buffer,l2-sse2,73.909,72.789,74.963
+u32-3buffer,l2-sse41,73.728,72.645,74.152

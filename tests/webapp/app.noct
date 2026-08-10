@@ -11,38 +11,38 @@
 func buildApp() {
     var app = new WebApp { routes: [], headers: {} };
 
-    app->get("/", (req, res) => {
-        res->text("root");
+    app.get("/", (req, res) => {
+        res.text("root");
     });
 
-    app->get("/hello", (req, res) => {
-        res->html("<h1>hi</h1>");
+    app.get("/hello", (req, res) => {
+        res.html("<h1>hi</h1>");
     });
 
-    app->get("/user/:id", (req, res) => {
-        res->json({id: req.params.id});
+    app.get("/user/:id", (req, res) => {
+        res.json({id: req.params.id});
     });
 
-    app->get("/user/:id/posts/:postId", (req, res) => {
-        res->json({user: req.params.id, post: req.params.postId});
+    app.get("/user/:id/posts/:postId", (req, res) => {
+        res.json({user: req.params.id, post: req.params.postId});
     });
 
-    app->get("/search", (req, res) => {
+    app.get("/search", (req, res) => {
         var q = "";
         if (Dict.hasKey(req.query, "q")) {
             q = req.query["q"];
         }
-        res->text("q=" + q);
+        res.text("q=" + q);
     });
 
-    app->post("/echo", (req, res) => {
-        res->setStatus(201);
-        res->text("body=" + req.body);
+    app.post("/echo", (req, res) => {
+        res.setStatus(201);
+        res.text("body=" + req.body);
     });
 
-    app->get("/boom", (req, res) => {
-        res->setStatus(500);
-        res->text("500 Internal Server Error");
+    app.get("/boom", (req, res) => {
+        res.setStatus(500);
+        res.text("500 Internal Server Error");
     });
 
     return app;
@@ -50,7 +50,7 @@ func buildApp() {
 
 func server_thread(param) {
     var app = buildApp();
-    return app->serveOn(param.server, param.count);
+    return app.serveOn(param.server, param.count);
 }
 
 // Send a raw request and return the whole response.

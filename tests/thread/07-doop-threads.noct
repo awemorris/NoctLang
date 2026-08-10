@@ -2,7 +2,7 @@ func worker(param) {
     var total = 0;
     for (i in 0..100) {
         var obj = new Counter { start: param.base };
-        total = total + obj->add(i);
+        total = total + obj.add(i);
     }
     return total;
 }

@@ -202,7 +202,9 @@ noct_register_source(
 
 ### noct_register_bytecode()
 
-This API registers functions from compiled bytecode data.
+This API registers functions from raw `.nb` bytecode data or a complete
+shebang-prefixed `.nap` buffer.  In a `.nap`, all functions are registered
+before its aggregate initializer is called.
 
 The given bytecode will be translated to machine code.
 

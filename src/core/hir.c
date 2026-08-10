@@ -557,6 +557,8 @@ hir_build(void)
 		afunc.name = hir_anon_func_name[i];
 		afunc.param_list = hir_anon_func_param_list[i];
 		afunc.return_type_name = NULL;
+		afunc.is_static = false;
+		afunc.is_inline = false;
 		afunc.stmt_list = hir_anon_func_stmt_list[i];
 		afunc.next = NULL;
 		if (!hir_visit_func(&afunc))
@@ -613,6 +615,22 @@ hir_get_function(uint32_t index)
 	func = hir_func_tbl[index];
 
 	return func;
+}
+
+bool
+hir_set_function_name(struct hir_block *func, const char *name)
+{
+	char *copy;
+
+	assert(func != NULL);
+	assert(func->type == HIR_BLOCK_FUNC);
+	copy = hir_strdup(name);
+	if (copy == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+	func->val.func.name = copy;
+	return true;
 }
 
 /*
@@ -682,6 +700,8 @@ hir_visit_func(
 			hir_out_of_memory();
 			break;
 		}
+		func_block->val.func.is_static = afunc->is_static;
+		func_block->val.func.is_inline = afunc->is_inline;
 
 		/* Parse the parameters. */
 		if (!hir_visit_param_list(func_block, afunc))
@@ -1852,6 +1872,7 @@ hir_visit_return_stmt(
 	}
 	memset(hstmt, 0, sizeof(struct hir_stmt));
 	hstmt->line = cur_astmt->line;
+	hstmt->is_bare_return = !cur_astmt->val.return_.has_value;
 
 	/* Set LHS. */
 	hstmt->lhs = hir_malloc(sizeof(struct hir_expr));
@@ -1975,10 +1996,18 @@ hir_visit_expr(
 		result = hir_visit_dot_expr(hexpr, aexpr);
 		break;
 	case AST_EXPR_CALL:
-		result = hir_visit_call_expr(hexpr, aexpr);
-		break;
-	case AST_EXPR_THISCALL:
-		result = hir_visit_thiscall_expr(hexpr, aexpr);
+		if (aexpr->val.call.func != NULL &&
+		    aexpr->val.call.func->type == AST_EXPR_DOT &&
+		    !(aexpr->val.call.func->val.dot.obj->type == AST_EXPR_TERM &&
+		      aexpr->val.call.func->val.dot.obj->val.term.term->type == AST_TERM_SYMBOL &&
+		      (strcmp(aexpr->val.call.func->val.dot.obj->val.term.term->val.symbol,
+		              "Int") == 0 ||
+		       strcmp(aexpr->val.call.func->val.dot.obj->val.term.term->val.symbol,
+		              "Float") == 0) &&
+		      strcmp(aexpr->val.call.func->val.dot.symbol, "from") == 0))
+			result = hir_visit_thiscall_expr(hexpr, aexpr);
+		else
+			result = hir_visit_call_expr(hexpr, aexpr);
 		break;
 	case AST_EXPR_ARRAY:
 		result = hir_visit_array_expr(hexpr, aexpr);
@@ -2205,12 +2234,22 @@ hir_visit_thiscall_expr(
 	struct ast_expr *aexpr)
 {
 	struct hir_expr *e;
+	struct ast_expr *dot;
+	struct ast_expr *obj;
 	struct ast_expr *arg;
+	struct ast_arg_list *arg_list;
+	const char *func;
 
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
 	assert(aexpr != NULL);
-	assert(aexpr->type == AST_EXPR_THISCALL);
+	assert(aexpr->type == AST_EXPR_CALL);
+	assert(aexpr->val.call.func != NULL);
+	assert(aexpr->val.call.func->type == AST_EXPR_DOT);
+	dot = aexpr->val.call.func;
+	obj = dot->val.dot.obj;
+	func = dot->val.dot.symbol;
+	arg_list = aexpr->val.call.arg_list;
 
 	/* Allocate an hexpr. */
 	e = hir_malloc(sizeof(struct hir_expr));
@@ -2222,21 +2261,21 @@ hir_visit_thiscall_expr(
 	e->type = HIR_EXPR_THISCALL;
 
 	/* Visit the object expression. */
-	if (!hir_visit_expr(&e->val.thiscall.obj, aexpr->val.thiscall.obj)) {
+	if (!hir_visit_expr(&e->val.thiscall.obj, obj)) {
 		hir_free_expr(e);
 		return false;
 	}
 
 	/* Copy the function name. */
-	e->val.thiscall.func = hir_strdup(aexpr->val.thiscall.func);
+	e->val.thiscall.func = hir_strdup(func);
 	if (e->val.thiscall.func == NULL) {
 		hir_free_expr(e);
 		return false;
 	}
 
 	/* Visit the argument expressions. */
-	if (aexpr->val.thiscall.arg_list != NULL) {
-		arg = aexpr->val.thiscall.arg_list->list;
+	if (arg_list != NULL) {
+		arg = arg_list->list;
 		while (arg != NULL) {
 			if (e->val.thiscall.arg_count >= HIR_PARAM_SIZE) {
 				hir_fatal(hir_error_line, N_TR("Too many parameters."));
@@ -2526,7 +2565,7 @@ hir_visit_term(
 			return false;
 		t->type = HIR_TERM_SYMBOL;
 		t->val.symbol = hir_strdup(resolved != NULL ? resolved :
-					   aterm->val.symbol);
+					   ast_resolve_static_symbol(aterm->val.symbol));
 		if (t->val.symbol == NULL) {
 			hir_out_of_memory();
 			return false;
@@ -2593,6 +2632,7 @@ hir_resolve_type_name(
 		int packed_type;
 		bool restricted;
 	} tbl[] = {
+		{ "void",            HIR_TYPE_VOID,       -1, false },
 		{ "int",             NOCT_VALUE_INT,    -1, false },
 		{ "long",            NOCT_VALUE_LONG,   -1, false },
 		{ "float",           NOCT_VALUE_FLOAT,  -1, false },
@@ -3289,6 +3329,9 @@ hir_optimize_func(
 
 	if (level < 2)
 		return true;
+
+	if (!hir_opt_inline_func(func_block))
+		return false;
 
 	/*
 	 * Seed ABCE/SIMD with function-wide scalar facts.  Conversion

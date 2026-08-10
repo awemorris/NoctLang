@@ -200,6 +200,13 @@ The file begins with a version header and source information, followed
 by one or more function blocks. Each function includes metadata and a
 binary bytecode payload.
 
+An executable `.nap` uses the exact transport prefix
+`#!/usr/bin/noct\n` immediately before this same bytecode format.  It
+contains one `Source` field and one function count for the complete bundle;
+it is not a concatenation of `.nb` files.  Its sole `$init.` function is an
+aggregate initializer that explicitly invokes per-source initializers in
+command-line input order after the loader has registered every function.
+
 ```
 Noct Bytecode 1.0
 Source

@@ -31,8 +31,8 @@ void ast_free(void *p);
 
 /* Internal: called back from the parser. */
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);
-struct ast_func *ast_accept_func(char *name, struct ast_param_list *param_list, char *return_type_name, struct ast_stmt_list *stmt_list);
-bool ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let);
+struct ast_func *ast_accept_func(int flags, char *name, struct ast_param_list *param_list, char *return_type_name, struct ast_stmt_list *stmt_list);
+bool ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let, bool is_static);
 bool ast_accept_toplevel_class(int line, char *name, struct ast_kv_list *kv_list);
 struct ast_param_list *ast_accept_param_list(struct ast_param_list *param_list, char *name);
 struct ast_param_list *ast_accept_param_list_typed(struct ast_param_list *param_list, char *name, char *type_name);
@@ -97,7 +97,6 @@ struct ast_expr *ast_accept_par_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_subscr_expr(struct ast_expr *expr1, struct ast_expr *expr2);
 struct ast_expr *ast_accept_dot_expr(struct ast_expr *obj, char *symbol);
 struct ast_expr *ast_accept_call_expr(struct ast_expr *func, struct ast_arg_list *arg_list);
-struct ast_expr *ast_accept_thiscall_expr(struct ast_expr *obj, char *func, struct ast_arg_list *arg_list);
 struct ast_expr *ast_accept_array_expr(struct ast_arg_list *arg_list);
 struct ast_expr *ast_accept_dict_expr(struct ast_kv_list *kv_list);
 struct ast_expr *ast_accept_class_expr(struct ast_kv_list *kv_list);
@@ -161,10 +160,11 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_RPAR_LBLK TOKEN_LBLK TOKEN_LBLK_BLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
 %token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSE_LBLK TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
-%token TOKEN_CONTINUE TOKEN_ARROW TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND
+%token TOKEN_CONTINUE TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND TOKEN_STATIC TOKEN_INLINE
 
 %type <func_list> func_list;
 %type <func> func;
+%type <ival> func_prefix;
 %type <param_list> param_list;
 %type <stmt_list> stmt_list;
 %type <stmt> stmt;
@@ -191,7 +191,6 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <stmt> continue_stmt;
 %type <expr> expr;
 %type <expr> call_expr;
-%type <expr> thiscall_expr;
 %type <expr> lambda_expr;
 %type <kv_list> kv_list;
 %type <kv> kv;
@@ -217,7 +216,6 @@ extern void ast_yyerror(void *scanner, char *s);
 %right TOKEN_NOT UNARYMINUS
 %left TOKEN_DOT
 %right TOKEN_RPAR_DARROW_LBLK
-%right TOKEN_ARROW
 %right TOKEN_LBLK
 %right TOKEN_LARR
 %right TOKEN_LPAR
@@ -255,43 +253,76 @@ func_list	: func
 		;
 toplevel_decl	: TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
-			ast_accept_toplevel_var(@1.first_line + 1, $2, $4, false);
+			if (!ast_accept_toplevel_var(@1.first_line + 1, $2, $4, false, false))
+				YYABORT;
 			debug("toplevel_decl: var");
 		}
 		| TOKEN_LET TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
-			ast_accept_toplevel_var(@1.first_line + 1, $2, $4, true);
+			if (!ast_accept_toplevel_var(@1.first_line + 1, $2, $4, true, false))
+				YYABORT;
 			debug("toplevel_decl: let");
+		}
+		| TOKEN_STATIC TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			if (!ast_accept_toplevel_var(@1.first_line + 1, $3, $5, false, true))
+				YYABORT;
+			debug("toplevel_decl: static var");
+		}
+		| TOKEN_STATIC TOKEN_LET TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			if (!ast_accept_toplevel_var(@1.first_line + 1, $3, $5, true, true))
+				YYABORT;
+			debug("toplevel_decl: static let");
 		}
 		| TOKEN_CLASS TOKEN_SYMBOL TOKEN_LBLK kv_list TOKEN_RBLK
 		{
-			ast_accept_toplevel_class(@1.first_line + 1, $2, $4);
+			if (!ast_accept_toplevel_class(@1.first_line + 1, $2, $4))
+				YYABORT;
 			debug("toplevel_decl: class");
 		}
 		| TOKEN_CLASS TOKEN_SYMBOL TOKEN_LBLK TOKEN_RBLK
 		{
-			ast_accept_toplevel_class(@1.first_line + 1, $2, NULL);
+			if (!ast_accept_toplevel_class(@1.first_line + 1, $2, NULL))
+				YYABORT;
 			debug("toplevel_decl: class empty");
 		}
 		;
-func		: TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
+func_prefix	: TOKEN_FUNC
 		{
-			$$ = ast_accept_func($2, $4, NULL, $6);
+			$$ = 0;
+		}
+		| TOKEN_STATIC TOKEN_FUNC
+		{
+			$$ = 1;
+		}
+		| TOKEN_STATIC TOKEN_INLINE TOKEN_FUNC
+		{
+			$$ = 3;
+		}
+		;
+func		: func_prefix TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
+		{
+			$$ = ast_accept_func($1, $2, $4, NULL, $6);
+			if ($$ == NULL) YYABORT;
 			debug("func: func name(param_list) { stmt_list }");
 		}
-		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
+		| func_prefix TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func($2, NULL, NULL, $5);
+			$$ = ast_accept_func($1, $2, NULL, NULL, $5);
+			if ($$ == NULL) YYABORT;
 			debug("func: func name() { stmt_list }");
 		}
-		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR TOKEN_COLON type_name TOKEN_LBLK stmt_list TOKEN_RBLK
+		| func_prefix TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR TOKEN_COLON type_name TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func($2, $4, $7, $9);
+			$$ = ast_accept_func($1, $2, $4, $7, $9);
+			if ($$ == NULL) YYABORT;
 			debug("func: func name(param_list): type { stmt_list }");
 		}
-		| TOKEN_FUNC TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR TOKEN_COLON type_name TOKEN_LBLK stmt_list TOKEN_RBLK
+		| func_prefix TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR TOKEN_COLON type_name TOKEN_LBLK stmt_list TOKEN_RBLK
 		{
-			$$ = ast_accept_func($2, NULL, $6, $8);
+			$$ = ast_accept_func($1, $2, NULL, $6, $8);
+			if ($$ == NULL) YYABORT;
 			debug("func: func name(): type { stmt_list }");
 		}
 		;
@@ -628,7 +659,7 @@ expr		: term
 		}
 		| TOKEN_LPAR expr TOKEN_RPAR
 		{
-			$$ = $2;
+			$$ = ast_accept_par_expr($2);
 			debug("expr: (expr)");
 		}
 		| expr TOKEN_LARR expr TOKEN_RARR
@@ -745,10 +776,6 @@ expr		: term
 		{
 			$$ = $1;
 		}
-		| thiscall_expr
-		{
-			$$ = $1;
-		}
 		| TOKEN_LARR arg_list TOKEN_RARR
 		{
 			$$ = ast_accept_array_expr($2);
@@ -807,17 +834,6 @@ call_expr	: expr TOKEN_LPAR arg_list TOKEN_RPAR
 			debug("expr: call()");
 		}
 		;
-thiscall_expr	: expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR arg_list TOKEN_RPAR
-		{
-			$$ = ast_accept_thiscall_expr($1, $3, $5);
-			debug("expr: thiscall(param_list)");
-		}
-		| expr TOKEN_ARROW TOKEN_SYMBOL TOKEN_LPAR TOKEN_RPAR
-		{
-			$$ = ast_accept_thiscall_expr($1, $3, NULL);
-			debug("expr: thiscall(param_list)");
-		}
-
 lambda_expr	: TOKEN_LPAR param_list TOKEN_RPAR_DARROW_LBLK stmt_list TOKEN_RBLK
 		{
 			$$ = ast_accept_func_expr($2, $4);

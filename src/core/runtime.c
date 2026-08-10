@@ -548,6 +548,9 @@ rt_register_bytecode(
 	char init_func_name[256];
 
 	pos = 0;
+	if (size >= strlen(NOCT_APP_SHEBANG) &&
+	    memcmp(data, NOCT_APP_SHEBANG, strlen(NOCT_APP_SHEBANG)) == 0)
+		pos = (uint32_t)strlen(NOCT_APP_SHEBANG);
 	file_name = NULL;
 	succeeded = false;
 	init_func_name[0] = '\0';

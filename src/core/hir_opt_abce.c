@@ -154,21 +154,29 @@ abce_packed_ctor_type(struct hir_expr *rhs)
 		{ "float64", NOCT_PACKED_FLOAT64 }
 	};
 	struct hir_expr *fn;
+	const char *ctor;
 	size_t i;
 
-	if (rhs == NULL || rhs->type != HIR_EXPR_CALL)
+	if (rhs == NULL)
 		return -1;
-	fn = rhs->val.call.func;
-	if (fn == NULL || fn->type != HIR_EXPR_DOT)
+	if (rhs->type == HIR_EXPR_THISCALL) {
+		fn = rhs->val.thiscall.obj;
+		ctor = rhs->val.thiscall.func;
+	} else if (rhs->type == HIR_EXPR_CALL) {
+		struct hir_expr *dot = rhs->val.call.func;
+		if (dot == NULL || dot->type != HIR_EXPR_DOT)
+			return -1;
+		fn = dot->val.dot.obj;
+		ctor = dot->val.dot.symbol;
+	} else {
 		return -1;
-	if (fn->val.dot.obj == NULL ||
-	    fn->val.dot.obj->type != HIR_EXPR_TERM ||
-	    fn->val.dot.obj->val.term.term->type != HIR_TERM_SYMBOL)
-		return -1;
-	if (strcmp(fn->val.dot.obj->val.term.term->val.symbol, "Packed") != 0)
+	}
+	if (fn == NULL || fn->type != HIR_EXPR_TERM ||
+	    fn->val.term.term->type != HIR_TERM_SYMBOL ||
+	    strcmp(fn->val.term.term->val.symbol, "Packed") != 0)
 		return -1;
 	for (i = 0; i < sizeof(tbl) / sizeof(tbl[0]); i++) {
-		if (strcmp(tbl[i].name, fn->val.dot.symbol) == 0)
+		if (strcmp(tbl[i].name, ctor) == 0)
 			return tbl[i].type;
 	}
 	return -1;

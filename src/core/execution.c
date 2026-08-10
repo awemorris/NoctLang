@@ -2472,40 +2472,35 @@ noct_ex_thiscall_helper(
 	int *arg)
 {
 	struct rt_value arg_val[NOCT_ARG_MAX];
-	struct rt_value callee_value;
 	struct rt_func *callee;
 	struct rt_value *obj_val;
 	struct rt_value ret;
+	bool inject_this;
+	int call_arg_count;
 	int i;
+
+	UNUSED_PARAMETER(name);
+	UNUSED_PARAMETER(name_len);
 
 	/* Get a receiver object. */
 	obj_val = &env->frame->tmpvar[obj];
 
-	/* If not an intrinsic call, object must be a dictionary. */
-	if (env->frame->tmpvar[obj].type != NOCT_VALUE_DICT) {
-		rt_error(env, N_TR("Not a dictionary."));
-		return false;
-	}
-
-	/* Get a function from a receiver object. */
-	memset(&callee_value, 0, sizeof(callee_value));
-	if (!rt_pin_local(env, &callee_value))
-		return false;
-	if (!rt_get_dict_elem_with_hash(env,
-					&env->frame->tmpvar[obj],
-					name,
-					name_len,
-					name_hash,
-					&callee_value)) {
-		rt_unpin_local(env, &callee_value);
-		return false;
-	}
-	if (callee_value.type != NOCT_VALUE_FUNC) {
-		rt_unpin_local(env, &callee_value);
+	/* name_hash is the pre-resolved callee tmpvar for the new bytecode
+	 * layout.  The legacy argument slots are retained in this C ABI so
+	 * existing AOT/JIT call sequences need only change their decoder. */
+	if (env->frame->tmpvar[name_hash].type != NOCT_VALUE_FUNC) {
 		rt_error(env, N_TR("Not a function."));
 		return false;
 	}
-	callee = callee_value.val.func;
+	callee = env->frame->tmpvar[name_hash].val.func;
+	inject_this = callee->param_count > 0 &&
+		callee->param_name[0] != NULL &&
+		strcmp(callee->param_name[0], "this") == 0;
+	call_arg_count = arg_count + (inject_this ? 1 : 0);
+	if (call_arg_count > NOCT_ARG_MAX) {
+		rt_error(env, N_TR("Too many parameters."));
+		return false;
+	}
 
 	/*
 	 * Pin the argument and result slots.
@@ -2514,43 +2509,38 @@ noct_ex_thiscall_helper(
 	 * so without pinning a collection running in another thread
 	 * would move the objects and leave these copies dangling.
 	 */
-	arg_count++;
 	memset(&ret, 0, sizeof(ret));
-	for (i = 0; i < arg_count; i++)
+	for (i = 0; i < call_arg_count; i++)
 		memset(&arg_val[i], 0, sizeof(arg_val[i]));
-	if (!rt_pin_local(env, &ret)) {
-		rt_unpin_local(env, &callee_value);
+	if (!rt_pin_local(env, &ret))
 		return false;
-	}
-	for (i = 0; i < arg_count; i++) {
+	for (i = 0; i < call_arg_count; i++) {
 		if (!rt_pin_local(env, &arg_val[i])) {
 			rt_unpin_local(env, &ret);
-			rt_unpin_local(env, &callee_value);
 			return false;
 		}
 	}
 
 	/* Get values of arguments. */
-	arg_val[0] = *obj_val;
-	for (i = 1; i < arg_count; i++)
-		arg_val[i] = env->frame->tmpvar[arg[i - 1]];
+	if (inject_this)
+		arg_val[0] = *obj_val;
+	for (i = 0; i < arg_count; i++)
+		arg_val[i + (inject_this ? 1 : 0)] = env->frame->tmpvar[arg[i]];
 
 	/* Do call. */
-	if (!rt_call(env, callee, (uint32_t)arg_count, &arg_val[0], &ret)) {
-		for (i = arg_count - 1; i >= 0; i--)
+	if (!rt_call(env, callee, (uint32_t)call_arg_count, &arg_val[0], &ret)) {
+		for (i = call_arg_count - 1; i >= 0; i--)
 			rt_unpin_local(env, &arg_val[i]);
 		rt_unpin_local(env, &ret);
-		rt_unpin_local(env, &callee_value);
 		return false;
 	}
 
 	/* Store a return value. */
 	env->frame->tmpvar[dst] = ret;
 
-	for (i = arg_count - 1; i >= 0; i--)
+	for (i = call_arg_count - 1; i >= 0; i--)
 		rt_unpin_local(env, &arg_val[i]);
 	rt_unpin_local(env, &ret);
-	rt_unpin_local(env, &callee_value);
 
 	return true;
 }

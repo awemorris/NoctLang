@@ -9,9 +9,9 @@
 // Usage:
 //
 //     var app = new WebApp {};
-//     app->get("/", (req, res) => { res->text("Hello, Noct!"); });
-//     app->get("/user/:id", (req, res) => { res->json({id: req.params.id}); });
-//     app->run("127.0.0.1", 8080);
+//     app.get("/", (req, res) => { res.text("Hello, Noct!"); });
+//     app.get("/user/:id", (req, res) => { res.json({id: req.params.id}); });
+//     app.run("127.0.0.1", 8080);
 //
 // The event loop is single-threaded and poller-driven. Handing an
 // accepted connection to a worker thread instead would not change
@@ -470,19 +470,19 @@ WebApp = class {
     },
 
     get: (this, pattern, handler) => {
-        return this->route("GET", pattern, handler);
+        return this.route("GET", pattern, handler);
     },
 
     post: (this, pattern, handler) => {
-        return this->route("POST", pattern, handler);
+        return this.route("POST", pattern, handler);
     },
 
     put: (this, pattern, handler) => {
-        return this->route("PUT", pattern, handler);
+        return this.route("PUT", pattern, handler);
     },
 
     delete: (this, pattern, handler) => {
-        return this->route("DELETE", pattern, handler);
+        return this.route("DELETE", pattern, handler);
     },
 
     // Serve files under dir for paths starting with prefix.
@@ -532,7 +532,7 @@ WebApp = class {
             req.params = params;
             r.handler(req, res);
             if (res.sent == 0) {
-                res->text("");
+                res.text("");
             }
             if (headOnly == 1) {
                 res.body = "";
@@ -546,7 +546,7 @@ WebApp = class {
             if (String.indexOf(rel, "..") < 0) {
                 var path = this.staticDir + "/" + rel;
                 if (FileUtil.checkFileExists(path) == 1) {
-                    res->setHeader("Content-Type", contentTypeOf(rel));
+                    res.setHeader("Content-Type", contentTypeOf(rel));
                     res.body = FileUtil.readText(path);
                     res.sent = 1;
                     return res;
@@ -556,8 +556,8 @@ WebApp = class {
 
         // A path that exists under a different method is a 405.
         if (methodMismatch == 1) {
-            res->setStatus(405);
-            res->text("405 Method Not Allowed");
+            res.setStatus(405);
+            res.text("405 Method Not Allowed");
             return res;
         }
 
@@ -565,12 +565,12 @@ WebApp = class {
         if (this.notFound != 0) {
             this.notFound(req, res);
             if (res.sent == 0) {
-                res->text("");
+                res.text("");
             }
             return res;
         }
-        res->setStatus(404);
-        res->text("404 Not Found");
+        res.setStatus(404);
+        res.text("404 Not Found");
         return res;
     },
 
@@ -597,10 +597,10 @@ WebApp = class {
         var res = 0;
         if (req.error != "") {
             res = new Response { headers: {}, body: "", status: 400, sent: 0 };
-            res->setStatus(400);
-            res->text("400 Bad Request");
+            res.setStatus(400);
+            res.text("400 Bad Request");
         } else {
-            res = this->dispatch(req);
+            res = this.dispatch(req);
         }
 
         HttpServer.send(conn, buildResponse(res, false));
@@ -622,7 +622,7 @@ WebApp = class {
             var ready = HttpServer.waitPoller(poller, 200);
             for (r in ready) {
                 var conn = HttpServer.accept(r.socket);
-                this->serve(conn);
+                this.serve(conn);
                 HttpServer.close(conn);
             }
         }
@@ -647,7 +647,7 @@ WebApp = class {
             var ready = HttpServer.waitPoller(poller, 5000);
             for (r in ready) {
                 var conn = HttpServer.accept(r.socket);
-                served = served + this->serve(conn);
+                served = served + this.serve(conn);
                 HttpServer.close(conn);
             }
         }
@@ -659,7 +659,7 @@ WebApp = class {
     // Same as run(), but stops after "limit" requests.
     runLimited: (this, host, port, limit) => {
         var server = HttpServer.listen(host, port);
-        var served = this->serveOn(server, limit);
+        var served = this.serveOn(server, limit);
         HttpServer.close(server);
         return served;
     }

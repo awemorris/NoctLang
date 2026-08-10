@@ -75,7 +75,7 @@ enum bytecode {
 
 	/* call */
 	OP_CALL,		/* 0x26:  38: func(arg1, ...) */
-	OP_THISCALL,		/* 0x27:  39: obj->func(arg1, ...) */
+	OP_THISCALL,		/* 0x27:  39: member call: dst,obj,callee,argc,args; inject obj iff param[0] is "this" */
 
 	/* branch */
 	OP_JMP,			/* 0x28:  40: PC = src */

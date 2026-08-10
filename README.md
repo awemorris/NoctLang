@@ -239,10 +239,17 @@ session API for embedded hosts is documented in [docs/repl.md](docs/repl.md).
 
 ### Compile into Bytecode
 
-To compile a script into a bytecode file:
+To compile a script into a sibling `.nb` bytecode file:
 
 ```
-noct --compile script.nb script.noct
+noct --compile script.noct
+```
+
+To bundle multiple sources into one executable Noct App:
+
+```
+noct --compile --app app.nap main.noct library.noct
+./app.nap
 ```
 
 ### Compile into Emacs Lisp

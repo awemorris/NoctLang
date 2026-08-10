@@ -110,6 +110,7 @@ void show_usage(void)
 	wide_printf(N_TR("  noct <vm-options> <files>           ... run a program\n"));
 #if defined(NOCT_USE_BCBACKEND)
 	wide_printf(N_TR("  noct --compile <in-files>           ... convert to bytecode files\n"));
+	wide_printf(N_TR("  noct --compile --app <out.nap> <in-files> ... build a Noct App\n"));
 #endif
 #if defined(NOCT_USE_CBACKEND)
 	wide_printf(N_TR("  noct --ansic <out-file> <in-files>  ... convert to a C source file\n"));

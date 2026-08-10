@@ -844,10 +844,9 @@ rt_visit_thiscall_op(
         struct rt_func *func,
         uint32_t *pc)
 {
-        int dst_tmpvar;
-        int obj_tmpvar;
-        const char *name;
-        uint32_t len, hash;
+	int dst_tmpvar;
+	int obj_tmpvar;
+	int func_tmpvar;
         int arg_count;
         int arg_tmpvar;
         int arg[NOCT_ARG_MAX];
@@ -855,16 +854,17 @@ rt_visit_thiscall_op(
 
         DEBUG_TRACE(*pc, "THISCALL");
 
-        GET_TMPVAR(&dst_tmpvar);
-        GET_TMPVAR(&obj_tmpvar);
-        GET_STRING(&name, &len, &hash);
+	GET_TMPVAR(&dst_tmpvar);
+	GET_TMPVAR(&obj_tmpvar);
+	GET_TMPVAR(&func_tmpvar);
         GET_U8(&arg_count);
         for (i = 0; i < arg_count; i++) {
                 GET_TMPVAR(&arg_tmpvar);
                 arg[i] = arg_tmpvar;
         }
 
-        if (!ex_thiscall_helper(env, dst_tmpvar, obj_tmpvar, name, len, hash, arg_count, arg))
+	if (!ex_thiscall_helper(env, dst_tmpvar, obj_tmpvar, NULL, 0,
+				(uint32_t)func_tmpvar, arg_count, arg))
                 return false;
 
         return true;

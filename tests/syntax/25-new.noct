@@ -18,5 +18,5 @@ func main() {
         voice: "neee"
     };
 
-    myCat->cry();
+    myCat.cry();
 }

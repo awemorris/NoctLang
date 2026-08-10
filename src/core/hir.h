@@ -14,6 +14,9 @@
 
 #include <noct/noct.h>
 
+/* Compiler-only return annotation; it is not a runtime NoctValue tag. */
+#define HIR_TYPE_VOID (-2)
+
 /* HIR Block Type */
 enum hir_block_type {
 	HIR_BLOCK_FUNC,
@@ -172,6 +175,8 @@ struct hir_block {
 			/* Optional declared return tag and packed element kind. */
 			int return_type;
 			int return_packed_type;
+			bool is_static;
+			bool is_inline;
 
 			/* File name. */
 			char *file_name;
@@ -282,6 +287,9 @@ struct hir_stmt {
 
 	/* RHS */
 	struct hir_expr *rhs;
+
+	/* True only for a source-level `return;` assignment to $return. */
+	bool is_bare_return;
 
 	/* Next item. */
 	struct hir_stmt *next;
@@ -459,6 +467,10 @@ hir_get_function_count(void);
 struct hir_block *
 hir_get_function(
 	uint32_t index);
+
+/* Replace a function's link name while the HIR arena is alive. */
+bool
+hir_set_function_name(struct hir_block *func, const char *name);
 
 /*
  * Get a file name.

@@ -278,8 +278,14 @@ load_program(
 	if (!load_file_content(argv[file_arg], &data, &len))
 		return false;
 
-	/* Check for the bytecode header. */
-	if (strncmp(data, NOCT_BYTECODE_HEADER, strlen(NOCT_BYTECODE_HEADER)) != 0) {
+	/* Check for raw bytecode or the exact executable .nap prefix. */
+	if (!((len >= strlen(NOCT_BYTECODE_HEADER) &&
+	       memcmp(data, NOCT_BYTECODE_HEADER,
+		      strlen(NOCT_BYTECODE_HEADER)) == 0) ||
+	      (len >= strlen(NOCT_APP_SHEBANG) + strlen(NOCT_BYTECODE_HEADER) &&
+	       memcmp(data, NOCT_APP_SHEBANG, strlen(NOCT_APP_SHEBANG)) == 0 &&
+	       memcmp(data + strlen(NOCT_APP_SHEBANG), NOCT_BYTECODE_HEADER,
+		      strlen(NOCT_BYTECODE_HEADER)) == 0))) {
 		/* It's a source file. */
 		if (!noct_register_source(env, argv[file_arg], data)) {
 			const char *file, *msg;

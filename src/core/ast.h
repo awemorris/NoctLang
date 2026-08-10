@@ -56,7 +56,6 @@ enum ast_expr_type {
 	AST_EXPR_SUBSCR,
 	AST_EXPR_DOT,
 	AST_EXPR_CALL,
-	AST_EXPR_THISCALL,
 	AST_EXPR_ARRAY,
 	AST_EXPR_DICT,
 	AST_EXPR_FUNC,
@@ -101,6 +100,10 @@ struct ast_func {
 
 	/* Optional return type annotation. */
 	char *return_type_name;
+
+	/* File-local functions are already mangled at AST construction time. */
+	bool is_static;
+	bool is_inline;
 
 	/* Statement list */
 	struct ast_stmt_list *stmt_list;
@@ -213,6 +216,7 @@ struct ast_stmt {
 		struct {
 			/* Return value expression. */
 			struct ast_expr *expr;
+			bool has_value;
 		} return_;
 	} val;
 
@@ -271,18 +275,6 @@ struct ast_expr {
 			/* Argument list. */
 			struct ast_arg_list *arg_list;
 		} call;
-
-		/* This-Call Expression */
-		struct {
-			/* Object expression. */
-			struct ast_expr *obj;
-
-			/* Function name. */
-			char *func;
-
-			/* Argument list. */
-			struct ast_arg_list *arg_list;
-		} thiscall;
 
 		/* Array Literal Expression */
 		struct {
@@ -370,6 +362,14 @@ ast_build(
 	const char *file_name,
 	const char *text);
 
+/* Build the internal aggregate initializer used by a .nap bundle. */
+bool
+ast_build_app_initializer(
+	const char *file_name,
+	const char *func_name,
+	const char *const *init_name,
+	uint32_t init_count);
+
 /*
  * Free an AST.
  */
@@ -387,6 +387,10 @@ ast_get_func_list(void);
  */
 const char *
 ast_get_file_name(void);
+
+/* Resolve a file-local source symbol, or return the original name. */
+const char *
+ast_resolve_static_symbol(const char *name);
 
 /*
  * Get the error message.

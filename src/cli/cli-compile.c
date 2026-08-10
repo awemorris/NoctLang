@@ -13,6 +13,7 @@
 
 /* Forward declaration. */
 static bool compile_source(const char *file_name);
+static bool compile_app(int argc, char *argv[], int first);
 
 /*
  * The top level function for the compile mode.
@@ -24,9 +25,19 @@ command_compile(
 {
 	int i;
 	int first = 2;
+	bool app = false;
 
 	/* Optional compiler diagnostics/settings before input files. */
 	while (first < argc) {
+		if (strcmp(argv[first], "--app") == 0) {
+			if (app) {
+				printf("--app may be specified only once.\n");
+				return 1;
+			}
+			app = true;
+			first++;
+			continue;
+		}
 		if (strncmp(argv[first], "--optimize-level=", 17) == 0) {
 			noct_bcback_set_optimize_level(atoi(argv[first] + 17));
 			first++;
@@ -43,6 +54,8 @@ command_compile(
 		show_usage();
 		return 1;
 	}
+	if (app)
+		return compile_app(argc, argv, first) ? 0 : 1;
 
 	/* For each argument file. */
 	for (i = first; i < argc; i++) {
@@ -52,6 +65,43 @@ command_compile(
 	}
 
 	return 0;
+}
+
+static bool
+compile_app(int argc, char *argv[], int first)
+{
+	const char *output;
+	int i;
+
+	if (argc - first < 2) {
+		printf("--app requires an output .nap file and at least one input .noct file.\n");
+		return false;
+	}
+	output = argv[first];
+	if (!noct_bcback_app_start(output)) {
+		printf("Invalid Noct App output path: %s\n", output);
+		return false;
+	}
+	for (i = first + 1; i < argc; i++) {
+		char *source_data;
+		size_t source_length;
+		if (strcmp(output, argv[i]) == 0) {
+			printf("Noct App output and input paths must differ.\n");
+			noct_bcback_app_abort();
+			return false;
+		}
+		if (!load_file_content(argv[i], &source_data, &source_length)) {
+			noct_bcback_app_abort();
+			return false;
+		}
+		if (!noct_bcback_app_add_source(argv[i], source_data)) {
+			free(source_data);
+			noct_bcback_app_abort();
+			return false;
+		}
+		free(source_data);
+	}
+	return noct_bcback_app_finalize();
 }
 
 /* Compile a source file. */

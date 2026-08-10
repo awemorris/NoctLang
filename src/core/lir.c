@@ -1879,6 +1879,17 @@ lir_visit_stmt(
 
 		func = lir_root_func(parent);
 		assert(func != NULL);
+		if (func->val.func.return_type == HIR_TYPE_VOID &&
+		    !stmt->is_bare_return) {
+			lir_error_line = stmt->line;
+			lir_fatal(N_TR("A void function cannot return a value."));
+			return false;
+		}
+		if (func->val.func.return_type >= 0 && stmt->is_bare_return) {
+			lir_error_line = stmt->line;
+			lir_fatal(N_TR("A typed function must return a value."));
+			return false;
+		}
 		if (func->val.func.return_type >= 0) {
 			proven = lir_expr_proven_type(stmt->rhs, parent);
 			if (proven >= 0 && proven != func->val.func.return_type) {
@@ -2965,6 +2976,7 @@ lir_visit_thiscall_expr(
 	int arg_tmpvar[HIR_PARAM_SIZE];
 	int arg_count;
 	int obj_tmpvar;
+	int func_tmpvar;
 	int i;
 
 	assert(expr != NULL);
@@ -2978,6 +2990,18 @@ lir_visit_thiscall_expr(
 	if (!lir_increment_tmpvar(&obj_tmpvar))
 		return false;
 	if (!lir_visit_expr(obj_tmpvar, expr->val.thiscall.obj, block))
+		return false;
+
+	/* Resolve and root the callee before evaluating arguments. */
+	if (!lir_increment_tmpvar(&func_tmpvar))
+		return false;
+	if (!lir_put_opcode(OP_LOADDOT))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)func_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)obj_tmpvar))
+		return false;
+	if (!lir_put_string(expr->val.thiscall.func))
 		return false;
 
 	/* Visit the arg exprs. */
@@ -2995,7 +3019,7 @@ lir_visit_thiscall_expr(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)obj_tmpvar))
 		return false;
-	if (!lir_put_string(expr->val.thiscall.func))
+	if (!lir_put_tmpvar((uint16_t)func_tmpvar))
 		return false;
 	if (!lir_put_imm8((uint8_t)arg_count))
 		return false;
@@ -3006,6 +3030,7 @@ lir_visit_thiscall_expr(
 
 	for (i = arg_count - 1; i >= 0; i--)
 		lir_decrement_tmpvar(arg_tmpvar[i]);
+	lir_decrement_tmpvar(func_tmpvar);
 	lir_decrement_tmpvar(obj_tmpvar);
 
 	return true;
@@ -3724,8 +3749,9 @@ lir_cleanup(struct lir_func *func)
 	noct_free(func->func_name);
 	for (i = 0; i < func->param_count; i++)
 		noct_free(func->param_name[i]);
+	noct_free(func->file_name);
 	noct_free(func->bytecode);
-	memset(func, 0, sizeof(struct lir_func));
+	noct_free(func);
 	noct_free(lir_file_name);
 	lir_file_name = NULL;
 }

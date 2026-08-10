@@ -45,6 +45,13 @@ NOCT_DLL
 bool
 noct_bcback_finalize(void);
 
+/* Collect multiple sources into one executable Noct App (.nap). */
+NOCT_DLL bool noct_bcback_app_start(const char *out_file_name);
+NOCT_DLL bool noct_bcback_app_add_source(const char *source_file_name,
+					 const char *source_data);
+NOCT_DLL bool noct_bcback_app_finalize(void);
+NOCT_DLL void noct_bcback_app_abort(void);
+
 /*
  * C Backend
  */

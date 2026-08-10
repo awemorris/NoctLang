@@ -1529,7 +1529,10 @@ jit_visit_thiscall_op(
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(obj);
-        CONSUME_STRING(symbol, symbol_len, symbol_hash);
+        CONSUME_TMPVAR(arg_tmp);
+        symbol = NULL;
+        symbol_len = 0;
+        symbol_hash = (uint32_t)arg_tmp;
         CONSUME_IMM8(arg_count);
         for (i = 0; i < arg_count; i++) {
                 CONSUME_TMPVAR(arg_tmp);

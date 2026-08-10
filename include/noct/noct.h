@@ -23,6 +23,7 @@
 
 /* Bytecode file header. */
 #define NOCT_BYTECODE_HEADER	"Noct Bytecode"
+#define NOCT_APP_SHEBANG	"#!/usr/bin/noct\n"
 
 /* Zero value. */
 #define NOCT_ZERO	{0, 0}

@@ -18,6 +18,39 @@ should NOT re-litigate decisions recorded in the Decision Log below.
 | [06-simd.md](06-simd.md) | 128-bit SIMD auto-vectorization (i32x4) of ABCE fast loops; multi-packed ABCE | 01, 05 (runs between ABCE and CSE; reuses the clone machinery) |
 | [07-typed-ops.md](07-typed-ops.md) | Typed arithmetic opcodes (int + float) inline-emitted under ABCE-guard or lattice proofs; float div-by-zero -> IEEE inf/NaN (Part 0, semantics change); supersedes 02 §6 | 01, 02 (CHECKTYPE); independent of 06 (cross-notes if both land) |
 
+## Exploratory future work
+
+The following document records research ideas discussed with the project owner.
+It is deliberately **not** an implementation-ready plan and does not change the
+authoritative decisions or implementation order above.
+
+- [10-future-multigrain-parallelization.md](10-future-multigrain-parallelization.md):
+  hierarchical multigrain automatic parallelization, incomplete invocation
+  graphs, profile-guided guarded devirtualization, and dynamic PE allocation.
+
+## Current implementation plans
+
+- [11-static-inline-static-scope-void.md](11-static-inline-static-scope-void.md):
+  file-local functions and variables, HIR-only `static inline`, and the
+  `void` return annotation.  Public/cross-file inline expansion is explicitly
+  outside the first implementation.
+- [12-noct-app-nap.md](12-noct-app-nap.md): build several `.noct` modules into
+  one executable, shebang-prefixed `.nap` bytecode application with one
+  aggregate initializer.  Depends on the file-symbol and safe-mangling
+  groundwork in design 11.
+- [13-jit-build-dependencies.md](13-jit-build-dependencies.md): make every
+  architecture JIT source a direct build input, preventing stale `jit.o`
+  files from presenting new bytecode as an unimplemented opcode.
+- [14-dot-member-thiscall.md](14-dot-member-thiscall.md): lower direct
+  `obj.foo()` syntax to a member call, inject the receiver only when the
+  callee's first parameter is named `this`, and remove the `->` operator.
+  Depends on design 13 because it changes `OP_THISCALL` decoding in every JIT.
+
+Implementation order for the current plans: **13 → 14 → 11 → 12**.  Design
+14 may be developed beside design 11 after its bytecode/runtime phase, but
+design 12's persistent bytecode golden must be made only after design 14 fixes
+the `OP_THISCALL` layout.
+
 Recommended implementation order: **01 → 04 → 03 → 02**.
 01 is self-contained and highest value (remacs Editor/Buffer speedup).
 04 is frontend-only.  03 builds on 04's `let`.  02 is most valuable
