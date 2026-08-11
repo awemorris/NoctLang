@@ -1,19 +1,19 @@
 #!/bin/sh
 
 #
-# CSE test suite (docs/design/05-cse.md).
+# ABCE test suite (docs/design/01-abce.md).
 #
 # Runs every case at optimize level 0 and 2, with the interpreter and
 # the JIT.  All four runs must match the golden output byte-for-byte:
-# CSE must never change observable behavior.
+# ABCE must never change observable behavior.
 #
 
-NOCT=${NOCT:-../build-static/noct}
+NOCT=${NOCT:-../../build-static/noct}
 
-echo 'CSE tests:'
+echo 'ABCE tests:'
 
 FAILED=0
-for tc in cse/*.noct; do
+for tc in abce/*.noct; do
     for lvl in "-O0" "-O2"; do
         # Error-message line numbers are debug info: they exist at
         # level 0 and are omitted at level >= 1 (OP_LINEINFO).  A case
@@ -35,27 +35,8 @@ for tc in cse/*.noct; do
     echo "PASS $tc"
 done
 
-#
-# R4 regression (docs/design/05-cse.md): the pass must fire on the
-# parameter-based flagship shape.  Only meaningful when the binary was
-# built with NOCT_ENABLE_OPTIMIZER, so skip if the pass reports nothing
-# at all across the whole suite run above.
-#
-if NOCT_CSE_DEBUG=1 $NOCT -j0 -O1 \
-        cse/r4_param_flagship.noct 2>&1 | grep -q '^\[cse\]'; then
-    if NOCT_CSE_DEBUG=1 $NOCT -j0 -O1 \
-            cse/r4_param_flagship.noct 2>&1 | \
-            grep -q '\[cse\] .*:f: [1-9][0-9]* captures'; then
-        echo 'PASS cse debug counter (R4)'
-    else
-        echo 'FAIL cse debug counter (R4): pass did not fire on f(d){d.k+d.k}'
-        FAILED=1
-    fi
-fi
-
 if [ "$FAILED" -ne 0 ]; then
-    echo 'CSE tests failed.'
+    echo 'ABCE tests failed.'
     exit 1
 fi
-
-echo 'All CSE tests passed.'
+echo 'All ABCE tests passed.'

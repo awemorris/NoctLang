@@ -12,7 +12,7 @@
 # pass silently dying); cases in MUST_NOT must not.
 #
 
-NOCT=${NOCT:-../build-static/noct}
+NOCT=${NOCT:-../../build-static/noct}
 NOCT_META=${NOCT_META:-$NOCT}
 
 MUST_VECTORIZE="blend blend2 blend2_multigroup fma_forms mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"

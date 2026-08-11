@@ -2,8 +2,8 @@
 
 set -eu
 
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-test_file="$repo_dir/tests/syntax/48-numeric-cond.noct"
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+test_file="$repo_dir/tests/testcases/syntax/48-numeric-cond.noct"
 expected_file="$test_file.out"
 tmp_dir=$(mktemp -d)
 trap 'rm -rf -- "$tmp_dir"' EXIT HUP INT TERM

@@ -2,7 +2,7 @@
 
 set -eu
 
-NOCT=${NOCT:-../build-mt-debug/noct}
+NOCT=${NOCT:-../../build-mt-debug/noct}
 tmp="app/.tmp-app-$$"
 mkdir "$tmp"
 trap 'rm -f "$tmp"/*; rmdir "$tmp"' EXIT HUP INT TERM

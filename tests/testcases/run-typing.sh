@@ -7,7 +7,7 @@
 # golden (used by the intentional violation case).
 #
 
-NOCT=${NOCT:-../build-static/noct}
+NOCT=${NOCT:-../../build-static/noct}
 
 echo 'Typing tests:'
 

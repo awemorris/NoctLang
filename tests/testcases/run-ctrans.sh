@@ -2,8 +2,12 @@
 
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 build_dir=${1:-"$root/build-static"}
+case "$build_dir" in
+/*) ;;
+*) build_dir="$root/$build_dir" ;;
+esac
 cc=${CC:-cc}
 noct="$build_dir/noct"
 work_dir="$build_dir/ctrans-test"
@@ -28,7 +32,7 @@ mkdir -p "$work_dir"
 # same golden output.
 for level in 0 2; do
 	echo "(-O$level)"
-	for tc in "$root"/tests/ctrans/*.noct; do
+	for tc in "$root"/tests/testcases/ctrans/*.noct; do
 		name=$(basename "$tc" .noct)-O$level
 		echo "$tc"
 
@@ -36,7 +40,7 @@ for level in 0 2; do
 		# headers, then run and compare with the golden output.
 		"$noct" --ansic -O$level \
 			"$work_dir/$name.c" "$tc"
-		"$cc" -I"$root/include" "$root/tests/ctrans-test.c" \
+		"$cc" -I"$root/include" "$root/tests/testcases/ctrans-test.c" \
 			"$work_dir/$name.c" \
 			"$build_dir/libnoctapi.a" "$build_dir/libnoct.a" -lm \
 			-o "$work_dir/$name"

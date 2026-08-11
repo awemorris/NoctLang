@@ -2,8 +2,12 @@
 
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 build_dir=${1:-"$root/build-static"}
+case "$build_dir" in
+/*) ;;
+*) build_dir="$root/$build_dir" ;;
+esac
 cc=${CC:-cc}
 test_bin="$build_dir/noct-repl-session-test"
 
@@ -16,7 +20,7 @@ test -f "$build_dir/libnoct.a" || {
 	exit 1
 }
 
-"$cc" -I"$root/include" "$root/tests/repl-session-test.c" \
+"$cc" -I"$root/include" "$root/tests/testcases/repl-session-test.c" \
 	"$build_dir/libnoct.a" -lm -o "$test_bin"
 "$test_bin"
-python3 "$root/tests/run-repl.py" "$build_dir/noct"
+python3 "$root/tests/testcases/run-repl.py" "$build_dir/noct"

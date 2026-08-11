@@ -1,6 +1,9 @@
 #!/bin/sh
 # ABCE synthetic benchmarks: optimize-level 0 vs 2, interpreter and JIT.
-NOCT=${NOCT:-../../build-static/noct}
+bench_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH= cd -- "$bench_dir/.." && pwd)
+NOCT=${NOCT:-"$repo_dir/build-static/noct"}
+cd "$bench_dir"
 for tc in b*.noct; do
     printf "%-22s" "$tc"
     for mode in "-j0" "-j"; do

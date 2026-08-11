@@ -5,7 +5,7 @@
 # Golden-diff; error cases assert the exact compile error message.
 #
 
-NOCT=${NOCT:-../build-static/noct}
+NOCT=${NOCT:-../../build-static/noct}
 
 echo 'Scoping tests:'
 

@@ -2,8 +2,8 @@
 
 set -eu
 
-NOCT=${NOCT:-../build-mt-debug/noct}
-FRAMEWORK=../apps/webapp/framework.noct
+NOCT=${NOCT:-../../build-mt-debug/noct}
+FRAMEWORK=../../apps/webapp/framework.noct
 
 echo 'NoctLang WebApp Tests'
 echo

@@ -16,7 +16,7 @@
 # alone cannot catch the optimization silently dying).
 #
 
-NOCT=${NOCT:-../build-static/noct}
+NOCT=${NOCT:-../../build-static/noct}
 
 MUST_EMIT="arith farith abce_region lattice shift_edges"
 

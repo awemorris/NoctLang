@@ -2,7 +2,7 @@
 
 Date: 2026-08-10
 
-`tests/simd/blend2.noct` の修正版と同じアルファブレンド式を、連続する
+`tests/testcases/simd/blend2.noct` の修正版と同じアルファブレンド式を、連続する
 1000 pixel に適用する一回の関数呼び出しについて測定した。
 
 ## 測定境界
@@ -36,8 +36,8 @@ mixed i32/f32 SIMDが組み合わさるため、倍率は単なるSIMD幅4より
 
 ## 再現用ファイル
 
-- `tests/bench/blend2-call-bench.noct`: 修正版alpha kernel。
-- `tests/bench/blend2-call-bench.c`: VM/JIT warmup、関数境界計時、50標本集計。
+- `bench/blend2-call-bench.noct`: 修正版alpha kernel。
+- `bench/blend2-call-bench.c`: VM/JIT warmup、関数境界計時、50標本集計。
 
 Linux x86_64ではrelease buildの`libnoct.a`/`libnoctapi.a`へリンクし、
 macOS arm64では`macos-arm64` presetへ`NOCT_ENABLE_OPTIMIZER=ON`を追加した
@@ -160,7 +160,7 @@ gcc -O3 -march=haswell -mprefer-vector-width=128 \
 
 Verification completed:
 
-- native x86_64 debug build and the full `tests/run-all.sh` suite;
+- native x86_64 debug build and the full `tests/test.sh all` suite;
 - `run-simd.sh`, including scalar/SSE2/SSE3/SSE4.1/AVX ceilings, O2/O3 FMA
   metadata, portable fallback, and the four-cache/native-JIT assertion;
 - `run-fma-helper.sh`, `run-cse.sh`, `run-abce.sh`, `run-typing.sh`,

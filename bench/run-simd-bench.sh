@@ -12,7 +12,7 @@
 set -eu
 
 bench_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_dir=$(CDPATH= cd -- "$bench_dir/../.." && pwd)
+repo_dir=$(CDPATH= cd -- "$bench_dir/.." && pwd)
 NOCT=${NOCT:-"$repo_dir/build-static/noct"}
 RUNS=${RUNS:-5}
 WARMUPS=${WARMUPS:-1}

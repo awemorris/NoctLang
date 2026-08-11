@@ -5,42 +5,55 @@
 func main() {
     // Define an architecture list.
     var arch_list = [
-        {name: "i386",    toolchain: "qemu-i386-toolchain.cmake",    qemu: "qemu-i386-static"},
-        {name: "x86_64",  toolchain: "qemu-x86_64-toolchain.cmake",  qemu: "qemu-x86_64-static"},
-        {name: "arm32",   toolchain: "qemu-arm32-toolchain.cmake",   qemu: "qemu-armhf-static"},
-        {name: "arm64",   toolchain: "qemu-arm64-toolchain.cmake",   qemu: "qemu-aarch64-static"},
-        {name: "riscv32", toolchain: "qemu-riscv32-toolchain.cmake", qemu: "qemu-riscv32-static"},
-        {name: "riscv64", toolchain: "qemu-riscv64-toolchain.cmake", qemu: "qemu-riscv64-static"},
-        {name: "ppc32",   toolchain: "qemu-ppc32-toolchain.cmake",   qemu: "qemu-ppc-static"},
-        {name: "ppc64",   toolchain: "qemu-ppc64-toolchain.cmake",   qemu: "qemu-ppc64el-static"},
-        {name: "mips32",  toolchain: "qemu-mips32-toolchain.cmake",  qemu: "qemu-mips-static"},
-        {name: "mips64",  toolchain: "qemu-mips64-toolchain.cmake",  qemu: "qemu-mips64-static"}
+        {name: "i386",    toolchain: "qemu-i386-toolchain.cmake",    qemu: "qemu-i386-static",     cc: "i686-linux-gnu-gcc"},
+        {name: "x86_64",  toolchain: "qemu-x86_64-toolchain.cmake",  qemu: "qemu-x86_64-static",   cc: "x86_64-linux-gnu-gcc"},
+        {name: "arm32",   toolchain: "qemu-arm32-toolchain.cmake",   qemu: "qemu-armhf-static",    cc: "arm-linux-gnueabihf-gcc"},
+        {name: "arm64",   toolchain: "qemu-arm64-toolchain.cmake",   qemu: "qemu-aarch64-static",  cc: "aarch64-linux-gnu-gcc"},
+        {name: "riscv32", toolchain: "qemu-riscv32-toolchain.cmake", qemu: "qemu-riscv32-static",  cc: "riscv32-unknown-linux-gnu-gcc"},
+        {name: "riscv64", toolchain: "qemu-riscv64-toolchain.cmake", qemu: "qemu-riscv64-static",  cc: "riscv64-linux-gnu-gcc"},
+        {name: "ppc32",   toolchain: "qemu-ppc32-toolchain.cmake",   qemu: "qemu-ppc-static",      cc: "powerpc-linux-gnu-gcc"},
+        {name: "ppc64",   toolchain: "qemu-ppc64-toolchain.cmake",   qemu: "qemu-ppc64el-static",  cc: "powerpc64le-linux-gnu-gcc"},
+        {name: "mips32",  toolchain: "qemu-mips32-toolchain.cmake",  qemu: "qemu-mips-static",     cc: "mips-linux-gnu-gcc"},
+        {name: "mips64",  toolchain: "qemu-mips64-toolchain.cmake",  qemu: "qemu-mips64-static",   cc: "mips64-linux-gnuabi64-gcc"}
     ];
 
     // Run arch tests.
+    var success = 1;
     for (arch in arch_list) {
-        if (arch_test(arch.name, arch.toolchain, arch.qemu) == 0) {
-	    break;
-	}
+        if (arch_test(arch.name, arch.toolchain, arch.qemu, arch.cc) == 0) {
+            success = 0;
+        }
     }
 
-    return 0;
+    if (success) {
+        print("All available multi-architecture tests passed.");
+        return 0;
+    }
+    return 1;
 }
 
-func arch_test(name, toolchain, qemu) {
+func arch_test(name, toolchain, qemu, cc) {
     // Print a header.
     print("[" + name + "]");
 
+    // A cross libc/toolchain is not distributed for every QEMU target on
+    // every host.  Missing targets are reported explicitly rather than
+    // turning the available-architecture regression suite red.
+    if (System.shell("command -v " + cc + " >/dev/null 2>&1") != 0) {
+        print("Skipped (compiler not found: " + cc + ").");
+        return 1;
+    }
+
     // Build a binary for a specified architecture.
-    if (System.shell("cd .. && " +
-                     "cmake -B build-" + name + " . -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/" + toolchain + " -DNOCT_ENABLE_CLI=ON -DNOCT_ENABLE_JIT=ON -DNOCT_ENABLE_API=ON && " +
+    if (System.shell("cd ../.. && " +
+                     "cmake -B build-" + name + " . -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/" + toolchain + " -DNOCT_ENABLE_CLI=ON -DNOCT_ENABLE_JIT=ON -DNOCT_ENABLE_API=ON -DNOCT_ENABLE_API_SYSTEM=ON -DNOCT_ENABLE_API_CONSOLE=ON -DNOCT_ENABLE_API_FILE=ON && " +
                      "cmake --build build-" + name + " --parallel") != 0) {
         print("Build failed.");
         return 0;
     }
 
     // Copy a binary.
-    if (System.shell("cp ../build-" + name + "/noct ./noct-arch") != 0) {
+    if (System.shell("cp ../../build-" + name + "/noct ./noct-arch") != 0) {
         print("Copy failed.");
         return 0;
     }

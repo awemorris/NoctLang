@@ -8,7 +8,7 @@ echo
 echo 'Running bootstrap tests...'
 for tc in elisp/*.noct; do
     echo "$tc";
-    ../build/noct --elisp out $tc || true;
+    ../../build/noct --elisp out $tc || true;
     diff $tc.out out;
 done
 

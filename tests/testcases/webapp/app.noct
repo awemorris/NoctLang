@@ -4,8 +4,8 @@
 // A server thread runs the framework; the main thread drives it with
 // real HTTP requests over a loopback socket and checks the responses.
 //
-// Built by concatenating examples/webapp/framework.noct with this file,
-// so run it through tests/run-webapp.sh rather than directly.
+// Built by concatenating apps/webapp/framework.noct with this file,
+// so run it through tests/test.sh webapp rather than directly.
 //
 
 func buildApp() {

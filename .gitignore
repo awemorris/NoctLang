@@ -4,5 +4,5 @@ build-*/
 out/
 
 # Test scratch output.
-tests/out
-tests/webapp/build/
+tests/testcases/out
+tests/testcases/webapp/build/

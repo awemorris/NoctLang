@@ -5,7 +5,7 @@
 # (docs/design/03-class.md).  Golden-diff over interpreter and JIT.
 #
 
-NOCT=${NOCT:-../build-static/noct}
+NOCT=${NOCT:-../../build-static/noct}
 
 echo 'Class tests:'
 

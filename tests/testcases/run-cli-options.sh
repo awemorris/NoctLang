@@ -2,7 +2,7 @@
 
 set -eu
 
-NOCT=${NOCT:-../build-mt-debug/noct}
+NOCT=${NOCT:-../../build-mt-debug/noct}
 work=".tmp-cli-options-$$"
 mkdir "$work"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
