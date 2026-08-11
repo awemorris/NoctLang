@@ -1,6 +1,6 @@
 func main() {
     // ABCE: eligible ranged-for loops over Packed.uint8.
-    // At --optimize-level=2 these run through the bounds-check-free
+    // At -O2 these run through the bounds-check-free
     // fast path; the output must be identical at every level.
     var n = 512;
     var p = Packed.uint8(n);

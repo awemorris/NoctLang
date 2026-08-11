@@ -23,6 +23,10 @@ NOCT_DLL
 void
 noct_bcback_set_optimize_level(int level);
 
+NOCT_DLL
+void
+noct_bcback_set_lineinfo(bool enable);
+
 /* Enable reports for successfully vectorized loops. */
 NOCT_DLL
 void
@@ -61,6 +65,10 @@ NOCT_DLL void noct_bcback_app_abort(void);
 NOCT_DLL
 void
 noct_cback_set_optimize_level(int level);
+
+NOCT_DLL
+void
+noct_cback_set_lineinfo(bool enable);
 
 /* Enable reports for successfully vectorized loops. */
 NOCT_DLL

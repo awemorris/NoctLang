@@ -44,6 +44,7 @@ static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, size
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_report_jit_result(struct rt_func *func, bool success);
+static void rt_commit_jit(struct rt_env *env);
 
 /* Test/debug observability for JIT compilation and silent interpreter fallback. */
 static void
@@ -56,6 +57,15 @@ rt_report_jit_result(
 			"noct-jit: %s: %s\n",
 			func->name,
 			success ? "compiled" : "fallback");
+}
+
+static void
+rt_commit_jit(struct rt_env *env)
+{
+	if (env->vm->config.jit_enable && env->vm->is_jit_dirty) {
+		jit_commit(env);
+		env->vm->is_jit_dirty = false;
+	}
 }
 static void rt_leave_frame(struct rt_env *env);
 static bool rt_init_global(struct rt_env *env);
@@ -497,6 +507,9 @@ rt_register_source(
 		return false;
 	}
 	result = rt_register_source_internal(env, file_name, source_text, module);
+	/* A failed registration can still have published earlier functions.
+	 * Keep those pointers executable until registration becomes transactional. */
+	rt_commit_jit(env);
 
 	/*
 	 * Public roots are registrations, not imports: REPL and
@@ -566,6 +579,7 @@ rt_register_source_internal(
 
 		/* Propagate the optimization level to the compiler. */
 		lir_set_optimize_level(env->vm->config.optimize_level);
+		lir_set_lineinfo(env->vm->config.lineinfo);
 
 		/* For each function. */
 		func_count = hir_get_function_count();
@@ -667,6 +681,7 @@ rt_register_source_internal(
 	/* Auto-execute the load-time init function ($init section). */
 	if (init_func_name[0] != '\0') {
 		struct rt_value init_ret;
+		rt_commit_jit(env);
 		if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
 			goto failed;
 	}
@@ -753,19 +768,18 @@ rt_register_lir(
 	if (!rt_set_global(env, func->name, &global))
 		return false;
 
-	/* Do JIT compilation */
+	/* Eager JIT compilation.  Failure is a per-function interpreter
+	 * fallback, not a source-registration failure. */
 	if (env->vm->config.jit_enable) {
-		if (env->vm->config.jit_threshold == 0) {
-			/* Write code. */
-			if (!jit_build(env, func)) {
-				rt_report_jit_result(func, false);
-				/* -1 means JIT failed. */
-				func->call_count = -1;
-			} else {
-				rt_report_jit_result(func, true);
-				/* Need to commit before call. */
-				env->vm->is_jit_dirty = true;
-			}
+		if (!jit_build(env, func)) {
+			rt_report_jit_result(func, false);
+			func->call_count = -1;
+			/* JIT diagnostics must not poison interpreter fallback. */
+			env->error_message[0] = '\0';
+			env->line = 0;
+		} else {
+			rt_report_jit_result(func, true);
+			env->vm->is_jit_dirty = true;
 		}
 	}
 
@@ -793,8 +807,25 @@ rt_register_bytecode(
 
 	pos = 0;
 	if (size >= strlen(NOCT_APP_SHEBANG) &&
-	    memcmp(data, NOCT_APP_SHEBANG, strlen(NOCT_APP_SHEBANG)) == 0)
+	    memcmp(data, NOCT_APP_SHEBANG, strlen(NOCT_APP_SHEBANG)) == 0) {
+#if defined(NOCT_USE_JIT)
+		size_t estimate;
+		size_t limit;
+#endif
 		pos = (uint32_t)strlen(NOCT_APP_SHEBANG);
+#if defined(NOCT_USE_JIT)
+		/* Native expansion varies by backend.  Eight times the serialized
+		 * app plus headroom is conservative for the current emitters; the
+		 * configured slab limit remains the hard cap. */
+		limit = jit_get_code_size(env);
+		if (limit <= 65536 || size > (limit - 65536) / 8)
+			estimate = limit;
+		else
+			estimate = size * 8 + 65536;
+		if (!jit_slab_reserve(env, estimate))
+			return false;
+#endif
+	}
 	file_name = NULL;
 	succeeded = false;
 	init_func_name[0] = '\0';
@@ -845,9 +876,14 @@ rt_register_bytecode(
 		noct_free(file_name);
 
 	if (!succeeded) {
+		rt_commit_jit(env);
 		rt_error(env, N_TR("Failed to load bytecode."));
 		return false;
 	}
+
+	/* Publish every eagerly generated function before returning or running
+	 * the app/module initializer. */
+	rt_commit_jit(env);
 
 	/* Auto-execute the load-time init function ($init section). */
 	if (init_func_name[0] != '\0') {
@@ -1197,31 +1233,6 @@ rt_call(
 	om_safepoint(env);
 #endif
 
-	/* Do JIT compilation if needed. */
-	if (env->vm->config.jit_enable &&
-	    func->jit_code == NULL &&
-	    func->call_count != -1) {
-		func->call_count++;
-		if (func->call_count == env->vm->config.jit_threshold) {
-			if (!jit_build(env, func)) {
-				rt_report_jit_result(func, false);
-				/* -1 means JIT failed. */
-				func->call_count = -1;
-			} else {
-				rt_report_jit_result(func, true);
-			}
-
-			/* Need to commit before call. */
-			env->vm->is_jit_dirty = true;
-		}
-	}
-
-	/* Commit JIT-compiled code for the first time compilation. */
-	if (env->vm->config.jit_enable && env->vm->is_jit_dirty) {
-		jit_commit(env);
-		env->vm->is_jit_dirty = false;
-	}
-
 	/* Allocate a frame for this call. */
 	if (!rt_enter_frame(env, func))
 		return false;
@@ -1279,12 +1290,6 @@ rt_call(
 	/* Get a return value. */
 	if (ret != NULL)
 		*ret = env->frame->tmpvar[0];
-
-	/* Commit JIT-compiled code for dynamically imported inside the function. */
-	if (env->vm->config.jit_enable && env->vm->is_jit_dirty) {
-		jit_commit(env);
-		env->vm->is_jit_dirty = false;
-	}
 
 	/* Succeeded. */
 	rt_leave_frame(env);

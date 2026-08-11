@@ -47,7 +47,8 @@ struct app_module {
 };
 
 static FILE *fp;
-static int bcback_optimize_level;
+static int bcback_optimize_level = 1;
+static bool bcback_lineinfo = true;
 static bool bcback_simd_info;
 static bool app_active;
 static char *app_output;
@@ -194,6 +195,13 @@ NOCT_DLL void
 noct_bcback_set_optimize_level(int level)
 {
 	bcback_optimize_level = level;
+	bcback_lineinfo = level == 0;
+}
+
+NOCT_DLL void
+noct_bcback_set_lineinfo(bool enable)
+{
+	bcback_lineinfo = enable;
 }
 
 NOCT_DLL void
@@ -238,6 +246,7 @@ noct_bcback_translate(const char *source_file_name, const char *source_data)
 		return false;
 	}
 	lir_set_optimize_level(bcback_optimize_level);
+	lir_set_lineinfo(bcback_lineinfo);
 	count = hir_get_function_count();
 	if (!bcback_write_header(fp, source_file_name, count))
 		goto cleanup;
@@ -562,6 +571,7 @@ app_add_source_internal(const char *source_file_name,
 		}
 	}
 	lir_set_optimize_level(bcback_optimize_level);
+	lir_set_lineinfo(bcback_lineinfo);
 	for (i = 0; i < count; i++) {
 		struct hir_block *h = hir_get_function(i);
 		struct lir_func *l;

@@ -28,6 +28,7 @@ command_compile(
 	int i;
 	int first = 2;
 	int optimize_level;
+	bool lineinfo;
 	enum cli_optimize_level_result optimize_result;
 	bool app = false;
 	compile_require_path_count = 0;
@@ -43,10 +44,11 @@ command_compile(
 			first++;
 			continue;
 		}
-		optimize_result =
-			parse_optimize_level_option(argv[first], &optimize_level);
+		optimize_result = parse_optimize_level_option(
+			argv[first], &optimize_level, &lineinfo);
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
 			noct_bcback_set_optimize_level(optimize_level);
+			noct_bcback_set_lineinfo(lineinfo);
 			first++;
 			continue;
 		}

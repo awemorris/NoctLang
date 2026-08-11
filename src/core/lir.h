@@ -95,4 +95,7 @@ lir_dump(
 void
 lir_set_optimize_level(int level);
 
+void
+lir_set_lineinfo(bool enable);
+
 #endif

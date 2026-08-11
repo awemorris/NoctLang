@@ -49,7 +49,7 @@ trap 'rm -rf -- "$tmp_dir"' EXIT HUP INT TERM
 run_case() {
     ceiling=$1
     env NOCT_JIT_SIMD_MAX=$ceiling \
-        "$qemu" $qemu_args "$noct" --force-jit --optimize-level=2 \
+        "$qemu" $qemu_args "$noct" -j -O2 \
         simd/blend2.noct > "$tmp_dir/$ceiling.out" 2>&1
     diff -u simd/blend2.noct.out "$tmp_dir/$ceiling.out"
 }
@@ -61,7 +61,7 @@ done
 native_tier=${tiers##* }
 
 env NOCT_JIT_SIMD_MAX=$native_tier NOCT_JIT_SIMD_DEBUG=1 \
-    "$qemu" $qemu_args "$noct" --force-jit --optimize-level=2 \
+    "$qemu" $qemu_args "$noct" -j -O2 \
     simd/blend2.noct > /dev/null 2> "$tmp_dir/caps"
 if ! grep -q 'vector=1' "$tmp_dir/caps"; then
     echo "JIT did not report vector bytecode for $arch" >&2

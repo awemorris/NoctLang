@@ -226,12 +226,12 @@ noct script.noct
 
 To disable the JIT compiler:
 ```
-noct --disable-jit script.noct
+noct -j0 script.noct
 ```
 
-To forcibly enable the JIT compiler from the startup:
+JIT compilation is eager and enabled by default; `-j` states it explicitly:
 ```
-noct --force-jit script.noct
+noct -j script.noct
 ```
 
 To start the interactive REPL, run `noct` without a script. The reusable REPL
@@ -281,12 +281,24 @@ To compile a script into an Emacs Lisp file:
 noct --elisp script.el script.noct
 ```
 
-### JIT Option
+### Optimization and Parallelization Options
 
 ```
-  --jit-threshold=N    ... call-count threshold for compilation
-  --jit-code-size=N    ... maximum generated-code reservation in bytes
+  -O, -O0..-O3, -O9   ... optimization preset (`-O` is the default)
+  -j, -j0              ... eager JIT (default), or interpreter only
+  --cpu[=N]            ... enable CPU automatic parallelization
+  --cpu-pe=N           ... processing elements (default: logical CPUs)
+  --cpu-affinity=LIST  ... logical CPU IDs, for example 0,2,4,8
+  --cpu-list            ... show NUMA/core/SMT topology and exit
+  --gpu                 ... enable GPU automatic parallelization
+  --gpu-name=NAME       ... select one GPU
+  --gpu-list            ... list GPU devices and exit
 ```
+
+`-O` and `-O1` enable weak typing, typed operations and CSE; `-O2` adds
+ABCE/SIMD; `-O3` permits fused FMA semantics. `-O9` also enables CPU and GPU
+automatic parallelization. The CPU/GPU execution backends may be absent in a
+given build; the CLI/configuration surface is available for those backends.
 
 ### Garbage Collection Options
 

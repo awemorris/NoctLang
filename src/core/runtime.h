@@ -47,6 +47,7 @@ struct rt_packed;
 struct rt_func;
 struct rt_bindglobal;
 struct rt_module;
+struct jit_slab;
 
 /*
  * String object.
@@ -391,6 +392,11 @@ struct rt_vm {
 
 	/* Is JIT code written and not commited? */
 	bool is_jit_dirty;
+
+	/* Per-VM JIT slabs.  Published pages are never made writable again. */
+	struct jit_slab *jit_slab_head;
+	struct jit_slab *jit_slab_tail;
+	struct jit_slab *jit_slab_current;
 
 	/* Config. */
 	struct rt_config config;

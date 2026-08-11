@@ -24,12 +24,12 @@ echo 'Typed-ops tests:'
 
 FAILED=0
 for tc in typedop/*.noct; do
-    for lvl in "" "--optimize-level=2"; do
+    for lvl in "-O0" "-O2"; do
         golden="$tc.out"
-        if [ -n "$lvl" ] && [ -f "$tc.out2" ]; then
+        if [ "$lvl" = "-O2" ] && [ -f "$tc.out2" ]; then
             golden="$tc.out2"
         fi
-        for jit in "--disable-jit" "--force-jit"; do
+        for jit in "-j0" "-j"; do
             $NOCT $jit $lvl "$tc" > out 2>&1
             if ! diff -q "$golden" out > /dev/null 2>&1; then
                 echo "FAIL $tc ($jit $lvl)"
@@ -41,14 +41,14 @@ for tc in typedop/*.noct; do
     echo "PASS $tc"
 done
 
-# Emission assertions (level 2, interpreter is enough: emission is
+# Emission assertions (level 1, interpreter is enough: emission is
 # decided at LIR build time, before the backend choice).
 for name in $MUST_EMIT; do
     tc="typedop/$name.noct"
     if [ ! -f "$tc" ]; then
         continue
     fi
-    n=$(NOCT_TYPED_DEBUG=1 $NOCT --disable-jit --optimize-level=2 "$tc" 2>&1 \
+    n=$(NOCT_TYPED_DEBUG=1 $NOCT -j0 -O1 "$tc" 2>&1 \
         | grep -c '^TYPED: .*emitted=[1-9]')
     if [ "$n" -eq 0 ]; then
         echo "FAIL $tc (no typed emission reported)"

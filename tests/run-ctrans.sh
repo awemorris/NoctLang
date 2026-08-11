@@ -27,14 +27,14 @@ mkdir -p "$work_dir"
 # pass, whose OP_PLOAD8U/OP_PSTORE8 output is C-specific) against the
 # same golden output.
 for level in 0 2; do
-	echo "(--optimize-level=$level)"
+	echo "(-O$level)"
 	for tc in "$root"/tests/ctrans/*.noct; do
 		name=$(basename "$tc" .noct)-O$level
 		echo "$tc"
 
 		# Translate to C, compile standalone against the public
 		# headers, then run and compare with the golden output.
-		"$noct" --ansic --optimize-level=$level \
+		"$noct" --ansic -O$level \
 			"$work_dir/$name.c" "$tc"
 		"$cc" -I"$root/include" "$root/tests/ctrans-test.c" \
 			"$work_dir/$name.c" \

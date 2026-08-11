@@ -61,7 +61,8 @@ static uint32_t func_count;
 static FILE *fp;
 
 /* Optimization level for translated output. */
-static int cback_optimize_level = 0;
+static int cback_optimize_level = 1;
+static bool cback_lineinfo = true;
 static bool cback_simd_info;
 
 /*
@@ -71,6 +72,13 @@ void
 noct_cback_set_optimize_level(int level)
 {
 	cback_optimize_level = level;
+	cback_lineinfo = level == 0;
+}
+
+void
+noct_cback_set_lineinfo(bool enable)
+{
+	cback_lineinfo = enable;
 }
 
 void
@@ -121,6 +129,7 @@ noct_cback_translate(
 
 	/* Propagate the optimization level to the compiler. */
 	lir_set_optimize_level(cback_optimize_level);
+	lir_set_lineinfo(cback_lineinfo);
 
 	/* Do parse, build AST. */
 	if (!ast_build(fname, data)) {

@@ -14,7 +14,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 NOCT_JIT_DEBUG=1 NOCT_JIT_FORCE_LONG_BRANCH=1 \
-	"$@" --force-jit "$test_file" >"$tmp_dir/actual" 2>"$tmp_dir/debug"
+	"$@" -j "$test_file" >"$tmp_dir/actual" 2>"$tmp_dir/debug"
 
 cmp "$expected_file" "$tmp_dir/actual"
 grep -q '^noct-jit: main: compiled$' "$tmp_dir/debug"

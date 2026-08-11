@@ -18,14 +18,14 @@ echo "(Interpreter)"
 for tc in webapp/*.noct; do
     name=$(basename "$tc" .noct)
     echo "$tc";
-    $NOCT --disable-jit "webapp/build/$name.noct" > out || true;
+    $NOCT -j0 "webapp/build/$name.noct" > out || true;
     diff "$tc.out" out;
 done
 echo "(JIT)"
 for tc in webapp/*.noct; do
     name=$(basename "$tc" .noct)
     echo "$tc";
-    $NOCT --force-jit "webapp/build/$name.noct" > out || true;
+    $NOCT -j "webapp/build/$name.noct" > out || true;
     diff "$tc.out" out;
 done
 echo 'All WebApp tests passed.'

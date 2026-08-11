@@ -25,7 +25,8 @@ enum cli_optimize_level_result {
 void show_usage(void);
 enum cli_optimize_level_result parse_optimize_level_option(
 	const char *arg,
-	int *level);
+	int *level,
+	bool *lineinfo);
 bool load_file_content(const char *fname, char **data, size_t *size);
 int wide_printf(const char *format, ...);
 bool add_file(const char *fname, bool (*add_file_hook)(const char *));

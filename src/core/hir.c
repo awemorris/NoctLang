@@ -3315,7 +3315,8 @@ hir_dump_block_at_level(
 
 /*
  * Run the HIR optimizer on one function.
- * A no-op below optimize level 2 or when the optimizer is not built.
+ * -O/-O1 runs inline, weak typing and CSE.  -O2 adds ABCE and SIMD;
+ * -O3 keeps those passes and permits fused arithmetic during LIR lowering.
  */
 bool
 hir_optimize_func(
@@ -3327,7 +3328,7 @@ hir_optimize_func(
 	assert(func_block != NULL);
 	assert(func_block->type == HIR_BLOCK_FUNC);
 
-	if (level < 2)
+	if (level < 1)
 		return true;
 
 	if (!hir_opt_inline_func(func_block))
@@ -3340,11 +3341,13 @@ hir_optimize_func(
 	 */
 	if (!hir_opt_typed_func(func_block))
 		return false;
-	if (!hir_opt_abce_func(func_block))
-		return false;
-	/* SIMD right after ABCE (it consumes the fast-loop marks). */
-	if (!hir_opt_simd_func(func_block, simd_info))
-		return false;
+	if (level >= 2) {
+		if (!hir_opt_abce_func(func_block))
+			return false;
+		/* SIMD right after ABCE (it consumes the fast-loop marks). */
+		if (!hir_opt_simd_func(func_block, simd_info))
+			return false;
+	}
 	if (!hir_opt_cse_func(func_block))
 		return false;
 	/* After CSE: the lattice must see CAPTURE home assignments. */

@@ -101,6 +101,7 @@ static char lir_error_message[1024];
  * Optimize lelve.
  */
 int lir_optimize_level = 0;
+static bool lir_lineinfo = true;
 
 /*
  * Set the optimization level. (Propagated from NoctConfig; see
@@ -110,6 +111,12 @@ void
 lir_set_optimize_level(int level)
 {
 	lir_optimize_level = level;
+}
+
+void
+lir_set_lineinfo(bool enable)
+{
+	lir_lineinfo = enable;
 }
 
 /*
@@ -275,8 +282,8 @@ lir_build(
 	/* Initialize the relocation table. */
 	loc_count = 0;
 
-	/* Typed entry checks (docs/design/02-typing.md; level >= 2). */
-	if (lir_optimize_level >= 2) {
+	/* Typed entry checks are part of -O/-O1 and above. */
+	if (lir_optimize_level >= 1) {
 		uint32_t k;
 		for (k = 0; k < hir_func->val.func.param_count; k++) {
 			int check_type;
@@ -471,7 +478,7 @@ lir_visit_basic_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (lir_optimize_level == 0) {
+	if (lir_lineinfo) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -597,7 +604,7 @@ lir_visit_if_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (lir_optimize_level == 0) {
+	if (lir_lineinfo) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -1888,7 +1895,7 @@ lir_visit_for_range_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (lir_optimize_level == 0) {
+	if (lir_lineinfo) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -2021,7 +2028,7 @@ lir_visit_for_kv_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (lir_optimize_level == 0) {
+	if (lir_lineinfo) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -2147,7 +2154,7 @@ lir_visit_for_v_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (lir_optimize_level == 0) {
+	if (lir_lineinfo) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -2287,7 +2294,7 @@ lir_visit_while_block(
 	block->addr = (uint32_t)bytecode_top;
 
 	/* Put a line number. */
-	if (lir_optimize_level == 0) {
+	if (lir_lineinfo) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)block->line))
@@ -2343,7 +2350,7 @@ lir_visit_stmt(
 	assert(stmt->rhs != NULL);
 
 	/* Put a line number. */
-	if (lir_optimize_level == 0) {
+	if (lir_lineinfo) {
 		if (!lir_put_opcode(OP_LINEINFO))
 			return false;
 		if (!lir_put_imm32((uint32_t)stmt->line))
@@ -3085,7 +3092,7 @@ lir_typed_binary_opcode(
 	int a, b;
 	struct hir_expr *rhs;
 
-	if (lir_optimize_level < 2 || typed_disabled)
+	if (lir_optimize_level < 1 || typed_disabled)
 		return -1;
 
 	switch (expr->type) {
@@ -3174,7 +3181,7 @@ lir_visit_binary_expr(
 	 * literal stays generic and errors at runtime, unchanged).
 	 */
 	if ((expr->type == HIR_EXPR_SHL || expr->type == HIR_EXPR_SHR) &&
-	    lir_optimize_level >= 2 && !typed_disabled) {
+	    lir_optimize_level >= 1 && !typed_disabled) {
 		struct hir_expr *rhs = expr->val.binary.expr[1];
 		if (rhs->type == HIR_EXPR_TERM &&
 		    rhs->val.term.term->type == HIR_TERM_INT &&
@@ -3243,7 +3250,7 @@ lir_visit_binary_expr(
 	case HIR_EXPR_XOR:
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:
-		if (lir_optimize_level >= 2 && !typed_disabled)
+		if (lir_optimize_level >= 1 && !typed_disabled)
 			typed_generic_count++;
 		break;
 	default:

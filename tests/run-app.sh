@@ -7,13 +7,13 @@ tmp="app/.tmp-app-$$"
 mkdir "$tmp"
 trap 'rm -f "$tmp"/*; rmdir "$tmp"' EXIT HUP INT TERM
 
-"$NOCT" --compile --app --optimize-level=2 "$tmp/test.nap" \
+"$NOCT" --compile --app -O2 "$tmp/test.nap" \
     app/main.noct app/second.noct
 head -n 1 "$tmp/test.nap" | grep -Fx '#!/usr/bin/noct'
 test -x "$tmp/test.nap"
-"$NOCT" --disable-jit "$tmp/test.nap" > "$tmp/interpreter.out"
+"$NOCT" -j0 "$tmp/test.nap" > "$tmp/interpreter.out"
 diff app/app.out "$tmp/interpreter.out"
-"$NOCT" --force-jit "$tmp/test.nap" > "$tmp/jit.out"
+"$NOCT" -j "$tmp/test.nap" > "$tmp/jit.out"
 diff app/app.out "$tmp/jit.out"
 
 if "$NOCT" --compile --app "$tmp/duplicate.nap" \
@@ -46,15 +46,15 @@ grep -Fx 'preserve-me' "$tmp/preserved.nap"
 
 # Runtime source loading and .nap linking share require resolution.  The leaf
 # initializer must run once, followed by its importer and finally the root.
-"$NOCT" --disable-jit --path=app/require/modules \
+"$NOCT" -j0 --path=app/require/modules \
     app/require/main.noct > "$tmp/require-runtime.out"
 diff app/require/require.out "$tmp/require-runtime.out"
 
 "$NOCT" --compile --app --path=app/require/modules \
     "$tmp/require.nap" app/require/main.noct
-"$NOCT" --disable-jit "$tmp/require.nap" > "$tmp/require-app.out"
+"$NOCT" -j0 "$tmp/require.nap" > "$tmp/require-app.out"
 diff app/require/require.out "$tmp/require-app.out"
-"$NOCT" --force-jit "$tmp/require.nap" > "$tmp/require-app-jit.out"
+"$NOCT" -j "$tmp/require.nap" > "$tmp/require-app-jit.out"
 diff app/require/require.out "$tmp/require-app-jit.out"
 if grep -F "$PWD" "$tmp/require.nap" >/dev/null; then
     echo 'Noct App leaked an absolute require path' >&2
@@ -69,7 +69,7 @@ if "$NOCT" --compile --app --path=app/require/modules:app/require \
 fi
 grep -F 'Circular require' "$tmp/cycle.log"
 
-if "$NOCT" --disable-jit --path=app/require/modules \
+if "$NOCT" -j0 --path=app/require/modules \
     app/require/missing.noct > "$tmp/missing.log" 2>&1; then
     echo 'missing required module was accepted' >&2
     exit 1

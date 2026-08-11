@@ -37,15 +37,17 @@ command_transpile_c(
 {
 	int first;
 	int optimize_level;
+	bool lineinfo;
 	enum cli_optimize_level_result optimize_result;
 
 	/* Optional compiler diagnostics/settings before the output file. */
 	first = 2;
 	while (first < argc) {
-		optimize_result =
-			parse_optimize_level_option(argv[first], &optimize_level);
+		optimize_result = parse_optimize_level_option(
+			argv[first], &optimize_level, &lineinfo);
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
 			noct_cback_set_optimize_level(optimize_level);
+			noct_cback_set_lineinfo(lineinfo);
 			first++;
 			continue;
 		}

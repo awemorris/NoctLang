@@ -126,10 +126,15 @@ void show_usage(void)
 #endif
 	wide_printf("\n");
 	wide_printf(N_TR("vm-options:\n"));
-	wide_printf(N_TR("  --disable-jit        ... disable JIT\n"));
-	wide_printf(N_TR("  --force-jit          ... equivalent to --jit-threshold=0\n"));
-	wide_printf(N_TR("  --jit-threshold=N    ... call-count threshold for compilation\n"));
-	wide_printf(N_TR("  -O0..-O3, --optimize-level=N ... optimize level (0/1/2/3+)\n"));
+	wide_printf(N_TR("  -j, -j0              ... eager JIT (default), or interpreter only\n"));
+	wide_printf(N_TR("  -O, -O0..-O3, -O9    ... optimization preset\n"));
+	wide_printf(N_TR("  --cpu[=N]            ... enable CPU automatic parallelization\n"));
+	wide_printf(N_TR("  --cpu-pe=N           ... processing elements (default: logical CPUs)\n"));
+	wide_printf(N_TR("  --cpu-affinity=LIST  ... comma-separated logical CPU IDs\n"));
+	wide_printf(N_TR("  --cpu-list            ... show CPU topology and exit\n"));
+	wide_printf(N_TR("  --gpu                 ... enable GPU automatic parallelization\n"));
+	wide_printf(N_TR("  --gpu-name=NAME       ... select one GPU by name\n"));
+	wide_printf(N_TR("  --gpu-list            ... show GPU devices and exit\n"));
 	wide_printf(N_TR("  --simd-info          ... report successfully vectorized loops\n"));
 	wide_printf(N_TR("  --path=DIRS          ... require search path (colon-separated)\n"));
 	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
@@ -145,39 +150,30 @@ void show_usage(void)
 enum cli_optimize_level_result
 parse_optimize_level_option(
 	const char *arg,
-	int *level)
+	int *level,
+	bool *lineinfo)
 {
-	const char *value;
-	char *end;
-	long parsed;
-
 	assert(arg != NULL);
 	assert(level != NULL);
+	assert(lineinfo != NULL);
 
 	if (arg[0] == '-' && arg[1] == 'O') {
-		if (arg[2] >= '0' && arg[2] <= '3' && arg[3] == '\0') {
+		if (arg[2] == '\0') {
+			*level = 1;
+			*lineinfo = true;
+			return CLI_OPTIMIZE_LEVEL_VALID;
+		}
+		if (((arg[2] >= '0' && arg[2] <= '3') || arg[2] == '9') &&
+		    arg[3] == '\0') {
 			*level = arg[2] - '0';
+			*lineinfo = arg[2] == '0';
 			return CLI_OPTIMIZE_LEVEL_VALID;
 		}
 		return CLI_OPTIMIZE_LEVEL_INVALID;
 	}
-	if (strncmp(arg, "--optimize-level=", 17) != 0)
-		return CLI_OPTIMIZE_LEVEL_NOT_MATCHED;
-
-	value = arg + 17;
-	if (*value == '\0')
+	if (strncmp(arg, "--optimize-level", 16) == 0)
 		return CLI_OPTIMIZE_LEVEL_INVALID;
-	errno = 0;
-	end = NULL;
-	parsed = strtol(value, &end, 10);
-	if (errno == ERANGE || end == value || *end != '\0' || parsed < 0
-#if LONG_MAX > INT_MAX
-	    || parsed > INT_MAX
-#endif
-	   )
-		return CLI_OPTIMIZE_LEVEL_INVALID;
-	*level = (int)parsed;
-	return CLI_OPTIMIZE_LEVEL_VALID;
+	return CLI_OPTIMIZE_LEVEL_NOT_MATCHED;
 }
 
 /*

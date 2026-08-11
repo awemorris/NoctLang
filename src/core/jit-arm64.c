@@ -30,14 +30,6 @@
 #define PATCH_BEQ                       1
 #define PATCH_BNE                       2
 
-/* Generated code. */
-static uint32_t *jit_code_region;
-static uint32_t *jit_code_region_cur;
-static uint32_t *jit_code_region_tail;
-
-/* Write mapped? */
-static bool is_writable;
-
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
@@ -50,53 +42,10 @@ jit_build(
           struct rt_env *env,
           struct rt_func *func)
 {
-        struct jit_context ctx;
-        int i;
-
-        /* If the first call, map a memory region for the generated code. */
-        if (jit_code_region == NULL) {
-                if (!jit_map_memory_region((void **)&jit_code_region, jit_get_code_size(env))) {
-                        rt_error(env, N_TR("Memory mapping failed."));
-                        return false;
-                }
-                jit_code_region_cur = jit_code_region;
-                jit_code_region_tail = jit_code_region + jit_get_code_size(env) / 4;
-                is_writable = true;
-        }
-
-        /* Make a context. */
-        memset(&ctx, 0, sizeof(struct jit_context));
-        ctx.code_top = jit_code_region_cur;
-        ctx.code_end = jit_code_region_tail;
-        ctx.code = ctx.code_top;
-        ctx.env = env;
-        ctx.func = func;
 	/* Advanced SIMD is part of the AArch64 application-profile ABI. */
-	jit_configure_simd(&ctx,
+	JIT_BUILD_STANDARD(env, func,
 			   JIT_SIMD_CAP_NEON | JIT_SIMD_CAP_FMAF32X4,
 			   "arm64");
-
-        /* Make code writable and non-executable. */
-        if (!is_writable) {
-                jit_map_writable(jit_code_region, jit_get_code_size(env));
-                is_writable = true;
-        }
-
-        /* Visit over the bytecode. */
-        if (!jit_visit_bytecode(&ctx))
-                return false;
-
-        jit_code_region_cur = ctx.code;
-
-        /* Patch branches. */
-        for (i = 0; i < ctx.branch_patch_count; i++) {
-                if (!jit_patch_branch(&ctx, i))
-                        return false;
-        }
-
-        func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
-
-        return true;
 }
 
 /*
@@ -106,15 +55,7 @@ void
 jit_free(
          struct rt_env *env)
 {
-        UNUSED_PARAMETER(env);
-
-        if (jit_code_region != NULL) {
-                jit_unmap_memory_region(jit_code_region, jit_get_code_size(env));
-
-                jit_code_region = NULL;
-                jit_code_region_cur = NULL;
-                jit_code_region_tail = NULL;
-        }
+	jit_slab_free_all(env);
 }
 
 /*
@@ -124,12 +65,7 @@ void
 jit_commit(
         struct rt_env *env)
 {
-        UNUSED_PARAMETER(env);
-
-        /* Make code executable and non-writable. */
-        jit_map_executable(jit_code_region, jit_get_code_size(env));
-
-        is_writable = false;
+	jit_slab_commit_all(env);
 }
 
 /*
@@ -194,6 +130,7 @@ jit_put_word(
         uint32_t word)
 {
         if (ctx->code >= ctx->code_end) {
+		ctx->code_overflow = true;
                 rt_error(ctx->env, "Code too big.");
                 return false;
         }

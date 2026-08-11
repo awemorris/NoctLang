@@ -40,14 +40,6 @@
 #define PATCH_BEQ               1
 #define PATCH_BNE               2
 
-/* Generated code. */
-static uint32_t *jit_code_region;
-static uint32_t *jit_code_region_cur;
-static uint32_t *jit_code_region_tail;
-
-/* Write mapped? */
-static bool is_writable;
-
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
@@ -93,27 +85,25 @@ jit_build(
           struct rt_func *func)
 {
         struct jit_context ctx;
+	struct jit_slab *slab;
+	void *code_top;
+	void *code_end;
+	void *generated_end;
+	void *aligned_end;
+	int attempt;
         int i;
+	bool visit_ok;
 
-        /* If the first call, map a memory region for the generated code. */
-        if (jit_code_region == NULL) {
-                if (!jit_map_memory_region((void **)&jit_code_region, jit_get_code_size(env))) {
-                        rt_error(env, "Memory mapping failed.");
-                        return false;
-                }
-                jit_code_region_cur = jit_code_region;
-                jit_code_region_tail = jit_code_region + jit_get_code_size(env) / 4;
-                is_writable = true;
-        }
-
-        /* Make a context. */
-        memset(&ctx, 0, sizeof(struct jit_context));
-        ctx.code_top = jit_code_region_cur;
-        ctx.code_end = jit_code_region_tail;
-        ctx.code = ctx.code_top;
-        ctx.env = env;
-        ctx.func = func;
-	jit_configure_simd(&ctx, jit_detect_simd_caps(), "ppc64");
+	for (attempt = 0; attempt < 2; attempt++) {
+		if (!jit_slab_acquire(env, &slab, &code_top, &code_end))
+			return false;
+		memset(&ctx, 0, sizeof(ctx));
+		ctx.code_top = code_top;
+		ctx.code_end = code_end;
+		ctx.code = code_top;
+		ctx.env = env;
+		ctx.func = func;
+		jit_configure_simd(&ctx, jit_detect_simd_caps(), "ppc64");
 
 #if defined(NOCT_ARCH_BE)
         /*
@@ -127,42 +117,59 @@ jit_build(
                         void *env;
                 } desc;
 
-                if (ctx.code_top + 24 >= ctx.code_top) {
-                        rt_error(env, "No JIT space");
-                        return false;
-                }
+		if ((uint8_t *)ctx.code + 24 > (uint8_t *)ctx.code_end) {
+			ctx.code_overflow = true;
+			rt_error(env, "Code too big.");
+		} else {
 
                 desc.entry = (void *)(ctx.code + 24);
                 desc.toc = ppc64_elf_v1_get_toc();
                 desc.env = NULL;
                 *(struct ppc64_elf_v1_func_desc *)ctx.code = desc;
                 ctx.code += 24;
+		}
         }
 #endif
 
-        /* Make code writable and non-executable. */
-        if (!is_writable) {
-                jit_map_writable(jit_code_region, jit_get_code_size(env));
-                is_writable = true;
-        }
+		visit_ok = !ctx.code_overflow && jit_visit_bytecode(&ctx);
+		if (!visit_ok) {
+			if (attempt == 0 &&
+			    ((uint8_t *)code_top != slab->base ||
+			     slab->size < jit_get_code_size(env))) {
+				if (ctx.code_overflow) {
+					jit_slab_abandon(env, slab);
+					jit_slab_clear_overflow(env);
+					continue;
+				}
+			}
+			return false;
+		}
 
-        /* Visit over the bytecode. */
-        if (!jit_visit_bytecode(&ctx))
-                return false;
+		generated_end = ctx.code;
+		for (i = 0; i < ctx.branch_patch_count; i++) {
+			if (!jit_patch_branch(&ctx, i))
+				return false;
+		}
+		aligned_end = (void *)(((uintptr_t)generated_end + 15) &
+				       (uintptr_t)~0xf);
+		if ((uint8_t *)aligned_end > (uint8_t *)ctx.code_end) {
+			ctx.code_overflow = true;
+			rt_error(env, "Code too big.");
+			if (attempt == 0 &&
+			    ((uint8_t *)code_top != slab->base ||
+			     slab->size < jit_get_code_size(env))) {
+				jit_slab_abandon(env, slab);
+				jit_slab_clear_overflow(env);
+				continue;
+			}
+			return false;
+		}
+		jit_slab_finish(env, slab, aligned_end);
 
-        /* Increment the JIT pointer. */
-        jit_code_region_cur = (void *)(((uintptr_t)ctx.code + 15) & (uintptr_t)~0xf);
-
-        /* Patch branches. */
-        for (i = 0; i < ctx.branch_patch_count; i++) {
-                if (!jit_patch_branch(&ctx, i))
-                        return false;
-        }
-
-        /* Set the jit_code pointer. */
-        func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
-
-        return true;
+		func->jit_code = (bool (CDECL *)(struct rt_env *))ctx.code_top;
+		return true;
+	}
+	return false;
 }
 
 /*
@@ -172,15 +179,7 @@ void
 jit_free(
          struct rt_env *env)
 {
-        UNUSED_PARAMETER(env);
-
-        if (jit_code_region != NULL) {
-                jit_unmap_memory_region(jit_code_region, jit_get_code_size(env));
-
-                jit_code_region = NULL;
-                jit_code_region_cur = NULL;
-                jit_code_region_tail = NULL;
-        }
+	jit_slab_free_all(env);
 }
 
 /*
@@ -191,12 +190,7 @@ jit_commit(
         struct rt_env *env)
 
 {
-	UNUSED_PARAMETER(env);
-
-        /* Make code executable and non-writable. */
-        jit_map_executable(jit_code_region, jit_get_code_size(env));
-
-        is_writable = false;
+	jit_slab_commit_all(env);
 }
 
 /*
@@ -250,6 +244,7 @@ jit_put_word(
         uint32_t tmp;
 
         if ((uint32_t *)ctx->code >= (uint32_t *)ctx->code_end) {
+		ctx->code_overflow = true;
                 rt_error(ctx->env, "Code too big.");
                 return false;
         }

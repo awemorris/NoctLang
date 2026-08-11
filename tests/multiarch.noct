@@ -90,7 +90,7 @@ func arch_test(name, toolchain, qemu) {
     // Run tests without JIT.
     print("Interpreter...");
     for(file in testcase) {
-        if (!run_testcase(qemu, "--disable-jit", file)) {
+        if (!run_testcase(qemu, "-j0", file)) {
             return 0;
 	}
     }
@@ -98,7 +98,7 @@ func arch_test(name, toolchain, qemu) {
     // Run tests with JIT.
     print("JIT...");
     for(file in testcase) {
-        if (!run_testcase(qemu, "--force-jit", file)) {
+        if (!run_testcase(qemu, "-j", file)) {
 	    return 0;
 	}
     }

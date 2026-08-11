@@ -3,8 +3,8 @@
 NOCT=${NOCT:-../../build-static/noct}
 for tc in b*.noct; do
     printf "%-22s" "$tc"
-    for mode in "--disable-jit" "--force-jit"; do
-        for lvl in "" "--optimize-level=2"; do
+    for mode in "-j0" "-j"; do
+        for lvl in "-O0" "-O2"; do
             t0=$(date +%s.%N)
             $NOCT $mode $lvl "$tc" > /dev/null 2>&1
             t1=$(date +%s.%N)

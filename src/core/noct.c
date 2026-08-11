@@ -27,9 +27,14 @@ noct_set_default_config(
 	memset(config, 0, sizeof(NoctConfig));
 
 	config->jit_enable             = true;
-	config->jit_threshold          = JIT_DEFAULT_THRESHOLD;
-	config->optimize_level         = 0;
+	config->optimize_level         = 1;
+	config->lineinfo               = true;
 	config->simd_info              = false;
+	config->auto_parallel          = 0;
+	config->cpu_pe                 = 0;
+	config->cpu_affinity           = NULL;
+	config->gpu_enable             = false;
+	config->gpu_name               = NULL;
 #if defined(NOCT_USE_JIT)
 	config->jit_code_size          = JIT_CODE_MAX;
 #else

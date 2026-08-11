@@ -15,8 +15,16 @@
 #endif
 #include "cli-main.h"
 
+#include <errno.h>
+#include <limits.h>
+
 #if defined(NOCT_TARGET_WINDOWS)
 #include <windows.h>
+#elif !defined(NOCT_TARGET_DOS4G) && !defined(NOCT_TARGET_PC98BE)
+#include <unistd.h>
+#if defined(__linux__)
+#include <dirent.h>
+#endif
 #endif
 
 static NoctVM *vm;
@@ -27,6 +35,8 @@ static int file_arg;
 static int prog_arg;
 static size_t param_count;
 static bool is_oneliner;
+static bool show_cpu_list;
+static bool show_gpu_list;
 static const char *require_path[64];
 static uint32_t require_path_count;
 
@@ -34,6 +44,10 @@ static bool parse_options(int argc, char *argv[]);
 static bool load_program(int argc, char *argv[]);
 static bool load_args(int argc, char *argv[]);
 static bool check_params(void);
+static bool parse_nonnegative_int(const char *text, int *value);
+static bool validate_cpu_affinity(const char *text);
+static void print_cpu_list(void);
+static void print_gpu_list(void);
 
 /*
  * Top level function for the run mode.
@@ -47,6 +61,14 @@ int command_run(int argc, char *argv[])
 	/* Parse options. */
 	if (!parse_options(argc, argv))
 		return 1;
+	if (show_cpu_list) {
+		print_cpu_list();
+		return 0;
+	}
+	if (show_gpu_list) {
+		print_gpu_list();
+		return 0;
+	}
 
 	/* Check if a file is specified. */
 	if (file_arg == argc && !is_oneliner) {
@@ -177,27 +199,81 @@ parse_options(
 {
 	int i;
 	int optimize_level;
+	bool lineinfo;
 	enum cli_optimize_level_result optimize_result;
 
 	file_arg = 1;
 	is_oneliner = false;
+	show_cpu_list = false;
+	show_gpu_list = false;
 	require_path_count = 0;
 	for (i = 1; i < argc; i++) {
 		if (argv[i][0] != '-')
 			break;
 
-		if (strcmp(argv[i], "--disable-jit") == 0) {
+		if (strcmp(argv[i], "-j0") == 0) {
 			config.jit_enable = false;
 			file_arg++;
 			continue;
 		}
-		if (strcmp(argv[i], "--force-jit") == 0) {
-			config.jit_threshold = 0;
+		if (strcmp(argv[i], "-j") == 0) {
+			config.jit_enable = true;
 			file_arg++;
 			continue;
 		}
-		if (strncmp(argv[i], "--jit-threshold=", 16) == 0) {
-			config.jit_threshold = atoi(argv[i] + 16);
+		if (strcmp(argv[i], "--cpu") == 0) {
+			config.auto_parallel = 1;
+			file_arg++;
+			continue;
+		}
+		if (strncmp(argv[i], "--cpu=", 6) == 0) {
+			if (!parse_nonnegative_int(argv[i] + 6,
+					   &config.auto_parallel)) {
+				wide_printf(N_TR("Invalid --cpu option.\n"));
+				return false;
+			}
+			file_arg++;
+			continue;
+		}
+		if (strncmp(argv[i], "--cpu-pe=", 9) == 0) {
+			if (!parse_nonnegative_int(argv[i] + 9, &config.cpu_pe) ||
+			    config.cpu_pe == 0) {
+				wide_printf(N_TR("Invalid --cpu-pe option.\n"));
+				return false;
+			}
+			file_arg++;
+			continue;
+		}
+		if (strncmp(argv[i], "--cpu-affinity=", 15) == 0) {
+			if (!validate_cpu_affinity(argv[i] + 15)) {
+				wide_printf(N_TR("Invalid --cpu-affinity option.\n"));
+				return false;
+			}
+			config.cpu_affinity = argv[i] + 15;
+			file_arg++;
+			continue;
+		}
+		if (strcmp(argv[i], "--cpu-list") == 0) {
+			show_cpu_list = true;
+			file_arg++;
+			continue;
+		}
+		if (strcmp(argv[i], "--gpu") == 0) {
+			config.gpu_enable = true;
+			file_arg++;
+			continue;
+		}
+		if (strncmp(argv[i], "--gpu-name=", 11) == 0) {
+			if (argv[i][11] == '\0') {
+				wide_printf(N_TR("Invalid --gpu-name option.\n"));
+				return false;
+			}
+			config.gpu_name = argv[i] + 11;
+			file_arg++;
+			continue;
+		}
+		if (strcmp(argv[i], "--gpu-list") == 0) {
+			show_gpu_list = true;
 			file_arg++;
 			continue;
 		}
@@ -206,10 +282,15 @@ parse_options(
 			file_arg++;
 			continue;
 		}
-		optimize_result =
-			parse_optimize_level_option(argv[i], &optimize_level);
+		optimize_result = parse_optimize_level_option(
+			argv[i], &optimize_level, &lineinfo);
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
 			config.optimize_level = optimize_level;
+			config.lineinfo = lineinfo;
+			if (optimize_level == 9) {
+				config.auto_parallel = 1;
+				config.gpu_enable = true;
+			}
 			file_arg++;
 			continue;
 		}
@@ -277,6 +358,132 @@ parse_options(
 	}
 
 	return true;
+}
+
+static bool
+parse_nonnegative_int(const char *text, int *value)
+{
+	char *end;
+	long parsed;
+
+	if (text == NULL || text[0] == '\0')
+		return false;
+	errno = 0;
+	parsed = strtol(text, &end, 10);
+	if (errno == ERANGE || end == text || *end != '\0' || parsed < 0
+#if LONG_MAX > INT_MAX
+	    || parsed > INT_MAX
+#endif
+	   )
+		return false;
+	*value = (int)parsed;
+	return true;
+}
+
+static bool
+validate_cpu_affinity(const char *text)
+{
+	const char *p = text;
+
+	if (p == NULL || *p == '\0')
+		return false;
+	for (;;) {
+		if (*p < '0' || *p > '9')
+			return false;
+		while (*p >= '0' && *p <= '9')
+			p++;
+		if (*p == '\0')
+			return true;
+		if (*p++ != ',' || *p == '\0')
+			return false;
+	}
+}
+
+#if defined(__linux__)
+static int
+read_cpu_topology_value(int cpu, const char *name)
+{
+	char path[256];
+	FILE *fp;
+	int value = -1;
+
+	snprintf(path, sizeof(path),
+		 "/sys/devices/system/cpu/cpu%d/topology/%s", cpu, name);
+	fp = fopen(path, "r");
+	if (fp != NULL) {
+		if (fscanf(fp, "%d", &value) != 1)
+			value = -1;
+		fclose(fp);
+	}
+	return value;
+}
+
+static int
+read_cpu_numa_node(int cpu)
+{
+	char path[256];
+	DIR *dir;
+	struct dirent *entry;
+	int node = -1;
+
+	snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d", cpu);
+	dir = opendir(path);
+	if (dir == NULL)
+		return -1;
+	while ((entry = readdir(dir)) != NULL) {
+		if (strncmp(entry->d_name, "node", 4) == 0 &&
+		    entry->d_name[4] >= '0' && entry->d_name[4] <= '9') {
+			node = atoi(entry->d_name + 4);
+			break;
+		}
+	}
+	closedir(dir);
+	return node;
+}
+#endif
+
+static void
+print_cpu_list(void)
+{
+	int count;
+	int i;
+
+#if defined(NOCT_TARGET_WINDOWS)
+	count = (int)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+#elif defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
+	count = 1;
+#else
+	count = (int)sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+	if (count < 1)
+		count = 1;
+	wide_printf("Logical CPUs: %d\n", count);
+	wide_printf("ID  NUMA  Package  Core  SMT\n");
+	for (i = 0; i < count; i++) {
+#if defined(__linux__)
+		int package = read_cpu_topology_value(i, "physical_package_id");
+		int core = read_cpu_topology_value(i, "core_id");
+		int node = read_cpu_numa_node(i);
+		int smt = 0;
+		int j;
+		for (j = 0; j < i; j++) {
+			if (read_cpu_topology_value(j, "physical_package_id") ==
+				package &&
+			    read_cpu_topology_value(j, "core_id") == core)
+				smt++;
+		}
+		wide_printf("%d  %d     %d        %d     %d\n",
+			    i, node, package, core, smt);
+#else
+		wide_printf("%d  ?     ?        ?     ?\n", i);
+#endif
+	}
+}
+
+static void
+print_gpu_list(void)
+{
+	wide_printf(N_TR("GPU backend is not linked; no devices are available.\n"));
 }
 
 static bool

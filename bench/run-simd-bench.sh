@@ -57,35 +57,35 @@ run_mode()
     output=$3
     case "$mode" in
     jit-l0)
-        invoke "$NOCT" --force-jit "$file" >"$output"
+        invoke "$NOCT" -j "$file" >"$output"
         ;;
     l2-nosimd)
-        invoke env NOCT_SIMD_DISABLE=1 "$NOCT" --force-jit \
-            --optimize-level=2 "$file" >"$output"
+        invoke env NOCT_SIMD_DISABLE=1 "$NOCT" -j \
+            -O2 "$file" >"$output"
         ;;
     l2-vscalar)
-        invoke env NOCT_JIT_SIMD_MAX=scalar "$NOCT" --force-jit \
-            --optimize-level=2 "$file" >"$output"
+        invoke env NOCT_JIT_SIMD_MAX=scalar "$NOCT" -j \
+            -O2 "$file" >"$output"
         ;;
     l2-sse2)
-        invoke env NOCT_JIT_SIMD_MAX=sse2 "$NOCT" --force-jit \
-            --optimize-level=2 "$file" >"$output"
+        invoke env NOCT_JIT_SIMD_MAX=sse2 "$NOCT" -j \
+            -O2 "$file" >"$output"
         ;;
     l2-sse3)
-        invoke env NOCT_JIT_SIMD_MAX=sse3 "$NOCT" --force-jit \
-            --optimize-level=2 "$file" >"$output"
+        invoke env NOCT_JIT_SIMD_MAX=sse3 "$NOCT" -j \
+            -O2 "$file" >"$output"
         ;;
     l2-sse41)
-        invoke env NOCT_JIT_SIMD_MAX=sse41 "$NOCT" --force-jit \
-            --optimize-level=2 "$file" >"$output"
+        invoke env NOCT_JIT_SIMD_MAX=sse41 "$NOCT" -j \
+            -O2 "$file" >"$output"
         ;;
     l2-neon)
-        invoke env NOCT_JIT_SIMD_MAX=neon "$NOCT" --force-jit \
-            --optimize-level=2 "$file" >"$output"
+        invoke env NOCT_JIT_SIMD_MAX=neon "$NOCT" -j \
+            -O2 "$file" >"$output"
         ;;
     l2-altivec)
-        invoke env NOCT_JIT_SIMD_MAX=altivec "$NOCT" --force-jit \
-            --optimize-level=2 "$file" >"$output"
+        invoke env NOCT_JIT_SIMD_MAX=altivec "$NOCT" -j \
+            -O2 "$file" >"$output"
         ;;
     *)
         echo "unknown mode: $mode" >&2
@@ -109,7 +109,7 @@ echo "NOCT: $NOCT" >&2
 echo "RUNS=$RUNS WARMUPS=$WARMUPS CPU=${CPU:-unbound}" >&2
 
 # Confirm that the selected host path contains vector bytecode and report caps.
-invoke env NOCT_JIT_SIMD_DEBUG=1 "$NOCT" --force-jit --optimize-level=2 \
+invoke env NOCT_JIT_SIMD_DEBUG=1 "$NOCT" -j -O2 \
     "$bench_dir/b12_vblend.noct" >/dev/null
 
 printf 'case,mode,median_ms,min_ms,max_ms\n'

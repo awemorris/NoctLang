@@ -11,7 +11,7 @@ echo 'Class tests:'
 
 FAILED=0
 for tc in class/*.noct; do
-    for jit in "--disable-jit" "--force-jit"; do
+    for jit in "-j0" "-j"; do
         $NOCT $jit "$tc" > out 2>&1
         if ! diff -q "$tc.out" out > /dev/null 2>&1; then
             echo "FAIL $tc ($jit)"

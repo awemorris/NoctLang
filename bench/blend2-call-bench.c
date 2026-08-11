@@ -160,8 +160,8 @@ main(int argc, char *argv[])
 
 	noct_set_default_config(&config);
 	config.jit_enable = true;
-	config.jit_threshold = 0;
 	config.optimize_level = level;
+	config.lineinfo = level == 0;
 	if (!noct_create_vm(&vm, &env, &config)) {
 		fprintf(stderr, "noct_create_vm failed\n");
 		goto cleanup_buffers;

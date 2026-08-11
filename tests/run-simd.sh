@@ -22,12 +22,12 @@ echo 'SIMD tests:'
 
 FAILED=0
 for tc in simd/*.noct; do
-    for lvl in "" "--optimize-level=2"; do
+    for lvl in "-O0" "-O2"; do
         golden="$tc.out"
-        if [ -n "$lvl" ] && [ -f "$tc.out2" ]; then
+        if [ "$lvl" = "-O2" ] && [ -f "$tc.out2" ]; then
             golden="$tc.out2"
         fi
-        for jit in "--disable-jit" "--force-jit"; do
+        for jit in "-j0" "-j"; do
             $NOCT $jit $lvl "$tc" > out 2>&1
             if ! diff -q "$golden" out > /dev/null 2>&1; then
                 echo "FAIL $tc ($jit $lvl)"
@@ -43,7 +43,7 @@ done
 # ceiling; SSE4.1 only shortens operations such as i32 multiply/extract.
 # On non-x86 backends these ceilings safely reduce to the scalar tier.
 for tier in scalar sse2 sse3 sse41 avx; do
-    NOCT_JIT_SIMD_MAX=$tier $NOCT --force-jit --optimize-level=2 \
+    NOCT_JIT_SIMD_MAX=$tier $NOCT -j -O2 \
         simd/blend2.noct > out 2>&1
     if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
         echo "FAIL SIMD ceiling $tier"
@@ -59,7 +59,7 @@ done
 # code-generation error.
 if [ "$(uname -m 2>/dev/null)" = "x86_64" ]; then
     debug=$(NOCT_LIR_VFOR_DEBUG=1 NOCT_JIT_CODEGEN_DEBUG=1 \
-        $NOCT --force-jit -O3 simd/blend2.noct 2>&1 >/dev/null)
+        $NOCT -j -O3 simd/blend2.noct 2>&1 >/dev/null)
     if printf '%s\n' "$debug" | grep -q \
         'noct-lir-vfor: max=13 .*caches=4 ' && \
        printf '%s\n' "$debug" | grep -q \
@@ -74,7 +74,7 @@ fi
 
 for name in $MUST_VECTORIZE; do
     tc="simd/$name.noct"
-    n=$(NOCT_SIMD_DEBUG=1 $NOCT --disable-jit --optimize-level=2 "$tc" 2>&1 \
+    n=$(NOCT_SIMD_DEBUG=1 $NOCT -j0 -O2 "$tc" 2>&1 \
         | grep -c 'vectorized')
     if [ "$n" -eq 0 ]; then
         echo "FAIL $tc (did not vectorize)"
@@ -86,7 +86,7 @@ done
 
 for name in $MUST_NOT; do
     tc="simd/$name.noct"
-    n=$(NOCT_SIMD_DEBUG=1 $NOCT --disable-jit --optimize-level=2 "$tc" 2>&1 \
+    n=$(NOCT_SIMD_DEBUG=1 $NOCT -j0 -O2 "$tc" 2>&1 \
         | grep -c 'vectorized')
     if [ "$n" -ne 0 ]; then
         echo "FAIL $tc (vectorized unexpectedly)"
@@ -98,7 +98,7 @@ done
 
 # --simd-info is the stable, success-only diagnostic.  It must include
 # the source loop line without exposing developer-only rejection output.
-info=$($NOCT --simd-info --disable-jit --optimize-level=2 \
+info=$($NOCT --simd-info -j0 -O2 \
     simd/f32.noct 2>&1)
 if ! printf '%s\n' "$info" | grep -q \
     '^SIMD: simd/f32.noct:6: vectorized (f32x4)$'; then
@@ -111,7 +111,7 @@ else
     echo "PASS --simd-info source location"
 fi
 
-if $NOCT --simd-info --disable-jit simd/f32.noct 2>&1 |
+if $NOCT --simd-info -j0 simd/f32.noct 2>&1 |
     grep -q '^SIMD:'; then
     echo "FAIL --simd-info reported without vectorization"
     FAILED=1
@@ -121,7 +121,7 @@ fi
 
 # O3 contracts eligible FP32 expressions to the common FMA opcode.  Native,
 # interpreter, and capability-ceiling paths must retain identical output.
-for jit in "--disable-jit" "--force-jit"; do
+for jit in "-j0" "-j"; do
     $NOCT $jit -O3 simd/blend2.noct > out 2>&1
     if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
         echo "FAIL O3 FMA blend2 ($jit)"
@@ -131,7 +131,7 @@ for jit in "--disable-jit" "--force-jit"; do
     fi
 done
 for tier in scalar sse41; do
-    NOCT_JIT_SIMD_MAX=$tier $NOCT --force-jit -O3 \
+    NOCT_JIT_SIMD_MAX=$tier $NOCT -j -O3 \
         simd/blend2.noct > out 2>&1
     if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
         echo "FAIL O3 FMA fallback ceiling $tier"
@@ -144,7 +144,7 @@ done
 # Optimized bytecode must preserve the ABI/prologue vector metadata.
 tmp_dir=$(mktemp -d)
 cp simd/f32.noct "$tmp_dir/f32.noct"
-compile_info=$($NOCT_META --compile --simd-info --optimize-level=2 \
+compile_info=$($NOCT_META --compile --simd-info -O2 \
     "$tmp_dir/f32.noct" 2>&1)
 if ! printf '%s\n' "$compile_info" | grep -q \
        "^SIMD: $tmp_dir/f32.noct:6: vectorized (f32x4)$" ||
@@ -152,7 +152,7 @@ if ! printf '%s\n' "$compile_info" | grep -q \
     echo "FAIL SIMD bytecode vector metadata/info"
     FAILED=1
 else
-    $NOCT_META --force-jit "$tmp_dir/f32.nb" > "$tmp_dir/out" 2>&1
+    $NOCT_META -j "$tmp_dir/f32.nb" > "$tmp_dir/out" 2>&1
     if ! diff -q simd/f32.noct.out "$tmp_dir/out" > /dev/null 2>&1; then
         echo "FAIL SIMD bytecode round trip"
         diff simd/f32.noct.out "$tmp_dir/out" | head -5
@@ -177,7 +177,7 @@ if ! grep -a -q '^FMA Ops$' "$tmp_dir/blend2.nb"; then
     echo "FAIL O3 bytecode missing FMA metadata"
     FAILED=1
 else
-    NOCT_JIT_SIMD_MAX=sse41 $NOCT_META --force-jit \
+    NOCT_JIT_SIMD_MAX=sse41 $NOCT_META -j \
         "$tmp_dir/blend2.nb" > "$tmp_dir/blend2.out" 2>&1
     if ! diff -q simd/blend2.noct.out "$tmp_dir/blend2.out" > /dev/null 2>&1; then
         echo "FAIL O3 FMA bytecode portable round trip"

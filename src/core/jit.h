@@ -19,9 +19,6 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Default JIT threshold. */
-#define JIT_DEFAULT_THRESHOLD	5
-
 #define ex_make_string_with_hash noct_ex_make_string_with_hash
 #define ex_make_empty_array noct_ex_make_empty_array
 #define ex_make_empty_dict noct_ex_make_empty_dict
@@ -168,6 +165,30 @@ jit_get_code_size(
 	return size;
 }
 
+/*
+ * One VM-local JIT allocation.  [base, committed) is RX and immutable;
+ * [current, end) remains RW.  Commit rounds current up to a page boundary,
+ * deliberately wasting the tail so a page is never switched back to RW.
+ */
+struct jit_slab {
+	uint8_t *base;
+	uint8_t *current;
+	uint8_t *committed;
+	uint8_t *end;
+	size_t size;
+	struct jit_slab *next;
+};
+
+bool jit_slab_acquire(struct rt_env *env, struct jit_slab **slab,
+		      void **code_top, void **code_end);
+bool jit_slab_reserve(struct rt_env *env, size_t estimated_size);
+void jit_slab_finish(struct rt_env *env, struct jit_slab *slab,
+		     void *code_end);
+void jit_slab_abandon(struct rt_env *env, struct jit_slab *slab);
+void jit_slab_clear_overflow(struct rt_env *env);
+void jit_slab_commit_all(struct rt_env *env);
+void jit_slab_free_all(struct rt_env *env);
+
 /* PC entry size. */
 #define PC_ENTRY_MAX		2048
 
@@ -242,6 +263,9 @@ struct jit_context {
 	/* Current code position in the mapped code area. */
 	void *code;
 
+	/* The current function did not fit and may be retried on a fresh slab. */
+	bool code_overflow;
+
 	/* Exception handler address of the current function. */
 	void *exception_code;
 
@@ -299,11 +323,53 @@ bool jit_map_memory_region(void **region, size_t size);
 /* Unmap a region. */
 void jit_unmap_memory_region(void *region, size_t size);
 
-/* Make a region writable. */
-void jit_map_writable(void *region, size_t size);
-
 /* Make a region executable. */
 void jit_map_executable(void * region, size_t size);
+
+/* Standard backend body.  The backend supplies its SIMD capability probe;
+ * branch patching remains local so architecture-specific ranges are kept. */
+#define JIT_BUILD_STANDARD(env_, func_, caps_, backend_) do {		\
+	struct jit_context jit_ctx_;					\
+	struct jit_slab *jit_slab_;					\
+	void *jit_top_;							\
+	void *jit_end_;							\
+	void *jit_generated_end_;					\
+	int jit_attempt_;						\
+	int jit_i_;							\
+	for (jit_attempt_ = 0; jit_attempt_ < 2; jit_attempt_++) {	\
+		if (!jit_slab_acquire((env_), &jit_slab_,			\
+				      &jit_top_, &jit_end_))			\
+			return false;					\
+		memset(&jit_ctx_, 0, sizeof(jit_ctx_));			\
+		jit_ctx_.code_top = jit_top_;				\
+		jit_ctx_.code_end = jit_end_;				\
+		jit_ctx_.code = jit_top_;					\
+		jit_ctx_.env = (env_);					\
+		jit_ctx_.func = (func_);					\
+		jit_configure_simd(&jit_ctx_, (caps_), (backend_));		\
+		if (!jit_visit_bytecode(&jit_ctx_)) {			\
+			if (jit_ctx_.code_overflow && jit_attempt_ == 0 &&	\
+			    ((uint8_t *)jit_top_ != jit_slab_->base ||		\
+			     jit_slab_->size < jit_get_code_size((env_)))) {	\
+				jit_slab_abandon((env_), jit_slab_);		\
+				jit_slab_clear_overflow((env_));		\
+				continue;					\
+			}							\
+			return false;					\
+		}							\
+		jit_generated_end_ = jit_ctx_.code;			\
+		for (jit_i_ = 0; jit_i_ < jit_ctx_.branch_patch_count;	\
+		     jit_i_++) {						\
+			if (!jit_patch_branch(&jit_ctx_, jit_i_))		\
+				return false;				\
+		}							\
+		jit_slab_finish((env_), jit_slab_, jit_generated_end_);	\
+		(func_)->jit_code =						\
+			(bool (CDECL *)(struct rt_env *))jit_ctx_.code_top;	\
+		return true;						\
+	}								\
+	return false;							\
+} while (0)
 
 /*
  * Get an opcode.

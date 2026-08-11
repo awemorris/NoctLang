@@ -1,4 +1,4 @@
-// Packed load/store loops; at --optimize-level=2 the ABCE pass turns
+// Packed load/store loops; at -O2 the ABCE pass turns
 // these accesses into raw OP_PLOAD8U/OP_PSTORE8 pointer operations.
 func main() {
     var n = 300;

@@ -116,14 +116,29 @@ struct rt_config {
 	/* Enable JIT. */
 	bool jit_enable;
 
-	/* JIT threshold. */
-	int jit_threshold;
-
 	/* Optimization level. */
 	int optimize_level;
 
+	/* Emit source line metadata. */
+	bool lineinfo;
+
 	/* Report successfully vectorized loops. */
 	bool simd_info;
+
+	/* CPU automatic parallelization level; zero disables it. */
+	int auto_parallel;
+
+	/* Requested processing elements; zero selects all logical CPUs. */
+	int cpu_pe;
+
+	/* Optional comma-separated logical CPU IDs. */
+	const char *cpu_affinity;
+
+	/* Enable GPU automatic parallelization. */
+	bool gpu_enable;
+
+	/* Optional exact GPU device name. */
+	const char *gpu_name;
 
 	/* Maximum bytes reserved for generated JIT code. */
 	size_t jit_code_size;
@@ -143,7 +158,7 @@ struct rt_config {
 	/* GC tenure-promotion threshold. */
 	size_t gc_promotion_threshold;
 
-	uint64_t reserved[55];
+	uint64_t reserved[51];
 };
 typedef struct rt_config NoctConfig;
 

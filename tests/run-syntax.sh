@@ -11,19 +11,19 @@ echo 'Running bootstrap tests...'
 echo "(Interpreter)";
 for tc in syntax/*.noct; do
     echo "$tc";
-    $NOCT --disable-jit $tc > out || true;
+    $NOCT -j0 $tc > out || true;
     diff $tc.out out;
 done
 echo "(JIT)";
 for tc in syntax/*.noct; do
     echo "$tc";
-    $NOCT --force-jit $tc > out || true;
+    $NOCT -j $tc > out || true;
     diff $tc.out out;
 done
-echo "(JIT + optimize-level=2)";
+echo "(JIT + -O2)";
 for tc in syntax/*.noct; do
     echo "$tc";
-    $NOCT --force-jit --optimize-level=2 $tc > out || true;
+    $NOCT -j -O2 $tc > out || true;
     diff $tc.out out;
 done
 echo 'All tests passed.'
