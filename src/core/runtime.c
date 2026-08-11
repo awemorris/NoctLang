@@ -1935,7 +1935,9 @@ rt_make_packed(
 	int type,
 	size_t size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void *native_pointer,
+	void (*native_finalizer)(void *native_pointer))
 {
 	struct rt_packed *packed;
 
@@ -1943,13 +1945,17 @@ rt_make_packed(
 	assert(val != NULL);
 	assert(size > 0);
 	assert(elem_size > 0);
+	assert((native_pointer == NULL) == (native_finalizer == NULL));
+	assert(preallocated != NULL || native_pointer == NULL);
 
 	/* Allocate an array. */
 	packed = rt_gc_alloc_packed(env,
 				    type,
 				    size,
 				    elem_size,
-				    preallocated);
+				    preallocated,
+				    native_pointer,
+				    native_finalizer);
 	if (packed == NULL) {
 		rt_out_of_memory(env);
 		return false;
@@ -1967,6 +1973,58 @@ rt_make_packed(
 	return true;
 }
 
+bool
+rt_get_packed_native_pointer(
+	struct rt_env *env,
+	struct rt_value *packed,
+	void **native_pointer,
+	void (**native_finalizer)(void *native_pointer))
+{
+	UNUSED_PARAMETER(env);
+
+	assert(packed != NULL);
+	assert(packed->type == NOCT_VALUE_PACKED);
+	assert(native_pointer != NULL);
+	assert(native_finalizer != NULL);
+
+	*native_pointer = packed->val.packed->native_pointer;
+	*native_finalizer = packed->val.packed->native_finalizer;
+	return true;
+}
+
+bool
+rt_finalize_packed(
+	struct rt_env *env,
+	struct rt_value *packed)
+{
+	struct rt_packed *p;
+	void *native_pointer;
+	void (*native_finalizer)(void *native_pointer);
+
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(packed->type == NOCT_VALUE_PACKED);
+
+	p = packed->val.packed;
+	if (p->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
+		return false;
+	}
+	if (p->native_pointer == NULL || p->native_finalizer == NULL) {
+		rt_error(env, N_TR("Packed does not own an external buffer."));
+		return false;
+	}
+
+	native_pointer = p->native_pointer;
+	native_finalizer = p->native_finalizer;
+	p->native_pointer = NULL;
+	p->native_finalizer = NULL;
+	p->packed_buffer = NULL;
+	p->elem_size = 0;
+	native_finalizer(native_pointer);
+	return true;
+}
+
 /*
  * Get the element type of a packed.
  */
@@ -1976,13 +2034,15 @@ rt_get_packed_type(
 	struct rt_value *packed,
 	int *type)
 {
-	UNUSED_PARAMETER(env);
-
 	assert(env != NULL);
 	assert(packed != NULL);
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
 	assert(type != NULL);
+	if (packed->val.packed->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
+		return false;
+	}
 
 	/* Get the type. */
 	*type = packed->val.packed->type;
@@ -1999,13 +2059,15 @@ rt_get_packed_size(
 	struct rt_value *packed,
 	size_t *size)
 {
-	UNUSED_PARAMETER(env);
-
 	assert(env != NULL);
 	assert(packed != NULL);
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
 	assert(size != NULL);
+	if (packed->val.packed->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
+		return false;
+	}
 
 	/* Get the type. */
 	*size = packed->val.packed->elem_size;
@@ -2023,13 +2085,15 @@ rt_get_packed_elem(
 	size_t index,
 	struct rt_value *val)
 {
-	UNUSED_PARAMETER(env);
-
 	assert(env != NULL);
 	assert(packed != NULL);
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
 	assert(val != NULL);
+	if (packed->val.packed->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
+		return false;
+	}
 
 	if (index >= packed->val.packed->elem_size) {
 		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
@@ -2092,13 +2156,15 @@ rt_set_packed_elem(
 	size_t index,
 	struct rt_value *val)
 {
-	UNUSED_PARAMETER(env);
-
 	assert(env != NULL);
 	assert(packed != NULL);
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
 	assert(val != NULL);
+	if (packed->val.packed->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
+		return false;
+	}
 
 	if (index >= packed->val.packed->elem_size) {
 		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
@@ -2319,6 +2385,10 @@ rt_make_packed_copy(
 	assert(env != NULL);
 	assert(dst != NULL);
 	assert(src != NULL);
+	if (src->val.packed->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
+		return false;
+	}
 
 	/*
 	 * Determine the byte size.
@@ -2349,10 +2419,12 @@ rt_make_packed_copy(
 
 	/* Allocate an array. */
 	dst_packed = rt_gc_alloc_packed(env,
-					src->val.packed->type,
-					size,
-					src->val.packed->elem_size,
-					NULL);
+					 src->val.packed->type,
+					 size,
+					 src->val.packed->elem_size,
+					 NULL,
+					 NULL,
+					 NULL);
 	if (dst_packed == NULL)
 		return false;
 

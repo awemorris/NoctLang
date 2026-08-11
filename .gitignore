@@ -6,3 +6,5 @@ out/
 # Test scratch output.
 tests/testcases/out
 tests/testcases/webapp/build/
+
+plan/

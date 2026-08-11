@@ -258,7 +258,7 @@ struct rt_array *rt_gc_alloc_array(struct rt_env *env, size_t size);
 struct rt_dict *rt_gc_alloc_dict(struct rt_env *env, size_t size);
 
 /* Allocates a packed object in the appropriate region. */
-struct rt_packed *rt_gc_alloc_packed(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
+struct rt_packed *rt_gc_alloc_packed(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void *native_pointer, void (*native_finalizer)(void *native_pointer));
 
 /* Write barrier: registers a container in the remember set if it references a young object. */
 void rt_gc_array_write_barrier(struct rt_env *env, struct rt_array *arr, size_t index, struct rt_value *val);

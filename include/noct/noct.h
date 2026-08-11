@@ -477,7 +477,29 @@ noct_make_packed(
 	int type,
 	size_t size,
 	size_t elem_size,
-	void *preallocated);
+	void *preallocated,
+	void *native_pointer,
+	void (*native_finalizer)(void *native_pointer));
+
+/*
+ * Retrieves the native owner associated with an external Packed.
+ */
+NOCT_DLL
+bool
+noct_get_packed_native_pointer(
+	NoctEnv *env,
+	NoctValue *packed,
+	void **native_pointer,
+	void (**native_finalizer)(void *native_pointer));
+
+/*
+ * Finalizes and closes an owned external Packed.
+ */
+NOCT_DLL
+bool
+noct_finalize_packed(
+	NoctEnv *env,
+	NoctValue *packed);
 
 /*
  * Retrieves the type tag of a value.

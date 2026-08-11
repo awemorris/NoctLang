@@ -775,6 +775,8 @@ expand_dict(
 
 	/* Link the new object, that is, do copy-publish. */
 	dict->newer = new_dict;
+	dict->native_pointer = NULL;
+	dict->native_finalizer = NULL;
 
 	/* Restarting from the beginning of the transaction is required. */
 	return true;

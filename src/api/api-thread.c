@@ -463,7 +463,8 @@ deep_copy_value(
 		 * noct_make_packed() takes the byte size first and the
 		 * element count second.
 		 */
-		if (!noct_make_packed(env, dst, ptype, size * esize, size, buf)) {
+		if (!noct_make_packed(env, dst, ptype, size * esize, size, buf,
+				      buf, noct_free)) {
 			noct_free(buf);
 			return false;
 		}

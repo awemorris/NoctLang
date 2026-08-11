@@ -27,6 +27,7 @@ Main suites:
   httpserver       HTTP server API tests.
   webapp           Web application framework tests.
   process          Process API tests.
+  mmap [build-dir] FileUtil mmap and Packed native-finalizer tests.
 
 Toolchain/integration suites:
   api [build-dir]  Embed/API backend test (default: build-static).
@@ -79,6 +80,7 @@ thread-stress)   run_script run-thread-stress.sh "$@" ;;
 httpserver)      run_script run-httpserver.sh "$@" ;;
 webapp)          run_script run-webapp.sh "$@" ;;
 process)         run_script run-process.sh "$@" ;;
+mmap)            run_script run-fileutil-mmap.sh "$@" ;;
 api)             run_script run-api-backend.sh "$@" ;;
 ctrans)          run_script run-ctrans.sh "$@" ;;
 repl)            run_script run-repl.sh "$@" ;;

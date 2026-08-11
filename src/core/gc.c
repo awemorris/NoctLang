@@ -96,8 +96,8 @@ static struct rt_array *rt_gc_alloc_array_graduate(struct rt_env *env, size_t si
 static struct rt_array *rt_gc_alloc_array_tenure(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_graduate(struct rt_env *env, size_t size);
 static struct rt_dict *rt_gc_alloc_dict_tenure(struct rt_env *env, size_t size);
-static struct rt_packed *rt_gc_alloc_packed_graduate(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
-static struct rt_packed *rt_gc_alloc_packed_tenure(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated);
+static struct rt_packed *rt_gc_alloc_packed_graduate(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void *native_pointer, void (*native_finalizer)(void *native_pointer));
+static struct rt_packed *rt_gc_alloc_packed_tenure(struct rt_env *env, int type, size_t size, size_t elem_size, void *preallocated, void *native_pointer, void (*native_finalizer)(void *native_pointer));
 static void rt_gc_young_gc(struct rt_env *env);
 static void rt_gc_young_gc_body(struct rt_env *env);
 static bool rt_gc_copy_young_object(struct rt_env *env, struct rt_gc_object **obj);
@@ -118,6 +118,7 @@ static struct rt_gc_object *rt_gc_copy_packed_to_graduate(struct rt_env *env, st
 static void rt_gc_old_gc(struct rt_env *env);
 static void rt_gc_old_gc_body(struct rt_env *env);
 static bool rt_gc_mark_old_object(struct rt_env *env, struct rt_gc_object **obj);
+static void rt_gc_finalize_object(struct rt_gc_object *obj);
 static void rt_gc_free_old_object(struct rt_env *env, struct rt_gc_object *obj);
 static bool rt_gc_compact_gc(struct rt_env *env);
 static struct rt_gc_object *rt_gc_compact_remap(struct rt_env *env, struct rt_gc_object *obj);
@@ -130,6 +131,7 @@ static void rt_gc_tenure_rebuild_bins(struct rt_env *env);
 static void *graduate_alloc(struct rt_env *env, size_t size);
 static void *rt_gc_tenure_alloc(struct rt_env *env, size_t size);
 static void rt_gc_tenure_free(struct rt_env *env, void *p);
+static void env_gc_cleanup(struct rt_vm *vm);
 
 /*
  * Initializes the garbage collector and allocate memory regions.
@@ -166,13 +168,25 @@ void
 rt_gc_cleanup(
 	struct rt_vm *vm)
 {
-	UNUSED_PARAMETER(vm);
+	struct rt_gc_object *obj;
+
+	/* Finalize all native owners that remain reachable at VM shutdown. */
+	for (obj = vm->gc.nursery_list; obj != NULL; obj = obj->next)
+		rt_gc_finalize_object(obj);
+	for (obj = vm->gc.graduate_list; obj != NULL; obj = obj->next)
+		rt_gc_finalize_object(obj);
+	for (obj = vm->gc.graduate_new_list; obj != NULL; obj = obj->next)
+		rt_gc_finalize_object(obj);
+	for (obj = vm->gc.tenure_list; obj != NULL; obj = obj->next)
+		rt_gc_finalize_object(obj);
+
+	env_gc_cleanup(vm);
 }
 
 /*
  * Cleanups the garbage collector and deallocate memory regions.
  */
-void env_gc_cleanup(struct rt_vm *vm)
+static void env_gc_cleanup(struct rt_vm *vm)
 {
 	/* Free the traversal worklist. */
 	noct_free(vm->gc.work);
@@ -996,7 +1010,9 @@ rt_gc_alloc_packed(
 	int type,
 	size_t size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void *native_pointer,
+	void (*native_finalizer)(void *native_pointer))
 {
 	struct rt_packed *packed;
 	void *p;
@@ -1005,17 +1021,25 @@ rt_gc_alloc_packed(
 	assert(env != NULL);
 	assert(size > 0);
 	assert(elem_size > 0);
+	assert((native_pointer == NULL) == (native_finalizer == NULL));
 
 	/* If use a preallocated buffer. */
 	if (preallocated != NULL)
 		size = 0;
+
+	/* Owned external buffers stay in tenure and never duplicate ownership. */
+	if (native_finalizer != NULL)
+		return rt_gc_alloc_packed_tenure(env, type, size, elem_size,
+						   preallocated, native_pointer,
+						   native_finalizer);
 
 	/*
 	 * [Large Object Promotion]
 	 *  - If the packed is large, allocate in the tenure region.
 	 */
 	if (size >= env->vm->config.gc_lop_threshold)
-		return rt_gc_alloc_packed_tenure(env, type, size, elem_size, preallocated);
+		return rt_gc_alloc_packed_tenure(env, type, size, elem_size,
+						   preallocated, NULL, NULL);
 
 	/* Allocate in the nursery region. */
 	for (retry = 0; retry <= 2; retry++) {
@@ -1060,7 +1084,10 @@ rt_gc_alloc_packed(
 		packed->type = type;
 		packed->size = size;
 		packed->elem_size = elem_size;
+		packed->packed_typed = false;
 		packed->packed_buffer = p;
+		packed->native_pointer = NULL;
+		packed->native_finalizer = NULL;
 
 		/* Succeeded. */
 		return packed;
@@ -1078,13 +1105,16 @@ rt_gc_alloc_packed_graduate(
 	int type,
 	size_t size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void *native_pointer,
+	void (*native_finalizer)(void *native_pointer))
 {
 	struct rt_packed *packed;
 	void *p;
 
 	assert(env != NULL);
 	assert(elem_size > 0);
+	assert((native_pointer == NULL) == (native_finalizer == NULL));
 
 	/* If use a preallocated buffer. */
 	if (preallocated != NULL)
@@ -1117,7 +1147,10 @@ rt_gc_alloc_packed_graduate(
 		packed->type = type;
 		packed->size = size;
 		packed->elem_size = elem_size;
+		packed->packed_typed = false;
 		packed->packed_buffer = p;
+		packed->native_pointer = native_pointer;
+		packed->native_finalizer = native_finalizer;
 
 		/* Succeeded. (graduate) */
 		return packed;
@@ -1127,7 +1160,9 @@ rt_gc_alloc_packed_graduate(
 	 * Failed to allocate in the graduate region.
 	 * Try allocating in the tenure region.
 	 */
-	packed = rt_gc_alloc_packed_tenure(env, type, size, elem_size, preallocated);
+	packed = rt_gc_alloc_packed_tenure(env, type, size, elem_size,
+					   preallocated, native_pointer,
+					   native_finalizer);
 	if (packed == NULL)
 		return NULL;
 
@@ -1142,13 +1177,16 @@ rt_gc_alloc_packed_tenure(
 	int type,
 	size_t size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void *native_pointer,
+	void (*native_finalizer)(void *native_pointer))
 {
 	struct rt_packed *packed;
 	void *p;
 	int retry;
 
 	assert(env != NULL);
+	assert((native_pointer == NULL) == (native_finalizer == NULL));
 
 	/* If use a preallocated buffer. */
 	if (preallocated != NULL)
@@ -1197,7 +1235,10 @@ rt_gc_alloc_packed_tenure(
 		packed->type = type;
 		packed->size = size;
 		packed->elem_size = elem_size;
+		packed->packed_typed = false;
 		packed->packed_buffer = p;
+		packed->native_pointer = native_pointer;
+		packed->native_finalizer = native_finalizer;
 
 		/* Succeeded. */
 		return packed;
@@ -1344,6 +1385,9 @@ rt_gc_young_gc_body(
 		obj->forward = NULL;
 		if (obj->type == RT_GC_TYPE_DICT) {
 			if (((struct rt_dict *)obj)->native_finalizer != NULL)
+				finalize_size++;
+		} else if (obj->type == RT_GC_TYPE_PACKED) {
+			if (((struct rt_packed *)obj)->native_finalizer != NULL)
 				finalize_size++;
 		}
 		obj = obj->next;
@@ -1562,11 +1606,24 @@ rt_gc_young_gc_body(
 		/* For all nursery objects. */
 		obj = env->vm->gc.nursery_list;
 		while (obj != NULL) {
-			if (!obj->is_marked &&
-			    obj->type == RT_GC_TYPE_DICT &&
+			if (!obj->is_marked && obj->type == RT_GC_TYPE_DICT &&
 			    ((struct rt_dict *)obj)->native_finalizer != NULL) {
-				finalize_table[finalize_count].native_pointer = ((struct rt_dict *)obj)->native_pointer;
-				finalize_table[finalize_count].native_finalizer = ((struct rt_dict *)obj)->native_finalizer;
+				struct rt_dict *dict = (struct rt_dict *)obj;
+				finalize_table[finalize_count].native_pointer = dict->native_pointer;
+				finalize_table[finalize_count].native_finalizer = dict->native_finalizer;
+				dict->native_pointer = NULL;
+				dict->native_finalizer = NULL;
+				finalize_count++;
+			} else if (!obj->is_marked &&
+				   obj->type == RT_GC_TYPE_PACKED &&
+				   ((struct rt_packed *)obj)->native_finalizer != NULL) {
+				struct rt_packed *packed = (struct rt_packed *)obj;
+				finalize_table[finalize_count].native_pointer = packed->native_pointer;
+				finalize_table[finalize_count].native_finalizer = packed->native_finalizer;
+				packed->native_pointer = NULL;
+				packed->native_finalizer = NULL;
+				packed->packed_buffer = NULL;
+				packed->elem_size = 0;
 				finalize_count++;
 			}
 			obj = obj->next;
@@ -2269,6 +2326,8 @@ rt_gc_promote_dict(
 
 	new_dict->native_pointer = old_dict->native_pointer;
 	new_dict->native_finalizer = old_dict->native_finalizer;
+	old_dict->native_pointer = NULL;
+	old_dict->native_finalizer = NULL;
 	new_dict->is_frozen = old_dict->is_frozen;
 
 #if defined(NOCT_USE_MULTITHREAD)
@@ -2301,12 +2360,16 @@ rt_gc_promote_packed(
 					       old_packed->type,
 					       old_packed->size,
 					       old_packed->elem_size,
-					       (old_packed->size == 0) ? old_packed->packed_buffer : NULL);
+					       (old_packed->size == 0) ? old_packed->packed_buffer : NULL,
+					       old_packed->native_pointer,
+					       old_packed->native_finalizer);
 	if (new_packed == NULL)
 		return false;
 
 	if (old_packed->size != 0)
 		memcpy(new_packed->packed_buffer, old_packed->packed_buffer, old_packed->size);
+	old_packed->native_pointer = NULL;
+	old_packed->native_finalizer = NULL;
 
 	/* Set the forwarding pointer. */
 	obj->forward = &new_packed->head;
@@ -2455,6 +2518,8 @@ rt_gc_copy_dict_to_graduate(
 
 	new_obj->native_pointer = old_obj->native_pointer;
 	new_obj->native_finalizer = old_obj->native_finalizer;
+	old_obj->native_pointer = NULL;
+	old_obj->native_finalizer = NULL;
 	new_obj->is_frozen = old_obj->is_frozen;
 
 #if defined(NOCT_USE_MULTITHREAD)
@@ -2493,13 +2558,17 @@ rt_gc_copy_packed_to_graduate(
 					      old_obj->type,
 					      old_obj->size,
 					      old_obj->elem_size,
-					      (old_obj->size == 0) ? old_obj->packed_buffer : NULL);
+					      (old_obj->size == 0) ? old_obj->packed_buffer : NULL,
+					      old_obj->native_pointer,
+					      old_obj->native_finalizer);
 	if (new_obj == NULL)
 		return NULL;
 
 	/* If not a preallocated. (that means packed_buffer is not managed by GC)  */
 	if (old_obj->size != 0)
 		memcpy(new_obj->packed_buffer, old_obj->packed_buffer, old_obj->size);
+	old_obj->native_pointer = NULL;
+	old_obj->native_finalizer = NULL;
 
 	/* Succeeded. */
 	return &new_obj->head;
@@ -2686,7 +2755,37 @@ fail:
 	return false;
 }
 
-/* Free a string, array, or dictionary object. */
+/* Finalize a native owner, detaching it before invoking foreign code. */
+static void
+rt_gc_finalize_object(
+	struct rt_gc_object *obj)
+{
+	void *native_pointer = NULL;
+	void (*native_finalizer)(void *native_pointer) = NULL;
+
+	if (obj->type == RT_GC_TYPE_DICT) {
+		struct rt_dict *dict = (struct rt_dict *)obj;
+		native_pointer = dict->native_pointer;
+		native_finalizer = dict->native_finalizer;
+		dict->native_pointer = NULL;
+		dict->native_finalizer = NULL;
+	} else if (obj->type == RT_GC_TYPE_PACKED) {
+		struct rt_packed *packed = (struct rt_packed *)obj;
+		native_pointer = packed->native_pointer;
+		native_finalizer = packed->native_finalizer;
+		packed->native_pointer = NULL;
+		packed->native_finalizer = NULL;
+		if (native_finalizer != NULL) {
+			packed->packed_buffer = NULL;
+			packed->elem_size = 0;
+		}
+	}
+
+	if (native_finalizer != NULL)
+		native_finalizer(native_pointer);
+}
+
+/* Free a string, array, dictionary, or packed object. */
 static void
 rt_gc_free_old_object(
 	struct rt_env *env,
@@ -2700,6 +2799,9 @@ rt_gc_free_old_object(
 	 */
 	if (obj->region != RT_GC_REGION_TENURE)
 		return;
+
+	/* Native resources are not part of the tenure allocation. */
+	rt_gc_finalize_object(obj);
 
 	/* Unlink from the tenure list. */
 	UNLINK_FROM_LIST(obj, env->vm->gc.tenure_list, prev, next);

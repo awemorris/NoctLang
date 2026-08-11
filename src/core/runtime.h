@@ -176,6 +176,12 @@ struct rt_packed {
 
 	/* Buffer pointer. */
 	void *packed_buffer;
+
+	/* Native owner for an external buffer. */
+	void *native_pointer;
+
+	/* Native owner finalizer. */
+	void (*native_finalizer)(void *native_pointer);
 };
 
 /*
@@ -783,7 +789,21 @@ rt_make_packed(
 	int type,
 	size_t size,
 	size_t elem_size,
-	void *preallocated);
+	void *preallocated,
+	void *native_pointer,
+	void (*native_finalizer)(void *native_pointer));
+
+bool
+rt_get_packed_native_pointer(
+	struct rt_env *env,
+	struct rt_value *packed,
+	void **native_pointer,
+	void (**native_finalizer)(void *native_pointer));
+
+bool
+rt_finalize_packed(
+	struct rt_env *env,
+	struct rt_value *packed);
 
 /* Get the element type of a packed. */
 bool

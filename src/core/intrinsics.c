@@ -1933,7 +1933,8 @@ rt_intrin_Packed_int8(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT8, i_size, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT8, i_size, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -1962,7 +1963,8 @@ rt_intrin_Packed_uint8(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT8, i_size, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT8, i_size, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -1995,7 +1997,8 @@ rt_intrin_Packed_int16(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT16, i_size * 2, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT16, i_size * 2, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -2030,7 +2033,8 @@ rt_intrin_Packed_uint16(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT16, i_size * 2, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT16, i_size * 2, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -2063,7 +2067,8 @@ rt_intrin_Packed_int32(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT32, i_size * 4, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT32, i_size * 4, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -2096,7 +2101,8 @@ rt_intrin_Packed_uint32(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT32, i_size * 4, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT32, i_size * 4, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -2129,7 +2135,8 @@ rt_intrin_Packed_int64(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT64, i_size * 8, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_INT64, i_size * 8, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -2162,7 +2169,8 @@ rt_intrin_Packed_uint64(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT64, i_size * 8, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_UINT64, i_size * 8, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -2195,7 +2203,8 @@ rt_intrin_Packed_float32(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT32, i_size * 4, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT32, i_size * 4, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;
@@ -2228,7 +2237,8 @@ rt_intrin_Packed_float64(
 		return false;
 	}
 
-	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT64, i_size * 8, i_size, NULL))
+	if (!noct_make_packed(env, &v_ret, NOCT_PACKED_FLOAT64, i_size * 8, i_size,
+			      NULL, NULL, NULL))
 		return false;
 	if (!noct_set_return(env, &v_ret))
 		return false;

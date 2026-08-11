@@ -172,9 +172,9 @@ main(int argc, char *argv[])
 	    !noct_get_global(env, "blend_alpha", &func_value) ||
 	    !noct_get_func(env, &func_value, &func) ||
 	    !noct_make_packed(env, &arg[0], NOCT_PACKED_UINT32,
-			      pixels * sizeof(*dst), pixels, dst) ||
+			      pixels * sizeof(*dst), pixels, dst, NULL, NULL) ||
 	    !noct_make_packed(env, &arg[1], NOCT_PACKED_UINT32,
-			      pixels * sizeof(*src), pixels, src) ||
+			      pixels * sizeof(*src), pixels, src, NULL, NULL) ||
 	    !noct_make_int(env, &arg[2], 128) ||
 	    !noct_make_int(env, &arg[3], 1) ||
 	    !noct_call(env, func, 4, arg, &ret)) {

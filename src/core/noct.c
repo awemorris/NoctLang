@@ -445,17 +445,57 @@ noct_make_packed(
 	int type,
 	size_t size,
 	size_t elem_size,
-	void *preallocated)
+	void *preallocated,
+	void *native_pointer,
+	void (*native_finalizer)(void *native_pointer))
 {
 	assert(env != NULL);
 	assert(val != NULL);
 	assert(size > 0);
 	assert(elem_size > 0);
 
-	if (!rt_make_packed(env, val, type, size, elem_size, preallocated))
+	if (!rt_make_packed(env, val, type, size, elem_size, preallocated,
+			    native_pointer, native_finalizer))
 		return false;
 
 	return true;
+}
+
+NOCT_DLL
+bool
+noct_get_packed_native_pointer(
+	NoctEnv *env,
+	NoctValue *packed,
+	void **native_pointer,
+	void (**native_finalizer)(void *native_pointer))
+{
+	assert(env != NULL);
+	assert(packed != NULL);
+	assert(native_pointer != NULL);
+	assert(native_finalizer != NULL);
+
+	if (packed->type != NOCT_VALUE_PACKED) {
+		rt_error(env, N_TR("Not a packed."));
+		return false;
+	}
+	return rt_get_packed_native_pointer(env, packed, native_pointer,
+					    native_finalizer);
+}
+
+NOCT_DLL
+bool
+noct_finalize_packed(
+	NoctEnv *env,
+	NoctValue *packed)
+{
+	assert(env != NULL);
+	assert(packed != NULL);
+
+	if (packed->type != NOCT_VALUE_PACKED) {
+		rt_error(env, N_TR("Not a packed."));
+		return false;
+	}
+	return rt_finalize_packed(env, packed);
 }
 
 NOCT_DLL
@@ -1201,6 +1241,10 @@ noct_get_packed_pointer(
 	/* Check the type. */
 	if (packed->type != NOCT_VALUE_PACKED) {
 		rt_error(env, N_TR("Not a packed."));
+		return false;
+	}
+	if (packed->val.packed->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
 		return false;
 	}
 

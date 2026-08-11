@@ -2589,6 +2589,10 @@ noct_ex_pbase_helper(
 		rt_error(env, N_TR("Value is not a packed."));
 		return false;
 	}
+	if (src_val->val.packed->packed_buffer == NULL) {
+		rt_error(env, N_TR("Packed is unmapped."));
+		return false;
+	}
 
 	dst_val->type = NOCT_VALUE_LONG;
 	dst_val->val.l = (int64_t)(intptr_t)src_val->val.packed->packed_buffer;
@@ -2617,6 +2621,7 @@ noct_ex_pcheck_helper(
 
 	result = 0;
 	if (src_val->type == NOCT_VALUE_PACKED &&
+	    src_val->val.packed->packed_buffer != NULL &&
 	    src_val->val.packed->type == packed_type)
 		result = 1;
 

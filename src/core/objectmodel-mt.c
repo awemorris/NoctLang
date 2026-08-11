@@ -2153,6 +2153,8 @@ expand_dict(
 	 * so the fully initialized new storage is visible before the link.
 	 */
 	atomic_store_release_ptr((void **)&dict->newer, new_dict);
+	dict->native_pointer = NULL;
+	dict->native_finalizer = NULL;
 
 	/*
 	 * Unlock if we used a lock.
