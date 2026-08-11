@@ -209,6 +209,8 @@ struct rt_func {
 	uint32_t tmpvar_size;
 	/* ABI/prologue metadata: bytecode contains OP_V* instructions. */
 	bool has_vector_ops;
+	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
+	bool has_fma_ops;
 
 	/* JIT-generated code. */
 	bool (CDECL *jit_code)(struct rt_env *env);

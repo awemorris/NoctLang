@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
+#include <math.h>
 #include <assert.h>
 
 /*
@@ -3541,6 +3542,113 @@ RT_VALF(noct_ex_vmulf32x4_helper, x.f[k] * y.f[k])
 RT_VALF(noct_ex_vdivf32x4_helper, x.f[k] / y.f[k])
 
 #undef RT_VALF
+
+/*
+ * C89 fallback derived from FreeBSD msun s_fmaf.c (also used by musl).
+ * Copyright (c) 2005-2011 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * A binary64 value has more than twice binary32's precision.  Computing in
+ * double is therefore exact enough except for the binary32 halfway cases;
+ * those cases are detected and the low double bit is nudged toward the exact
+ * result before the final conversion.  No fenv.h dependency is used because
+ * OpenWatcom 1.9 does not provide it; Noct arithmetic uses the default
+ * round-to-nearest-even mode.
+ */
+#if defined(__WATCOMC__) || defined(NOCT_FORCE_SOFT_FMAF)
+static float
+noct_fmaf32_soft(float x, float y, float z)
+{
+	volatile double xy;
+	volatile double result;
+	double err;
+	union {
+		double f;
+		uint64_t i;
+	} u;
+	int e;
+	int neg;
+
+	xy = (double)x * (double)y;
+	result = xy + (double)z;
+	u.f = result;
+	e = (int)((u.i >> 52) & 0x7ffu);
+	if ((u.i & (uint64_t)0x1fffffffU) != (uint64_t)0x10000000U ||
+	    e == 0x7ff ||
+	    (result - xy == (double)z && result - (double)z == xy))
+		return (float)result;
+
+	neg = (int)(u.i >> 63);
+	if (neg == ((double)z > xy))
+		err = xy - result + (double)z;
+	else
+		err = (double)z - result + xy;
+	if (neg == (err < 0.0))
+		u.i++;
+	else
+		u.i--;
+	return (float)u.f;
+}
+#endif
+
+static float
+noct_fmaf32(float x, float y, float z)
+{
+#if defined(__WATCOMC__) || defined(NOCT_FORCE_SOFT_FMAF)
+	return noct_fmaf32_soft(x, y, z);
+#else
+	return fmaf(x, y, z);
+#endif
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vfmaf32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int va,
+	int packed_vb_vc)
+{
+	union rt_vlanes a;
+	union rt_vlanes b;
+	union rt_vlanes c;
+	union rt_vlanes d;
+	int vb;
+	int vc;
+	int k;
+
+	vb = (packed_vb_vc >> 8) & 0xff;
+	vc = packed_vb_vc & 0xff;
+	memcpy(&a, env->vreg[va], 16);
+	memcpy(&b, env->vreg[vb], 16);
+	memcpy(&c, env->vreg[vc], 16);
+	for (k = 0; k < 4; k++)
+		d.f[k] = noct_fmaf32(a.f[k], b.f[k], c.f[k]);
+	memcpy(env->vreg[vd], &d, 16);
+	return true;
+}
 
 NOCT_DLL
 bool

@@ -45,6 +45,8 @@ struct lir_func {
 	bool return_type_checked;
 	/* Bytecode contains at least one OP_V* instruction. */
 	bool has_vector_ops;
+	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
+	bool has_fma_ops;
 	uint32_t tmpvar_size;
 	uint32_t bytecode_size;
 	uint8_t *bytecode;

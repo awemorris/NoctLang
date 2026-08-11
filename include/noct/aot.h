@@ -581,6 +581,7 @@ NOCT_DECL_TYPED_HELPER(noct_ex_vdivf32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vcvti32f32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vcvtf32i32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vori32x4i_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vfmaf32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_ploadf32_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_pstoref32_helper)
 

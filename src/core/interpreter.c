@@ -1461,6 +1461,22 @@ rt_visit_vori32x4i_op(
 	return ex_vori32x4i_helper(env, vd, vs, (imm << 8) | shift);
 }
 
+static INLINE bool
+rt_visit_vfmaf32x4_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int vd, va, vb, vc;
+
+	UNUSED_PARAMETER(func);
+	GET_U8(&vd);
+	GET_U8(&va);
+	GET_U8(&vb);
+	GET_U8(&vc);
+	return ex_vfmaf32x4_helper(env, vd, va, (vb << 8) | vc);
+}
+
 /* Visit an instruction. */
 static bool
 rt_visit_op(
@@ -1789,6 +1805,10 @@ rt_visit_op(
 		break;
 	case OP_VORI32X4I:
 		if (!rt_visit_vori32x4i_op(env, func, pc))
+			return false;
+		break;
+	case OP_VFMAF32X4:
+		if (!rt_visit_vfmaf32x4_op(env, func, pc))
 			return false;
 		break;
         default:

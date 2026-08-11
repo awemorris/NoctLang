@@ -1623,6 +1623,23 @@ cback_visit_vori32x4i_op(
 	return true;
 }
 
+static INLINE bool
+cback_visit_vfmaf32x4_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int vd, va, vb, vc;
+
+	GET_U8(&vd);
+	GET_U8(&va);
+	GET_U8(&vb);
+	GET_U8(&vc);
+	fprintf(fp,
+		"    if (!noct_ex_vfmaf32x4_helper(env, %d, %d, %d)) return false;\n",
+		vd, va, (vb << 8) | vc);
+	return true;
+}
+
 static bool
 cback_visit_op(
 	struct lir_func *func,
@@ -1950,6 +1967,10 @@ cback_visit_op(
 		break;
 	case OP_VORI32X4I:
 		if (!cback_visit_vori32x4i_op(func, pc))
+			return false;
+		break;
+	case OP_VFMAF32X4:
+		if (!cback_visit_vfmaf32x4_op(func, pc))
 			return false;
 		break;
 	default:

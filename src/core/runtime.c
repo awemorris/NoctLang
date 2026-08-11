@@ -740,6 +740,7 @@ rt_register_lir(
 	}
 	func->tmpvar_size = lir->tmpvar_size;
 	func->has_vector_ops = lir->has_vector_ops;
+	func->has_fma_ops = lir->has_fma_ops;
 	func->file_name = noct_strdup(lir->file_name);
 	if (func->file_name == NULL) {
 		rt_out_of_memory(env);
@@ -990,6 +991,13 @@ rt_register_bytecode_function(
 			if (line == NULL)
 				break;
 			lfunc.has_vector_ops = atoi(line) != 0;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "FMA Ops") == 0) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			lfunc.has_fma_ops = atoi(line) != 0;
 			line = rt_read_bytecode_line(data, size, pos);
 		}
 

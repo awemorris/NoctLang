@@ -1526,18 +1526,18 @@ NOCT_DLL const char *noct_gettext(const char *msg)
         if (strncmp(lang_code, "ja", 2) == 0) return "  --jit-threshold=N    ... コンパイルを行う呼び出し回数のしきい値\n";
         return "  --jit-threshold=N    ... call-count threshold for compilation\n";
     }
-    if (strcmp(msg, "  --optimize-level=N   ... optimize level (0/1)\n") == 0) {
-        if (strncmp(lang_code, "en", 2) == 0) return "  --optimize-level=N   ... optimize level (0/1)\n";
-        if (strncmp(lang_code, "es", 2) == 0) return "  --optimize-level=N   ... nivel de optimización (0/1)\n";
-        if (strncmp(lang_code, "fr", 2) == 0) return "  --optimize-level=N   ... niveau d’optimisation (0/1)\n";
-        if (strncmp(lang_code, "de", 2) == 0) return "  --optimize-level=N   ... Optimierungsstufe (0/1)\n";
-        if (strncmp(lang_code, "it", 2) == 0) return "  --optimize-level=N   ... livello di ottimizzazione (0/1)\n";
-        if (strncmp(lang_code, "el", 2) == 0) return "  --optimize-level=N   ... επίπεδο βελτιστοποίησης (0/1)\n";
-        if (strncmp(lang_code, "ru", 2) == 0) return "  --optimize-level=N   ... уровень оптимизации (0/1)\n";
-        if (strncmp(lang_code, "zh", 2) == 0) return "  --optimize-level=N   ... 优化级别 (0/1)\n";
-        if (strncmp(lang_code, "tw", 2) == 0) return "  --optimize-level=N   ... 最佳化等級 (0/1)\n";
-        if (strncmp(lang_code, "ja", 2) == 0) return "  --optimize-level=N   ... 最適化レベル (0/1)\n";
-        return "  --optimize-level=N   ... optimize level (0/1)\n";
+    if (strcmp(msg, "  -O0..-O3, --optimize-level=N ... optimize level (0/1/2/3+)\n") == 0) {
+        if (strncmp(lang_code, "en", 2) == 0) return "  -O0..-O3, --optimize-level=N ... optimize level (0/1/2/3+)\n";
+        if (strncmp(lang_code, "es", 2) == 0) return "  -O0..-O3, --optimize-level=N ... nivel de optimización (0/1/2/3+)\n";
+        if (strncmp(lang_code, "fr", 2) == 0) return "  -O0..-O3, --optimize-level=N ... niveau d’optimisation (0/1/2/3+)\n";
+        if (strncmp(lang_code, "de", 2) == 0) return "  -O0..-O3, --optimize-level=N ... Optimierungsstufe (0/1/2/3+)\n";
+        if (strncmp(lang_code, "it", 2) == 0) return "  -O0..-O3, --optimize-level=N ... livello di ottimizzazione (0/1/2/3+)\n";
+        if (strncmp(lang_code, "el", 2) == 0) return "  -O0..-O3, --optimize-level=N ... επίπεδο βελτιστοποίησης (0/1/2/3+)\n";
+        if (strncmp(lang_code, "ru", 2) == 0) return "  -O0..-O3, --optimize-level=N ... уровень оптимизации (0/1/2/3+)\n";
+        if (strncmp(lang_code, "zh", 2) == 0) return "  -O0..-O3, --optimize-level=N ... 优化级别 (0/1/2/3+)\n";
+        if (strncmp(lang_code, "tw", 2) == 0) return "  -O0..-O3, --optimize-level=N ... 最佳化等級 (0/1/2/3+)\n";
+        if (strncmp(lang_code, "ja", 2) == 0) return "  -O0..-O3, --optimize-level=N ... 最適化レベル (0/1/2/3+)\n";
+        return "  -O0..-O3, --optimize-level=N ... optimize level (0/1/2/3+)\n";
     }
     if (strcmp(msg, "  --gc-nursery-size=N  ... first GC space size in bytes\n") == 0) {
         if (strncmp(lang_code, "en", 2) == 0) return "  --gc-nursery-size=N  ... first GC space size in bytes\n";

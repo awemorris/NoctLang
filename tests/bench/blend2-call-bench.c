@@ -127,7 +127,8 @@ main(int argc, char *argv[])
 	level = atoi(argv[1]);
 	samples = atoi(argv[2]);
 	iterations = atoi(argv[3]);
-	if ((level != 0 && level != 2) || samples <= 0 || iterations <= 0)
+	if ((level != 0 && level != 2 && level != 3) ||
+	    samples <= 0 || iterations <= 0)
 		return 2;
 	pixels = (size_t)iterations;
 	memset(&func_value, 0, sizeof(func_value));

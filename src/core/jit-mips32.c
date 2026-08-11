@@ -717,6 +717,14 @@ static INLINE bool jit_visit_vori32x4i_op(struct jit_context *ctx)
 	return false;
 }
 
+static INLINE bool jit_visit_vfmaf32x4_op(struct jit_context *ctx)
+{
+	int a,b,c,d; CONSUME_IMM8(a); CONSUME_IMM8(b);
+	CONSUME_IMM8(c); CONSUME_IMM8(d);
+	UNUSED_PARAMETER(a); UNUSED_PARAMETER(b); UNUSED_PARAMETER(c); UNUSED_PARAMETER(d);
+	return false;
+}
+
 static INLINE bool
 jit_visit_subjnz_op(struct jit_context *ctx)
 {
@@ -2875,6 +2883,7 @@ jit_visit_bytecode(
 		case OP_VINDEX_HINT: if (!jit_visit_vindex_hint_op(ctx)) return false; break;
 		case OP_SUBJNZ: if (!jit_visit_subjnz_op(ctx)) return false; break;
 		case OP_VORI32X4I: if (!jit_visit_vori32x4i_op(ctx)) return false; break;
+		case OP_VFMAF32X4: if (!jit_visit_vfmaf32x4_op(ctx)) return false; break;
                 case OP_IADD:
                 case OP_ISUB:
                 case OP_IMUL:

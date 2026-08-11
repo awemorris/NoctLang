@@ -16,7 +16,16 @@
 #include <stdarg.h>
 #include <assert.h>
 
+enum cli_optimize_level_result {
+	CLI_OPTIMIZE_LEVEL_NOT_MATCHED,
+	CLI_OPTIMIZE_LEVEL_VALID,
+	CLI_OPTIMIZE_LEVEL_INVALID
+};
+
 void show_usage(void);
+enum cli_optimize_level_result parse_optimize_level_option(
+	const char *arg,
+	int *level);
 bool load_file_content(const char *fname, char **data, size_t *size);
 int wide_printf(const char *format, ...);
 bool add_file(const char *fname, bool (*add_file_hook)(const char *));

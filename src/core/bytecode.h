@@ -167,7 +167,8 @@ enum bytecode {
 	 * against the frame size) and raw imm8s for vreg indices, lane
 	 * numbers and shift counts (an imm8 never goes through the
 	 * tmpvar validators -- the design-07 lesson).  vd/va/vb/vs are
-	 * vreg indices 0..7 into env->vreg[]; "base" tmpvars hold a
+	 * vreg indices 0..15 into env->vreg[] (native backends may expose a
+	 * smaller target-specific budget); "base" tmpvars hold a
 	 * long payload address (PBASE-derived), "ofs" tmpvars an int
 	 * ELEMENT index scaled by 4 bytes.  Loads/stores are unaligned
 	 * by contract.  Every helper is (env, int, int, int).
@@ -209,6 +210,7 @@ enum bytecode {
 	OP_VINDEX_HINT,	/* no-op: index/stop/remaining(u16), id/lanes/flags(imm8) */
 	OP_SUBJNZ,		/* value(u16) -= decrement(imm8); jump target(u32) if nonzero */
 	OP_VORI32X4I,		/* vd = vs | (imm8 << shift), lane-wise; four imm8 operands */
+	OP_VFMAF32X4,		/* vd = fmaf(va, vb, vc), lane-wise; four imm8 operands */
 };
 
 /* OP_VINDEX_HINT flags. */

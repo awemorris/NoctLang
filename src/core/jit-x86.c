@@ -803,6 +803,20 @@ jit_visit_vori32x4i_op(struct jit_context *ctx)
 	return true;
 }
 
+static INLINE bool
+jit_visit_vfmaf32x4_op(struct jit_context *ctx)
+{
+	int dst, src1, vb, vc, src2;
+
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(vb);
+	CONSUME_IMM8(vc);
+	src2 = (vb << 8) | vc;
+	ASM_BINARY_OP(ex_vfmaf32x4_helper);
+	return true;
+}
+
 /* Visit a OP_ADD instruction. */
 static INLINE bool
 jit_visit_add_op(
@@ -3062,6 +3076,9 @@ jit_visit_bytecode(
 			break;
 		case OP_VORI32X4I:
 			if (!jit_visit_vori32x4i_op(ctx)) return false;
+			break;
+		case OP_VFMAF32X4:
+			if (!jit_visit_vfmaf32x4_op(ctx)) return false;
 			break;
                 case OP_IADD:
                 case OP_ISUB:

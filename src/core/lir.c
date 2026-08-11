@@ -26,7 +26,7 @@
 
 /* Debug print */
 #undef DEBUG_BLOCK_ORDER
-#undef DEBUG_DUMP_LIR
+/* DEBUG_DUMP_LIR may be supplied by a diagnostic build. */
 
 /*
  * Target LIR.
@@ -50,6 +50,7 @@ static uint32_t tmpvar_count;
 
 /* ABI/prologue metadata for the function currently being built. */
 static bool has_vector_ops;
+static bool has_fma_ops;
 
 /* Per-function virtual PBASE allocation IDs (0/1 are currently useful). */
 static uint8_t pbase_hint_next;
@@ -254,6 +255,7 @@ lir_build(
 	}
 	bytecode_top = 0;
 	has_vector_ops = false;
+	has_fma_ops = false;
 	pbase_hint_next = 0;
 
 	/* Typed-op emission state (design 07). */
@@ -378,6 +380,7 @@ lir_build(
 
 	(*lir_func)->tmpvar_size = tmpvar_count + 1;
 	(*lir_func)->has_vector_ops = has_vector_ops;
+	(*lir_func)->has_fma_ops = has_fma_ops;
 
 #ifdef DEBUG_DUMP_LIR
 	lir_dump(*lir_func);
@@ -721,6 +724,10 @@ lir_visit_for_block(
 
 #if defined(NOCT_ARCH_ARM64)
 #define VFOR_VREG_MAX		16
+#elif defined(NOCT_ARCH_X86_64)
+/* xmm0..xmm12 are logical vregs; xmm13/xmm14 are SSE2 integer-multiply
+ * scratch and xmm15 holds the vector opaque-alpha invariant. */
+#define VFOR_VREG_MAX		13
 #else
 #define VFOR_VREG_MAX		8
 #endif
@@ -994,6 +1001,73 @@ lir_vfor_value_vreg(struct vfor_plan *plan, struct hir_expr *e)
 	return lir_vfor_cached_reg(plan, e);
 }
 
+static int lir_vfor_scratch_need(struct vfor_plan *plan,
+				 struct hir_expr *e);
+
+/* Select A*B+C for the O3-only fused operation.  For two products the
+   cheaper product to materialize as C is selected by the scratch model. */
+static bool
+lir_vfor_fma_parts(struct vfor_plan *plan, struct hir_expr *e,
+		   struct hir_expr **a, struct hir_expr **b,
+		   struct hir_expr **c)
+{
+	struct hir_expr *l;
+	struct hir_expr *r;
+	bool lm, rm;
+
+	e = lir_vfor_strip_par(e);
+	if (lir_optimize_level < 3 || e->type != HIR_EXPR_PLUS ||
+	    lir_vfor_expr_type(plan, e) != NOCT_VALUE_FLOAT)
+		return false;
+	l = lir_vfor_strip_par(e->val.binary.expr[0]);
+	r = lir_vfor_strip_par(e->val.binary.expr[1]);
+	lm = l->type == HIR_EXPR_MUL &&
+		lir_vfor_expr_type(plan, l) == NOCT_VALUE_FLOAT;
+	rm = r->type == HIR_EXPR_MUL &&
+		lir_vfor_expr_type(plan, r) == NOCT_VALUE_FLOAT;
+	if (!lm && !rm)
+		return false;
+	if (lm && rm && lir_vfor_scratch_need(plan, l) <
+			lir_vfor_scratch_need(plan, r)) {
+		/* Keep the more expensive product as the fused multiplication. */
+		*a = lir_vfor_strip_par(r->val.binary.expr[0]);
+		*b = lir_vfor_strip_par(r->val.binary.expr[1]);
+		*c = l;
+	} else if (lm) {
+		*a = lir_vfor_strip_par(l->val.binary.expr[0]);
+		*b = lir_vfor_strip_par(l->val.binary.expr[1]);
+		*c = r;
+	} else {
+		*a = lir_vfor_strip_par(r->val.binary.expr[0]);
+		*b = lir_vfor_strip_par(r->val.binary.expr[1]);
+		*c = l;
+	}
+	return true;
+}
+
+/* Scratch slots for simultaneously resident multiplication operands. */
+static int
+lir_vfor_fma_factor_need(struct vfor_plan *plan,
+			 struct hir_expr *a, struct hir_expr *b)
+{
+	int an, bn, ab, ba;
+	bool av, bv;
+
+	av = lir_vfor_value_vreg(plan, a) >= 0;
+	bv = lir_vfor_value_vreg(plan, b) >= 0;
+	if (av && bv)
+		return 0;
+	an = lir_vfor_scratch_need(plan, a);
+	bn = lir_vfor_scratch_need(plan, b);
+	if (av)
+		return 1 + bn;
+	if (bv)
+		return 1 + an;
+	ab = 1 + an > 2 + bn ? 1 + an : 2 + bn;
+	ba = 1 + bn > 2 + an ? 1 + bn : 2 + an;
+	return ab < ba ? ab : ba;
+}
+
 /* Number of scratch vregs needed in addition to the destination.  Cached
    values and terms are already resident.  This mirrors lir_vfor_expr(). */
 static int
@@ -1001,12 +1075,21 @@ lir_vfor_scratch_need(struct vfor_plan *plan, struct hir_expr *e)
 {
 	struct hir_expr *l;
 	struct hir_expr *r;
+	struct hir_expr *fa;
+	struct hir_expr *fb;
+	struct hir_expr *fc;
 	int ln, rn;
+	int cn, fn;
 	bool lv, rv;
 
 	e = lir_vfor_strip_par(e);
 	if (e->type == HIR_EXPR_TERM || lir_vfor_cached_reg(plan, e) >= 0)
 		return 0;
+	if (lir_vfor_fma_parts(plan, e, &fa, &fb, &fc)) {
+		cn = lir_vfor_scratch_need(plan, fc);
+		fn = lir_vfor_fma_factor_need(plan, fa, fb);
+		return cn > fn ? cn : fn;
+	}
 	switch (e->type) {
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
@@ -1208,6 +1291,65 @@ lir_vfor_expr_reads(struct hir_expr *e, const char *sym)
 	}
 }
 
+static bool lir_vfor_expr(struct vfor_plan *plan, int dst, int sp,
+			  struct hir_expr *e);
+
+static bool
+lir_vfor_emit_fma(struct vfor_plan *plan, int dst, int sp,
+		  struct hir_expr *e)
+{
+	struct hir_expr *a;
+	struct hir_expr *b;
+	struct hir_expr *c;
+	struct hir_expr *tmp;
+	int va, vb;
+	int an, bn, ab, ba;
+
+	if (!lir_vfor_fma_parts(plan, e, &a, &b, &c))
+		return false;
+	if (!lir_vfor_expr(plan, dst, sp, c))
+		return false;
+	va = lir_vfor_value_vreg(plan, a);
+	vb = lir_vfor_value_vreg(plan, b);
+	if (va < 0 && vb < 0) {
+		an = lir_vfor_scratch_need(plan, a);
+		bn = lir_vfor_scratch_need(plan, b);
+		ab = 1 + an > 2 + bn ? 1 + an : 2 + bn;
+		ba = 1 + bn > 2 + an ? 1 + bn : 2 + an;
+		if (ba < ab) {
+			tmp = a; a = b; b = tmp;
+		}
+	}
+	va = lir_vfor_value_vreg(plan, a);
+	if (va < 0) {
+		va = lir_vfor_physical_reg(plan, sp);
+		if (va < 0) {
+			lir_fatal("SIMD FMA: vreg stack overflow.");
+			return false;
+		}
+		if (!lir_vfor_expr(plan, va, sp + 1, a))
+			return false;
+		sp++;
+	}
+	vb = lir_vfor_value_vreg(plan, b);
+	if (vb < 0) {
+		vb = lir_vfor_physical_reg(plan, sp);
+		if (vb < 0) {
+			lir_fatal("SIMD FMA: vreg stack overflow.");
+			return false;
+		}
+		if (!lir_vfor_expr(plan, vb, sp + 1, b))
+			return false;
+	}
+	if (!lir_put_opcode(OP_VFMAF32X4) ||
+	    !lir_put_imm8((uint8_t)dst) ||
+	    !lir_put_imm8((uint8_t)va) ||
+	    !lir_put_imm8((uint8_t)vb) ||
+	    !lir_put_imm8((uint8_t)dst))
+		return false;
+	return true;
+}
+
 /*
  * Evaluate a vector expression into dst (always a stack slot or a
  * destination the expression provably does not read; the statement
@@ -1305,10 +1447,17 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 	{
 		struct hir_expr *l = lir_vfor_strip_par(e->val.binary.expr[0]);
 		struct hir_expr *r = lir_vfor_strip_par(e->val.binary.expr[1]);
+		struct hir_expr *fma_a, *fma_b, *fma_c;
 		bool commutative = (e->type != HIR_EXPR_MINUS &&
 				    e->type != HIR_EXPR_DIV);
 		int va, vb;
 		bool lvalue, rvalue;
+
+		if (e->type == HIR_EXPR_PLUS && lir_optimize_level >= 3 &&
+		    lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT)
+			if (lir_vfor_fma_parts(plan, e,
+						&fma_a, &fma_b, &fma_c))
+				return lir_vfor_emit_fma(plan, dst, sp, e);
 
 		/* A logical right shift by 24 already produces an 8-bit value;
 		   the source-level & 0xff is redundant. */
@@ -1508,6 +1657,12 @@ lir_visit_vfor_block(
 	if (!lir_vfor_plan_fits(&plan, block, i)) {
 		lir_fatal("SIMD: vreg budget exceeded.");
 		return false;
+	}
+	if (getenv("NOCT_LIR_VFOR_DEBUG") != NULL) {
+		fprintf(stderr,
+			"noct-lir-vfor: max=%d homes=%d candidates=%d caches=%d stack=%d\n",
+			VFOR_VREG_MAX, i, plan.cache_candidate_count,
+			plan.cache_count, plan.stack_base);
 	}
 
 	/* Evaluate start/stop once. */
@@ -3859,8 +4014,10 @@ lir_put_opcode(
 	uint8_t opcode)
 {
 	if ((opcode >= OP_VLOADI32X4 && opcode <= OP_VCVTF32I32X4) ||
-	    opcode == OP_VORI32X4I)
+	    opcode == OP_VORI32X4I || opcode == OP_VFMAF32X4)
 		has_vector_ops = true;
+	if (opcode == OP_VFMAF32X4)
+		has_fma_ops = true;
 	if (!lir_put_u8(opcode))
 		return false;
 
@@ -4770,6 +4927,15 @@ lir_dump(
 			printf("%04d: VORI32X4I(vd:%u, vs:%u, imm:0x%02x, shift:%u)\n",
 			       ofs, (unsigned)vd, (unsigned)vs, (unsigned)imm,
 			       (unsigned)shift);
+			break;
+		}
+		case OP_VFMAF32X4:
+		{
+			uint8_t vd, va, vb, vc;
+			IMM1(vd); IMM1(va); IMM1(vb); IMM1(vc);
+			printf("%04d: VFMAF32X4(vd:%u, va:%u, vb:%u, vc:%u)\n",
+			       ofs, (unsigned)vd, (unsigned)va, (unsigned)vb,
+			       (unsigned)vc);
 			break;
 		}
 		case OP_ISHL:

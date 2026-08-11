@@ -100,12 +100,19 @@ jit_build(
         jit_code_region_cur = ctx.code;
 
         /* Patch branches. */
-        for (i = 0; i < ctx.branch_patch_count; i++) {
-                if (!jit_patch_branch(&ctx, i))
-                        return false;
-        }
+	for (i = 0; i < ctx.branch_patch_count; i++) {
+		if (!jit_patch_branch(&ctx, i))
+			return false;
+	}
+	if (getenv("NOCT_JIT_CODEGEN_DEBUG") != NULL) {
+		fprintf(stderr,
+			"noct-jit-codegen: x86_64: func=%s bytes=%lu\n",
+			func->name != NULL ? func->name : "?",
+			(unsigned long)((uint8_t *)ctx.code -
+					(uint8_t *)ctx.code_top));
+	}
 
-        func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
+	func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
 
         return true;
 }
@@ -686,6 +693,10 @@ jit_visit_inc_op(
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM8(step);
+	if (ctx->vector_hint_active &&
+	    dst == ctx->vector_hint_index_tmp &&
+	    step == ctx->vector_hint_lanes)
+		return true;
 
         dst *= (int)sizeof(struct rt_value);
 
@@ -700,17 +711,278 @@ jit_visit_inc_op(
                 /* addq $step, 8(%rax) */    IB(0x48); IB(0x83); IB(0x40); IB(0x08); IB((uint8_t)step);
         }
 
-        return true;
+	return true;
+}
+
+/* x86-64 vector-register encoders.  Keep the logical SIMD operations
+ * three-address; legacy SSE lowering uses the same helpers and inserts a
+ * copy only when the ISA requires destructive two-address execution.
+ * GNU as/objdump high-register oracles used while reviewing these fields:
+ *   vpsrld $24,xmm11,xmm10       c4 c1 29 72 d3 18
+ *   vmulps xmm12,xmm11,xmm10    c4 41 20 59 d4
+ *   vfmadd231ps xmm12,xmm11,xmm10 c4 42 21 b8 d4
+ *   paddd xmm12,xmm10           66 45 0f fe d4
+ * (operands above are written in AT&T source order). */
+static INLINE bool
+jit_x86_64_valid_xmm(int reg)
+{
+	return reg >= 0 && reg < 16;
+}
+
+static INLINE bool
+jit_x86_64_put_rex_rr(struct jit_context *ctx, int reg, int rm)
+{
+	uint8_t rex;
+
+	if (!jit_x86_64_valid_xmm(reg) || !jit_x86_64_valid_xmm(rm))
+		return false;
+	rex = (uint8_t)(0x40 | ((reg & 8) != 0 ? 4 : 0) |
+			      ((rm & 8) != 0 ? 1 : 0));
+	return rex == 0x40 || jit_put_byte(ctx, rex);
+}
+
+/* Legacy SSE register/register instruction.  map is 1 for 0f, 2 for
+ * 0f38, and 3 for 0f3a. */
+static INLINE bool
+jit_x86_64_put_sse_rr(struct jit_context *ctx, uint8_t prefix, int map,
+			 uint8_t opcode, int dst, int src)
+{
+	if (!jit_x86_64_valid_xmm(dst) || !jit_x86_64_valid_xmm(src))
+		return false;
+	if (prefix != 0 && !jit_put_byte(ctx, prefix))
+		return false;
+	if (!jit_x86_64_put_rex_rr(ctx, dst, src) ||
+	    !jit_put_byte(ctx, 0x0f))
+		return false;
+	if (map == 2 && !jit_put_byte(ctx, 0x38))
+		return false;
+	if (map == 3 && !jit_put_byte(ctx, 0x3a))
+		return false;
+	return jit_put_byte(ctx, opcode) &&
+		jit_put_byte(ctx, (uint8_t)(0xc0 | ((dst & 7) << 3) |
+					       (src & 7)));
+}
+
+static INLINE bool
+jit_x86_64_put_vex3(struct jit_context *ctx, int map, int pp, int dst,
+			int rm, int src1, bool has_src1)
+{
+	uint8_t b2, b3;
+
+	if (!jit_x86_64_valid_xmm(dst) || !jit_x86_64_valid_xmm(rm) ||
+	    (has_src1 && !jit_x86_64_valid_xmm(src1)))
+		return false;
+	b2 = (uint8_t)(((dst & 8) == 0 ? 0x80 : 0) | 0x40 |
+		       ((rm & 8) == 0 ? 0x20 : 0) | (map & 0x1f));
+	b3 = (uint8_t)((has_src1 ? ((~src1 & 15) << 3) : 0x78) |
+		       (pp & 3));
+	return jit_put_byte(ctx, 0xc4) && jit_put_byte(ctx, b2) &&
+		jit_put_byte(ctx, b3);
+}
+
+/* VEX.NDS.128 register binary operation: dst = src1 op src2. */
+static INLINE bool
+jit_x86_64_put_vex_rrr(struct jit_context *ctx, int map, int pp,
+			  uint8_t opcode, int dst, int src1, int src2)
+{
+	if (!jit_x86_64_put_vex3(ctx, map, pp, dst, src2, src1, true))
+		return false;
+	return jit_put_byte(ctx, opcode) &&
+		jit_put_byte(ctx, (uint8_t)(0xc0 | ((dst & 7) << 3) |
+					       (src2 & 7)));
+}
+
+/* VEX.128 two-operand operation whose vvvv field is reserved. */
+static INLINE bool
+jit_x86_64_put_vex_rr(struct jit_context *ctx, int map, int pp,
+			 uint8_t opcode, int dst, int src)
+{
+	if (!jit_x86_64_put_vex3(ctx, map, pp, dst, src, 0, false))
+		return false;
+	return jit_put_byte(ctx, opcode) &&
+		jit_put_byte(ctx, (uint8_t)(0xc0 | ((dst & 7) << 3) |
+					       (src & 7)));
+}
+
+/* VEX immediate packed shift: vvvv encodes dst, ModRM.rm encodes src,
+ * and ModRM.reg remains the opcode extension. */
+static INLINE bool
+jit_x86_64_put_vex_shift(struct jit_context *ctx, int ext, int dst,
+			    int src, uint8_t imm)
+{
+	if (!jit_x86_64_put_vex3(ctx, 1, 1, 0, src, dst, true))
+		return false;
+	return jit_put_byte(ctx, 0x72) &&
+		jit_put_byte(ctx, (uint8_t)(0xc0 | ((ext & 7) << 3) |
+					       (src & 7))) &&
+		jit_put_byte(ctx, imm);
+}
+
+static uint16_t
+jit_x86_64_read_u16(const uint8_t *p)
+{
+	return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
+}
+
+static uint32_t
+jit_x86_64_read_u32(const uint8_t *p)
+{
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+	       ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+/* Strictly prove the call-free vector region before assigning rbx/rsi/rdi. */
+static bool
+jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
+			    int remaining_tmp, int lanes)
+{
+	uint32_t p, body_lpc, size;
+	uint16_t base, ofs, value;
+	int i, inc_count;
+	uint8_t op, imm, shift;
+
+	ctx->vector_base_tmp[0] = -1;
+	ctx->vector_base_tmp[1] = -1;
+	ctx->vector_imm_value = -1;
+	ctx->vector_imm_shift = -1;
+	body_lpc = ctx->lpc;
+	p = body_lpc;
+	inc_count = 0;
+	while (p < ctx->func->bytecode_size) {
+		op = ctx->func->bytecode[p];
+		size = 0;
+		base = 0xffffu;
+		switch (op) {
+		case OP_VLOADI32X4:
+		case OP_VLOADF32X4:
+			if (p + 6 > ctx->func->bytecode_size) return false;
+			base = jit_x86_64_read_u16(&ctx->func->bytecode[p + 2]);
+			ofs = jit_x86_64_read_u16(&ctx->func->bytecode[p + 4]);
+			if (ofs != (uint16_t)index_tmp) return false;
+			size = 6; break;
+		case OP_VSTOREI32X4:
+		case OP_VSTOREF32X4:
+			if (p + 6 > ctx->func->bytecode_size) return false;
+			base = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			ofs = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
+			if (ofs != (uint16_t)index_tmp) return false;
+			size = 6; break;
+		case OP_VSPLATI32: case OP_VSPLATF32:
+			size = 4; break;
+		case OP_VGETLANEI32: case OP_VGETLANEF32:
+			size = 5; break;
+		case OP_VMOV128: case OP_VCVTI32F32X4:
+		case OP_VCVTF32I32X4:
+			size = 3; break;
+		case OP_VADDI32X4: case OP_VSUBI32X4:
+		case OP_VMULI32X4: case OP_VAND128: case OP_VOR128:
+		case OP_VXOR128: case OP_VSHLI32X4: case OP_VSHRI32X4:
+		case OP_VADDF32X4: case OP_VSUBF32X4:
+		case OP_VMULF32X4: case OP_VDIVF32X4:
+			size = 4; break;
+		case OP_VFMAF32X4:
+			if ((ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0)
+				return false;
+			size = 5; break;
+		case OP_VORI32X4I:
+			if (p + 5 > ctx->func->bytecode_size) return false;
+			imm = ctx->func->bytecode[p + 3];
+			shift = ctx->func->bytecode[p + 4];
+			if (ctx->vector_imm_value >= 0 &&
+			    (ctx->vector_imm_value != imm ||
+			     ctx->vector_imm_shift != shift))
+				return false;
+			ctx->vector_imm_value = imm;
+			ctx->vector_imm_shift = shift;
+			size = 5; break;
+		case OP_INC:
+			if (p + 4 > ctx->func->bytecode_size ||
+			    jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]) !=
+				(uint16_t)index_tmp ||
+			    ctx->func->bytecode[p + 3] != (uint8_t)lanes)
+				return false;
+			inc_count++;
+			size = 4; break;
+		case OP_SUBJNZ:
+			if (p + 8 > ctx->func->bytecode_size) return false;
+			value = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			if (value != (uint16_t)remaining_tmp ||
+			    ctx->func->bytecode[p + 3] != (uint8_t)lanes ||
+			    jit_x86_64_read_u32(&ctx->func->bytecode[p + 4]) !=
+				body_lpc)
+				return false;
+			return ctx->vector_base_tmp[0] >= 0 && inc_count == 1;
+		default:
+			return false;
+		}
+		if (base != 0xffffu) {
+			for (i = 0; i < 2; i++) {
+				if (ctx->vector_base_tmp[i] == (int)base)
+					break;
+				if (ctx->vector_base_tmp[i] < 0) {
+					ctx->vector_base_tmp[i] = (int)base;
+					break;
+				}
+			}
+			if (i == 2) return false;
+		}
+		p += size;
+	}
+	return false;
 }
 
 static INLINE bool
 jit_visit_vindex_hint_op(struct jit_context *ctx)
 {
 	int a, b, c, id, lanes, flags;
+	int ofs, base_ofs;
+	uint32_t imm_value;
 	CONSUME_TMPVAR(a); CONSUME_TMPVAR(b); CONSUME_TMPVAR(c);
 	CONSUME_IMM8(id); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
-	UNUSED_PARAMETER(a); UNUSED_PARAMETER(b); UNUSED_PARAMETER(c);
-	UNUSED_PARAMETER(id); UNUSED_PARAMETER(lanes); UNUSED_PARAMETER(flags);
+	UNUSED_PARAMETER(id);
+	ctx->vector_hint_active = !IS_MSABI && lanes > 0 &&
+		(ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0 &&
+		(flags & VINDEX_CURSOR_ONLY) != 0 &&
+		jit_x86_64_scan_vector_loop(ctx, a, c, lanes);
+	ctx->vector_hint_index_tmp = a;
+	ctx->vector_hint_stop_tmp = b;
+	ctx->vector_hint_remaining_tmp = c;
+	ctx->vector_hint_lanes = lanes;
+	ctx->vector_hint_flags = flags;
+	if (!ctx->vector_hint_active)
+		return true;
+	/* rax=stop; adjusted bases are raw_base + stop*4. */
+	ofs = b * (int)sizeof(struct rt_value);
+	ASM { IB(0x49); IB(0x63); IB(0x87); ID((uint32_t)(ofs + 8)); }
+	base_ofs = ctx->vector_base_tmp[0] * (int)sizeof(struct rt_value);
+	ASM {
+		IB(0x49); IB(0x8b); IB(0x9f); ID((uint32_t)(base_ofs + 8));
+		IB(0x48); IB(0x8d); IB(0x1c); IB(0x83);
+	}
+	if (ctx->vector_base_tmp[1] >= 0) {
+		base_ofs = ctx->vector_base_tmp[1] *
+			(int)sizeof(struct rt_value);
+		ASM {
+			IB(0x49); IB(0x8b); IB(0xb7); ID((uint32_t)(base_ofs + 8));
+			IB(0x48); IB(0x8d); IB(0x34); IB(0x86);
+		}
+	}
+	/* rdi = -(stop-start), sign extended to 64 bits. */
+	ofs = c * (int)sizeof(struct rt_value);
+	ASM {
+		IB(0x49); IB(0x63); IB(0xbf); ID((uint32_t)(ofs + 8));
+		IB(0x48); IB(0xf7); IB(0xdf);
+	}
+	if (ctx->vector_imm_value >= 0) {
+		imm_value = (uint32_t)ctx->vector_imm_value <<
+			    ((uint32_t)ctx->vector_imm_shift & 31u);
+		/* mov imm,eax; movd eax,xmm15; pshufd $0,xmm15,xmm15. */
+		ASM {
+			IB(0xb8); ID(imm_value);
+			IB(0x66); IB(0x44); IB(0x0f); IB(0x6e); IB(0xf8);
+			IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xff); IB(0x00);
+		}
+	}
 	return true;
 }
 
@@ -719,6 +991,8 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 {
 	int value, decrement;
 	uint32_t target_lpc;
+	bool hinted;
+	int ofs;
 
 	CONSUME_TMPVAR(value);
 	CONSUME_IMM8(decrement);
@@ -726,6 +1000,35 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
+	}
+	hinted = ctx->vector_hint_active &&
+		 value == ctx->vector_hint_remaining_tmp &&
+		 decrement == ctx->vector_hint_lanes;
+	if (hinted) {
+		/* rdi is the negative remaining count: addq lanes; jne body. */
+		ASM { IB(0x48); IB(0x83); IB(0xc7); IB((uint8_t)decrement); }
+		ctx->branch_patch[ctx->branch_patch_count].code = ctx->code;
+		ctx->branch_patch[ctx->branch_patch_count].lpc = target_lpc;
+		ctx->branch_patch[ctx->branch_patch_count].type = PATCH_JNE;
+		ctx->branch_patch_count++;
+		ASM { IB(0x0f); IB(0x85); ID(0); }
+		/* Preserve bytecode-visible state at loop exit. */
+		ofs = value * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)(ofs + 8)); ID(0);
+		}
+		if ((ctx->vector_hint_flags & VINDEX_WRITEBACK_STOP) != 0) {
+			int index_ofs = ctx->vector_hint_index_tmp *
+				(int)sizeof(struct rt_value);
+			int stop_ofs = ctx->vector_hint_stop_tmp *
+				(int)sizeof(struct rt_value);
+			ASM {
+				IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(stop_ofs + 8));
+				IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(index_ofs + 8));
+			}
+		}
+		ctx->vector_hint_active = false;
+		return true;
 	}
 	value *= (int)sizeof(struct rt_value);
 	ASM {
@@ -753,16 +1056,36 @@ jit_visit_vori32x4i_op(struct jit_context *ctx)
 
 	CONSUME_IMM8(dst); CONSUME_IMM8(src);
 	CONSUME_IMM8(imm); CONSUME_IMM8(shift);
-	if ((ctx->simd_caps & JIT_SIMD_CAP_SSE2) == 0) {
+	if (dst < 0 || dst >= 16 || src < 0 || src >= 16) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (IS_MSABI || (ctx->simd_caps & JIT_SIMD_CAP_SSE2) == 0) {
 		src1 = src;
 		src2 = (imm << 8) | shift;
 		ASM_BINARY_OP(ex_vori32x4i_helper);
 		return true;
 	}
-	if (dst != src) {
-		/* movdqa xmmDst, xmmSrc */
-		ASM { IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (dst << 3) | src)); }
+	if (dst >= 13 || src >= 13) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
 	}
+	if (ctx->vector_hint_active &&
+	    ctx->vector_imm_value == imm &&
+	    ctx->vector_imm_shift == shift) {
+		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+			return jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xeb,
+						      dst, src, 15);
+		}
+		if (dst != src && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+							  0x6f, dst, src))
+			return false;
+		/* por xmm15, xmmDst (xmm15 selected by REX.B). */
+		return jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, dst, 15);
+	}
+	if (dst != src && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+							  dst, src))
+		return false;
 	value = (uint32_t)imm << ((uint32_t)shift & 31);
 	/* Use a temporary 16-byte stack constant; no vector register is
 	   clobbered and no helper call crosses the live SIMD region. */
@@ -774,11 +1097,64 @@ jit_visit_vori32x4i_op(struct jit_context *ctx)
 			ASM { IB(0xc7); IB(0x44); IB(0x24); IB((uint8_t)(k * 4)); ID(value); }
 		}
 	}
-	ASM {
-		IB(0x66); IB(0x0f); IB(0xeb); IB((uint8_t)(0x04 | (dst << 3))); IB(0x24);
-		IB(0x48); IB(0x83); IB(0xc4); IB(0x10);
-	}
+	ASM { IB(0x66); }
+	if ((dst & 8) != 0) { ASM { IB(0x44); } }
+	ASM { IB(0x0f); IB(0xeb);
+	      IB((uint8_t)(0x04 | ((dst & 7) << 3))); IB(0x24);
+	      IB(0x48); IB(0x83); IB(0xc4); IB(0x10); }
 	return true;
+}
+
+static INLINE bool
+jit_visit_vfmaf32x4_op(struct jit_context *ctx)
+{
+	int dst, src1, src2, addend;
+	uint8_t opcode;
+
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(src2);
+	CONSUME_IMM8(addend);
+	if (dst < 0 || dst >= 16 || src1 < 0 || src1 >= 16 ||
+	    src2 < 0 || src2 >= 16 || addend < 0 || addend >= 16) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (IS_MSABI ||
+	    (ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0) {
+		int packed_src2_addend = (src2 << 8) | addend;
+		src2 = packed_src2_addend;
+		ASM_BINARY_OP(ex_vfmaf32x4_helper);
+		return true;
+	}
+	if (dst < 0 || dst >= 13 || src1 < 0 || src1 >= 13 ||
+	    src2 < 0 || src2 >= 13 || addend < 0 || addend >= 13) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (dst == addend) {
+		/* vfmadd231ps dst, src1, src2 */
+		opcode = 0xb8;
+		return jit_x86_64_put_vex_rrr(ctx, 2, 1, opcode,
+					      dst, src1, src2);
+	} else if (dst == src1) {
+		/* vfmadd213ps dst, src2, addend */
+		opcode = 0xa8;
+		return jit_x86_64_put_vex_rrr(ctx, 2, 1, opcode,
+					      dst, src2, addend);
+	} else if (dst == src2) {
+		/* vfmadd213ps dst, src1, addend */
+		opcode = 0xa8;
+		return jit_x86_64_put_vex_rrr(ctx, 2, 1, opcode,
+					      dst, src1, addend);
+	} else {
+		/* movdqa xmmAddend, xmmDst; vfmadd231ps dst,src1,src2 */
+		if (!jit_x86_64_put_vex_rr(ctx, 1, 1, 0x6f, dst, addend))
+			return false;
+		opcode = 0xb8;
+		return jit_x86_64_put_vex_rrr(ctx, 2, 1, opcode,
+					      dst, src1, src2);
+	}
 }
 
 /* Visit a OP_ADD instruction. */
@@ -2504,8 +2880,8 @@ jit_visit_typed_op(
  * 128-bit SIMD ops (docs/design/06-simd.md).
  *
  * SysV x86_64 with SSE2/SSE4.1 (runtime CPUID gate): inline vector code,
- * vreg k -> xmm k (all of xmm0..7 are caller-saved, and vector state
- * only lives inside a strip region that emits no calls).  Win64 uses
+ * vreg k -> xmm k (xmm0..xmm12 are available to call-free vector
+ * regions; xmm13..xmm15 are backend scratch/invariant registers). Win64 uses
  * direct scalar lowering over env->vreg so it never owns nonvolatile
  * xmm6/xmm7; scalar FP uses only volatile xmm0.
  */
@@ -2516,6 +2892,7 @@ jit_detect_simd_caps(void)
 {
 #if defined(__GNUC__)
         uint32_t a, b, c, d;
+	uint32_t xcr0_lo, xcr0_hi;
 	uint32_t caps = 0;
         __asm__ __volatile__("cpuid"
                              : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
@@ -2526,9 +2903,21 @@ jit_detect_simd_caps(void)
 		caps |= JIT_SIMD_CAP_SSE3;
 	if ((c & (1u << 19)) != 0)
 		caps |= JIT_SIMD_CAP_SSE41;
+	if ((c & (1u << 27)) != 0 && (c & (1u << 28)) != 0) {
+		__asm__ __volatile__("xgetbv"
+				     : "=a"(xcr0_lo), "=d"(xcr0_hi)
+				     : "c"(0));
+		UNUSED_PARAMETER(xcr0_hi);
+		if ((xcr0_lo & 6u) == 6u) {
+			caps |= JIT_SIMD_CAP_AVX;
+			if ((c & (1u << 12)) != 0)
+				caps |= JIT_SIMD_CAP_FMAF32X4;
+		}
+	}
 	return caps;
 #elif defined(_MSC_VER)
 	int regs[4];
+	unsigned __int64 xcr0;
 	uint32_t caps = 0;
 	__cpuidex(regs, 1, 0);
 	if (((uint32_t)regs[3] & (1u << 26)) != 0)
@@ -2537,6 +2926,15 @@ jit_detect_simd_caps(void)
 		caps |= JIT_SIMD_CAP_SSE3;
 	if (((uint32_t)regs[2] & (1u << 19)) != 0)
 		caps |= JIT_SIMD_CAP_SSE41;
+	if (((uint32_t)regs[2] & (1u << 27)) != 0 &&
+	    ((uint32_t)regs[2] & (1u << 28)) != 0) {
+		xcr0 = _xgetbv(0);
+		if ((xcr0 & 6u) == 6u) {
+			caps |= JIT_SIMD_CAP_AVX;
+			if (((uint32_t)regs[2] & (1u << 12)) != 0)
+				caps |= JIT_SIMD_CAP_FMAF32X4;
+		}
+	}
 	return caps;
 #else
 	return 0;
@@ -2759,18 +3157,70 @@ jit_visit_vector_op(
         if (!inline_ok)
                 return jit_visit_vector_scalar_op(ctx, op, a, b, c);
 
+	/* Native SysV mapping reserves xmm13/xmm14 for SSE2 multiply
+	 * scratch and xmm15 for the opaque-alpha invariant. */
+	switch (op) {
+	case OP_VLOADI32X4:
+	case OP_VLOADF32X4:
+	case OP_VSPLATI32:
+	case OP_VSPLATF32:
+		if (a < 0 || a >= 13) goto broken_vreg;
+		break;
+	case OP_VSTOREI32X4:
+	case OP_VSTOREF32X4:
+		if (c < 0 || c >= 13) goto broken_vreg;
+		break;
+	case OP_VGETLANEI32:
+	case OP_VGETLANEF32:
+		if (b < 0 || b >= 13) goto broken_vreg;
+		break;
+	case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
+		if (a < 0 || a >= 13 || b < 0 || b >= 13)
+			goto broken_vreg;
+		break;
+	case OP_VSHLI32X4:
+	case OP_VSHRI32X4:
+		if (a < 0 || a >= 13 || b < 0 || b >= 13)
+			goto broken_vreg;
+		break;
+	default:
+		if (a < 0 || a >= 13 || b < 0 || b >= 13 ||
+		    c < 0 || c >= 13)
+			goto broken_vreg;
+		break;
+	}
+
         switch (op) {
         case OP_VLOADI32X4:
         case OP_VLOADF32X4:
         {
                 int base = b * (int)sizeof(struct rt_value);
                 int ofs = c * (int)sizeof(struct rt_value);
+		int cursor = -1;
+		if (ctx->vector_hint_active) {
+			if (ctx->vector_base_tmp[0] == b) cursor = 0;
+			else if (ctx->vector_base_tmp[1] == b) cursor = 1;
+		}
+		if (cursor >= 0) {
+			/* movdqu (rbx|rsi,rdi,4), xmmA */
+			ASM { IB(0xf3); }
+			if ((a & 8) != 0) { ASM { IB(0x44); } }
+			ASM { IB(0x0f); IB(0x6f);
+			      IB((uint8_t)(0x04 | ((a & 7) << 3)));
+			      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
+			break;
+		}
                 ASM {
                         /* r15: &env->frame->tmpvar[0] */
                         /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                         /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
-                        /* movdqu (%rax,%rcx,4) -> %xmmA */ IB(0xf3); IB(0x0f); IB(0x6f); IB((uint8_t)(0x04 | (a << 3))); IB(0x88);
+                        /* movdqu (%rax,%rcx,4) -> %xmmA */ IB(0xf3);
                 }
+		if ((a & 8) != 0) { ASM { IB(0x44); } }
+		ASM { IB(0x0f); IB(0x6f);
+		      IB((uint8_t)(0x04 | ((a & 7) << 3))); IB(0x88); }
                 break;
         }
         case OP_VSTOREI32X4:
@@ -2778,21 +3228,41 @@ jit_visit_vector_op(
         {
                 int base = a * (int)sizeof(struct rt_value);
                 int ofs = b * (int)sizeof(struct rt_value);
+		int cursor = -1;
+		if (ctx->vector_hint_active) {
+			if (ctx->vector_base_tmp[0] == a) cursor = 0;
+			else if (ctx->vector_base_tmp[1] == a) cursor = 1;
+		}
+		if (cursor >= 0) {
+			/* movdqu xmmC, (rbx|rsi,rdi,4) */
+			ASM { IB(0xf3); }
+			if ((c & 8) != 0) { ASM { IB(0x44); } }
+			ASM { IB(0x0f); IB(0x7f);
+			      IB((uint8_t)(0x04 | ((c & 7) << 3)));
+			      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
+			break;
+		}
                 ASM {
                         /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                         /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
-                        /* movdqu %xmmC -> (%rax,%rcx,4) */ IB(0xf3); IB(0x0f); IB(0x7f); IB((uint8_t)(0x04 | (c << 3))); IB(0x88);
+                        /* movdqu %xmmC -> (%rax,%rcx,4) */ IB(0xf3);
                 }
+		if ((c & 8) != 0) { ASM { IB(0x44); } }
+		ASM { IB(0x0f); IB(0x7f);
+		      IB((uint8_t)(0x04 | ((c & 7) << 3))); IB(0x88); }
                 break;
         }
         case OP_VSPLATI32:
         case OP_VSPLATF32:
         {
                 int src = b * (int)sizeof(struct rt_value);
-                ASM {
-                        /* movd src+8(%r15) -> %xmmA */    IB(0x66); IB(0x41); IB(0x0f); IB(0x6e); IB((uint8_t)(0x87 | (a << 3))); ID((uint32_t)(src + 8));
-                        /* pshufd $0, %xmmA -> %xmmA */    IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (a << 3) | a)); IB(0x00);
-                }
+		ASM { IB(0x66); IB((uint8_t)((a & 8) != 0 ? 0x45 : 0x41));
+		      IB(0x0f); IB(0x6e);
+		      IB((uint8_t)(0x87 | ((a & 7) << 3)));
+		      ID((uint32_t)(src + 8)); }
+		if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, a, a))
+			return false;
+		ASM { IB(0x00); }
                 break;
         }
         case OP_VGETLANEI32:
@@ -2800,14 +3270,22 @@ jit_visit_vector_op(
         {
                 int dst = a * (int)sizeof(struct rt_value);
 		if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
-			ASM {
-				/* pextrd $c, %xmmB -> dst+8(%r15) */ IB(0x66); IB(0x41); IB(0x0f); IB(0x3a); IB(0x16); IB((uint8_t)(0x87 | (b << 3))); ID((uint32_t)(dst + 8)); IB((uint8_t)c);
-			}
+			ASM { IB(0x66);
+			      IB((uint8_t)((b & 8) != 0 ? 0x45 : 0x41));
+			      IB(0x0f); IB(0x3a); IB(0x16);
+			      IB((uint8_t)(0x87 | ((b & 7) << 3)));
+			      ID((uint32_t)(dst + 8)); IB((uint8_t)c); }
 		} else {
+			ASM { IB(0x66); }
+			if ((b & 8) != 0) { ASM { IB(0x41); } }
 			ASM {
 				/* SSE2: combine two pextrw results without changing xmmB. */
-				IB(0x66); IB(0x0f); IB(0xc5); IB((uint8_t)(0xc0 | b)); IB((uint8_t)(c * 2));
-				IB(0x66); IB(0x0f); IB(0xc5); IB((uint8_t)(0xc8 | b)); IB((uint8_t)(c * 2 + 1));
+				IB(0x0f); IB(0xc5); IB((uint8_t)(0xc0 | (b & 7))); IB((uint8_t)(c * 2));
+				IB(0x66);
+			}
+			if ((b & 8) != 0) { ASM { IB(0x41); } }
+			ASM {
+				IB(0x0f); IB(0xc5); IB((uint8_t)(0xc8 | (b & 7))); IB((uint8_t)(c * 2 + 1));
 				IB(0xc1); IB(0xe1); IB(0x10);
 				IB(0x09); IB(0xc8);
 				IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst + 8));
@@ -2823,16 +3301,32 @@ jit_visit_vector_op(
         }
         case OP_VMOV128:
                 if (a != b) {
-                        ASM {
-                                /* movdqa %xmmB -> %xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b));
-                        }
+			if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+				if (!jit_x86_64_put_vex_rr(ctx, 1, 1, 0x6f,
+							 a, b))
+					return false;
+			} else if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+							  0x6f, a, b)) {
+				return false;
+			}
                 }
                 break;
 	case OP_VCVTI32F32X4:
-		ASM { /* cvtdq2ps xmmB,xmmA */ IB(0x0f); IB(0x5b); IB((uint8_t)(0xc0 | (a << 3) | b)); }
+		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+			if (!jit_x86_64_put_vex_rr(ctx, 1, 0, 0x5b, a, b))
+				return false;
+		} else if (!jit_x86_64_put_sse_rr(ctx, 0, 1, 0x5b, a, b)) {
+			return false;
+		}
 		break;
 	case OP_VCVTF32I32X4:
-		ASM { /* cvttps2dq xmmB,xmmA */ IB(0xf3); IB(0x0f); IB(0x5b); IB((uint8_t)(0xc0 | (a << 3) | b)); }
+		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+			if (!jit_x86_64_put_vex_rr(ctx, 1, 2, 0x5b, a, b))
+				return false;
+		} else if (!jit_x86_64_put_sse_rr(ctx, 0xf3, 1, 0x5b,
+							  a, b)) {
+			return false;
+		}
 		break;
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
@@ -2840,100 +3334,133 @@ jit_visit_vector_op(
         case OP_VAND128:
         case OP_VOR128:
         case OP_VXOR128:
-                /* Two-address lowering: vd = va first (the LIR layer
-                   guarantees vd != vb), then op vd, vb. */
-                if (op == OP_VMULI32X4 &&
-		    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
-			/* Save odd lanes in scratch xmm8/xmm9 before vd is
-			   overwritten; these registers are caller-saved on SysV. */
-			ASM {
-				/* movdqa xmmB,xmm8; pshufd $f5,xmm8,xmm8 */
-				IB(0x66); IB(0x44); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | b));
-				IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xc0); IB(0xf5);
-				/* movdqa xmmC,xmm9; pshufd $f5,xmm9,xmm9 */
-				IB(0x66); IB(0x44); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc8 | c));
-				IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xc9); IB(0xf5);
-				/* pmuludq xmm9,xmm8 */
-				IB(0x66); IB(0x45); IB(0x0f); IB(0xf4); IB(0xc1);
+		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+			int map = op == OP_VMULI32X4 ? 2 : 1;
+			uint8_t opcode;
+			switch (op) {
+			case OP_VADDI32X4: opcode = 0xfe; break;
+			case OP_VSUBI32X4: opcode = 0xfa; break;
+			case OP_VMULI32X4: opcode = 0x40; break;
+			case OP_VAND128: opcode = 0xdb; break;
+			case OP_VOR128: opcode = 0xeb; break;
+			default: opcode = 0xef; break;
 			}
+			if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+						      a, b, c))
+				return false;
+			break;
 		}
-		if (a != b) {
-                        ASM {
-                                /* movdqa %xmmB -> %xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b));
-                        }
-                }
-                switch (op) {
-                case OP_VADDI32X4:
-                        ASM { /* paddd */  IB(0x66); IB(0x0f); IB(0xfe); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-                        break;
-                case OP_VSUBI32X4:
-                        ASM { /* psubd */  IB(0x66); IB(0x0f); IB(0xfa); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-                        break;
-                case OP_VMULI32X4:
+		/* Legacy two-address lowering. */
+		if (op == OP_VMULI32X4 &&
+		    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
+			/* xmm13/xmm14 are reserved outside the logical map. */
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, b) ||
+			    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, 13, 13))
+				return false;
+			ASM { IB(0xf5); }
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 14, c) ||
+			    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, 14, 14))
+				return false;
+			ASM { IB(0xf5); }
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xf4, 13, 14))
+				return false;
+		}
+		if (a != b && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+							 a, b))
+			return false;
+		switch (op) {
+		case OP_VADDI32X4:
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xfe, a, c))
+				return false;
+			break;
+		case OP_VSUBI32X4:
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xfa, a, c))
+				return false;
+			break;
+		case OP_VMULI32X4:
 			if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
-				ASM { /* pmulld */ IB(0x66); IB(0x0f); IB(0x38); IB(0x40); IB((uint8_t)(0xc0 | (a << 3) | c)); }
+				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 2, 0x40,
+							  a, c))
+					return false;
 			} else {
-				ASM {
-					/* even lanes; merge low dwords with odd products. */
-					IB(0x66); IB(0x0f); IB(0xf4); IB((uint8_t)(0xc0 | (a << 3) | c));
-					IB(0x66); IB(0x0f); IB(0x70); IB((uint8_t)(0xc0 | (a << 3) | a)); IB(0x88);
-					IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xc0); IB(0x88);
-					IB(0x66); IB(0x41); IB(0x0f); IB(0x62); IB((uint8_t)(0xc0 | (a << 3)));
-				}
+				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xf4,
+							  a, c) ||
+				    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70,
+							  a, a))
+					return false;
+				ASM { IB(0x88); }
+				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70,
+							  13, 13))
+					return false;
+				ASM { IB(0x88); }
+				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x62,
+							  a, 13))
+					return false;
 			}
-                        break;
-                case OP_VAND128:
-                        ASM { /* pand */   IB(0x66); IB(0x0f); IB(0xdb); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-                        break;
-                case OP_VOR128:
-                        ASM { /* por */    IB(0x66); IB(0x0f); IB(0xeb); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-                        break;
-                default:
-                        ASM { /* pxor */   IB(0x66); IB(0x0f); IB(0xef); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-                        break;
-                }
+			break;
+		case OP_VAND128:
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xdb, a, c))
+				return false;
+			break;
+		case OP_VOR128:
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, a, c))
+				return false;
+			break;
+		default:
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xef, a, c))
+				return false;
+			break;
+		}
                 break;
 	case OP_VADDF32X4:
 	case OP_VSUBF32X4:
 	case OP_VMULF32X4:
 	case OP_VDIVF32X4:
-		if (a != b) {
-			ASM { /* movdqa xmmB,xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b)); }
-		}
-		switch (op) {
-		case OP_VADDF32X4:
-			ASM { IB(0x0f); IB(0x58); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-			break;
-		case OP_VSUBF32X4:
-			ASM { IB(0x0f); IB(0x5c); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-			break;
-		case OP_VMULF32X4:
-			ASM { IB(0x0f); IB(0x59); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-			break;
-		default:
-			ASM { IB(0x0f); IB(0x5e); IB((uint8_t)(0xc0 | (a << 3) | c)); }
-			break;
+	{
+		uint8_t opcode = op == OP_VADDF32X4 ? 0x58 :
+			op == OP_VSUBF32X4 ? 0x5c :
+			op == OP_VMULF32X4 ? 0x59 : 0x5e;
+		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+			if (!jit_x86_64_put_vex_rrr(ctx, 1, 0, opcode,
+						      a, b, c))
+				return false;
+		} else {
+			if (a != b && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+							     0x6f, a, b))
+				return false;
+			if (!jit_x86_64_put_sse_rr(ctx, 0, 1, opcode, a, c))
+				return false;
 		}
 		break;
+	}
         case OP_VSHLI32X4:
         case OP_VSHRI32X4:
-                if (a != b) {
-                        ASM {
-                                /* movdqa %xmmB -> %xmmA */ IB(0x66); IB(0x0f); IB(0x6f); IB((uint8_t)(0xc0 | (a << 3) | b));
-                        }
-                }
-                if (op == OP_VSHLI32X4) {
-                        ASM { /* pslld $c, %xmmA */ IB(0x66); IB(0x0f); IB(0x72); IB((uint8_t)(0xf0 | a)); IB((uint8_t)c); }
-                } else {
-                        ASM { /* psrld $c, %xmmA */ IB(0x66); IB(0x0f); IB(0x72); IB((uint8_t)(0xd0 | a)); IB((uint8_t)c); }
-                }
+		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+			if (!jit_x86_64_put_vex_shift(ctx,
+					op == OP_VSHLI32X4 ? 6 : 2,
+					a, b, (uint8_t)c))
+				return false;
+			break;
+		}
+		if (a != b && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+							 a, b))
+			return false;
+		ASM { IB(0x66); }
+		if ((a & 8) != 0) { ASM { IB(0x41); } }
+		ASM { IB(0x0f); IB(0x72);
+		      IB((uint8_t)((op == OP_VSHLI32X4 ? 0xf0 : 0xd0) |
+				   (a & 7))); IB((uint8_t)c); }
                 break;
         default:
                 assert(NEVER_COME_HERE);
                 return false;
         }
 
-        return true;
+	return true;
+
+broken_vreg:
+	rt_error(ctx->env, BROKEN_BYTECODE);
+	return false;
 }
 
 /* Visit a bytecode of a function. */
@@ -3315,6 +3842,9 @@ jit_visit_bytecode(
 			break;
 		case OP_VORI32X4I:
 			if (!jit_visit_vori32x4i_op(ctx)) return false;
+			break;
+		case OP_VFMAF32X4:
+			if (!jit_visit_vfmaf32x4_op(ctx)) return false;
 			break;
                 case OP_IADD:
                 case OP_ISUB:

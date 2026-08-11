@@ -36,14 +36,22 @@ command_transpile_c(
 	char *argv[])
 {
 	int first;
+	int optimize_level;
+	enum cli_optimize_level_result optimize_result;
 
 	/* Optional compiler diagnostics/settings before the output file. */
 	first = 2;
 	while (first < argc) {
-		if (strncmp(argv[first], "--optimize-level=", 17) == 0) {
-			noct_cback_set_optimize_level(atoi(argv[first] + 17));
+		optimize_result =
+			parse_optimize_level_option(argv[first], &optimize_level);
+		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
+			noct_cback_set_optimize_level(optimize_level);
 			first++;
 			continue;
+		}
+		if (optimize_result == CLI_OPTIMIZE_LEVEL_INVALID) {
+			printf("Invalid optimize-level option %s.\n", argv[first]);
+			return 1;
 		}
 		if (strcmp(argv[first], "--simd-info") == 0) {
 			noct_cback_set_simd_info(true);

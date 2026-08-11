@@ -115,6 +115,7 @@
 #define ex_vmulf32x4_helper noct_ex_vmulf32x4_helper
 #define ex_vdivf32x4_helper noct_ex_vdivf32x4_helper
 #define ex_vori32x4i_helper noct_ex_vori32x4i_helper
+#define ex_vfmaf32x4_helper noct_ex_vfmaf32x4_helper
 #define ex_ploadf32_helper noct_ex_ploadf32_helper
 #define ex_pstoref32_helper noct_ex_pstoref32_helper
 
@@ -179,6 +180,8 @@ jit_get_code_size(
 #define JIT_SIMD_CAP_SSE41	(1u << 2)
 #define JIT_SIMD_CAP_NEON	(1u << 3)
 #define JIT_SIMD_CAP_ALTIVEC	(1u << 4)
+#define JIT_SIMD_CAP_FMAF32X4	(1u << 5)
+#define JIT_SIMD_CAP_AVX		(1u << 6)
 
 /* Test/user ceiling.  It can remove detected features, never add them. */
 static INLINE uint32_t
@@ -197,10 +200,16 @@ jit_apply_simd_max(uint32_t detected)
 	if (strcmp(max, "sse41") == 0)
 		return detected & (JIT_SIMD_CAP_SSE2 | JIT_SIMD_CAP_SSE3 |
 				   JIT_SIMD_CAP_SSE41);
+	if (strcmp(max, "avx") == 0)
+		return detected & (JIT_SIMD_CAP_SSE2 | JIT_SIMD_CAP_SSE3 |
+				   JIT_SIMD_CAP_SSE41 | JIT_SIMD_CAP_AVX);
 	if (strcmp(max, "neon") == 0)
-		return detected & JIT_SIMD_CAP_NEON;
+		return detected & (JIT_SIMD_CAP_NEON |
+				   JIT_SIMD_CAP_FMAF32X4);
 	if (strcmp(max, "altivec") == 0)
 		return detected & JIT_SIMD_CAP_ALTIVEC;
+	if (strcmp(max, "fma") == 0)
+		return detected;
 	return detected;
 }
 
@@ -221,6 +230,8 @@ struct jit_context {
 	int vector_hint_flags;
 	int vector_base_tmp[2];
 	uint32_t vector_base_last_lpc[2];
+	int vector_imm_value;
+	int vector_imm_shift;
 
 	/* Top of the mapped code area. */
 	void *code_top;
@@ -267,11 +278,18 @@ jit_configure_simd(struct jit_context *ctx, uint32_t detected,
 {
 	ctx->simd_caps = jit_apply_simd_max(detected);
 	ctx->has_vector_ops = ctx->func->has_vector_ops;
+	if (ctx->func->has_fma_ops &&
+	    (ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0)
+		ctx->simd_caps = 0;
 	if (getenv("NOCT_JIT_SIMD_DEBUG") != NULL) {
 		fprintf(stderr,
-			"noct-jit-simd: %s: caps=0x%x vector=%d\n",
+			"noct-jit-simd: %s: caps=0x%x vector=%d fma=%d mode=%s\n",
 			backend, (unsigned)ctx->simd_caps,
-			ctx->has_vector_ops ? 1 : 0);
+			ctx->has_vector_ops ? 1 : 0,
+			ctx->func->has_fma_ops ? 1 : 0,
+			ctx->func->has_fma_ops &&
+			(ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0 ?
+				"portable" : "native");
 	}
 }
 

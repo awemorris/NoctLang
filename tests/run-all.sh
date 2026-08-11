@@ -6,6 +6,7 @@ echo 'NoctLang Test Suites'
 echo
 
 sh run-syntax.sh
+sh run-cli-options.sh
 sh run-thread.sh
 sh run-httpserver.sh
 sh run-webapp.sh

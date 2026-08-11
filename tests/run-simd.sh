@@ -15,7 +15,7 @@
 NOCT=${NOCT:-../build-static/noct}
 NOCT_META=${NOCT_META:-$NOCT}
 
-MUST_VECTORIZE="blend blend2 blend2_multigroup mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
+MUST_VECTORIZE="blend blend2 blend2_multigroup fma_forms mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
 MUST_NOT="overlap_reject u8_reject counter_value carried if_reject budget"
 
 echo 'SIMD tests:'
@@ -42,7 +42,7 @@ done
 # The x86 tiers deliberately use the SSE2 instruction subset for the SSE3
 # ceiling; SSE4.1 only shortens operations such as i32 multiply/extract.
 # On non-x86 backends these ceilings safely reduce to the scalar tier.
-for tier in scalar sse2 sse3 sse41; do
+for tier in scalar sse2 sse3 sse41 avx; do
     NOCT_JIT_SIMD_MAX=$tier $NOCT --force-jit --optimize-level=2 \
         simd/blend2.noct > out 2>&1
     if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
@@ -53,6 +53,24 @@ for tier in scalar sse2 sse3 sse41; do
         echo "PASS SIMD ceiling $tier"
     fi
 done
+
+# The x86_64 LIR plan must retain all four blend common values, and the
+# native JIT build must finish rather than silently falling back after a
+# code-generation error.
+if [ "$(uname -m 2>/dev/null)" = "x86_64" ]; then
+    debug=$(NOCT_LIR_VFOR_DEBUG=1 NOCT_JIT_CODEGEN_DEBUG=1 \
+        $NOCT --force-jit -O3 simd/blend2.noct 2>&1 >/dev/null)
+    if printf '%s\n' "$debug" | grep -q \
+        'noct-lir-vfor: max=13 .*caches=4 ' && \
+       printf '%s\n' "$debug" | grep -q \
+        'noct-jit-codegen: x86_64: func=blend '; then
+        echo "PASS x86_64 four-value vector cache/native JIT build"
+    else
+        echo "FAIL x86_64 four-value vector cache/native JIT build"
+        printf '%s\n' "$debug" | head -10
+        FAILED=1
+    fi
+fi
 
 for name in $MUST_VECTORIZE; do
     tc="simd/$name.noct"
@@ -101,6 +119,28 @@ else
     echo "PASS --simd-info success-only behavior"
 fi
 
+# O3 contracts eligible FP32 expressions to the common FMA opcode.  Native,
+# interpreter, and capability-ceiling paths must retain identical output.
+for jit in "--disable-jit" "--force-jit"; do
+    $NOCT $jit -O3 simd/blend2.noct > out 2>&1
+    if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
+        echo "FAIL O3 FMA blend2 ($jit)"
+        FAILED=1
+    else
+        echo "PASS O3 FMA blend2 ($jit)"
+    fi
+done
+for tier in scalar sse41; do
+    NOCT_JIT_SIMD_MAX=$tier $NOCT --force-jit -O3 \
+        simd/blend2.noct > out 2>&1
+    if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
+        echo "FAIL O3 FMA fallback ceiling $tier"
+        FAILED=1
+    else
+        echo "PASS O3 FMA fallback ceiling $tier"
+    fi
+done
+
 # Optimized bytecode must preserve the ABI/prologue vector metadata.
 tmp_dir=$(mktemp -d)
 cp simd/f32.noct "$tmp_dir/f32.noct"
@@ -119,6 +159,31 @@ else
         FAILED=1
     else
         echo "PASS SIMD bytecode vector metadata/round trip"
+    fi
+fi
+
+# O3 bytecode records that the function requires fused semantics.  O2 must
+# not acquire that metadata, and the persisted O3 image must round-trip.
+cp simd/blend2.noct "$tmp_dir/blend2.noct"
+$NOCT_META --compile -O2 "$tmp_dir/blend2.noct" > /dev/null 2>&1
+if grep -a -q '^FMA Ops$' "$tmp_dir/blend2.nb"; then
+    echo "FAIL O2 bytecode unexpectedly contains FMA metadata"
+    FAILED=1
+else
+    echo "PASS O2 bytecode has no FMA metadata"
+fi
+$NOCT_META --compile -O3 "$tmp_dir/blend2.noct" > /dev/null 2>&1
+if ! grep -a -q '^FMA Ops$' "$tmp_dir/blend2.nb"; then
+    echo "FAIL O3 bytecode missing FMA metadata"
+    FAILED=1
+else
+    NOCT_JIT_SIMD_MAX=sse41 $NOCT_META --force-jit \
+        "$tmp_dir/blend2.nb" > "$tmp_dir/blend2.out" 2>&1
+    if ! diff -q simd/blend2.noct.out "$tmp_dir/blend2.out" > /dev/null 2>&1; then
+        echo "FAIL O3 FMA bytecode portable round trip"
+        FAILED=1
+    else
+        echo "PASS O3 FMA bytecode metadata/portable round trip"
     fi
 fi
 rm -rf "$tmp_dir"

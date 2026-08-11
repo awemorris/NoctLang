@@ -176,6 +176,8 @@ parse_options(
 	char *argv[])
 {
 	int i;
+	int optimize_level;
+	enum cli_optimize_level_result optimize_result;
 
 	file_arg = 1;
 	is_oneliner = false;
@@ -204,10 +206,17 @@ parse_options(
 			file_arg++;
 			continue;
 		}
-		if (strncmp(argv[i], "--optimize-level=", 17) == 0) {
-			config.optimize_level = atoi(argv[i] + 17);
+		optimize_result =
+			parse_optimize_level_option(argv[i], &optimize_level);
+		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
+			config.optimize_level = optimize_level;
 			file_arg++;
 			continue;
+		}
+		if (optimize_result == CLI_OPTIMIZE_LEVEL_INVALID) {
+			wide_printf(N_TR("Invalid optimize-level option %s.\n"),
+				    argv[i]);
+			return false;
 		}
 		if (strcmp(argv[i], "--simd-info") == 0) {
 			config.simd_info = true;
@@ -263,7 +272,7 @@ parse_options(
 			continue;
 		}
 
-		wide_printf(N_TR("Unknown option %s.\n"), argv[1]);
+		wide_printf(N_TR("Unknown option %s.\n"), argv[i]);
 		return false;
 	}
 

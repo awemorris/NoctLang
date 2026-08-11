@@ -179,6 +179,8 @@ bcback_write_function(FILE *out, const struct lir_func *f)
 		return false;
 	if (f->has_vector_ops && fprintf(out, "Vector Ops\n1\n") < 0)
 		return false;
+	if (f->has_fma_ops && fprintf(out, "FMA Ops\n1\n") < 0)
+		return false;
 	if (fprintf(out, "Temporary Size\n%u\nBytecode Size\n%u\n",
 		    f->tmpvar_size, f->bytecode_size) < 0)
 		return false;

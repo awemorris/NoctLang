@@ -72,7 +72,9 @@ jit_build(
         ctx.env = env;
         ctx.func = func;
 	/* Advanced SIMD is part of the AArch64 application-profile ABI. */
-	jit_configure_simd(&ctx, JIT_SIMD_CAP_NEON, "arm64");
+	jit_configure_simd(&ctx,
+			   JIT_SIMD_CAP_NEON | JIT_SIMD_CAP_FMAF32X4,
+			   "arm64");
 
         /* Make code writable and non-executable. */
         if (!is_writable) {
@@ -1061,6 +1063,8 @@ jit_arm64_scan_vector_bases(struct jit_context *ctx)
 			size = 4; break;
 		case OP_VORI32X4I:
 			size = 5; break;
+		case OP_VFMAF32X4:
+			size = 5; break;
 		case OP_INC:
 			size = 4; break;
 		case OP_SUBJNZ:
@@ -1248,6 +1252,54 @@ jit_visit_vori32x4i_op(
 	/* Current LIR only emits the verified opaque-alpha form. */
 	rt_error(ctx->env, BROKEN_BYTECODE);
 	return false;
+}
+
+static INLINE bool
+jit_visit_vfmaf32x4_op(
+	struct jit_context *ctx)
+{
+	int dst, src1, src2, src3;
+	int vd, vn, vm, va, vacc;
+
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(src2);
+	CONSUME_IMM8(src3);
+	if ((ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0) {
+		int packed_src2_src3 = (src2 << 8) | src3;
+		src2 = packed_src2_src3;
+		ASM_BINARY_OP(ex_vfmaf32x4_helper);
+		return true;
+	}
+	vd = dst < 8 ? dst : dst < 16 ? dst + 8 : -1;
+	vn = src1 < 8 ? src1 : src1 < 16 ? src1 + 8 : -1;
+	vm = src2 < 8 ? src2 : src2 < 16 ? src2 + 8 : -1;
+	va = src3 < 8 ? src3 : src3 < 16 ? src3 + 8 : -1;
+	if (vd < 0 || vn < 0 || vm < 0 || va < 0) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	vacc = vd;
+	if (vd != va && (vd == vn || vd == vm))
+		vacc = 31; /* scratch outside the logical vreg mapping */
+	if (vacc != va) {
+		/* mov vD.16b, vA.16b */
+		if (!jit_put_word(ctx, 0x4ea01c00u |
+				 ((uint32_t)va << 16) |
+				 ((uint32_t)va << 5) | (uint32_t)vacc))
+			return false;
+	}
+	/* fmla vD.4s, vN.4s, vM.4s: D = A + N * M. */
+	if (!jit_put_word(ctx, 0x4e20cc00u |
+			  ((uint32_t)vm << 16) |
+			  ((uint32_t)vn << 5) | (uint32_t)vacc))
+		return false;
+	if (vacc != vd) {
+		/* mov vD.16b, v31.16b */
+		return jit_put_word(ctx, 0x4ea01c00u | (31u << 16) |
+				    (31u << 5) | (uint32_t)vd);
+	}
+	return true;
 }
 
 /* Visit a OP_ADD instruction. */
@@ -3892,6 +3944,10 @@ jit_visit_bytecode(
 			break;
 		case OP_VORI32X4I:
 			if (!jit_visit_vori32x4i_op(ctx))
+				return false;
+			break;
+		case OP_VFMAF32X4:
+			if (!jit_visit_vfmaf32x4_op(ctx))
 				return false;
 			break;
                 case OP_IADD:

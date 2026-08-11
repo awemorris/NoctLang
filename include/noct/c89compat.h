@@ -331,7 +331,24 @@ enum { false = 0, true = 1 };
 /*
  * Definitions of the intN_t and uintN_t types.
  */
-#if defined(HAVE_STDINT_H)
+#if defined(__WATCOMC__)
+/* OpenWatcom 1.9 advertises C99, but including inttypes.h/stdint.h after
+ * standard headers diagnoses its own limit-macro spellings as redefinitions.
+ * Use the compiler's native integer types without those headers. */
+#ifndef INTN_DEF
+#define INTN_DEF
+typedef signed char int8_t;
+typedef signed short int16_t;
+typedef signed int int32_t;
+typedef signed long long int64_t;
+typedef long intptr_t;
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+typedef unsigned long long uint64_t;
+typedef unsigned long uintptr_t;
+#endif
+#elif defined(HAVE_STDINT_H)
 #include <stdint.h>
 #elif defined(HAVE_INTTYPES_H)
 #include <inttypes.h>
@@ -369,6 +386,15 @@ typedef unsigned long uintptr_t;
 #endif
 
 #include <limits.h>
+
+#if defined(__WATCOMC__)
+#ifndef UINT32_MAX
+#define UINT32_MAX ((uint32_t)0xffffffffUL)
+#endif
+#ifndef SIZE_MAX
+#define SIZE_MAX ((size_t)-1)
+#endif
+#endif
 
 /*
  * Definition of the inline keyword.

@@ -11,6 +11,9 @@
 
 #include "cli-main.h"
 
+#include <errno.h>
+#include <limits.h>
+
 #if defined(NOCT_TARGET_WINDOWS)
 #include <windows.h>
 #elif defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_MACOS)
@@ -126,7 +129,7 @@ void show_usage(void)
 	wide_printf(N_TR("  --disable-jit        ... disable JIT\n"));
 	wide_printf(N_TR("  --force-jit          ... equivalent to --jit-threshold=0\n"));
 	wide_printf(N_TR("  --jit-threshold=N    ... call-count threshold for compilation\n"));
-	wide_printf(N_TR("  --optimize-level=N   ... optimize level (0/1/2)\n"));
+	wide_printf(N_TR("  -O0..-O3, --optimize-level=N ... optimize level (0/1/2/3+)\n"));
 	wide_printf(N_TR("  --simd-info          ... report successfully vectorized loops\n"));
 	wide_printf(N_TR("  --path=DIRS          ... require search path (colon-separated)\n"));
 	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
@@ -134,6 +137,47 @@ void show_usage(void)
 	wide_printf(N_TR("  --gc-tenure-size=N   ... final GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-lop-threshold=N ... move objects larger than N-bytes to final GC space\n"));
 	wide_printf("\n");
+}
+
+/*
+ * Parse an optimization-level option.
+ */
+enum cli_optimize_level_result
+parse_optimize_level_option(
+	const char *arg,
+	int *level)
+{
+	const char *value;
+	char *end;
+	long parsed;
+
+	assert(arg != NULL);
+	assert(level != NULL);
+
+	if (arg[0] == '-' && arg[1] == 'O') {
+		if (arg[2] >= '0' && arg[2] <= '3' && arg[3] == '\0') {
+			*level = arg[2] - '0';
+			return CLI_OPTIMIZE_LEVEL_VALID;
+		}
+		return CLI_OPTIMIZE_LEVEL_INVALID;
+	}
+	if (strncmp(arg, "--optimize-level=", 17) != 0)
+		return CLI_OPTIMIZE_LEVEL_NOT_MATCHED;
+
+	value = arg + 17;
+	if (*value == '\0')
+		return CLI_OPTIMIZE_LEVEL_INVALID;
+	errno = 0;
+	end = NULL;
+	parsed = strtol(value, &end, 10);
+	if (errno == ERANGE || end == value || *end != '\0' || parsed < 0
+#if LONG_MAX > INT_MAX
+	    || parsed > INT_MAX
+#endif
+	   )
+		return CLI_OPTIMIZE_LEVEL_INVALID;
+	*level = (int)parsed;
+	return CLI_OPTIMIZE_LEVEL_VALID;
 }
 
 /*
