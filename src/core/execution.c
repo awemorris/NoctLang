@@ -3680,6 +3680,38 @@ noct_ex_vcvtf32i32x4_helper(NoctEnv *env, int vd, int va, int unused)
 	return true;
 }
 
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmins32x4_helper(NoctEnv *env, int vd, int va, int vb)
+{
+	union rt_vlanes a, b, d;
+	int k;
+
+	memcpy(&a, env->vreg[va], 16);
+	memcpy(&b, env->vreg[vb], 16);
+	for (k = 0; k < 4; k++)
+		d.i[k] = a.i[k] < b.i[k] ? a.i[k] : b.i[k];
+	memcpy(env->vreg[vd], &d, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmaxs32x4_helper(NoctEnv *env, int vd, int va, int vb)
+{
+	union rt_vlanes a, b, d;
+	int k;
+
+	memcpy(&a, env->vreg[va], 16);
+	memcpy(&b, env->vreg[vb], 16);
+	for (k = 0; k < 4; k++)
+		d.i[k] = a.i[k] > b.i[k] ? a.i[k] : b.i[k];
+	memcpy(env->vreg[vd], &d, 16);
+	return true;
+}
+
 /*
  * OR a replicated byte immediate into each 32-bit lane.  The fourth
  * typed-helper operand packs imm8 in bits 8..15 and shift in bits 0..7;

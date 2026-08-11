@@ -217,6 +217,8 @@ enum bytecode {
 	OP_VMASKSTOREI32X4,	/* base(u16), ofs(u16), value(vreg), mask(vreg) */
 	OP_VINDUCTF32X4,	/* vd(u8), state(u16), step(u16), exact recurrence */
 	OP_VGATHERI32X4_CHECKED, /* vd(u8), base(u16), plen(u16), vi(u8) */
+	OP_VMINS32X4,		/* vd(u8) = signed-min(va(u8), vb(u8)) */
+	OP_VMAXS32X4,		/* vd(u8) = signed-max(va(u8), vb(u8)) */
 };
 
 /* Predicates for OP_VCMPI32X4 and OP_VCMPF32X4. */
@@ -234,5 +236,8 @@ enum vector_compare_predicate {
 #define VINDEX_CURSOR_ONLY	0x01
 #define VINDEX_WRITEBACK_STOP	0x02
 #define VINDEX_FORCE_SCALAR	0x04 /* keep vector state memory-canonical */
+#define VINDEX_REQUIRE_MASKSTORE 0x08 /* region contains VMASKSTOREI32X4 */
+#define VINDEX_REQUIRE_INDUCT	0x10 /* region contains exact VINDUCTF32X4 */
+#define VINDEX_REQUIRE_GATHER	0x20 /* region contains checked gather */
 
 #endif

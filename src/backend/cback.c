@@ -1674,6 +1674,19 @@ cback_visit_vselect128_op(struct lir_func *func, uint32_t *pc)
 }
 
 static INLINE bool
+cback_visit_vminmaxs32x4_op(struct lir_func *func, uint32_t *pc, bool is_max)
+{
+	int vd, va, vb;
+	GET_U8(&vd); GET_U8(&va); GET_U8(&vb);
+	fprintf(fp,
+		"    if (!%s(env, %d, %d, %d)) return false;\n",
+		is_max ? "noct_ex_vmaxs32x4_helper" :
+			 "noct_ex_vmins32x4_helper",
+		vd, va, vb);
+	return true;
+}
+
+static INLINE bool
 cback_visit_vmaskstorei32x4_op(struct lir_func *func, uint32_t *pc)
 {
 	int base, ofs, vs, vm;
@@ -2061,6 +2074,12 @@ cback_visit_op(
 		break;
 	case OP_VGATHERI32X4_CHECKED:
 		if (!cback_visit_vgatheri32x4_checked_op(func, pc))
+			return false;
+		break;
+	case OP_VMINS32X4:
+	case OP_VMAXS32X4:
+		if (!cback_visit_vminmaxs32x4_op(func, pc,
+						 op == OP_VMAXS32X4))
 			return false;
 		break;
 	default:

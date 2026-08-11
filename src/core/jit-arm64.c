@@ -997,6 +997,7 @@ jit_arm64_scan_vector_bases(struct jit_context *ctx)
 		case OP_VSHLI32X4: case OP_VSHRI32X4:
 		case OP_VADDF32X4: case OP_VSUBF32X4:
 		case OP_VMULF32X4: case OP_VDIVF32X4:
+		case OP_VMINS32X4: case OP_VMAXS32X4:
 			size = 4; break;
 		case OP_VORI32X4I:
 			size = 5; break;
@@ -3340,12 +3341,24 @@ jit_visit_vector_scalar_op(
         case OP_VAND128:
         case OP_VOR128:
         case OP_VXOR128:
+	case OP_VMINS32X4:
+	case OP_VMAXS32X4:
                 for (lane = 0; lane < 4; lane++) {
                         uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
                         uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
                         uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
                         LDR_W_IMM(REG_X3, REG_X5, a);
                         LDR_W_IMM(REG_X4, REG_X5, b);
+			if (op == OP_VMINS32X4 || op == OP_VMAXS32X4) {
+				/* cmp w3,w4; csel w3,w3,w4,le/ge */
+				if (!jit_put_word(ctx, 0x6b04007f) ||
+				    !jit_put_word(ctx, 0x1a800000 | (4u << 16) |
+					((uint32_t)(op == OP_VMINS32X4 ? 0xd : 0xa)
+					 << 12) | (3u << 5) | 3u))
+					return false;
+				STR_W_IMM(REG_X3, REG_X5, d);
+				continue;
+			}
                         switch (op) {
                         case OP_VADDI32X4:
                                 if (!jit_put_word(ctx, 0x0b000000 | (4u << 16) |
@@ -3650,6 +3663,18 @@ jit_visit_vector_op(
                                   ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
+	case OP_VMINS32X4:
+		/* smin vA.4s, vB.4s, vC.4s */
+		if (!jit_put_word(ctx, 0x4e206c00 | ((uint32_t)vc << 16) |
+				  ((uint32_t)vb << 5) | (uint32_t)va))
+			return false;
+		break;
+	case OP_VMAXS32X4:
+		/* smax vA.4s, vB.4s, vC.4s */
+		if (!jit_put_word(ctx, 0x4e206400 | ((uint32_t)vc << 16) |
+				  ((uint32_t)vb << 5) | (uint32_t)va))
+			return false;
+		break;
         case OP_VMULI32X4:
                 /* mul vA.4s, vB.4s, vC.4s */
                 if (!jit_put_word(ctx, 0x4ea09c00 | ((uint32_t)vc << 16) |
@@ -4132,6 +4157,8 @@ jit_visit_bytecode(
                 case OP_VDIVF32X4:
 		case OP_VCVTI32F32X4:
 		case OP_VCVTF32I32X4:
+		case OP_VMINS32X4:
+		case OP_VMAXS32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

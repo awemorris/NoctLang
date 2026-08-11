@@ -2,6 +2,7 @@
 
 # Run the mixed alpha-blend SIMD/JIT test under qemu-user.
 # Usage: ./run-simd-qemu.sh arm64 /path/to/noct [/path/to/sysroot]
+# NOCT_HOST may select the optimizer-enabled host compiler.
 
 set -eu
 
@@ -23,6 +24,12 @@ if [ -n "$sysroot" ]; then
 fi
 
 test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH= cd -- "$test_dir/../.." && pwd)
+host_noct=${NOCT_HOST:-"$repo_dir/build-static/noct"}
+if [ ! -x "$host_noct" ]; then
+    echo "optimizer-enabled host Noct not found: $host_noct" >&2
+    exit 2
+fi
 cd "$test_dir"
 
 case "$arch" in
@@ -45,13 +52,16 @@ fi
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf -- "$tmp_dir"' EXIT HUP INT TERM
+cp simd/drawimage/blend-alpha.noct "$tmp_dir/blend-alpha.noct"
+"$host_noct" --compile -O2 "$tmp_dir/blend-alpha.noct" >/dev/null 2>&1
+alpha_nb="$tmp_dir/blend-alpha.nb"
 
 run_case() {
     ceiling=$1
     env NOCT_JIT_SIMD_MAX=$ceiling \
         "$qemu" $qemu_args "$noct" -j -O2 \
-        simd/blend2.noct > "$tmp_dir/$ceiling.out" 2>&1
-    diff -u simd/blend2.noct.out "$tmp_dir/$ceiling.out"
+        "$alpha_nb" > "$tmp_dir/$ceiling.out" 2>&1
+    diff -u simd/drawimage/blend-alpha.noct.out "$tmp_dir/$ceiling.out"
 }
 
 for ceiling in $tiers; do
@@ -62,7 +72,7 @@ native_tier=${tiers##* }
 
 env NOCT_JIT_SIMD_MAX=$native_tier NOCT_JIT_SIMD_DEBUG=1 \
     "$qemu" $qemu_args "$noct" -j -O2 \
-    simd/blend2.noct > /dev/null 2> "$tmp_dir/caps"
+    "$alpha_nb" > /dev/null 2> "$tmp_dir/caps"
 if ! grep -q 'vector=1' "$tmp_dir/caps"; then
     echo "JIT did not report vector bytecode for $arch" >&2
     cat "$tmp_dir/caps" >&2

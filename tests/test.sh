@@ -23,6 +23,7 @@ Main suites:
   scoping          Block scope, let and TDZ behavior.
   app              .nap packaging and require resolution.
   thread           Thread API tests.
+  thread-stress    Repeat promotion/expansion races (default: 100 times).
   httpserver       HTTP server API tests.
   webapp           Web application framework tests.
   process          Process API tests.
@@ -74,6 +75,7 @@ class)           run_script run-class.sh "$@" ;;
 scoping)         run_script run-scoping.sh "$@" ;;
 app)             run_script run-app.sh "$@" ;;
 thread)          run_script run-thread.sh "$@" ;;
+thread-stress)   run_script run-thread-stress.sh "$@" ;;
 httpserver)      run_script run-httpserver.sh "$@" ;;
 webapp)          run_script run-webapp.sh "$@" ;;
 process)         run_script run-process.sh "$@" ;;

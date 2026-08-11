@@ -1,4 +1,4 @@
-/* Measure the corrected blend2 alpha kernel across a fixed pixel count. */
+/* Measure DRAW_IMAGE_ALPHA across a fixed pixel count and one call boundary. */
 
 #define _POSIX_C_SOURCE 200809L
 
@@ -120,7 +120,7 @@ main(int argc, char *argv[])
 	size_t pixels;
 
 	if (argc != 5) {
-		fprintf(stderr, "usage: %s LEVEL SAMPLES ITERATIONS benchmark.noct\n",
+		fprintf(stderr, "usage: %s LEVEL SAMPLES PIXELS blend-alpha.noct\n",
 			argv[0]);
 		return 2;
 	}
@@ -169,7 +169,7 @@ main(int argc, char *argv[])
 	if (!noct_pin_local(env, 6, &func_value, &arg[0], &arg[1], &arg[2],
 			    &arg[3], &ret) ||
 	    !noct_register_source(env, argv[4], source) ||
-	    !noct_get_global(env, "blend_bench", &func_value) ||
+	    !noct_get_global(env, "blend_alpha", &func_value) ||
 	    !noct_get_func(env, &func_value, &func) ||
 	    !noct_make_packed(env, &arg[0], NOCT_PACKED_UINT32,
 			      pixels * sizeof(*dst), pixels, dst) ||

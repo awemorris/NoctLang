@@ -1584,9 +1584,14 @@ promote_array_to_shared(
 	arr = follow_array_pointer(env, arr_val);
 
 	/*
-	 * Publish the shared flag.
+	 * Another thread may have observed the same thread-local array and
+	 * completed its promotion while this thread was waiting for the STW
+	 * executor.  Recheck only after acquiring STW and following the newest
+	 * storage.  Keep publish_array_shared() strict: this caller, rather than
+	 * the state-transition primitive, is what makes promotion idempotent.
 	 */
-	publish_array_shared(env, arr);
+	if (!atomic_load_acquire_int(&arr->shared))
+		publish_array_shared(env, arr);
 
 	/*
 	 * Ensure the boundary by waiting until all threads reach safepoints.
@@ -1630,9 +1635,14 @@ promote_dict_to_shared(
 	dict = follow_dict_pointer(env, dict_val);
 
 	/*
-	 * Publish the shared flag.
+	 * The pre-STW check in start_dict_read() is only an optimistic check.
+	 * A competing promoter can publish while this thread waits for the STW
+	 * executor, so recheck the newest storage under STW before making the
+	 * transition.  publish_dict_shared() deliberately retains its assertion
+	 * against a genuine double publication.
 	 */
-	publish_dict_shared(env, dict);
+	if (!atomic_load_acquire_int(&dict->shared))
+		publish_dict_shared(env, dict);
 
 	/*
 	 * Ensure the boundary by waiting until all threads reach safepoints.

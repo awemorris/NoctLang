@@ -769,6 +769,7 @@ struct vfor_plan {
 	int cache_count;
 	bool is_float;
 	bool force_scalar;
+	uint8_t native_requirements;
 };
 
 static struct hir_expr *lir_vfor_strip_par(struct hir_expr *e);
@@ -800,14 +801,26 @@ lir_vfor_expr_type(struct vfor_plan *plan, struct hir_expr *e)
 	e = lir_vfor_strip_par(e);
 	switch (e->type) {
 	case HIR_EXPR_TERM:
+	{
+		int i;
 		if (e->val.term.term->type == HIR_TERM_INT)
 			return NOCT_VALUE_INT;
 		if (e->val.term.term->type == HIR_TERM_FLOAT)
 			return NOCT_VALUE_FLOAT;
-		if (e->val.term.term->type == HIR_TERM_SYMBOL)
+		if (e->val.term.term->type == HIR_TERM_SYMBOL) {
+			for (i = 0; i < plan->inv_count; i++)
+				if (strcmp(plan->inv[i],
+					   e->val.term.term->val.symbol) == 0)
+					return plan->inv_type[i];
+			for (i = 0; i < plan->temp_count; i++)
+				if (strcmp(plan->temp[i],
+					   e->val.term.term->val.symbol) == 0)
+					return plan->temp_type[i];
 			return lir_vfor_local_type(plan,
 				e->val.term.term->val.symbol);
+		}
 		return -1;
+	}
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PGATHER32: return NOCT_VALUE_INT;
 	case HIR_EXPR_PLOADF32: return NOCT_VALUE_FLOAT;
@@ -936,8 +949,26 @@ lir_vfor_cache_eligible(struct vfor_plan *plan, struct hir_expr *e)
 	e = lir_vfor_strip_par(e);
 	if (e->type == HIR_EXPR_PLOAD32 || e->type == HIR_EXPR_PLOADF32)
 		return true;
-	return (e->type == HIR_EXPR_MUL || e->type == HIR_EXPR_MINUS) &&
-		lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT;
+	if (e->type == HIR_EXPR_CALL)
+		return hir_get_intrinsic_call(e) == HIR_INTRINSIC_INT_FROM ||
+		       hir_get_intrinsic_call(e) == HIR_INTRINSIC_FLOAT_FROM;
+	return (e->type == HIR_EXPR_PLUS || e->type == HIR_EXPR_MINUS ||
+		e->type == HIR_EXPR_MUL || e->type == HIR_EXPR_DIV) &&
+	       lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT;
+}
+
+static bool
+lir_vfor_cache_reads_body_temp(struct vfor_plan *plan, struct hir_expr *e)
+{
+	int i;
+	for (i = 0; i < plan->temp_count; i++) {
+		/* Caches are materialized at the loop header, before body-local
+		 * assignments.  Hoisting any expression that reads such a home is
+		 * invalid, not only the visibly stateful induction case. */
+		if (lir_vfor_expr_reads(e, plan->temp[i]))
+			return true;
+	}
+	return false;
 }
 
 static void
@@ -981,6 +1012,35 @@ lir_vfor_cache_collect(struct vfor_plan *plan, struct hir_expr *e)
 		lir_vfor_cache_collect(plan, e->val.binary.expr[0]);
 		lir_vfor_cache_collect(plan, e->val.binary.expr[1]);
 		break;
+	}
+}
+
+/* Count occurrences of needle in the same pure-expression walk used by
+ * cache collection.  Once a selected parent is materialized, all but one of
+ * its repeated evaluations disappear; this lets cache ranking charge that
+ * saving to nested candidates instead of selecting both parent and child. */
+static int
+lir_vfor_expr_occurrences(struct hir_expr *haystack, struct hir_expr *needle)
+{
+	haystack = lir_vfor_strip_par(haystack);
+	needle = lir_vfor_strip_par(needle);
+	if (lir_vfor_expr_equal(haystack, needle))
+		return 1;
+	switch (haystack->type) {
+	case HIR_EXPR_TERM:
+	case HIR_EXPR_VINDUCTF32:
+		return 0;
+	case HIR_EXPR_CALL:
+		return lir_vfor_expr_occurrences(haystack->val.call.arg[0], needle);
+	case HIR_EXPR_SELECT:
+		return lir_vfor_expr_occurrences(haystack->val.select.cond, needle) +
+		       lir_vfor_expr_occurrences(haystack->val.select.if_true, needle) +
+		       lir_vfor_expr_occurrences(haystack->val.select.if_false, needle);
+	case HIR_EXPR_PGATHER32:
+		return lir_vfor_expr_occurrences(haystack->val.gather.index, needle);
+	default:
+		return lir_vfor_expr_occurrences(haystack->val.binary.expr[0], needle) +
+		       lir_vfor_expr_occurrences(haystack->val.binary.expr[1], needle);
 	}
 }
 
@@ -1312,9 +1372,11 @@ lir_vfor_collect(struct vfor_plan *plan, struct hir_expr *e)
 		return true;
 	case HIR_EXPR_PGATHER32:
 		plan->force_scalar = true;
+		plan->native_requirements |= VINDEX_REQUIRE_GATHER;
 		return lir_vfor_collect(plan, e->val.gather.index);
 	case HIR_EXPR_VINDUCTF32:
 		plan->force_scalar = true;
+		plan->native_requirements |= VINDEX_REQUIRE_INDUCT;
 		/* state/step are scalar tmpvars encoded directly in the opcode */
 		return true;
 	case HIR_EXPR_SHL:
@@ -1412,6 +1474,58 @@ lir_vfor_compare_predicate(int hir_type)
 	case HIR_EXPR_GTE: return VCMP_GE;
 	default:           return -1;
 	}
+}
+
+/* Recognize the signed clamp shapes produced by transactional if-conversion.
+ * Keep this target-independent: the source has signed Noct ints even though
+ * the reference C kernel happens to use unsigned pixel intermediates. */
+static bool
+lir_vfor_select_minmax(struct vfor_plan *plan, struct hir_expr *e,
+			int *op, struct hir_expr **x, struct hir_expr **bound)
+{
+	struct hir_expr *cond;
+	struct hir_expr *l;
+	struct hir_expr *r;
+	struct hir_expr *t;
+	struct hir_expr *f;
+
+	if (e->type != HIR_EXPR_SELECT)
+		return false;
+	cond = lir_vfor_strip_par(e->val.select.cond);
+	if (cond->type != HIR_EXPR_LT && cond->type != HIR_EXPR_GT)
+		return false;
+	l = lir_vfor_strip_par(cond->val.binary.expr[0]);
+	r = lir_vfor_strip_par(cond->val.binary.expr[1]);
+	t = lir_vfor_strip_par(e->val.select.if_true);
+	f = lir_vfor_strip_par(e->val.select.if_false);
+	if (lir_vfor_expr_type(plan, l) != NOCT_VALUE_INT ||
+	    lir_vfor_expr_type(plan, r) != NOCT_VALUE_INT ||
+	    lir_vfor_expr_type(plan, t) != NOCT_VALUE_INT ||
+	    lir_vfor_expr_type(plan, f) != NOCT_VALUE_INT)
+		return false;
+
+	/* x > C ? C : x, or C < x ? C : x */
+	if ((cond->type == HIR_EXPR_GT &&
+	     lir_vfor_expr_equal(t, r) && lir_vfor_expr_equal(f, l)) ||
+	    (cond->type == HIR_EXPR_LT &&
+	     lir_vfor_expr_equal(t, l) && lir_vfor_expr_equal(f, r))) {
+		*op = OP_VMINS32X4;
+		*x = f;
+		*bound = t;
+		return true;
+	}
+
+	/* x < C ? C : x, or C > x ? C : x */
+	if ((cond->type == HIR_EXPR_LT &&
+	     lir_vfor_expr_equal(t, r) && lir_vfor_expr_equal(f, l)) ||
+	    (cond->type == HIR_EXPR_GT &&
+	     lir_vfor_expr_equal(t, l) && lir_vfor_expr_equal(f, r))) {
+		*op = OP_VMAXS32X4;
+		*x = f;
+		*bound = t;
+		return true;
+	}
+	return false;
 }
 
 static bool
@@ -1600,8 +1714,39 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 	case HIR_EXPR_SELECT:
 	{
 		int vm, vt, vf;
+		int minmax_op;
+		int vx, vb;
+		struct hir_expr *minmax_x;
+		struct hir_expr *minmax_bound;
 		struct hir_expr *t = lir_vfor_strip_par(e->val.select.if_true);
 		struct hir_expr *f = lir_vfor_strip_par(e->val.select.if_false);
+
+		if (lir_vfor_select_minmax(plan, e, &minmax_op,
+					    &minmax_x, &minmax_bound)) {
+			vx = lir_vfor_value_vreg(plan, minmax_x);
+			vb = lir_vfor_value_vreg(plan, minmax_bound);
+			if (vx < 0) {
+				if (!lir_vfor_expr(plan, dst, sp, minmax_x))
+					return false;
+				vx = dst;
+			}
+			if (vb < 0) {
+				if (vx == dst) {
+					vb = lir_vfor_physical_reg(plan, sp);
+					if (vb < 0 || !lir_vfor_expr(plan, vb, sp + 1,
+								   minmax_bound))
+						return false;
+				} else {
+					/* min/max is commutative: build the complex bound
+					 * in dst so legacy two-address lowering is safe. */
+					if (!lir_vfor_expr(plan, dst, sp, minmax_bound))
+						return false;
+					vb = vx;
+					vx = dst;
+				}
+			}
+			return lir_vfor_put3(minmax_op, 1, dst, 1, vx, 1, vb, 1);
+		}
 
 		if (!lir_vfor_expr(plan, dst, sp, e->val.select.cond))
 			return false;
@@ -1789,7 +1934,11 @@ lir_visit_vfor_block(
 	int start_tmpvar, stop_tmpvar, remaining_tmpvar, guard_tmpvar;
 	int scratch_tmpvar;
 	struct hir_stmt *stmt;
-	int i, pass, store_count;
+	int i, j, pick, best, best_count, best_score, score, store_count;
+	int effective_count, occurrences, selected_loads;
+	bool requires_maskstore;
+	bool cache_selected[VFOR_CACHE_CANDIDATE_MAX];
+	struct vfor_cache_entry cache_swap;
 
 	assert(block->type == HIR_BLOCK_FOR);
 	assert(block->val.for_.is_vector);
@@ -1804,6 +1953,8 @@ lir_visit_vfor_block(
 	plan.counter = block->val.for_.counter_symbol;
 	plan.counter_tmpvar = lir_get_local_index(block, plan.counter);
 	store_count = 0;
+	requires_maskstore = false;
+	memset(cache_selected, 0, sizeof(cache_selected));
 
 	/* Collect the plan (mirror of the HIR-side budget check). */
 	for (stmt = block->val.for_.inner->val.basic.stmt_list;
@@ -1838,6 +1989,7 @@ lir_visit_vfor_block(
 				return false;
 			lir_vfor_cache_collect(&plan, stmt->rhs);
 			if (stmt->lhs->type == HIR_EXPR_PMASKSTORE32) {
+				requires_maskstore = true;
 				if (!lir_vfor_collect(&plan,
 						      stmt->lhs->val.mask_store.mask))
 					return false;
@@ -1849,24 +2001,51 @@ lir_visit_vfor_block(
 	}
 
 	/* One-store vector bodies have no intervening memory clobber.  Select
-	   repeated loads first, then repeated floating blend expressions in
-	   source order (pix_a before inverse-alpha in blend2). */
+	 * repeated pure DAG nodes by saved emission work instead of source order.
+	 * Stable candidate index is the final tie-breaker, keeping bytecode
+	 * deterministic. */
 	if (store_count == 1) {
-		for (pass = 0; pass < 2 && plan.cache_count < VFOR_CACHE_MAX;
-		     pass++) {
-			for (i = 0; i < plan.cache_candidate_count &&
-			     plan.cache_count < VFOR_CACHE_MAX; i++) {
-				struct hir_expr *ce = lir_vfor_strip_par(
-					plan.cache_candidate[i].expr);
-				bool is_load = ce->type == HIR_EXPR_PLOAD32 ||
-					ce->type == HIR_EXPR_PLOADF32;
-				if (plan.cache_candidate[i].count < 2 ||
-				    (pass == 0) != is_load)
+		for (pick = 0; pick < VFOR_CACHE_MAX; pick++) {
+			best = -1;
+			best_count = 0;
+			best_score = 0;
+			for (i = 0; i < plan.cache_candidate_count; i++) {
+				if (cache_selected[i] ||
+				    plan.cache_candidate[i].count < 2 ||
+				    lir_vfor_cache_reads_body_temp(&plan,
+					plan.cache_candidate[i].expr))
 					continue;
-				plan.cache[plan.cache_count] =
-					plan.cache_candidate[i];
-				plan.cache_count++;
+				effective_count = plan.cache_candidate[i].count;
+				for (j = 0; j < plan.cache_count; j++) {
+					occurrences = lir_vfor_expr_occurrences(
+						plan.cache[j].expr,
+						plan.cache_candidate[i].expr);
+					if (occurrences > 0)
+						effective_count -=
+							(plan.cache[j].count - 1) *
+							occurrences;
+				}
+				if (effective_count < 2)
+					continue;
+				score = (effective_count - 1) *
+					plan.cache_candidate[i].size;
+				if (score > best_score ||
+				    (score == best_score && best >= 0 &&
+				     plan.cache_candidate[i].size >
+					plan.cache_candidate[best].size)) {
+					best = i;
+					best_count = effective_count;
+					best_score = score;
+				}
 			}
+			if (best < 0)
+				break;
+			cache_selected[best] = true;
+			plan.cache[plan.cache_count++] =
+				plan.cache_candidate[best];
+			/* Subsequent child scores must subtract only the evaluations
+			 * that remained when this parent cache was selected. */
+			plan.cache[plan.cache_count - 1].count = best_count;
 		}
 	}
 	i = plan.const_count + plan.inv_count + plan.temp_count;
@@ -1876,21 +2055,37 @@ lir_visit_vfor_block(
 		lir_fatal("SIMD: vreg budget exceeded.");
 		return false;
 	}
-	/* Current masked-store native lowering exists only on Arm64.  Encoding
-	   the full logical width selects the direct-scalar region tier on the
-	   smaller x86_64/i386/PPC mappings without architecture-dependent LIR. */
-	for (stmt = block->val.for_.inner->val.basic.stmt_list;
-	     stmt != NULL; stmt = stmt->next) {
-		if (stmt->lhs->type == HIR_EXPR_PMASKSTORE32) {
-			plan.required_vregs = 16;
-			break;
+	/* Materialization must be child-before-parent even though selection was
+	 * benefit ordered.  Expression size is a deterministic topological proxy
+	 * for the pure tree grammar. */
+	for (i = 1; i < plan.cache_count; i++) {
+		for (j = i; j > 0 && plan.cache[j - 1].size > plan.cache[j].size;
+		     j--) {
+			cache_swap = plan.cache[j - 1];
+			plan.cache[j - 1] = plan.cache[j];
+			plan.cache[j] = cache_swap;
 		}
 	}
+	if (!lir_vfor_plan_fits(&plan, block,
+		plan.const_count + plan.inv_count + plan.temp_count)) {
+		lir_fatal("SIMD: ranked cache dependency plan exceeded vreg budget.");
+		return false;
+	}
+	/* Masked stores no longer inflate the architecture-neutral logical
+	 * register requirement.  Backends decide whether the whole region has a
+	 * native masked-store tier before emitting its first vector operation. */
 	if (getenv("NOCT_LIR_VFOR_DEBUG") != NULL) {
+		selected_loads = 0;
+		for (i = 0; i < plan.cache_count; i++) {
+			struct hir_expr *ce = lir_vfor_strip_par(plan.cache[i].expr);
+			if (ce->type == HIR_EXPR_PLOAD32 ||
+			    ce->type == HIR_EXPR_PLOADF32)
+				selected_loads++;
+		}
 		fprintf(stderr,
-			"noct-lir-vfor: max=%d required=%d homes=%d candidates=%d caches=%d stack=%d\n",
+			"noct-lir-vfor: max=%d required=%d homes=%d candidates=%d caches=%d loads=%d stack=%d\n",
 			VFOR_VREG_MAX, plan.required_vregs, i, plan.cache_candidate_count,
-			plan.cache_count, plan.stack_base);
+			plan.cache_count, selected_loads, plan.stack_base);
 	}
 
 	/* Evaluate start/stop once. */
@@ -1953,7 +2148,9 @@ lir_visit_vfor_block(
 	    !lir_put_tmpvar((uint16_t)stop_tmpvar) ||
 	    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
 	    !lir_put_imm8((uint8_t)plan.required_vregs) || !lir_put_imm8(4) ||
-	    !lir_put_imm8(plan.force_scalar ? VINDEX_FORCE_SCALAR : 0))
+	    !lir_put_imm8((plan.force_scalar ? VINDEX_FORCE_SCALAR : 0) |
+			  plan.native_requirements |
+			  (requires_maskstore ? VINDEX_REQUIRE_MASKSTORE : 0)))
 		return false;
 
 	/*
@@ -1998,7 +2195,9 @@ lir_visit_vfor_block(
 	    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
 	    !lir_put_imm8((uint8_t)plan.required_vregs) || !lir_put_imm8(4) ||
 	    !lir_put_imm8(VINDEX_CURSOR_ONLY | VINDEX_WRITEBACK_STOP |
-		(plan.force_scalar ? VINDEX_FORCE_SCALAR : 0)))
+		(plan.force_scalar ? VINDEX_FORCE_SCALAR : 0) |
+		plan.native_requirements |
+		(requires_maskstore ? VINDEX_REQUIRE_MASKSTORE : 0)))
 		return false;
 
 	/* First recurrent body opcode. */
@@ -4291,7 +4490,8 @@ lir_put_opcode(
 	if ((opcode >= OP_VLOADI32X4 && opcode <= OP_VCVTF32I32X4) ||
 	    opcode == OP_VORI32X4I || opcode == OP_VFMAF32X4 ||
 	    opcode == OP_VCMPI32X4 || opcode == OP_VCMPF32X4 ||
-	    opcode == OP_VSELECT128)
+	    opcode == OP_VSELECT128 || opcode == OP_VMINS32X4 ||
+	    opcode == OP_VMAXS32X4)
 	    /* keep portable masked stores visible to runtime metadata */
 	    has_vector_ops = true;
 	if (opcode == OP_VMASKSTOREI32X4)
@@ -5239,6 +5439,17 @@ lir_dump(
 			printf("%04d: VSELECT128(vd:%u, vm:%u, vt:%u, vf:%u)\n",
 			       ofs, (unsigned)vd, (unsigned)vm, (unsigned)vt,
 			       (unsigned)vf);
+			break;
+		}
+		case OP_VMINS32X4:
+		case OP_VMAXS32X4:
+		{
+			uint8_t vd, va, vb;
+			IMM1(vd); IMM1(va); IMM1(vb);
+			printf("%04d: %s(vd:%u, va:%u, vb:%u)\n", ofs,
+			       opcode == OP_VMINS32X4 ? "VMINS32X4" :
+			       "VMAXS32X4", (unsigned)vd, (unsigned)va,
+			       (unsigned)vb);
 			break;
 		}
 		case OP_VMASKSTOREI32X4:

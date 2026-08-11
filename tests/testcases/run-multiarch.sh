@@ -17,7 +17,18 @@ fi
 case_dir="$root/tests/testcases"
 cd "$case_dir"
 log=$(mktemp)
-trap 'rm -f -- noct-arch out "$log"' EXIT HUP INT TERM
+blend_copy_nb=simd/drawimage/blend-copy.nb
+blend_add_nb=simd/drawimage/blend-add.nb
+trap 'rm -f -- noct-arch out "$log" "$blend_copy_nb" "$blend_copy_nb.out" "$blend_add_nb" "$blend_add_nb.out"' EXIT HUP INT TERM
+
+# Cross builds intentionally do not link the optimizer.  Produce optimized,
+# portable bytecode once with the host compiler so every target exercises the
+# persisted vector opcodes and its own interpreter/JIT lowering.
+"$NOCT" --compile -O2 simd/drawimage/blend-copy.noct >/dev/null 2>&1
+"$NOCT" --compile -O2 simd/drawimage/blend-add.noct >/dev/null 2>&1
+cp simd/drawimage/blend-copy.noct.out "$blend_copy_nb.out"
+cp simd/drawimage/blend-add.noct.out "$blend_add_nb.out"
+
 "$NOCT" -j0 multiarch.noct | tee "$log"
 if ! grep -Fx 'All available multi-architecture tests passed.' "$log" >/dev/null; then
     echo 'Multi-architecture tests failed.' >&2

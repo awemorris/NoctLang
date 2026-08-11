@@ -116,6 +116,19 @@ func arch_test(name, toolchain, qemu, cc) {
 	}
     }
 
+    // These optimized bytecode images were produced by the host compiler.
+    // Cross binaries do not link the optimizer, so successful execution also
+    // proves that vector metadata/opcodes survive bytecode persistence.  Copy
+    // covers OP_INC(step=4)/OP_SUBJNZ; add covers signed VMINS32X4/VMAXS32X4.
+    if (!run_testcase(qemu, "-j",
+                      "simd/drawimage/blend-copy.nb")) {
+        return 0;
+    }
+    if (!run_testcase(qemu, "-j",
+                      "simd/drawimage/blend-add.nb")) {
+        return 0;
+    }
+
     return 1;
 }
 

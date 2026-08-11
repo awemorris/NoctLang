@@ -18,5 +18,6 @@ out="$build_dir/jit-slab-test"
 # On x86_64 O3 the first function plus blend exceed 28KiB, while blend alone
 # fits. This exercises whole-function retry on a fresh slab.
 "$build_dir/noct" -O3 --jit-code-size=28672 \
-	"$root/tests/testcases/simd/blend2.noct" > "$build_dir/jit-slab-blend.out"
-diff "$root/tests/testcases/simd/blend2.noct.out" "$build_dir/jit-slab-blend.out"
+	"$root/tests/testcases/simd/drawimage/blend-alpha.noct" > "$build_dir/jit-slab-blend.out"
+diff "$root/tests/testcases/simd/drawimage/blend-alpha.noct.out" \
+	"$build_dir/jit-slab-blend.out"

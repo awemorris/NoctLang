@@ -255,10 +255,12 @@ struct jit_context {
 	int vector_hint_remaining_tmp;
 	int vector_hint_lanes;
 	int vector_hint_flags;
+	int vector_vreg_limit;
 	int vector_base_tmp[2];
 	uint32_t vector_base_last_lpc[2];
 	int vector_imm_value;
 	int vector_imm_shift;
+	int vector_imm_reg;
 
 	/* Top of the mapped code area. */
 	void *code_top;

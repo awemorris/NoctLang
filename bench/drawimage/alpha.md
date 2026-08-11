@@ -1,8 +1,8 @@
-# blend2 1000-pixel call benchmark
+# DRAW_IMAGE_ALPHA function-call benchmark
 
 Date: 2026-08-10
 
-`tests/testcases/simd/blend2.noct` の修正版と同じアルファブレンド式を、連続する
+`tests/testcases/simd/drawimage/blend-alpha.noct`のアルファブレンド式を、連続する
 1000 pixel に適用する一回の関数呼び出しについて測定した。
 
 ## 測定境界
@@ -11,7 +11,7 @@ Date: 2026-08-10
 - 最初に 1-pixel の呼び出しを行い、JIT code の commit を完了する。
 - 続いて測定対象と同じ 1000-pixel 呼び出しを5回 warmup する。
 - 入力バッファの初期化と各回の復元は測定区間外とする。
-- 単調時計を `blend_bench()` の呼び出し直前と復帰直後だけで読む。
+- 単調時計を `blend_alpha()` の呼び出し直前と復帰直後だけで読む。
 - O0 と O2 をそれぞれ50回測り、最速値と通常の偶数標本中央値
   （25番目と26番目の平均）を求める。
 - x86_64 はCPU 63へ固定した。M5はmacOS上で通常実行した。
@@ -36,8 +36,9 @@ mixed i32/f32 SIMDが組み合わさるため、倍率は単なるSIMD幅4より
 
 ## 再現用ファイル
 
-- `bench/blend2-call-bench.noct`: 修正版alpha kernel。
-- `bench/blend2-call-bench.c`: VM/JIT warmup、関数境界計時、50標本集計。
+- `tests/testcases/simd/drawimage/blend-alpha.noct`: テストとベンチで共有するalpha kernel。
+- `bench/drawimage/alpha-call-bench.c`: VM/JIT warmup、関数境界計時、標本集計。
+- `bench/drawimage/run-alpha.sh`: ビルドとO2/O3測定をまとめたrunner。
 
 Linux x86_64ではrelease buildの`libnoct.a`/`libnoctapi.a`へリンクし、
 macOS arm64では`macos-arm64` presetへ`NOCT_ENABLE_OPTIMIZER=ON`を追加した
@@ -172,3 +173,36 @@ The pre-existing Android Arm64 build directory could not be regenerated on
 the development host because its cached NDK toolchain path was `/build/...`;
 the native M5 build/test above provides the Arm64 regression gate instead.
 AVX2 x8 and wider loops remain future work.
+
+## Cache-ranking regression fix (2026-08-12)
+
+The draw-image follow-up initially changed the ALPHA cache selection from
+two packed loads plus `pix_a`/`pix_inv_a` to a nested parent/child set.  That
+caused two extra destination loads.  The wider AVX register map also rebuilt
+the opaque-alpha constant inside every iteration.  Together these changed the
+recurrent loop from 39 to 44 instructions and made the immediate pre-fix build
+about 6--7% slower than revision `97deff4` in an interleaved same-host test.
+
+Cache ranking now uses marginal benefit: repetitions removed by an already
+selected parent are subtracted from its child candidate.  The planner again
+selects both packed loads.  On AVX, an otherwise-unused physical vector
+register holds the opaque-alpha constant from the preheader while xmm15
+remains instruction-local scratch.  The recurrent O3 loop is back to 39
+instructions.
+
+The comparison below used CPU 63, 1,000,000 pixels, five warmups, 50 samples,
+and excluded JIT compilation.  It compares the clean `97deff4` worktree and
+the fixed worktree in one interleaved run; all checksums were `6236317`.
+
+| build | level | fastest | median |
+|---|---:|---:|---:|
+| `97deff4` | O2 | 1.051779 ms | 1.089400 ms |
+| fixed | O2 | 1.053492 ms | 1.080560 ms |
+| `97deff4` | O3 | 0.972543 ms | 1.006331 ms |
+| fixed | O3 | 0.966599 ms | 0.994790 ms |
+
+The fixed build is therefore at performance parity with the clean baseline
+(within about 1% in this short, shared-server measurement), while removing
+the reproducible 6--7% pre-fix regression.  The SIMD suite now asserts two
+selected packed-load caches and preheader immediate materialization so the
+same code-shape regression cannot pass on output correctness alone.

@@ -1,9 +1,10 @@
-// Regression for vector values that must remain live across the backedge.
+// DRAW_IMAGE_ALPHA regression for vector values that must remain live across
+// the backedge.  This is a supporting planner case, not a distinct kernel.
 func main() {
     let dst = Packed.uint32(13);
     let src = Packed.uint32(13);
     init_pixels(dst, src);
-    blend_multigroup(dst, src, 128, 13);
+    blend_alpha_multigroup(dst, src, 128, 13);
     for (i in 0..13) {
         print(dst[i]);
     }
@@ -23,8 +24,8 @@ func init_pixels(dst, src) {
     }
 }
 
-func blend_multigroup(dst: rpackeduint32, src: rpackeduint32,
-                      alpha: int, count: int) {
+func blend_alpha_multigroup(dst: rpackeduint32, src: rpackeduint32,
+                            alpha: int, count: int) {
     let alpha_float = alpha / 65025.0;
     for (i in 0..count) {
         let dst_pix = dst[i];

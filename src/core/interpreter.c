@@ -1505,6 +1505,22 @@ rt_visit_vselect128_op(struct rt_env *env, struct rt_func *func, uint32_t *pc)
 }
 
 static INLINE bool
+rt_visit_vminmaxs32x4_op(struct rt_env *env, struct rt_func *func,
+			 uint32_t *pc, bool is_max)
+{
+	int vd, va, vb;
+
+	UNUSED_PARAMETER(func);
+	GET_U8(&vd); GET_U8(&va); GET_U8(&vb);
+	if (vd >= 16 || va >= 16 || vb >= 16) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+	return is_max ? ex_vmaxs32x4_helper(env, vd, va, vb) :
+			ex_vmins32x4_helper(env, vd, va, vb);
+}
+
+static INLINE bool
 rt_visit_vmaskstorei32x4_op(struct rt_env *env, struct rt_func *func,
 			    uint32_t *pc)
 {
@@ -1900,6 +1916,12 @@ rt_visit_op(
 		break;
 	case OP_VGATHERI32X4_CHECKED:
 		if (!rt_visit_vgatheri32x4_checked_op(env, func, pc))
+			return false;
+		break;
+	case OP_VMINS32X4:
+	case OP_VMAXS32X4:
+		if (!rt_visit_vminmaxs32x4_op(env, func, pc,
+					       op == OP_VMAXS32X4))
 			return false;
 		break;
         default:

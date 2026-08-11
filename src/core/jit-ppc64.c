@@ -1026,7 +1026,11 @@ jit_visit_inc_op(
 
                 /* env->frame->tmpvar[dst].val.i++ */
                 /* lwz r4, 8(r3) */     IW(0x08008380);
-                /* addi r4, r4, step */ IW(0x00008438 | ((uint32_t)step << 16));
+		/* IW is byte-oriented: place the signed I-form immediate with
+		 * lo16(), rather than shifting the host integer into ISA bit 16.
+		 * The latter encoded step 1 as 256 on both PPC endian variants. */
+		/* addi r4, r4, step */ IW(0x00008438 |
+					 lo16((uint32_t)step));
                 /* stw r4, 8(r3) */     IW(0x08008390);
         }
 
@@ -1074,7 +1078,9 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 	ASM {
 		IW(0x00006038 | lo16((uint32_t)value)); IW(0x147a637c);
 		IW(0x08008380);
-		IW(0x00008438 | ((uint32_t)(uint16_t)(-(int16_t)decrement) << 16));
+		/* addi r4, r4, -decrement (byte-oriented signed imm16) */
+		IW(0x00008438 |
+		   lo16((uint32_t)(int32_t)(-(int16_t)decrement)));
 		IW(0x08008390); IW(0x0000042c);
 	}
 	ctx->branch_patch[ctx->branch_patch_count].code=ctx->code;
@@ -2950,6 +2956,8 @@ jit_put_altivec_op(struct jit_context *ctx, int op, int dst, int src1, int src2)
         case OP_VMOV128:    base = 0x10000484; src2 = src1; break; /* vor */
         case OP_VADDI32X4:  base = 0x10000080; break; /* vadduwm */
         case OP_VSUBI32X4:  base = 0x10000480; break; /* vsubuwm */
+        case OP_VMINS32X4:  base = 0x10000382; break; /* vminsw */
+        case OP_VMAXS32X4:  base = 0x10000182; break; /* vmaxsw */
         case OP_VAND128:    base = 0x10000404; break;
         case OP_VOR128:     base = 0x10000484; break;
         case OP_VXOR128:    base = 0x100004c4; break;
@@ -2985,6 +2993,8 @@ jit_altivec_supports_op(int op)
         case OP_VMOV128:
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
+        case OP_VMINS32X4:
+        case OP_VMAXS32X4:
         case OP_VAND128:
         case OP_VOR128:
         case OP_VXOR128:
@@ -3093,6 +3103,12 @@ jit_put_vector_scalar_op(struct jit_context *ctx, int op,
 		return true;
 	case OP_VCVTF32I32X4:
 		ASM_BINARY_OP(noct_ex_vcvtf32i32x4_helper);
+		return true;
+	case OP_VMINS32X4:
+		ASM_BINARY_OP(noct_ex_vmins32x4_helper);
+		return true;
+	case OP_VMAXS32X4:
+		ASM_BINARY_OP(noct_ex_vmaxs32x4_helper);
 		return true;
         case OP_VADDI32X4:
         case OP_VSUBI32X4:
@@ -3588,6 +3604,8 @@ jit_visit_bytecode(
                 case OP_VMOV128:
                 case OP_VADDI32X4:
                 case OP_VSUBI32X4:
+                case OP_VMINS32X4:
+                case OP_VMAXS32X4:
                 case OP_VMULI32X4:
                 case OP_VAND128:
                 case OP_VOR128:

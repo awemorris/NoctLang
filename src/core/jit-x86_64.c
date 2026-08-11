@@ -50,6 +50,37 @@ static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
 static uint32_t jit_detect_simd_caps(void);
 
+static void
+jit_x86_64_dump_code(struct jit_context *ctx, void *generated_end)
+{
+	const char *dir = getenv("NOCT_JIT_DUMP_DIR");
+	char name[96];
+	char path[512];
+	const char *src;
+	size_t i, n;
+	FILE *fp;
+
+	if (dir == NULL || dir[0] == '\0')
+		return;
+	src = ctx->func->name != NULL ? ctx->func->name : "anonymous";
+	for (i = 0; src[i] != '\0' && i + 1 < sizeof(name); i++) {
+		char c = src[i];
+		name[i] = (c >= 'a' && c <= 'z') ||
+			  (c >= 'A' && c <= 'Z') ||
+			  (c >= '0' && c <= '9') || c == '_' || c == '-' ? c : '_';
+	}
+	name[i] = '\0';
+	if (snprintf(path, sizeof(path), "%s/%s-%p.x86_64.bin", dir, name,
+		     (void *)ctx->func->bytecode) >= (int)sizeof(path))
+		return;
+	fp = fopen(path, "wb");
+	if (fp == NULL)
+		return;
+	n = (size_t)((uint8_t *)generated_end - (uint8_t *)ctx->code_top);
+	(void)fwrite(ctx->code_top, 1, n, fp);
+	(void)fclose(fp);
+}
+
 /*
  * Generate a JIT-compiled code for a function.
  */
@@ -96,6 +127,7 @@ jit_build(
 			if (!jit_patch_branch(&ctx, i))
 				return false;
 		}
+		jit_x86_64_dump_code(&ctx, generated_end);
 		jit_slab_finish(env, slab, generated_end);
 		if (getenv("NOCT_JIT_CODEGEN_DEBUG") != NULL) {
 			fprintf(stderr,
@@ -802,6 +834,13 @@ jit_x86_64_put_vex_shift(struct jit_context *ctx, int ext, int dst,
 		jit_put_byte(ctx, imm);
 }
 
+static INLINE void
+jit_x86_64_patch_local_rel32(uint8_t *disp, uint8_t *target)
+{
+	int32_t rel = (int32_t)(target - (disp + 4));
+	memcpy(disp, &rel, sizeof(rel));
+}
+
 static uint16_t
 jit_x86_64_read_u16(const uint8_t *p)
 {
@@ -829,6 +868,7 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 	ctx->vector_base_tmp[1] = -1;
 	ctx->vector_imm_value = -1;
 	ctx->vector_imm_shift = -1;
+	ctx->vector_imm_reg = -1;
 	body_lpc = ctx->lpc;
 	p = body_lpc;
 	inc_count = 0;
@@ -863,6 +903,7 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 		case OP_VXOR128: case OP_VSHLI32X4: case OP_VSHRI32X4:
 		case OP_VADDF32X4: case OP_VSUBF32X4:
 		case OP_VMULF32X4: case OP_VDIVF32X4:
+		case OP_VMINS32X4: case OP_VMAXS32X4:
 			size = 4; break;
 		case OP_VFMAF32X4:
 			if ((ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0)
@@ -873,6 +914,16 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 		case OP_VSELECT128:
 			size = 5; break;
 		case OP_VMASKSTOREI32X4:
+			if (p + 7 > ctx->func->bytecode_size ||
+			    (ctx->simd_caps & JIT_SIMD_CAP_AVX) == 0) {
+				/* A helper call cannot be mixed with register-canonical
+				 * values.  Select the portable tier for the whole region. */
+				ctx->simd_caps = 0;
+				return false;
+			}
+			base = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			ofs = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
+			if (ofs != (uint16_t)index_tmp) return false;
 			size = 7; break;
 		case OP_VINDUCTF32X4:
 			size = 6; break;
@@ -931,19 +982,58 @@ jit_visit_vindex_hint_op(struct jit_context *ctx)
 	int a, b, c, required_vregs, lanes, flags;
 	int ofs, base_ofs;
 	uint32_t imm_value;
+	int portable_force;
 	CONSUME_TMPVAR(a); CONSUME_TMPVAR(b); CONSUME_TMPVAR(c);
 	CONSUME_IMM8(required_vregs); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
-	if (required_vregs > 13 || (flags & VINDEX_FORCE_SCALAR) != 0)
+	ctx->vector_vreg_limit =
+		(ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0 ? 15 : 13;
+	portable_force = (flags & VINDEX_FORCE_SCALAR) != 0;
+	if (portable_force &&
+	    (flags & (VINDEX_REQUIRE_INDUCT | VINDEX_REQUIRE_GATHER)) != 0 &&
+	    (flags & ~(VINDEX_CURSOR_ONLY | VINDEX_WRITEBACK_STOP |
+		       VINDEX_FORCE_SCALAR | VINDEX_REQUIRE_INDUCT |
+		       VINDEX_REQUIRE_GATHER | VINDEX_REQUIRE_MASKSTORE)) == 0 &&
+	    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0)
+		portable_force = 0;
+	if (required_vregs > ctx->vector_vreg_limit ||
+	    portable_force ||
+	    ((flags & VINDEX_REQUIRE_MASKSTORE) != 0 &&
+	     (ctx->simd_caps & JIT_SIMD_CAP_AVX) == 0))
 		ctx->simd_caps = 0;
 	ctx->vector_hint_active = !IS_MSABI && lanes > 0 &&
 		(ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0 &&
 		(flags & VINDEX_CURSOR_ONLY) != 0 &&
 		jit_x86_64_scan_vector_loop(ctx, a, c, lanes);
+	ctx->vector_imm_reg = -1;
+	if (ctx->vector_hint_active && ctx->vector_imm_value >= 0) {
+		if (ctx->vector_vreg_limit <= 13)
+			ctx->vector_imm_reg = 15;
+		else if (required_vregs < ctx->vector_vreg_limit)
+			/* Logical registers occupy [0, required_vregs).  Keep xmm15
+			 * instruction-local and use the first otherwise-unused register. */
+			ctx->vector_imm_reg = required_vregs;
+	}
 	ctx->vector_hint_index_tmp = a;
 	ctx->vector_hint_stop_tmp = b;
 	ctx->vector_hint_remaining_tmp = c;
 	ctx->vector_hint_lanes = lanes;
 	ctx->vector_hint_flags = flags;
+	if ((flags & VINDEX_CURSOR_ONLY) != 0 &&
+	    getenv("NOCT_JIT_VECTOR_DEBUG") != NULL) {
+		int native = !IS_MSABI &&
+			(ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0 &&
+			required_vregs <= ctx->vector_vreg_limit;
+		fprintf(stderr,
+			"noct-jit-vector: func=%s required=%d peak=%d physical=%d scratch=%d spills=0 mode=%s cursor=%s imm=%s\n",
+			ctx->func->name != NULL ? ctx->func->name : "?",
+			required_vregs, required_vregs,
+			native ? required_vregs : 0,
+			native ? (ctx->vector_vreg_limit > 13 ? 1 : 3) : 0,
+			native ? "native" : "portable",
+			ctx->vector_hint_active ? "register" : "memory",
+			ctx->vector_imm_value < 0 ? "none" :
+			ctx->vector_imm_reg >= 0 ? "preheader" : "inline");
+	}
 	if (!ctx->vector_hint_active)
 		return true;
 	/* rax=stop; adjusted bases are raw_base + stop*4. */
@@ -968,15 +1058,22 @@ jit_visit_vindex_hint_op(struct jit_context *ctx)
 		IB(0x49); IB(0x63); IB(0xbf); ID((uint32_t)(ofs + 8));
 		IB(0x48); IB(0xf7); IB(0xdf);
 	}
-	if (ctx->vector_imm_value >= 0) {
+	if (ctx->vector_imm_reg >= 0) {
 		imm_value = (uint32_t)ctx->vector_imm_value <<
 			    ((uint32_t)ctx->vector_imm_shift & 31u);
-		/* mov imm,eax; movd eax,xmm15; pshufd $0,xmm15,xmm15. */
-		ASM {
-			IB(0xb8); ID(imm_value);
-			IB(0x66); IB(0x44); IB(0x0f); IB(0x6e); IB(0xf8);
-			IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xff); IB(0x00);
-		}
+		/* mov imm,eax; movd eax,xmmN; pshufd $0,xmmN,xmmN. */
+		ASM { IB(0xb8); ID(imm_value); IB(0x66); }
+		if ((ctx->vector_imm_reg & 8) != 0)
+			ASM { IB(0x44); }
+		ASM { IB(0x0f); IB(0x6e);
+		      IB((uint8_t)(0xc0 | ((ctx->vector_imm_reg & 7) << 3)));
+		      IB(0x66); }
+		if ((ctx->vector_imm_reg & 8) != 0)
+			ASM { IB(0x45); }
+		ASM { IB(0x0f); IB(0x70);
+		      IB((uint8_t)(0xc0 | ((ctx->vector_imm_reg & 7) << 3) |
+				   (ctx->vector_imm_reg & 7)));
+		      IB(0x00); }
 	}
 	return true;
 }
@@ -1046,7 +1143,6 @@ jit_visit_vori32x4i_op(struct jit_context *ctx)
 {
 	int dst, src, imm, shift;
 	uint32_t value;
-	int k;
 	int src1, src2;
 
 	CONSUME_IMM8(dst); CONSUME_IMM8(src);
@@ -1061,43 +1157,38 @@ jit_visit_vori32x4i_op(struct jit_context *ctx)
 		ASM_BINARY_OP(ex_vori32x4i_helper);
 		return true;
 	}
-	if (dst >= 13 || src >= 13) {
+	if (dst >= ctx->vector_vreg_limit || src >= ctx->vector_vreg_limit) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
-	if (ctx->vector_hint_active &&
+	if (ctx->vector_hint_active && ctx->vector_imm_reg >= 0 &&
 	    ctx->vector_imm_value == imm &&
 	    ctx->vector_imm_shift == shift) {
 		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
 			return jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xeb,
-						      dst, src, 15);
+						      dst, src, ctx->vector_imm_reg);
 		}
 		if (dst != src && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
 							  0x6f, dst, src))
 			return false;
-		/* por xmm15, xmmDst (xmm15 selected by REX.B). */
-		return jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, dst, 15);
+		return jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, dst,
+					       ctx->vector_imm_reg);
 	}
+	value = (uint32_t)imm << ((uint32_t)shift & 31);
+	/* In the wide AVX map xmm15 is the sole instruction-local scratch.
+	 * Materialize this operation's immediate just before use so compare or
+	 * select may freely reuse xmm15 earlier in the loop. */
+	ASM {
+		IB(0xb8); ID(value);
+		IB(0x66); IB(0x44); IB(0x0f); IB(0x6e); IB(0xf8);
+		IB(0x66); IB(0x45); IB(0x0f); IB(0x70); IB(0xff); IB(0x00);
+	}
+	if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0)
+		return jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xeb, dst, src, 15);
 	if (dst != src && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
 							  dst, src))
 		return false;
-	value = (uint32_t)imm << ((uint32_t)shift & 31);
-	/* Use a temporary 16-byte stack constant; no vector register is
-	   clobbered and no helper call crosses the live SIMD region. */
-	ASM { IB(0x48); IB(0x83); IB(0xec); IB(0x10); }
-	for (k = 0; k < 4; k++) {
-		if (k == 0) {
-			ASM { IB(0xc7); IB(0x04); IB(0x24); ID(value); }
-		} else {
-			ASM { IB(0xc7); IB(0x44); IB(0x24); IB((uint8_t)(k * 4)); ID(value); }
-		}
-	}
-	ASM { IB(0x66); }
-	if ((dst & 8) != 0) { ASM { IB(0x44); } }
-	ASM { IB(0x0f); IB(0xeb);
-	      IB((uint8_t)(0x04 | ((dst & 7) << 3))); IB(0x24);
-	      IB(0x48); IB(0x83); IB(0xc4); IB(0x10); }
-	return true;
+	return jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, dst, 15);
 }
 
 static INLINE bool
@@ -1122,8 +1213,10 @@ jit_visit_vfmaf32x4_op(struct jit_context *ctx)
 		ASM_BINARY_OP(ex_vfmaf32x4_helper);
 		return true;
 	}
-	if (dst < 0 || dst >= 13 || src1 < 0 || src1 >= 13 ||
-	    src2 < 0 || src2 >= 13 || addend < 0 || addend >= 13) {
+	if (dst < 0 || dst >= ctx->vector_vreg_limit ||
+	    src1 < 0 || src1 >= ctx->vector_vreg_limit ||
+	    src2 < 0 || src2 >= ctx->vector_vreg_limit ||
+	    addend < 0 || addend >= ctx->vector_vreg_limit) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
@@ -1174,9 +1267,47 @@ jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
 		ASM_BINARY_OP(helper);
 		return true;
 	}
+	if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+		if (dst >= ctx->vector_vreg_limit ||
+		    src1 >= ctx->vector_vreg_limit ||
+		    src2 >= ctx->vector_vreg_limit)
+			goto broken_vcmp;
+		left = src1;
+		right = src2;
+		if (is_float) {
+			switch (pred) {
+			case VCMP_EQ: imm = 0; break;
+			case VCMP_NE: imm = 4; break;
+			case VCMP_LT: imm = 1; break;
+			case VCMP_LE: imm = 2; break;
+			case VCMP_GT: imm = 1; left = src2; right = src1; break;
+			case VCMP_GE: imm = 2; left = src2; right = src1; break;
+			default: return false;
+			}
+			return jit_x86_64_put_vex_rrr(ctx, 1, 0, 0xc2,
+						      dst, left, right) &&
+			       jit_put_byte(ctx, (uint8_t)imm);
+		}
+		if (pred == VCMP_LT || pred == VCMP_GE) {
+			left = src2;
+			right = src1;
+		}
+		if (!jit_x86_64_put_vex_rrr(ctx, 1, 1,
+				pred == VCMP_EQ || pred == VCMP_NE ? 0x76 : 0x66,
+				dst, left, right))
+			return false;
+		if (pred == VCMP_NE || pred == VCMP_LE || pred == VCMP_GE) {
+			/* Logical vregs occupy xmm0..xmm14 in the wide map. */
+			if (!jit_x86_64_put_vex_rrr(ctx, 1, 1, 0x76,
+						      15, 15, 15) ||
+			    !jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xef,
+						      dst, dst, 15))
+				return false;
+		}
+		return true;
+	}
 	if (dst >= 13 || src1 >= 13 || src2 >= 13) {
-		rt_error(ctx->env, BROKEN_BYTECODE);
-		return false;
+		goto broken_vcmp;
 	}
 	if (is_float) {
 		left = src1;
@@ -1221,6 +1352,10 @@ jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
 						    dst, 13))
 		return false;
 	return true;
+
+broken_vcmp:
+	rt_error(ctx->env, BROKEN_BYTECODE);
+	return false;
 }
 
 static INLINE bool
@@ -1241,9 +1376,22 @@ jit_visit_vselect128_op(struct jit_context *ctx)
 		ASM_BINARY_OP(ex_vselect128_helper);
 		return true;
 	}
+	if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+		if (dst >= ctx->vector_vreg_limit ||
+		    mask >= ctx->vector_vreg_limit ||
+		    src1 >= ctx->vector_vreg_limit ||
+		    src2 >= ctx->vector_vreg_limit)
+			goto broken_vselect;
+		/* xmm15 is instruction-local: true&mask, then false&~mask. */
+		return jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xdb,
+						      15, mask, src1) &&
+		       jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xdf,
+						      dst, mask, src2) &&
+		       jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xeb,
+						      dst, dst, 15);
+	}
 	if (dst >= 13 || mask >= 13 || src1 >= 13 || src2 >= 13) {
-		rt_error(ctx->env, BROKEN_BYTECODE);
-		return false;
+		goto broken_vselect;
 	}
 	/* xmm13 = mask & true; xmm14 = ~mask & false. */
 	if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, mask) ||
@@ -1256,21 +1404,51 @@ jit_visit_vselect128_op(struct jit_context *ctx)
 						    dst, 13))
 		return false;
 	return true;
+
+broken_vselect:
+	rt_error(ctx->env, BROKEN_BYTECODE);
+	return false;
 }
 
 static INLINE bool
 jit_visit_vmaskstorei32x4_op(struct jit_context *ctx)
 {
 	int dst, src1, src2;
-	int mask;
+	int mask, base, ofs, cursor;
 	CONSUME_TMPVAR(dst); CONSUME_TMPVAR(src1);
 	CONSUME_IMM8(src2); CONSUME_IMM8(mask);
 	if (src2 < 0 || src2 >= 16 || mask < 0 || mask >= 16) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
-	/* LIR requests 16 logical vregs for this region, so x86_64 reaches
-	   this handler only in the memory-canonical direct-scalar tier. */
+	if (!IS_MSABI && (ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+		if (src2 >= ctx->vector_vreg_limit ||
+		    mask >= ctx->vector_vreg_limit) {
+			rt_error(ctx->env, BROKEN_BYTECODE);
+			return false;
+		}
+		cursor = -1;
+		if (ctx->vector_hint_active) {
+			if (ctx->vector_base_tmp[0] == dst) cursor = 0;
+			else if (ctx->vector_base_tmp[1] == dst) cursor = 1;
+		}
+		if (cursor < 0) {
+			base = dst * (int)sizeof(struct rt_value);
+			ofs = src1 * (int)sizeof(struct rt_value);
+			ASM {
+				IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+				IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+			}
+		}
+		/* VEX.128.66.0f38.WIG 2e /r: vvvv=mask, reg=data. */
+		if (!jit_x86_64_put_vex3(ctx, 2, 1, src2, 0, mask, true) ||
+		    !jit_put_byte(ctx, 0x2e) ||
+		    !jit_put_byte(ctx, (uint8_t)(0x04 | ((src2 & 7) << 3))) ||
+		    !jit_put_byte(ctx, (uint8_t)(cursor == 0 ? 0xbb :
+						 cursor == 1 ? 0xbe : 0x88)))
+			return false;
+		return true;
+	}
 	if ((ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
@@ -1284,12 +1462,45 @@ static INLINE bool
 jit_visit_vinductf32x4_op(struct jit_context *ctx)
 {
 	int dst, src1, src2;
+	int state_ofs, step_ofs, lane;
 	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1); CONSUME_TMPVAR(src2);
 	if (dst < 0 || dst >= 16) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
-	ASM_BINARY_OP(ex_vinductf32x4_helper);
+	if (IS_MSABI || (ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
+		ASM_BINARY_OP(ex_vinductf32x4_helper);
+		return true;
+	}
+	if (dst >= ctx->vector_vreg_limit) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	state_ofs = src1 * (int)sizeof(struct rt_value) + 8;
+	step_ofs = src2 * (int)sizeof(struct rt_value) + 8;
+	/* xmm15 is the scalar recurrent state.  Each addss rounds before the
+	 * next lane and the fourth result is written back exactly as the helper
+	 * specifies. */
+	ASM {
+		IB(0xf3); IB(0x45); IB(0x0f); IB(0x10); IB(0xbf);
+		ID((uint32_t)state_ofs);
+	}
+	if (!jit_x86_64_put_vex_rrr(ctx, 1, 1, 0xef, dst, dst, dst))
+		return false;
+	for (lane = 0; lane < 4; lane++) {
+		if (!jit_x86_64_put_vex_rrr(ctx, 3, 1, 0x21,
+						      dst, dst, 15) ||
+		    !jit_put_byte(ctx, (uint8_t)(lane << 4)))
+			return false;
+		ASM {
+			IB(0xf3); IB(0x45); IB(0x0f); IB(0x58); IB(0xbf);
+			ID((uint32_t)step_ofs);
+		}
+	}
+	ASM {
+		IB(0xf3); IB(0x45); IB(0x0f); IB(0x11); IB(0xbf);
+		ID((uint32_t)state_ofs);
+	}
 	return true;
 }
 
@@ -1297,14 +1508,85 @@ static INLINE bool
 jit_visit_vgatheri32x4_checked_op(struct jit_context *ctx)
 {
 	int dst, src1, plen, vi, src2;
+	int base_ofs, plen_ofs, lane;
+	uint32_t vbase;
+	uint8_t *fail_patch[8];
+	uint8_t *done_patch;
+	uint8_t *fail_target;
+	uint8_t *done_target;
+	int fail_count;
 	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1);
 	CONSUME_TMPVAR(plen); CONSUME_IMM8(vi);
 	if (dst < 0 || dst >= 16 || vi < 0 || vi >= 16) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
+	if (IS_MSABI || (ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
+		src2 = (plen << 8) | vi;
+		ASM_BINARY_OP(ex_vgatheri32x4_checked_helper);
+		return true;
+	}
+	if (dst >= ctx->vector_vreg_limit || vi >= ctx->vector_vreg_limit) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	base_ofs = src1 * (int)sizeof(struct rt_value) + 8;
+	plen_ofs = plen * (int)sizeof(struct rt_value) + 8;
+	vbase = (uint32_t)offsetof(struct rt_env, vreg) + (uint32_t)vi * 16;
+	fail_count = 0;
+	ASM {
+		/* rax=packed bytes, edx=element count. */
+		IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)base_ofs);
+		IB(0x41); IB(0x8b); IB(0x97); ID((uint32_t)plen_ofs);
+	}
+	for (lane = 0; lane < 4; lane++) {
+		/* pextrd ecx,xmmVi,lane */
+		ASM { IB(0x66); }
+		if ((vi & 8) != 0) { ASM { IB(0x44); } }
+		ASM {
+			IB(0x0f); IB(0x3a); IB(0x16);
+			IB((uint8_t)(0xc1 | ((vi & 7) << 3)));
+			IB((uint8_t)lane);
+			IB(0x85); IB(0xc9);             /* test ecx,ecx */
+			IB(0x0f); IB(0x88);             /* js fail */
+		}
+		fail_patch[fail_count++] = (uint8_t *)ctx->code;
+		if (!jit_put_dword(ctx, 0)) return false;
+		ASM {
+			IB(0x39); IB(0xd1);             /* cmp ecx,edx */
+			IB(0x0f); IB(0x83);             /* jae fail */
+		}
+		fail_patch[fail_count++] = (uint8_t *)ctx->code;
+		if (!jit_put_dword(ctx, 0)) return false;
+		ASM { IB(0x8b); IB(0x0c); IB(0x88); } /* mov ecx,[rax+rcx*4] */
+		ASM { IB(0x66); }
+		if ((dst & 8) != 0) { ASM { IB(0x44); } }
+		ASM {
+			IB(0x0f); IB(0x3a); IB(0x22);
+			IB((uint8_t)(0xc1 | ((dst & 7) << 3)));
+			IB((uint8_t)lane);
+		}
+	}
+	ASM { IB(0xe9); }
+	done_patch = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0)) return false;
+
+	fail_target = (uint8_t *)ctx->code;
+	for (lane = 0; lane < fail_count; lane++)
+		jit_x86_64_patch_local_rel32(fail_patch[lane], fail_target);
+	/* Cold failure: synchronize only the index vector required by the
+	 * canonical helper, which rechecks lanes in source order and preserves
+	 * the existing diagnostic text. */
+	ASM { IB(0xf3); }
+	ASM { IB((uint8_t)((vi & 8) != 0 ? 0x45 : 0x41)); }
+	ASM {
+		IB(0x0f); IB(0x7f);
+		IB((uint8_t)(0x86 | ((vi & 7) << 3))); ID(vbase);
+	}
 	src2 = (plen << 8) | vi;
 	ASM_BINARY_OP(ex_vgatheri32x4_checked_helper);
+	done_target = (uint8_t *)ctx->code;
+	jit_x86_64_patch_local_rel32(done_patch, done_target);
 	return true;
 }
 
@@ -3194,11 +3476,22 @@ jit_visit_vector_scalar_op(
         case OP_VAND128:
         case OP_VOR128:
         case OP_VXOR128:
+	case OP_VMINS32X4:
+	case OP_VMAXS32X4:
                 for (lane = 0; lane < 4; lane++) {
                         uint32_t a = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
                         uint32_t b = vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4;
                         uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
                         IB(0x41); IB(0x8b); IB(0x86); ID(a);
+			if (op == OP_VMINS32X4 || op == OP_VMAXS32X4) {
+				/* cmp b,eax; signed min uses cmovg, max cmovl. */
+				IB(0x41); IB(0x3b); IB(0x86); ID(b);
+				IB(0x41); IB(0x0f);
+				IB((uint8_t)(op == OP_VMINS32X4 ? 0x4f : 0x4c));
+				IB(0x86); ID(b);
+				IB(0x41); IB(0x89); IB(0x86); ID(d);
+				continue;
+			}
                         IB(0x41);
                         switch (op) {
                         case OP_VADDI32X4: IB(0x03); IB(0x86); ID(b); break;
@@ -3258,6 +3551,7 @@ jit_visit_vector_op(
         int b;
         int c;
         int inline_ok;
+	int vreg_limit;
 
 	/* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
 	   receive an explicitly tested save area.  SysV needs only SSE2;
@@ -3305,40 +3599,42 @@ jit_visit_vector_op(
                 break;
         }
 
-        if (!inline_ok)
-                return jit_visit_vector_scalar_op(ctx, op, a, b, c);
+	if (!inline_ok)
+		return jit_visit_vector_scalar_op(ctx, op, a, b, c);
+	vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
 
-	/* Native SysV mapping reserves xmm13/xmm14 for SSE2 multiply
-	 * scratch and xmm15 for the opaque-alpha invariant. */
+	/* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+	 * non-destructive forms and admits logical xmm0..xmm14, reserving only
+	 * xmm15 as instruction-local scratch. */
 	switch (op) {
 	case OP_VLOADI32X4:
 	case OP_VLOADF32X4:
 	case OP_VSPLATI32:
 	case OP_VSPLATF32:
-		if (a < 0 || a >= 13) goto broken_vreg;
+		if (a < 0 || a >= vreg_limit) goto broken_vreg;
 		break;
 	case OP_VSTOREI32X4:
 	case OP_VSTOREF32X4:
-		if (c < 0 || c >= 13) goto broken_vreg;
+		if (c < 0 || c >= vreg_limit) goto broken_vreg;
 		break;
 	case OP_VGETLANEI32:
 	case OP_VGETLANEF32:
-		if (b < 0 || b >= 13) goto broken_vreg;
+		if (b < 0 || b >= vreg_limit) goto broken_vreg;
 		break;
 	case OP_VMOV128:
 	case OP_VCVTI32F32X4:
 	case OP_VCVTF32I32X4:
-		if (a < 0 || a >= 13 || b < 0 || b >= 13)
+		if (a < 0 || a >= vreg_limit || b < 0 || b >= vreg_limit)
 			goto broken_vreg;
 		break;
 	case OP_VSHLI32X4:
 	case OP_VSHRI32X4:
-		if (a < 0 || a >= 13 || b < 0 || b >= 13)
+		if (a < 0 || a >= vreg_limit || b < 0 || b >= vreg_limit)
 			goto broken_vreg;
 		break;
 	default:
-		if (a < 0 || a >= 13 || b < 0 || b >= 13 ||
-		    c < 0 || c >= 13)
+		if (a < 0 || a >= vreg_limit || b < 0 || b >= vreg_limit ||
+		    c < 0 || c >= vreg_limit)
 			goto broken_vreg;
 		break;
 	}
@@ -3485,8 +3781,11 @@ jit_visit_vector_op(
         case OP_VAND128:
         case OP_VOR128:
         case OP_VXOR128:
+	case OP_VMINS32X4:
+	case OP_VMAXS32X4:
 		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
-			int map = op == OP_VMULI32X4 ? 2 : 1;
+			int map = (op == OP_VMULI32X4 ||
+				   op == OP_VMINS32X4 || op == OP_VMAXS32X4) ? 2 : 1;
 			uint8_t opcode;
 			switch (op) {
 			case OP_VADDI32X4: opcode = 0xfe; break;
@@ -3494,12 +3793,17 @@ jit_visit_vector_op(
 			case OP_VMULI32X4: opcode = 0x40; break;
 			case OP_VAND128: opcode = 0xdb; break;
 			case OP_VOR128: opcode = 0xeb; break;
+			case OP_VMINS32X4: opcode = 0x39; break;
+			case OP_VMAXS32X4: opcode = 0x3d; break;
 			default: opcode = 0xef; break;
 			}
-			if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
-						      a, b, c))
-				return false;
-			break;
+			if ((op != OP_VMINS32X4 && op != OP_VMAXS32X4) ||
+			    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+				if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+							      a, b, c))
+					return false;
+				break;
+			}
 		}
 		/* Legacy two-address lowering. */
 		if (op == OP_VMULI32X4 &&
@@ -3556,6 +3860,43 @@ jit_visit_vector_op(
 		case OP_VOR128:
 			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, a, c))
 				return false;
+			break;
+		case OP_VMINS32X4:
+		case OP_VMAXS32X4:
+			if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 2,
+						op == OP_VMINS32X4 ? 0x39 : 0x3d,
+						a, c))
+					return false;
+			} else {
+				/* SSE2 signed min/max via (a>b) mask.  xmm13/xmm14
+				 * are outside the logical map. */
+				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+							 13, b) ||
+				    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x66,
+							 13, c) ||
+				    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+							 14, 13))
+					return false;
+				if (op == OP_VMINS32X4) {
+					if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+								 0xdb, 14, c) ||
+					    !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+								 0xdf, 13, b))
+						return false;
+				} else {
+					if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+								 0xdb, 14, b) ||
+					    !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+								 0xdf, 13, c))
+						return false;
+				}
+				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb,
+							 14, 13) ||
+				    (a != 14 && !jit_x86_64_put_sse_rr(ctx, 0x66,
+								      1, 0x6f, a, 14)))
+					return false;
+			}
 			break;
 		default:
 			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xef, a, c))
@@ -4062,7 +4403,9 @@ jit_visit_bytecode(
                 case OP_VMULF32X4:
                 case OP_VDIVF32X4:
 		case OP_VCVTI32F32X4:
-		case OP_VCVTF32I32X4:
+                case OP_VCVTF32I32X4:
+		case OP_VMINS32X4:
+		case OP_VMAXS32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

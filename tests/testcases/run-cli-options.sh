@@ -15,14 +15,14 @@ for option in -O -O0 -O1 -O2 -O3 -O9; do
 done
 
 # Compile-mode option order is observable through O3-only FMA metadata.
-cp simd/blend2.noct "$work/blend2.noct"
-$NOCT --compile -O3 -O2 "$work/blend2.noct"
-if grep -a -q '^FMA Ops$' "$work/blend2.nb"; then
+cp simd/drawimage/blend-alpha.noct "$work/blend-alpha.noct"
+$NOCT --compile -O3 -O2 "$work/blend-alpha.noct"
+if grep -a -q '^FMA Ops$' "$work/blend-alpha.nb"; then
     echo 'last-option-wins failed for -O3 -O2' >&2
     exit 1
 fi
-$NOCT --compile -O2 -O3 "$work/blend2.noct"
-grep -a -q '^FMA Ops$' "$work/blend2.nb"
+$NOCT --compile -O2 -O3 "$work/blend-alpha.noct"
+grep -a -q '^FMA Ops$' "$work/blend-alpha.nb"
 
 $NOCT --compile --app -O3 "$work/app.nap" simd/f32.noct
 test -s "$work/app.nap"

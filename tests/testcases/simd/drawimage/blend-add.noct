@@ -27,4 +27,10 @@ func main() {
     blend_add(dst, src, 255, 16);
     print(dst[0]);
     print(dst[15]);
+
+    // Signed-clamp regression: negative alpha may produce a negative
+    // intermediate.  VMINS32X4 must not be replaced by unsigned min.
+    dst[0] = 0;
+    blend_add(dst, src, -255, 16);
+    print(dst[0]);
 }

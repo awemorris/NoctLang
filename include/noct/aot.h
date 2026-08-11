@@ -588,6 +588,8 @@ NOCT_DECL_TYPED_HELPER(noct_ex_vselect128_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vmaskstorei32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vinductf32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vgatheri32x4_checked_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vmins32x4_helper)
+NOCT_DECL_TYPED_HELPER(noct_ex_vmaxs32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_ploadf32_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_pstoref32_helper)
 

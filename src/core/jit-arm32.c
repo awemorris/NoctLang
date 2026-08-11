@@ -2736,9 +2736,21 @@ jit_visit_vector_scalar_op(
 	case OP_VAND128:
 	case OP_VOR128:
 	case OP_VXOR128:
+	case OP_VMINS32X4:
+	case OP_VMAXS32X4:
 		for (lane = 0; lane < 4; lane++) {
 			LDR(REG_R0, REG_R4, src1 * 16 + lane * 4);
 			LDR(REG_R1, REG_R4, src2 * 16 + lane * 4);
+			if (op == OP_VMINS32X4 || op == OP_VMAXS32X4) {
+				/* cmp r0,r1; mov{gt|lt} r2,r1 after r2=r0. */
+				if (!jit_put_word(ctx, 0xe1a02000) ||
+				    !jit_put_word(ctx, 0xe1500001) ||
+				    !jit_put_word(ctx, op == OP_VMINS32X4 ?
+							 0xc1a02001 : 0xb1a02001))
+					return false;
+				STR(REG_R2, REG_R4, dst * 16 + lane * 4);
+				continue;
+			}
 			switch (op) {
 			case OP_VADDI32X4: if (!jit_put_word(ctx, 0xe0802001)) return false; break;
 			case OP_VSUBI32X4: if (!jit_put_word(ctx, 0xe0402001)) return false; break;
@@ -2983,6 +2995,12 @@ jit_visit_vector_op(
 							       dst, src1, src2));
 		case OP_VMULI32X4:
 			return jit_put_word(ctx, jit_neon_q3(0xf2200950,
+							       dst, src1, src2));
+		case OP_VMINS32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf2200650,
+							       dst, src1, src2));
+		case OP_VMAXS32X4:
+			return jit_put_word(ctx, jit_neon_q3(0xf2200640,
 							       dst, src1, src2));
 		case OP_VAND128:
 			return jit_put_word(ctx, jit_neon_q3(0xf2000150,
@@ -3391,7 +3409,9 @@ jit_visit_bytecode(
         case OP_VMULF32X4:
         case OP_VDIVF32X4:
 	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
+                case OP_VCVTF32I32X4:
+		case OP_VMINS32X4:
+		case OP_VMAXS32X4:
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;

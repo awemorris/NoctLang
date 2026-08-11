@@ -15,7 +15,7 @@
 NOCT=${NOCT:-../../build-static/noct}
 NOCT_META=${NOCT_META:-$NOCT}
 
-MUST_VECTORIZE="blend blend2 blend2_multigroup fma_forms mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
+MUST_VECTORIZE="blend fma_forms mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
 MUST_NOT="overlap_reject u8_reject counter_value carried if_reject budget"
 
 echo 'SIMD tests:'
@@ -89,31 +89,65 @@ done
 # On non-x86 backends these ceilings safely reduce to the scalar tier.
 for tier in scalar sse2 sse3 sse41 avx; do
     NOCT_JIT_SIMD_MAX=$tier $NOCT -j -O2 \
-        simd/blend2.noct > out 2>&1
-    if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
+        simd/drawimage/blend-alpha.noct > out 2>&1
+    if ! diff -q simd/drawimage/blend-alpha.noct.out out > /dev/null 2>&1; then
         echo "FAIL SIMD ceiling $tier"
-        diff simd/blend2.noct.out out | head -5
+        diff simd/drawimage/blend-alpha.noct.out out | head -5
         FAILED=1
     else
         echo "PASS SIMD ceiling $tier"
     fi
 done
 
-# The x86_64 LIR plan must retain all four blend common values, and the
-# native JIT build must finish rather than silently falling back after a
-# code-generation error.
+# Signed clamp bytecode must remain correct at every x86 capability ceiling.
+# blend-add includes a negative-alpha case which distinguishes signed min from
+# an accidental unsigned pixel-specific lowering.
+$NOCT -j0 -O0 simd/drawimage/blend-add.noct > out.ref 2>&1
+for tier in scalar sse2 sse41 avx; do
+    NOCT_JIT_SIMD_MAX=$tier $NOCT -j -O2 \
+        simd/drawimage/blend-add.noct > out 2>&1
+    if ! diff -q out.ref out > /dev/null 2>&1; then
+        echo "FAIL signed vector min ceiling $tier"
+        FAILED=1
+    else
+        echo "PASS signed vector min ceiling $tier"
+    fi
+done
+
+# The x86_64 LIR plan must retain both packed loads among its four blend
+# common values.  The opaque-alpha constant belongs in the preheader, not in
+# every iteration.  These are code-shape gates for the ALPHA regression that
+# functional output comparisons cannot detect.
 if [ "$(uname -m 2>/dev/null)" = "x86_64" ]; then
     debug=$(NOCT_LIR_VFOR_DEBUG=1 NOCT_JIT_CODEGEN_DEBUG=1 \
-        $NOCT -j -O3 simd/blend2.noct 2>&1 >/dev/null)
+        NOCT_JIT_VECTOR_DEBUG=1 \
+        $NOCT -j -O3 simd/drawimage/blend-alpha.noct 2>&1 >/dev/null)
     if printf '%s\n' "$debug" | grep -q \
-        'noct-lir-vfor: max=16 required=[0-9][0-9]* .*caches=4 ' && \
+        'noct-lir-vfor: max=16 required=[0-9][0-9]* .*caches=4 loads=2 ' && \
        printf '%s\n' "$debug" | grep -q \
-        'noct-jit-codegen: x86_64: func=blend '; then
-        echo "PASS x86_64 four-value vector cache/native JIT build"
+        'noct-jit-vector: func=blend_alpha .*mode=native .*imm=preheader' && \
+       printf '%s\n' "$debug" | grep -q \
+        'noct-jit-codegen: x86_64: func=blend_alpha '; then
+        echo "PASS x86_64 ALPHA cache/preheader/native JIT shape"
     else
-        echo "FAIL x86_64 four-value vector cache/native JIT build"
+        echo "FAIL x86_64 ALPHA cache/preheader/native JIT shape"
         printf '%s\n' "$debug" | head -10
         FAILED=1
+    fi
+    if grep -qw avx /proc/cpuinfo 2>/dev/null; then
+        for name in blend-glyph blend-melt blend-rule; do
+            func=$(printf '%s' "$name" | tr '-' '_')
+            debug=$(NOCT_JIT_SIMD_MAX=avx NOCT_JIT_VECTOR_DEBUG=1 \
+                $NOCT -j -O2 "simd/drawimage/$name.noct" 2>&1 >/dev/null)
+            if printf '%s\n' "$debug" | grep -q \
+                "func=$func .*mode=native"; then
+                echo "PASS x86_64 AVX native $name"
+            else
+                echo "FAIL x86_64 AVX native $name"
+                printf '%s\n' "$debug" | head -10
+                FAILED=1
+            fi
+        done
     fi
 fi
 
@@ -167,18 +201,18 @@ fi
 # O3 contracts eligible FP32 expressions to the common FMA opcode.  Native,
 # interpreter, and capability-ceiling paths must retain identical output.
 for jit in "-j0" "-j"; do
-    $NOCT $jit -O3 simd/blend2.noct > out 2>&1
-    if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
-        echo "FAIL O3 FMA blend2 ($jit)"
+    $NOCT $jit -O3 simd/drawimage/blend-alpha.noct > out 2>&1
+    if ! diff -q simd/drawimage/blend-alpha.noct.out out > /dev/null 2>&1; then
+        echo "FAIL O3 FMA ALPHA ($jit)"
         FAILED=1
     else
-        echo "PASS O3 FMA blend2 ($jit)"
+        echo "PASS O3 FMA ALPHA ($jit)"
     fi
 done
 for tier in scalar sse41; do
     NOCT_JIT_SIMD_MAX=$tier $NOCT -j -O3 \
-        simd/blend2.noct > out 2>&1
-    if ! diff -q simd/blend2.noct.out out > /dev/null 2>&1; then
+        simd/drawimage/blend-alpha.noct > out 2>&1
+    if ! diff -q simd/drawimage/blend-alpha.noct.out out > /dev/null 2>&1; then
         echo "FAIL O3 FMA fallback ceiling $tier"
         FAILED=1
     else
@@ -209,22 +243,23 @@ fi
 
 # O3 bytecode records that the function requires fused semantics.  O2 must
 # not acquire that metadata, and the persisted O3 image must round-trip.
-cp simd/blend2.noct "$tmp_dir/blend2.noct"
-$NOCT_META --compile -O2 "$tmp_dir/blend2.noct" > /dev/null 2>&1
-if grep -a -q '^FMA Ops$' "$tmp_dir/blend2.nb"; then
+cp simd/drawimage/blend-alpha.noct "$tmp_dir/blend-alpha.noct"
+$NOCT_META --compile -O2 "$tmp_dir/blend-alpha.noct" > /dev/null 2>&1
+if grep -a -q '^FMA Ops$' "$tmp_dir/blend-alpha.nb"; then
     echo "FAIL O2 bytecode unexpectedly contains FMA metadata"
     FAILED=1
 else
     echo "PASS O2 bytecode has no FMA metadata"
 fi
-$NOCT_META --compile -O3 "$tmp_dir/blend2.noct" > /dev/null 2>&1
-if ! grep -a -q '^FMA Ops$' "$tmp_dir/blend2.nb"; then
+$NOCT_META --compile -O3 "$tmp_dir/blend-alpha.noct" > /dev/null 2>&1
+if ! grep -a -q '^FMA Ops$' "$tmp_dir/blend-alpha.nb"; then
     echo "FAIL O3 bytecode missing FMA metadata"
     FAILED=1
 else
     NOCT_JIT_SIMD_MAX=sse41 $NOCT_META -j \
-        "$tmp_dir/blend2.nb" > "$tmp_dir/blend2.out" 2>&1
-    if ! diff -q simd/blend2.noct.out "$tmp_dir/blend2.out" > /dev/null 2>&1; then
+        "$tmp_dir/blend-alpha.nb" > "$tmp_dir/blend-alpha.out" 2>&1
+    if ! diff -q simd/drawimage/blend-alpha.noct.out \
+        "$tmp_dir/blend-alpha.out" > /dev/null 2>&1; then
         echo "FAIL O3 FMA bytecode portable round trip"
         FAILED=1
     else
