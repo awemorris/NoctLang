@@ -207,14 +207,32 @@ enum bytecode {
 	OP_PSTOREF32,		/* 0x6b: 107: base[ofs] = src(float) */
 
 	/* Vector-loop code-generation hints and portable fused operations. */
-	OP_VINDEX_HINT,	/* no-op: index/stop/remaining(u16), id/lanes/flags(imm8) */
+	OP_VINDEX_HINT,	/* no-op: index/stop/remaining(u16), required_vregs/lanes/flags(imm8) */
 	OP_SUBJNZ,		/* value(u16) -= decrement(imm8); jump target(u32) if nonzero */
 	OP_VORI32X4I,		/* vd = vs | (imm8 << shift), lane-wise; four imm8 operands */
 	OP_VFMAF32X4,		/* vd = fmaf(va, vb, vc), lane-wise; four imm8 operands */
+	OP_VCMPI32X4,		/* vd = compare(va, vb, pred); four imm8 operands */
+	OP_VCMPF32X4,		/* vd = compare(va, vb, pred); four imm8 operands */
+	OP_VSELECT128,		/* vd = mask ? vt : vf, bitwise; four imm8 operands */
+	OP_VMASKSTOREI32X4,	/* base(u16), ofs(u16), value(vreg), mask(vreg) */
+	OP_VINDUCTF32X4,	/* vd(u8), state(u16), step(u16), exact recurrence */
+	OP_VGATHERI32X4_CHECKED, /* vd(u8), base(u16), plen(u16), vi(u8) */
+};
+
+/* Predicates for OP_VCMPI32X4 and OP_VCMPF32X4. */
+enum vector_compare_predicate {
+	VCMP_EQ,
+	VCMP_NE,
+	VCMP_LT,
+	VCMP_LE,
+	VCMP_GT,
+	VCMP_GE,
+	VCMP_PREDICATE_COUNT
 };
 
 /* OP_VINDEX_HINT flags. */
 #define VINDEX_CURSOR_ONLY	0x01
 #define VINDEX_WRITEBACK_STOP	0x02
+#define VINDEX_FORCE_SCALAR	0x04 /* keep vector state memory-canonical */
 
 #endif

@@ -64,14 +64,15 @@
 #define ABCE_BODY_F32		2
 #define ABCE_MAX_ASSIGNED	32	/* assigned locals in a body     */
 #define ABCE_MAX_LOOPS		16	/* candidate loops per function  */
-#define ABCE_MAX_PACKED		4	/* packed locals per loop        */
+#define ABCE_MAX_PACKED		8	/* packed locals per loop        */
 
 /* A subscript site shape: p[i], p[i+u], p[u+i], p[i-u]. */
 enum abce_shape {
 	ABCE_SHAPE_I,		/* p[i]     */
 	ABCE_SHAPE_I_PLUS_U,	/* p[i + u] */
 	ABCE_SHAPE_U_PLUS_I,	/* p[u + i] */
-	ABCE_SHAPE_I_MINUS_U	/* p[i - u] */
+	ABCE_SHAPE_I_MINUS_U,	/* p[i - u] */
+	ABCE_SHAPE_GATHER	/* p[arbitrary vectorizable index] */
 };
 
 struct abce_site {
@@ -284,6 +285,7 @@ struct abce_ctx {
 	char lo_name[32];
 	char hi_name[32];
 	char base_name[ABCE_MAX_PACKED][32];
+	char len_name[ABCE_MAX_PACKED][32];
 	char g_name[32];
 
 	/* Element-type bet (NOCT_PACKED_*) from constant propagation. */
@@ -601,6 +603,8 @@ abce_check_invariant_u(struct abce_ctx *ctx, struct hir_expr *e)
 	       abce_check_invariant_u(ctx, e->val.binary.expr[1]);
 }
 
+static bool abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr);
+
 /* Register a subscript site; validate the affine shape. */
 static bool
 abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
@@ -706,7 +710,13 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 				return false;
 		}
 	} else {
-		return false;
+		/* An indirect read is not range-proven by ABCE.  Keep it as an
+		   explicit checked gather in the fast body; its index expression
+		   must still be pure and otherwise legal for this loop. */
+		site.shape = ABCE_SHAPE_GATHER;
+		site.u_expr = f;
+		if (!abce_check_expr(ctx, f))
+			return false;
 	}
 
 	/* Dedup structurally-equal sites. */
@@ -728,6 +738,9 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 		    o->u_expr != NULL && abce_expr_equal(o->u_expr, site.u_expr))
 			return true;
 		if (site.shape == ABCE_SHAPE_I)
+			return true;
+		if (site.shape == ABCE_SHAPE_GATHER && o->u_expr != NULL &&
+		    abce_expr_equal(o->u_expr, site.u_expr))
 			return true;
 	}
 	if (ctx->site_count >= ABCE_MAX_SITES)
@@ -927,8 +940,20 @@ abce_check_stmt(struct abce_ctx *ctx, struct hir_stmt *stmt)
 		return true;
 	}
 	if (stmt->lhs->type == HIR_EXPR_SUBSCR) {
+		int k, si;
 		if (!abce_check_site(ctx, stmt->lhs))
 			return false;
+		/* Scatter is deliberately out of scope. */
+		for (k = 0; k < ctx->packed_count; k++)
+			if (strcmp(ctx->packed[k], stmt->lhs->val.binary.expr[0]
+					->val.term.term->val.symbol) == 0)
+				break;
+		for (si = 0; si < ctx->site_count; si++)
+			if (ctx->sites[si].packed_index == k &&
+			    ctx->sites[si].shape == ABCE_SHAPE_GATHER &&
+			    abce_expr_equal(ctx->sites[si].u_expr,
+				stmt->lhs->val.binary.expr[1]))
+				return false;
 		if (!abce_check_expr(ctx, stmt->rhs))
 			return false;
 		if (abce_expr_type(ctx, stmt->rhs) !=
@@ -1025,6 +1050,8 @@ abce_check_eligibility(struct abce_ctx *ctx)
 			return false;
 	}
 	for (i = 0; i < ctx->site_count; i++) {
+		if (ctx->sites[i].shape == ABCE_SHAPE_GATHER)
+			continue;
 		if (!ctx->sites[i].u_is_const &&
 		    ctx->sites[i].u_name != NULL &&
 		    abce_is_assigned(ctx, ctx->sites[i].u_name))
@@ -1370,6 +1397,20 @@ abce_packed_subscr_index(struct abce_ctx *ctx, struct hir_expr *e)
 }
 
 static bool
+abce_is_gather_site(struct abce_ctx *ctx, int packed_index,
+		    struct hir_expr *index)
+{
+	int i;
+	for (i = 0; i < ctx->site_count; i++) {
+		if (ctx->sites[i].packed_index == packed_index &&
+		    ctx->sites[i].shape == ABCE_SHAPE_GATHER &&
+		    abce_expr_equal(ctx->sites[i].u_expr, index))
+			return true;
+	}
+	return false;
+}
+
+static bool
 abce_canonicalize_index(struct abce_ctx *ctx, int packed_index,
 			struct hir_expr *f)
 {
@@ -1417,11 +1458,28 @@ abce_rewrite_expr(struct abce_ctx *ctx, struct hir_expr *e)
 	{
 		int k = abce_packed_subscr_index(ctx, e);
 		if (k >= 0) {
-			/* p[f]  ->  PLOAD*($baseK, f) */
+			/* p[f] -> contiguous PLOAD or an explicitly checked gather. */
 			struct hir_expr *base_term;
+			struct hir_expr *index = e->val.binary.expr[1];
+			bool gather = abce_is_gather_site(ctx, k, index);
 			base_term = abce_mk_expr_symbol(ctx->base_name[k]);
 			if (base_term == NULL)
 				return false;
+			if (gather) {
+				struct hir_expr *length =
+					abce_mk_expr_symbol(ctx->len_name[k]);
+				if (length == NULL || !abce_rewrite_expr(ctx, index))
+					return false;
+				e->type = HIR_EXPR_PGATHER32;
+				e->val.gather.base = base_term;
+				e->val.gather.length = length;
+				e->val.gather.index = index;
+				e->val.gather.packed =
+					abce_mk_expr_symbol(ctx->packed[k]);
+				if (e->val.gather.packed == NULL)
+					return false;
+				return true;
+			}
 			e->type = abce_load_kind(ctx->packed_bet[k]);
 			e->val.binary.expr[0] = base_term;
 			/* expr[1] (the offset) stays. */
@@ -1604,6 +1662,8 @@ abce_mk_guard(struct abce_ctx *ctx)
 	 * one endpoint outside [0, len).
 	 */
 	for (i = 0; i < ctx->site_count; i++) {
+		if (ctx->sites[i].shape == ABCE_SHAPE_GATHER)
+			continue; /* checked lane-by-lane by the gather opcode */
 		/* f(lo) >= 0 && f(lo) < PLEN(p) */
 		e = abce_mk_binary(HIR_EXPR_GTE,
 				   abce_mk_endpoint(ctx, &ctx->sites[i], false),
@@ -1668,10 +1728,13 @@ abce_version_loop(struct abce_ctx *ctx)
 	for (i = 0; i < ctx->packed_count; i++) {
 		snprintf(ctx->base_name[i], sizeof(ctx->base_name[i]),
 			 "$abce%d_base%d", abce_loop_seq, i);
+		snprintf(ctx->len_name[i], sizeof(ctx->len_name[i]),
+			 "$abce%d_len%d", abce_loop_seq, i);
 	}
 	for (i = 0; i < ctx->site_count; i++) {
 		int j;
-		if (ctx->sites[i].u_expr == NULL)
+		if (ctx->sites[i].u_expr == NULL ||
+		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
 		for (j = 0; j < i; j++) {
 			if (ctx->sites[j].u_expr != NULL &&
@@ -1696,10 +1759,13 @@ abce_version_loop(struct abce_ctx *ctx)
 	for (i = 0; i < ctx->packed_count; i++) {
 		if (!hir_add_local(F, ctx->base_name[i]))
 			return false;
+		if (!hir_add_local(F, ctx->len_name[i]))
+			return false;
 	}
 	for (i = 0; i < ctx->site_count; i++) {
 		int j;
-		if (ctx->sites[i].u_expr == NULL)
+		if (ctx->sites[i].u_expr == NULL ||
+		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
 		for (j = 0; j < i; j++) {
 			if (strcmp(ctx->sites[j].hoist_name,
@@ -1811,10 +1877,11 @@ abce_version_loop(struct abce_ctx *ctx)
 			return false;
 	}
 
-	/* B1: $baseK = PBASE(pK) for every packed. */
+	/* B1: hoist both raw base and element count for checked gathers. */
 	{
 		struct hir_stmt *tail = NULL;
 		for (i = 0; i < ctx->packed_count; i++) {
+			struct hir_stmt *s_len;
 			pbase = abce_mk_unary(HIR_EXPR_PBASE,
 					      abce_mk_expr_symbol(ctx->packed[i]));
 			s_base = abce_mk_assign_stmt(line,
@@ -1827,13 +1894,22 @@ abce_version_loop(struct abce_ctx *ctx)
 			else
 				tail->next = s_base;
 			tail = s_base;
+			s_len = abce_mk_assign_stmt(line,
+				abce_mk_expr_symbol(ctx->len_name[i]),
+				abce_mk_unary(HIR_EXPR_PLEN,
+					abce_mk_expr_symbol(ctx->packed[i])));
+			if (s_len == NULL)
+				return false;
+			tail->next = s_len;
+			tail = s_len;
 		}
 		/* Canonicalize non-trivial invariant offsets only after the
 		   TYPEIS guard has succeeded. */
 		for (i = 0; i < ctx->site_count; i++) {
 			struct hir_stmt *s_off;
 			int j;
-			if (ctx->sites[i].u_expr == NULL)
+			if (ctx->sites[i].u_expr == NULL ||
+			    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 				continue;
 			for (j = 0; j < i; j++) {
 				if (strcmp(ctx->sites[j].hoist_name,
@@ -1947,6 +2023,12 @@ abce_verify_fast_expr(struct hir_expr *e)
 		/* CSE runs after ABCE, so this cannot appear today; keep
 		   the walk correct in case the pass order ever changes. */
 		abce_verify_fast_expr(e->val.capture.expr);
+		break;
+	case HIR_EXPR_PGATHER32:
+		abce_verify_fast_expr(e->val.gather.base);
+		abce_verify_fast_expr(e->val.gather.length);
+		abce_verify_fast_expr(e->val.gather.index);
+		abce_verify_fast_expr(e->val.gather.packed);
 		break;
 	default:
 		abce_verify_fast_expr(e->val.binary.expr[0]);

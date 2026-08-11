@@ -1477,6 +1477,73 @@ rt_visit_vfmaf32x4_op(
 	return ex_vfmaf32x4_helper(env, vd, va, (vb << 8) | vc);
 }
 
+static INLINE bool
+rt_visit_vcmp_op(struct rt_env *env, struct rt_func *func, uint32_t *pc,
+		 bool is_float)
+{
+	int vd, va, vb, pred;
+	GET_U8(&vd); GET_U8(&va); GET_U8(&vb); GET_U8(&pred);
+	if (vd >= 16 || va >= 16 || vb >= 16 || pred >= VCMP_PREDICATE_COUNT) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+	return is_float ?
+		ex_vcmpf32x4_helper(env, vd, va, (vb << 8) | pred) :
+		ex_vcmpi32x4_helper(env, vd, va, (vb << 8) | pred);
+}
+
+static INLINE bool
+rt_visit_vselect128_op(struct rt_env *env, struct rt_func *func, uint32_t *pc)
+{
+	int vd, vm, vt, vf;
+	GET_U8(&vd); GET_U8(&vm); GET_U8(&vt); GET_U8(&vf);
+	if (vd >= 16 || vm >= 16 || vt >= 16 || vf >= 16) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+	return ex_vselect128_helper(env, vd, vm, (vt << 8) | vf);
+}
+
+static INLINE bool
+rt_visit_vmaskstorei32x4_op(struct rt_env *env, struct rt_func *func,
+			    uint32_t *pc)
+{
+	int base, ofs, vs, vm;
+	GET_TMPVAR(&base); GET_TMPVAR(&ofs); GET_U8(&vs); GET_U8(&vm);
+	if (vs >= 16 || vm >= 16) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+	return ex_vmaskstorei32x4_helper(env, base, ofs, (vs << 8) | vm);
+}
+
+static INLINE bool
+rt_visit_vinductf32x4_op(struct rt_env *env, struct rt_func *func,
+			 uint32_t *pc)
+{
+	int vd, state, step;
+	GET_U8(&vd); GET_TMPVAR(&state); GET_TMPVAR(&step);
+	if (vd >= 16) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+	return ex_vinductf32x4_helper(env, vd, state, step);
+}
+
+static INLINE bool
+rt_visit_vgatheri32x4_checked_op(struct rt_env *env, struct rt_func *func,
+				 uint32_t *pc)
+{
+	int vd, base, plen, vi;
+	GET_U8(&vd); GET_TMPVAR(&base); GET_TMPVAR(&plen); GET_U8(&vi);
+	if (vd >= 16 || vi >= 16) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+	return ex_vgatheri32x4_checked_helper(env, vd, base,
+					       (plen << 8) | vi);
+}
+
 /* Visit an instruction. */
 static bool
 rt_visit_op(
@@ -1809,6 +1876,30 @@ rt_visit_op(
 		break;
 	case OP_VFMAF32X4:
 		if (!rt_visit_vfmaf32x4_op(env, func, pc))
+			return false;
+		break;
+	case OP_VCMPI32X4:
+		if (!rt_visit_vcmp_op(env, func, pc, false))
+			return false;
+		break;
+	case OP_VCMPF32X4:
+		if (!rt_visit_vcmp_op(env, func, pc, true))
+			return false;
+		break;
+	case OP_VSELECT128:
+		if (!rt_visit_vselect128_op(env, func, pc))
+			return false;
+		break;
+	case OP_VMASKSTOREI32X4:
+		if (!rt_visit_vmaskstorei32x4_op(env, func, pc))
+			return false;
+		break;
+	case OP_VINDUCTF32X4:
+		if (!rt_visit_vinductf32x4_op(env, func, pc))
+			return false;
+		break;
+	case OP_VGATHERI32X4_CHECKED:
+		if (!rt_visit_vgatheri32x4_checked_op(env, func, pc))
 			return false;
 		break;
         default:

@@ -500,6 +500,26 @@ cse_count_expr(
 	case HIR_EXPR_CAPTURE:
 		n += cse_count_expr(e->val.capture.expr);
 		break;
+	case HIR_EXPR_SELECT:
+		n += cse_count_expr(e->val.select.cond);
+		n += cse_count_expr(e->val.select.if_true);
+		n += cse_count_expr(e->val.select.if_false);
+		break;
+	case HIR_EXPR_PMASKSTORE32:
+		n += cse_count_expr(e->val.mask_store.base);
+		n += cse_count_expr(e->val.mask_store.offset);
+		n += cse_count_expr(e->val.mask_store.mask);
+		break;
+	case HIR_EXPR_PGATHER32:
+		n += cse_count_expr(e->val.gather.base);
+		n += cse_count_expr(e->val.gather.length);
+		n += cse_count_expr(e->val.gather.index);
+		n += cse_count_expr(e->val.gather.packed);
+		break;
+	case HIR_EXPR_VINDUCTF32:
+		n += cse_count_expr(e->val.binary.expr[0]);
+		n += cse_count_expr(e->val.binary.expr[1]);
+		break;
 	case HIR_EXPR_DOT:
 		n += cse_count_expr(e->val.dot.obj);
 		break;
@@ -812,6 +832,35 @@ cse_expr(
 	case HIR_EXPR_CAPTURE:
 		/* Created by this pass; transparent, never revisited. */
 		return cse_expr(ctx, &e->val.capture.expr, weight);
+
+	case HIR_EXPR_SELECT:
+		/* SIMD SELECT evaluates all three inputs.  Traverse children so
+		   their bookkeeping remains valid, but do not value-number the
+		   ternary node itself. */
+		w = 0;
+		(void)cse_expr(ctx, &e->val.select.cond, &w);
+		(void)cse_expr(ctx, &e->val.select.if_true, &w);
+		(void)cse_expr(ctx, &e->val.select.if_false, &w);
+		*weight += w + 1;
+		return CSE_NOVN;
+
+	case HIR_EXPR_PMASKSTORE32:
+		w = 0;
+		(void)cse_expr(ctx, &e->val.mask_store.base, &w);
+		(void)cse_expr(ctx, &e->val.mask_store.offset, &w);
+		(void)cse_expr(ctx, &e->val.mask_store.mask, &w);
+		*weight += w + 1;
+		return CSE_NOVN;
+
+	case HIR_EXPR_PGATHER32:
+		w = 0;
+		(void)cse_expr(ctx, &e->val.gather.index, &w);
+		*weight += w + 1;
+		return CSE_NOVN;
+
+	case HIR_EXPR_VINDUCTF32:
+		*weight += 1;
+		return CSE_NOVN;
 
 	case HIR_EXPR_NEG:
 	case HIR_EXPR_NOT:

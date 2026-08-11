@@ -3076,8 +3076,7 @@ jit_visit_bytecode(
                                 return false;
                         break;
 		default:
-			assert(JIT_OP_NOT_IMPLEMENTED);
-			break;
+			return false; /* interpreter fallback for newer bytecode */
 		}
 	}
 

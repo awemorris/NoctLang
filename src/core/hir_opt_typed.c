@@ -117,6 +117,10 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		return a == TP_INT ? TP_INT : TP_UNKNOWN;
 	case HIR_EXPR_CAPTURE:
 		return tp_eval_expr(ctx, e->val.capture.expr, in_region);
+	case HIR_EXPR_SELECT:
+		a = tp_eval_expr(ctx, e->val.select.if_true, in_region);
+		b = tp_eval_expr(ctx, e->val.select.if_false, in_region);
+		return a == b ? a : tp_combine(a, b);
 	case HIR_EXPR_PLUS:
 	case HIR_EXPR_MINUS:
 	case HIR_EXPR_MUL:
@@ -165,11 +169,13 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 	case HIR_EXPR_PLOAD16U:
 	case HIR_EXPR_PLOAD16S:
 	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PGATHER32:
 	case HIR_EXPR_PLEN:
 	case HIR_EXPR_PCHECK:
 	case HIR_EXPR_TYPEIS:
 		return TP_INT;
 	case HIR_EXPR_PLOADF32:
+	case HIR_EXPR_VINDUCTF32:
 		return TP_FLOAT;
 	case HIR_EXPR_CALL:
 		switch (hir_get_intrinsic_call(e)) {
@@ -220,6 +226,16 @@ tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		return;
+	case HIR_EXPR_PMASKSTORE32:
+		tp_apply_captures(ctx, e->val.mask_store.base, in_region);
+		tp_apply_captures(ctx, e->val.mask_store.offset, in_region);
+		tp_apply_captures(ctx, e->val.mask_store.mask, in_region);
+		return;
+	case HIR_EXPR_PGATHER32:
+		tp_apply_captures(ctx, e->val.gather.index, in_region);
+		return;
+	case HIR_EXPR_VINDUCTF32:
+		return;
 	case HIR_EXPR_PAR:
 	case HIR_EXPR_NEG:
 	case HIR_EXPR_NOT:
@@ -231,6 +247,11 @@ tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		tp_apply_captures(ctx, e->val.capture.expr, in_region);
 		tp_meet_symbol(ctx, e->val.capture.symbol,
 			       tp_eval_expr(ctx, e->val.capture.expr, in_region));
+		return;
+	case HIR_EXPR_SELECT:
+		tp_apply_captures(ctx, e->val.select.cond, in_region);
+		tp_apply_captures(ctx, e->val.select.if_true, in_region);
+		tp_apply_captures(ctx, e->val.select.if_false, in_region);
 		return;
 	case HIR_EXPR_DOT:
 		tp_apply_captures(ctx, e->val.dot.obj, in_region);

@@ -2987,6 +2987,38 @@ hir_free_expr(
 			e->val.capture.symbol = NULL;
 		}
 		break;
+	case HIR_EXPR_SELECT:
+		if (e->val.select.cond != NULL) {
+			hir_free_expr(e->val.select.cond);
+			e->val.select.cond = NULL;
+		}
+		if (e->val.select.if_true != NULL) {
+			hir_free_expr(e->val.select.if_true);
+			e->val.select.if_true = NULL;
+		}
+		if (e->val.select.if_false != NULL) {
+			hir_free_expr(e->val.select.if_false);
+			e->val.select.if_false = NULL;
+		}
+		break;
+	case HIR_EXPR_PMASKSTORE32:
+		if (e->val.mask_store.base != NULL)
+			hir_free_expr(e->val.mask_store.base);
+		if (e->val.mask_store.offset != NULL)
+			hir_free_expr(e->val.mask_store.offset);
+		if (e->val.mask_store.mask != NULL)
+			hir_free_expr(e->val.mask_store.mask);
+		break;
+	case HIR_EXPR_PGATHER32:
+		if (e->val.gather.base != NULL)
+			hir_free_expr(e->val.gather.base);
+		if (e->val.gather.length != NULL)
+			hir_free_expr(e->val.gather.length);
+		if (e->val.gather.index != NULL)
+			hir_free_expr(e->val.gather.index);
+		if (e->val.gather.packed != NULL)
+			hir_free_expr(e->val.gather.packed);
+		break;
 	case HIR_EXPR_CALL:
 		if (e->val.call.func != NULL) {
 			hir_free_expr(e->val.call.func);
@@ -3074,6 +3106,7 @@ hir_free_expr(
 	case HIR_EXPR_PSTORE32:
 	case HIR_EXPR_PSTORE64:
 	case HIR_EXPR_PSTOREF32:
+	case HIR_EXPR_VINDUCTF32:
 		/* ABCE binary ops. */
 		if (e->val.binary.expr[0] != NULL) {
 			hir_free_expr(e->val.binary.expr[0]);

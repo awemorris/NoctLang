@@ -80,6 +80,9 @@ enum hir_expr_type {
 	HIR_EXPR_PSTORE32,	/* as LHS only                                    */
 	HIR_EXPR_PSTORE64,	/* as LHS only                                    */
 	HIR_EXPR_PSTOREF32,	/* as LHS only; float32 source                    */
+	HIR_EXPR_PMASKSTORE32,	/* optimizer-only: base, offset, lane mask        */
+	HIR_EXPR_PGATHER32,	/* optimizer-only: checked base[index lanes]      */
+	HIR_EXPR_VINDUCTF32,	/* optimizer-only: exact four-step f32 induction  */
 
 	/*
 	 * CSE (docs/design/05-cse.md).  Created only by the HIR
@@ -89,6 +92,9 @@ enum hir_expr_type {
 	 * variable, and yields the value.
 	 */
 	HIR_EXPR_CAPTURE,	/* unary + home local symbol                      */
+
+	/* SIMD if-conversion: evaluate cond ? if_true : if_false. */
+	HIR_EXPR_SELECT,
 };
 
 /* Calls which the runtime guarantees cannot be rebound. */
@@ -388,6 +394,28 @@ struct hir_expr {
 			/* Home local variable symbol. */
 			char *symbol;
 		} capture;
+
+		/* Select Expression (optimizer-only; SIMD predication) */
+		struct {
+			struct hir_expr *cond;
+			struct hir_expr *if_true;
+			struct hir_expr *if_false;
+		} select;
+
+		/* Masked packed store LHS (optimizer-only; SIMD). */
+		struct {
+			struct hir_expr *base;
+			struct hir_expr *offset;
+			struct hir_expr *mask;
+		} mask_store;
+
+		/* Checked packed gather (optimizer-only; SIMD). */
+		struct {
+			struct hir_expr *base;
+			struct hir_expr *length;
+			struct hir_expr *index;
+			struct hir_expr *packed; /* scalar fallback owner */
+		} gather;
 	} val;
 };
 

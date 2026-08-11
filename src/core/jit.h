@@ -113,6 +113,12 @@
 #define ex_vdivf32x4_helper noct_ex_vdivf32x4_helper
 #define ex_vori32x4i_helper noct_ex_vori32x4i_helper
 #define ex_vfmaf32x4_helper noct_ex_vfmaf32x4_helper
+#define ex_vcmpi32x4_helper noct_ex_vcmpi32x4_helper
+#define ex_vcmpf32x4_helper noct_ex_vcmpf32x4_helper
+#define ex_vselect128_helper noct_ex_vselect128_helper
+#define ex_vmaskstorei32x4_helper noct_ex_vmaskstorei32x4_helper
+#define ex_vinductf32x4_helper noct_ex_vinductf32x4_helper
+#define ex_vgatheri32x4_checked_helper noct_ex_vgatheri32x4_checked_helper
 #define ex_ploadf32_helper noct_ex_ploadf32_helper
 #define ex_pstoref32_helper noct_ex_pstoref32_helper
 

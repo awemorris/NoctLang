@@ -773,6 +773,9 @@ rt_register_lir(
 	if (env->vm->config.jit_enable) {
 		if (!jit_build(env, func)) {
 			rt_report_jit_result(func, false);
+			/* A backend may reserve/publish its entry pointer before the
+			   final opcode is accepted.  Never execute a partial function. */
+			func->jit_code = NULL;
 			func->call_count = -1;
 			/* JIT diagnostics must not poison interpreter fallback. */
 			env->error_message[0] = '\0';

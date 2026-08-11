@@ -707,11 +707,13 @@ jit_visit_inc_op(
 static INLINE bool
 jit_visit_vindex_hint_op(struct jit_context *ctx)
 {
-	int a,b,c,id,lanes,flags;
+	int a,b,c,required_vregs,lanes,flags;
 	CONSUME_TMPVAR(a); CONSUME_TMPVAR(b); CONSUME_TMPVAR(c);
-	CONSUME_IMM8(id); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
+	CONSUME_IMM8(required_vregs); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
 	UNUSED_PARAMETER(a); UNUSED_PARAMETER(b); UNUSED_PARAMETER(c);
-	UNUSED_PARAMETER(id); UNUSED_PARAMETER(lanes); UNUSED_PARAMETER(flags);
+	UNUSED_PARAMETER(lanes); UNUSED_PARAMETER(flags);
+	if (required_vregs > 8)
+		ctx->simd_caps = 0;
 	return true;
 }
 
@@ -2997,9 +2999,8 @@ jit_visit_bytecode(
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;
-                default:
-                        assert(JIT_OP_NOT_IMPLEMENTED);
-                        break;
+		default:
+			return false; /* interpreter fallback for newer bytecode */
                 }
         }
 

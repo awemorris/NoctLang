@@ -1649,6 +1649,63 @@ cback_visit_vfmaf32x4_op(
 	return true;
 }
 
+static INLINE bool
+cback_visit_vcmp_op(struct lir_func *func, uint32_t *pc, bool is_float)
+{
+	int vd, va, vb, pred;
+	GET_U8(&vd); GET_U8(&va); GET_U8(&vb); GET_U8(&pred);
+	fprintf(fp,
+		"    if (!%s(env, %d, %d, %d)) return false;\n",
+		is_float ? "noct_ex_vcmpf32x4_helper" :
+			   "noct_ex_vcmpi32x4_helper",
+		vd, va, (vb << 8) | pred);
+	return true;
+}
+
+static INLINE bool
+cback_visit_vselect128_op(struct lir_func *func, uint32_t *pc)
+{
+	int vd, vm, vt, vf;
+	GET_U8(&vd); GET_U8(&vm); GET_U8(&vt); GET_U8(&vf);
+	fprintf(fp,
+		"    if (!noct_ex_vselect128_helper(env, %d, %d, %d)) return false;\n",
+		vd, vm, (vt << 8) | vf);
+	return true;
+}
+
+static INLINE bool
+cback_visit_vmaskstorei32x4_op(struct lir_func *func, uint32_t *pc)
+{
+	int base, ofs, vs, vm;
+	GET_TMPVAR(&base); GET_TMPVAR(&ofs); GET_U8(&vs); GET_U8(&vm);
+	fprintf(fp,
+		"    if (!noct_ex_vmaskstorei32x4_helper(env, %d, %d, %d)) return false;\n",
+		base, ofs, (vs << 8) | vm);
+	return true;
+}
+
+static INLINE bool
+cback_visit_vinductf32x4_op(struct lir_func *func, uint32_t *pc)
+{
+	int vd, state, step;
+	GET_U8(&vd); GET_TMPVAR(&state); GET_TMPVAR(&step);
+	fprintf(fp,
+		"    if (!noct_ex_vinductf32x4_helper(env, %d, %d, %d)) return false;\n",
+		vd, state, step);
+	return true;
+}
+
+static INLINE bool
+cback_visit_vgatheri32x4_checked_op(struct lir_func *func, uint32_t *pc)
+{
+	int vd, base, plen, vi;
+	GET_U8(&vd); GET_TMPVAR(&base); GET_TMPVAR(&plen); GET_U8(&vi);
+	fprintf(fp,
+		"    if (!noct_ex_vgatheri32x4_checked_helper(env, %d, %d, %d)) return false;\n",
+		vd, base, (plen << 8) | vi);
+	return true;
+}
+
 static bool
 cback_visit_op(
 	struct lir_func *func,
@@ -1980,6 +2037,30 @@ cback_visit_op(
 		break;
 	case OP_VFMAF32X4:
 		if (!cback_visit_vfmaf32x4_op(func, pc))
+			return false;
+		break;
+	case OP_VCMPI32X4:
+		if (!cback_visit_vcmp_op(func, pc, false))
+			return false;
+		break;
+	case OP_VCMPF32X4:
+		if (!cback_visit_vcmp_op(func, pc, true))
+			return false;
+		break;
+	case OP_VSELECT128:
+		if (!cback_visit_vselect128_op(func, pc))
+			return false;
+		break;
+	case OP_VMASKSTOREI32X4:
+		if (!cback_visit_vmaskstorei32x4_op(func, pc))
+			return false;
+		break;
+	case OP_VINDUCTF32X4:
+		if (!cback_visit_vinductf32x4_op(func, pc))
+			return false;
+		break;
+	case OP_VGATHERI32X4_CHECKED:
+		if (!cback_visit_vgatheri32x4_checked_op(func, pc))
 			return false;
 		break;
 	default:

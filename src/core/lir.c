@@ -729,15 +729,10 @@ lir_visit_for_block(
  * non-term subtree results occupy stack slots.
  */
 
-#if defined(NOCT_ARCH_ARM64)
+/* Bytecode owns 16 logical vector registers.  A JIT whose native mapping is
+ * smaller consumes OP_VINDEX_HINT before the first vector instruction and
+ * selects its direct-scalar vector tier for the whole region. */
 #define VFOR_VREG_MAX		16
-#elif defined(NOCT_ARCH_X86_64)
-/* xmm0..xmm12 are logical vregs; xmm13/xmm14 are SSE2 integer-multiply
- * scratch and xmm15 holds the vector opaque-alpha invariant. */
-#define VFOR_VREG_MAX		13
-#else
-#define VFOR_VREG_MAX		8
-#endif
 #define VFOR_MAX_CONSTS		8
 #define VFOR_MAX_LOCALS		8
 #define VFOR_CACHE_CANDIDATE_MAX 32
@@ -764,13 +759,16 @@ struct vfor_plan {
 	int inv_count;
 	const char *temp[VFOR_MAX_LOCALS];
 	uint8_t temp_type[VFOR_MAX_LOCALS];
+	bool temp_induction[VFOR_MAX_LOCALS];
 	int temp_count;
 	int stack_base;
+	int required_vregs;
 	struct vfor_cache_entry cache_candidate[VFOR_CACHE_CANDIDATE_MAX];
 	int cache_candidate_count;
 	struct vfor_cache_entry cache[VFOR_CACHE_MAX];
 	int cache_count;
 	bool is_float;
+	bool force_scalar;
 };
 
 static struct hir_expr *lir_vfor_strip_par(struct hir_expr *e);
@@ -810,11 +808,15 @@ lir_vfor_expr_type(struct vfor_plan *plan, struct hir_expr *e)
 			return lir_vfor_local_type(plan,
 				e->val.term.term->val.symbol);
 		return -1;
-	case HIR_EXPR_PLOAD32: return NOCT_VALUE_INT;
+	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PGATHER32: return NOCT_VALUE_INT;
 	case HIR_EXPR_PLOADF32: return NOCT_VALUE_FLOAT;
+	case HIR_EXPR_VINDUCTF32: return NOCT_VALUE_FLOAT;
 	case HIR_EXPR_CALL:
 		return hir_get_intrinsic_call(e) == HIR_INTRINSIC_INT_FROM ?
 			NOCT_VALUE_INT : NOCT_VALUE_FLOAT;
+	case HIR_EXPR_SELECT:
+		return lir_vfor_expr_type(plan, e->val.select.if_true);
 	case HIR_EXPR_PLUS:
 	case HIR_EXPR_MINUS:
 	case HIR_EXPR_MUL:
@@ -865,8 +867,28 @@ lir_vfor_expr_equal(struct hir_expr *a, struct hir_expr *b)
 		return hir_get_intrinsic_call(a) == hir_get_intrinsic_call(b) &&
 		       a->val.call.arg_count == 1 && b->val.call.arg_count == 1 &&
 		       lir_vfor_expr_equal(a->val.call.arg[0], b->val.call.arg[0]);
+	case HIR_EXPR_SELECT:
+		return lir_vfor_expr_equal(a->val.select.cond,
+					   b->val.select.cond) &&
+		       lir_vfor_expr_equal(a->val.select.if_true,
+					   b->val.select.if_true) &&
+		       lir_vfor_expr_equal(a->val.select.if_false,
+					   b->val.select.if_false);
+	case HIR_EXPR_PGATHER32:
+		return lir_vfor_expr_equal(a->val.gather.base,
+					    b->val.gather.base) &&
+		       lir_vfor_expr_equal(a->val.gather.length,
+					    b->val.gather.length) &&
+		       lir_vfor_expr_equal(a->val.gather.index,
+					    b->val.gather.index);
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
+	case HIR_EXPR_LT:
+	case HIR_EXPR_LTE:
+	case HIR_EXPR_GT:
+	case HIR_EXPR_GTE:
+	case HIR_EXPR_EQ:
+	case HIR_EXPR_NEQ:
 	case HIR_EXPR_PLUS:
 	case HIR_EXPR_MINUS:
 	case HIR_EXPR_MUL:
@@ -894,6 +916,14 @@ lir_vfor_expr_size(struct hir_expr *e)
 		return 1;
 	case HIR_EXPR_CALL:
 		return 1 + lir_vfor_expr_size(e->val.call.arg[0]);
+	case HIR_EXPR_SELECT:
+		return 1 + lir_vfor_expr_size(e->val.select.cond) +
+			lir_vfor_expr_size(e->val.select.if_true) +
+			lir_vfor_expr_size(e->val.select.if_false);
+	case HIR_EXPR_PGATHER32:
+		return 1 + lir_vfor_expr_size(e->val.gather.index);
+	case HIR_EXPR_VINDUCTF32:
+		return 1;
 	default:
 		return 1 + lir_vfor_expr_size(e->val.binary.expr[0]) +
 			lir_vfor_expr_size(e->val.binary.expr[1]);
@@ -936,6 +966,16 @@ lir_vfor_cache_collect(struct vfor_plan *plan, struct hir_expr *e)
 		break;
 	case HIR_EXPR_CALL:
 		lir_vfor_cache_collect(plan, e->val.call.arg[0]);
+		break;
+	case HIR_EXPR_SELECT:
+		lir_vfor_cache_collect(plan, e->val.select.cond);
+		lir_vfor_cache_collect(plan, e->val.select.if_true);
+		lir_vfor_cache_collect(plan, e->val.select.if_false);
+		break;
+	case HIR_EXPR_PGATHER32:
+		lir_vfor_cache_collect(plan, e->val.gather.index);
+		break;
+	case HIR_EXPR_VINDUCTF32:
 		break;
 	default:
 		lir_vfor_cache_collect(plan, e->val.binary.expr[0]);
@@ -1100,9 +1140,31 @@ lir_vfor_scratch_need(struct vfor_plan *plan, struct hir_expr *e)
 	switch (e->type) {
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
+	case HIR_EXPR_VINDUCTF32:
 		return 0;
+	case HIR_EXPR_PGATHER32:
+		return lir_vfor_scratch_need(plan, e->val.gather.index);
 	case HIR_EXPR_CALL:
 		return lir_vfor_scratch_need(plan, e->val.call.arg[0]);
+	case HIR_EXPR_SELECT:
+	{
+		int cn = lir_vfor_scratch_need(plan, e->val.select.cond);
+		int tn = 1 + lir_vfor_scratch_need(plan,
+						 e->val.select.if_true);
+		int fn2 = 2 + lir_vfor_scratch_need(plan,
+						  e->val.select.if_false);
+		int need = cn > tn ? cn : tn;
+		return need > fn2 ? need : fn2;
+	}
+	case HIR_EXPR_LT:
+	case HIR_EXPR_LTE:
+	case HIR_EXPR_GT:
+	case HIR_EXPR_GTE:
+	case HIR_EXPR_EQ:
+	case HIR_EXPR_NEQ:
+		ln = lir_vfor_scratch_need(plan, e->val.binary.expr[0]);
+		rn = 1 + lir_vfor_scratch_need(plan, e->val.binary.expr[1]);
+		return ln > rn ? ln : rn;
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:
 		return lir_vfor_scratch_need(plan, e->val.binary.expr[0]);
@@ -1134,10 +1196,12 @@ lir_vfor_plan_fits(struct vfor_plan *plan, struct hir_block *block,
 	struct hir_stmt *stmt;
 	int i;
 	int need;
+	int peak;
 
 	plan->stack_base = home_count + plan->cache_count;
 	if (plan->stack_base > VFOR_VREG_MAX)
 		return false;
+	peak = plan->stack_base;
 	for (i = 0; i < plan->cache_count; i++) {
 		plan->cache[i].reg = home_count + i;
 		plan->cache[i].emitted = false;
@@ -1147,6 +1211,8 @@ lir_vfor_plan_fits(struct vfor_plan *plan, struct hir_block *block,
 		need = lir_vfor_scratch_need(plan, plan->cache[i].expr);
 		if (need > 0 && plan->stack_base + need > VFOR_VREG_MAX)
 			return false;
+		if (plan->stack_base + need > peak)
+			peak = plan->stack_base + need;
 		plan->cache[i].emitted = true;
 	}
 	for (stmt = block->val.for_.inner->val.basic.stmt_list;
@@ -1160,14 +1226,28 @@ lir_vfor_plan_fits(struct vfor_plan *plan, struct hir_block *block,
 			if (need > 0 && plan->stack_base + need >
 			    VFOR_VREG_MAX)
 				return false;
+			if (plan->stack_base + need > peak)
+				peak = plan->stack_base + need;
 		} else if (rhs->type != HIR_EXPR_TERM) {
 			/* The store value itself occupies stack_base. */
 			if (plan->stack_base + 1 + need > VFOR_VREG_MAX)
 				return false;
+			if (plan->stack_base + 1 + need > peak)
+				peak = plan->stack_base + 1 + need;
+			if (stmt->lhs->type == HIR_EXPR_PMASKSTORE32) {
+				int mn = lir_vfor_scratch_need(plan,
+					stmt->lhs->val.mask_store.mask);
+				/* value in stack_base, mask in stack_base+1 */
+				if (plan->stack_base + 2 + mn > VFOR_VREG_MAX)
+					return false;
+				if (plan->stack_base + 2 + mn > peak)
+					peak = plan->stack_base + 2 + mn;
+			}
 		}
 	}
 	for (i = 0; i < plan->cache_count; i++)
 		plan->cache[i].emitted = false;
+	plan->required_vregs = peak > 0 ? peak : 1;
 	return true;
 }
 
@@ -1222,9 +1302,20 @@ lir_vfor_collect(struct vfor_plan *plan, struct hir_expr *e)
 	case HIR_EXPR_CALL:
 		return e->val.call.arg_count == 1 &&
 		       lir_vfor_collect(plan, e->val.call.arg[0]);
+	case HIR_EXPR_SELECT:
+		return lir_vfor_collect(plan, e->val.select.cond) &&
+		       lir_vfor_collect(plan, e->val.select.if_true) &&
+		       lir_vfor_collect(plan, e->val.select.if_false);
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
 		/* Base local + bare-counter index: no vreg operands. */
+		return true;
+	case HIR_EXPR_PGATHER32:
+		plan->force_scalar = true;
+		return lir_vfor_collect(plan, e->val.gather.index);
+	case HIR_EXPR_VINDUCTF32:
+		plan->force_scalar = true;
+		/* state/step are scalar tmpvars encoded directly in the opcode */
 		return true;
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:
@@ -1289,6 +1380,14 @@ lir_vfor_expr_reads(struct hir_expr *e, const char *sym)
 		}
 		return false;
 	}
+	case HIR_EXPR_SELECT:
+		return lir_vfor_expr_reads(e->val.select.cond, sym) ||
+		       lir_vfor_expr_reads(e->val.select.if_true, sym) ||
+		       lir_vfor_expr_reads(e->val.select.if_false, sym);
+	case HIR_EXPR_PGATHER32:
+		return lir_vfor_expr_reads(e->val.gather.index, sym);
+	case HIR_EXPR_VINDUCTF32:
+		return lir_vfor_expr_reads(e->val.binary.expr[1], sym);
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
 		return false;
@@ -1300,6 +1399,20 @@ lir_vfor_expr_reads(struct hir_expr *e, const char *sym)
 
 static bool lir_vfor_expr(struct vfor_plan *plan, int dst, int sp,
 			  struct hir_expr *e);
+
+static int
+lir_vfor_compare_predicate(int hir_type)
+{
+	switch (hir_type) {
+	case HIR_EXPR_EQ:  return VCMP_EQ;
+	case HIR_EXPR_NEQ: return VCMP_NE;
+	case HIR_EXPR_LT:  return VCMP_LT;
+	case HIR_EXPR_LTE: return VCMP_LE;
+	case HIR_EXPR_GT:  return VCMP_GT;
+	case HIR_EXPR_GTE: return VCMP_GE;
+	default:           return -1;
+	}
+}
 
 static bool
 lir_vfor_emit_fma(struct vfor_plan *plan, int dst, int sp,
@@ -1408,6 +1521,31 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 				     0, base_tmpvar,
 				     0, plan->counter_tmpvar, 1);
 	}
+	case HIR_EXPR_PGATHER32:
+	{
+		int base = lir_get_local_index(plan->loop,
+			e->val.gather.base->val.term.term->val.symbol);
+		int plen = lir_get_local_index(plan->loop,
+			e->val.gather.length->val.term.term->val.symbol);
+		if (!lir_vfor_expr(plan, dst, sp, e->val.gather.index))
+			return false;
+		return lir_put_opcode(OP_VGATHERI32X4_CHECKED) &&
+		       lir_put_imm8((uint8_t)dst) &&
+		       lir_put_tmpvar((uint16_t)base) &&
+		       lir_put_tmpvar((uint16_t)plen) &&
+		       lir_put_imm8((uint8_t)dst);
+	}
+	case HIR_EXPR_VINDUCTF32:
+	{
+		int state = lir_get_local_index(plan->loop,
+			e->val.binary.expr[0]->val.term.term->val.symbol);
+		int step = lir_get_local_index(plan->loop,
+			e->val.binary.expr[1]->val.term.term->val.symbol);
+		return lir_put_opcode(OP_VINDUCTF32X4) &&
+		       lir_put_imm8((uint8_t)dst) &&
+		       lir_put_tmpvar((uint16_t)state) &&
+		       lir_put_tmpvar((uint16_t)step);
+	}
 	case HIR_EXPR_CALL:
 	{
 		struct hir_expr *arg = lir_vfor_strip_par(e->val.call.arg[0]);
@@ -1422,6 +1560,69 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 		op = hir_get_intrinsic_call(e) == HIR_INTRINSIC_FLOAT_FROM ?
 			OP_VCVTI32F32X4 : OP_VCVTF32I32X4;
 		return lir_vfor_put3(op, 1, dst, 1, src, 0, 0, 0);
+	}
+	case HIR_EXPR_LT:
+	case HIR_EXPR_LTE:
+	case HIR_EXPR_GT:
+	case HIR_EXPR_GTE:
+	case HIR_EXPR_EQ:
+	case HIR_EXPR_NEQ:
+	{
+		struct hir_expr *l = lir_vfor_strip_par(e->val.binary.expr[0]);
+		struct hir_expr *r = lir_vfor_strip_par(e->val.binary.expr[1]);
+		int va, vb, pred, cmpop;
+
+		va = lir_vfor_value_vreg(plan, l);
+		if (va < 0) {
+			if (!lir_vfor_expr(plan, dst, sp, l))
+				return false;
+			va = dst;
+		}
+		vb = lir_vfor_value_vreg(plan, r);
+		if (vb < 0) {
+			vb = lir_vfor_physical_reg(plan, sp);
+			if (vb < 0) {
+				lir_fatal("SIMD: vreg stack overflow.");
+				return false;
+			}
+			if (!lir_vfor_expr(plan, vb, sp + 1, r))
+				return false;
+		}
+		pred = lir_vfor_compare_predicate(e->type);
+		cmpop = lir_vfor_expr_type(plan, l) == NOCT_VALUE_FLOAT ?
+			OP_VCMPF32X4 : OP_VCMPI32X4;
+		return lir_put_opcode((uint8_t)cmpop) &&
+		       lir_put_imm8((uint8_t)dst) &&
+		       lir_put_imm8((uint8_t)va) &&
+		       lir_put_imm8((uint8_t)vb) &&
+		       lir_put_imm8((uint8_t)pred);
+	}
+	case HIR_EXPR_SELECT:
+	{
+		int vm, vt, vf;
+		struct hir_expr *t = lir_vfor_strip_par(e->val.select.if_true);
+		struct hir_expr *f = lir_vfor_strip_par(e->val.select.if_false);
+
+		if (!lir_vfor_expr(plan, dst, sp, e->val.select.cond))
+			return false;
+		vm = dst;
+		vt = lir_vfor_value_vreg(plan, t);
+		if (vt < 0) {
+			vt = lir_vfor_physical_reg(plan, sp);
+			if (vt < 0 || !lir_vfor_expr(plan, vt, sp + 1, t))
+				return false;
+		}
+		vf = lir_vfor_value_vreg(plan, f);
+		if (vf < 0) {
+			vf = lir_vfor_physical_reg(plan, sp + 1);
+			if (vf < 0 || !lir_vfor_expr(plan, vf, sp + 2, f))
+				return false;
+		}
+		return lir_put_opcode(OP_VSELECT128) &&
+		       lir_put_imm8((uint8_t)dst) &&
+		       lir_put_imm8((uint8_t)vm) &&
+		       lir_put_imm8((uint8_t)vt) &&
+		       lir_put_imm8((uint8_t)vf);
 	}
 	case HIR_EXPR_SHL:
 	case HIR_EXPR_SHR:
@@ -1622,8 +1823,11 @@ lir_visit_vfor_block(
 					return false;
 				}
 				plan.temp[plan.temp_count] = sym;
-				plan.temp_type[plan.temp_count++] =
+				plan.temp_type[plan.temp_count] =
 					(uint8_t)lir_vfor_expr_type(&plan, stmt->rhs);
+				plan.temp_induction[plan.temp_count] =
+					stmt->rhs->type == HIR_EXPR_VINDUCTF32;
+				plan.temp_count++;
 			}
 			if (!lir_vfor_collect(&plan, stmt->rhs))
 				return false;
@@ -1633,6 +1837,13 @@ lir_visit_vfor_block(
 			if (!lir_vfor_collect(&plan, stmt->rhs))
 				return false;
 			lir_vfor_cache_collect(&plan, stmt->rhs);
+			if (stmt->lhs->type == HIR_EXPR_PMASKSTORE32) {
+				if (!lir_vfor_collect(&plan,
+						      stmt->lhs->val.mask_store.mask))
+					return false;
+				lir_vfor_cache_collect(&plan,
+						stmt->lhs->val.mask_store.mask);
+			}
 			store_count++;
 		}
 	}
@@ -1665,10 +1876,20 @@ lir_visit_vfor_block(
 		lir_fatal("SIMD: vreg budget exceeded.");
 		return false;
 	}
+	/* Current masked-store native lowering exists only on Arm64.  Encoding
+	   the full logical width selects the direct-scalar region tier on the
+	   smaller x86_64/i386/PPC mappings without architecture-dependent LIR. */
+	for (stmt = block->val.for_.inner->val.basic.stmt_list;
+	     stmt != NULL; stmt = stmt->next) {
+		if (stmt->lhs->type == HIR_EXPR_PMASKSTORE32) {
+			plan.required_vregs = 16;
+			break;
+		}
+	}
 	if (getenv("NOCT_LIR_VFOR_DEBUG") != NULL) {
 		fprintf(stderr,
-			"noct-lir-vfor: max=%d homes=%d candidates=%d caches=%d stack=%d\n",
-			VFOR_VREG_MAX, i, plan.cache_candidate_count,
+			"noct-lir-vfor: max=%d required=%d homes=%d candidates=%d caches=%d stack=%d\n",
+			VFOR_VREG_MAX, plan.required_vregs, i, plan.cache_candidate_count,
 			plan.cache_count, plan.stack_base);
 	}
 
@@ -1702,11 +1923,43 @@ lir_visit_vfor_block(
 		return false;
 	lir_decrement_tmpvar(guard_tmpvar);
 
+	/* counter = start */
+	if (!lir_put_opcode(OP_ASSIGN))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
+		return false;
+
+	/* remaining = stop - start.  The strip-loop guard above proves a
+	   positive multiple of four, so the countdown latch is sufficient. */
+	if (!lir_increment_tmpvar(&remaining_tmpvar))
+		return false;
+	if (!lir_put_opcode(OP_ISUB))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)remaining_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)stop_tmpvar))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
+		return false;
+
+	/* Declare the logical-register requirement before the first vector
+	 * opcode.  flags=0 makes this an allocation declaration only; the
+	 * recurrent-loop index hint is emitted after the splat preheader. */
+	if (!lir_put_opcode(OP_VINDEX_HINT))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar) ||
+	    !lir_put_tmpvar((uint16_t)stop_tmpvar) ||
+	    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
+	    !lir_put_imm8((uint8_t)plan.required_vregs) || !lir_put_imm8(4) ||
+	    !lir_put_imm8(plan.force_scalar ? VINDEX_FORCE_SCALAR : 0))
+		return false;
+
 	/*
-	 * Preheader: splat constants and invariant locals.  From here
-	 * to the lane extraction there must be no helper call on the
-	 * register-mapping backends (design 06, 5.6): only ICONST,
-	 * ASSIGN, EQI/JMPIFEQ, INC, JMP and vector ops are emitted.
+	 * Preheader: splat constants and invariant locals.  The allocation
+	 * declaration above must precede every vector opcode so a backend with a
+	 * smaller native map can select its direct-scalar tier coherently.
 	 */
 	if (plan.const_count > 0) {
 		if (!lir_increment_tmpvar(&scratch_tmpvar))
@@ -1736,35 +1989,16 @@ lir_visit_vfor_block(
 			return false;
 	}
 
-	/* counter = start */
-	if (!lir_put_opcode(OP_ASSIGN))
-		return false;
-	if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar))
-		return false;
-	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
-		return false;
-
-	/* remaining = stop - start.  The strip-loop guard above proves a
-	   positive multiple of four, so the countdown latch is sufficient. */
-	if (!lir_increment_tmpvar(&remaining_tmpvar))
-		return false;
-	if (!lir_put_opcode(OP_ISUB))
-		return false;
-	if (!lir_put_tmpvar((uint16_t)remaining_tmpvar))
-		return false;
-	if (!lir_put_tmpvar((uint16_t)stop_tmpvar))
-		return false;
-	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
-		return false;
-
-	/* Declare register-allocation intent.  Portable consumers ignore it. */
+	/* Native backends scan from this second declaration through SUBJNZ to
+	 * reserve the counter and packed-base registers. */
 	if (!lir_put_opcode(OP_VINDEX_HINT))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar) ||
 	    !lir_put_tmpvar((uint16_t)stop_tmpvar) ||
 	    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
-	    !lir_put_imm8(0) || !lir_put_imm8(4) ||
-	    !lir_put_imm8(VINDEX_CURSOR_ONLY | VINDEX_WRITEBACK_STOP))
+	    !lir_put_imm8((uint8_t)plan.required_vregs) || !lir_put_imm8(4) ||
+	    !lir_put_imm8(VINDEX_CURSOR_ONLY | VINDEX_WRITEBACK_STOP |
+		(plan.force_scalar ? VINDEX_FORCE_SCALAR : 0)))
 		return false;
 
 	/* First recurrent body opcode. */
@@ -1814,8 +2048,12 @@ lir_visit_vfor_block(
 			/* PSTORE32/PSTOREF32(sb, counter) = expr */
 			struct hir_expr *v = lir_vfor_strip_par(stmt->rhs);
 			int vs;
+			struct hir_expr *base_expr =
+				stmt->lhs->type == HIR_EXPR_PMASKSTORE32 ?
+				stmt->lhs->val.mask_store.base :
+				stmt->lhs->val.binary.expr[0];
 			int base_tmpvar = lir_get_local_index(block,
-				stmt->lhs->val.binary.expr[0]->val.term.term->val.symbol);
+				base_expr->val.term.term->val.symbol);
 			if (v->type == HIR_EXPR_TERM) {
 				vs = lir_vfor_term_vreg(&plan, v);
 				if (vs < 0) {
@@ -1829,7 +2067,22 @@ lir_visit_vfor_block(
 					return false;
 				vs = plan.stack_base;
 			}
-			if (!lir_vfor_put3(stmt->lhs->type == HIR_EXPR_PSTOREF32 ?
+			if (stmt->lhs->type == HIR_EXPR_PMASKSTORE32) {
+				int vm = lir_vfor_value_vreg(&plan,
+					stmt->lhs->val.mask_store.mask);
+				if (vm < 0) {
+					vm = plan.stack_base + 1;
+					if (!lir_vfor_expr(&plan, vm, vm + 1,
+							   stmt->lhs->val.mask_store.mask))
+						return false;
+				}
+				if (!lir_put_opcode(OP_VMASKSTOREI32X4) ||
+				    !lir_put_tmpvar((uint16_t)base_tmpvar) ||
+				    !lir_put_tmpvar((uint16_t)plan.counter_tmpvar) ||
+				    !lir_put_imm8((uint8_t)vs) ||
+				    !lir_put_imm8((uint8_t)vm))
+					return false;
+			} else if (!lir_vfor_put3(stmt->lhs->type == HIR_EXPR_PSTOREF32 ?
 					   OP_VSTOREF32X4 : OP_VSTOREI32X4,
 					   0, base_tmpvar,
 					   0, plan.counter_tmpvar,
@@ -1861,6 +2114,8 @@ lir_visit_vfor_block(
 	   overwrites these when it runs at all). */
 	for (i = 0; i < plan.temp_count; i++) {
 		int idx = lir_get_local_index(block, plan.temp[i]);
+		if (plan.temp_induction[i])
+			continue; /* OP_VINDUCT already wrote state after lane 3 */
 		if (!lir_vfor_put3(plan.temp_type[i] == NOCT_VALUE_FLOAT ?
 				   OP_VGETLANEF32 : OP_VGETLANEI32,
 				   0, idx,
@@ -2622,6 +2877,19 @@ lir_visit_expr(
 		if (!lir_visit_binary_expr(dst_tmpvar, expr, block))
 			return false;
 		break;
+	case HIR_EXPR_PGATHER32:
+	{
+		/* Scalar remainder/fallback retains the ordinary checked
+		   subscript semantics through the owner packed object. */
+		struct hir_expr sub;
+		memset(&sub, 0, sizeof(sub));
+		sub.type = HIR_EXPR_SUBSCR;
+		sub.val.binary.expr[0] = expr->val.gather.packed;
+		sub.val.binary.expr[1] = expr->val.gather.index;
+		if (!lir_visit_binary_expr(dst_tmpvar, &sub, block))
+			return false;
+		break;
+	}
 	case HIR_EXPR_PBASE:
 	case HIR_EXPR_PLEN:
 		/* ABCE unary ops. */
@@ -4021,7 +4289,15 @@ lir_put_opcode(
 	uint8_t opcode)
 {
 	if ((opcode >= OP_VLOADI32X4 && opcode <= OP_VCVTF32I32X4) ||
-	    opcode == OP_VORI32X4I || opcode == OP_VFMAF32X4)
+	    opcode == OP_VORI32X4I || opcode == OP_VFMAF32X4 ||
+	    opcode == OP_VCMPI32X4 || opcode == OP_VCMPF32X4 ||
+	    opcode == OP_VSELECT128)
+	    /* keep portable masked stores visible to runtime metadata */
+	    has_vector_ops = true;
+	if (opcode == OP_VMASKSTOREI32X4)
+		has_vector_ops = true;
+	if (opcode == OP_VINDUCTF32X4 ||
+	    opcode == OP_VGATHERI32X4_CHECKED)
 		has_vector_ops = true;
 	if (opcode == OP_VFMAF32X4)
 		has_fma_ops = true;
@@ -4908,12 +5184,12 @@ lir_dump(
 		case OP_VINDEX_HINT:
 		{
 			uint16_t index_tmp, stop_tmp, remaining_tmp;
-			uint8_t index_id, lanes, flags;
+			uint8_t required_vregs, lanes, flags;
 			IMM2(index_tmp); IMM2(stop_tmp); IMM2(remaining_tmp);
-			IMM1(index_id); IMM1(lanes); IMM1(flags);
-			printf("%04d: VINDEX_HINT(index:%d, stop:%d, remaining:%d, id:%u, lanes:%u, flags:0x%02x)\n",
+			IMM1(required_vregs); IMM1(lanes); IMM1(flags);
+			printf("%04d: VINDEX_HINT(index:%d, stop:%d, remaining:%d, vregs:%u, lanes:%u, flags:0x%02x)\n",
 			       ofs, index_tmp, stop_tmp, remaining_tmp,
-			       (unsigned)index_id, (unsigned)lanes,
+			       (unsigned)required_vregs, (unsigned)lanes,
 			       (unsigned)flags);
 			break;
 		}
@@ -4943,6 +5219,53 @@ lir_dump(
 			printf("%04d: VFMAF32X4(vd:%u, va:%u, vb:%u, vc:%u)\n",
 			       ofs, (unsigned)vd, (unsigned)va, (unsigned)vb,
 			       (unsigned)vc);
+			break;
+		}
+		case OP_VCMPI32X4:
+		case OP_VCMPF32X4:
+		{
+			uint8_t vd, va, vb, pred;
+			IMM1(vd); IMM1(va); IMM1(vb); IMM1(pred);
+			printf("%04d: %s(vd:%u, va:%u, vb:%u, pred:%u)\n",
+			       ofs, opcode == OP_VCMPF32X4 ? "VCMPF32X4" :
+			       "VCMPI32X4", (unsigned)vd, (unsigned)va,
+			       (unsigned)vb, (unsigned)pred);
+			break;
+		}
+		case OP_VSELECT128:
+		{
+			uint8_t vd, vm, vt, vf;
+			IMM1(vd); IMM1(vm); IMM1(vt); IMM1(vf);
+			printf("%04d: VSELECT128(vd:%u, vm:%u, vt:%u, vf:%u)\n",
+			       ofs, (unsigned)vd, (unsigned)vm, (unsigned)vt,
+			       (unsigned)vf);
+			break;
+		}
+		case OP_VMASKSTOREI32X4:
+		{
+			uint16_t base, index;
+			uint8_t vs, vm;
+			IMM2(base); IMM2(index); IMM1(vs); IMM1(vm);
+			printf("%04d: VMASKSTOREI32X4(base:%u, index:%u, vs:%u, vm:%u)\n",
+			       ofs, (unsigned)base, (unsigned)index,
+			       (unsigned)vs, (unsigned)vm);
+			break;
+		}
+		case OP_VINDUCTF32X4:
+		{
+			uint8_t vd; uint16_t state, step;
+			IMM1(vd); IMM2(state); IMM2(step);
+			printf("%04d: VINDUCTF32X4(vd:%u, state:%u, step:%u)\n",
+			       ofs, (unsigned)vd, (unsigned)state, (unsigned)step);
+			break;
+		}
+		case OP_VGATHERI32X4_CHECKED:
+		{
+			uint8_t vd, vi; uint16_t base, plen;
+			IMM1(vd); IMM2(base); IMM2(plen); IMM1(vi);
+			printf("%04d: VGATHERI32X4_CHECKED(vd:%u, base:%u, plen:%u, vi:%u)\n",
+			       ofs, (unsigned)vd, (unsigned)base,
+			       (unsigned)plen, (unsigned)vi);
 			break;
 		}
 		case OP_ISHL:

@@ -3708,3 +3708,181 @@ noct_ex_vori32x4i_helper(
 	memcpy(env->vreg[vd], &x, 16);
 	return true;
 }
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcmpi32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int va,
+	int packed_vb_pred)
+{
+	union rt_vlanes a, b, d;
+	int vb = (packed_vb_pred >> 8) & 0xff;
+	int pred = packed_vb_pred & 0xff;
+	int k;
+
+	memcpy(&a, env->vreg[va], 16);
+	memcpy(&b, env->vreg[vb], 16);
+	for (k = 0; k < 4; k++) {
+		bool yes;
+		switch (pred) {
+		case VCMP_EQ: yes = a.i[k] == b.i[k]; break;
+		case VCMP_NE: yes = a.i[k] != b.i[k]; break;
+		case VCMP_LT: yes = a.i[k] <  b.i[k]; break;
+		case VCMP_LE: yes = a.i[k] <= b.i[k]; break;
+		case VCMP_GT: yes = a.i[k] >  b.i[k]; break;
+		case VCMP_GE: yes = a.i[k] >= b.i[k]; break;
+		default: return false;
+		}
+		d.u[k] = yes ? UINT32_MAX : 0;
+	}
+	memcpy(env->vreg[vd], &d, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcmpf32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int va,
+	int packed_vb_pred)
+{
+	union rt_vlanes a, b, d;
+	int vb = (packed_vb_pred >> 8) & 0xff;
+	int pred = packed_vb_pred & 0xff;
+	int k;
+
+	memcpy(&a, env->vreg[va], 16);
+	memcpy(&b, env->vreg[vb], 16);
+	for (k = 0; k < 4; k++) {
+		bool yes;
+		switch (pred) {
+		case VCMP_EQ: yes = a.f[k] == b.f[k]; break;
+		case VCMP_NE: yes = a.f[k] != b.f[k]; break;
+		case VCMP_LT: yes = a.f[k] <  b.f[k]; break;
+		case VCMP_LE: yes = a.f[k] <= b.f[k]; break;
+		case VCMP_GT: yes = a.f[k] >  b.f[k]; break;
+		case VCMP_GE: yes = a.f[k] >= b.f[k]; break;
+		default: return false;
+		}
+		d.u[k] = yes ? UINT32_MAX : 0;
+	}
+	memcpy(env->vreg[vd], &d, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vselect128_helper(
+	NoctEnv *env,
+	int vd,
+	int vm,
+	int packed_vt_vf)
+{
+	union rt_vlanes m, t, f, d;
+	int vt = (packed_vt_vf >> 8) & 0xff;
+	int vf = packed_vt_vf & 0xff;
+	int k;
+
+	memcpy(&m, env->vreg[vm], 16);
+	memcpy(&t, env->vreg[vt], 16);
+	memcpy(&f, env->vreg[vf], 16);
+	for (k = 0; k < 4; k++)
+		d.u[k] = (m.u[k] & t.u[k]) | (~m.u[k] & f.u[k]);
+	memcpy(env->vreg[vd], &d, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmaskstorei32x4_helper(
+	NoctEnv *env,
+	int base,
+	int ofs,
+	int packed_vs_vm)
+{
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *o = &env->frame->tmpvar[ofs];
+	union rt_vlanes value, mask;
+	char *p;
+	int vs = (packed_vs_vm >> 8) & 0xff;
+	int vm = packed_vs_vm & 0xff;
+	int k;
+
+	p = (char *)(intptr_t)b->val.l + (int64_t)o->val.i * 4;
+	memcpy(&value, env->vreg[vs], 16);
+	memcpy(&mask, env->vreg[vm], 16);
+	for (k = 0; k < 4; k++) {
+		if (mask.u[k] == UINT32_MAX)
+			memcpy(p + k * 4, &value.u[k], 4);
+	}
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vinductf32x4_helper(
+	NoctEnv *env,
+	int vd,
+	int state,
+	int step)
+{
+	struct rt_value *s = &env->frame->tmpvar[state];
+	struct rt_value *d = &env->frame->tmpvar[step];
+	union rt_vlanes out;
+	float x = s->val.f;
+	float delta = d->val.f;
+	int k;
+
+	for (k = 0; k < 4; k++) {
+		volatile float rounded;
+		out.f[k] = x;
+		rounded = x + delta;
+		x = rounded;
+	}
+	s->val.f = x;
+	memcpy(env->vreg[vd], &out, 16);
+	return true;
+}
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vgatheri32x4_checked_helper(
+	NoctEnv *env,
+	int vd,
+	int base,
+	int packed_plen_vi)
+{
+	int plen = (packed_plen_vi >> 8) & 0xffff;
+	int vi = packed_plen_vi & 0xff;
+	struct rt_value *b = &env->frame->tmpvar[base];
+	struct rt_value *n = &env->frame->tmpvar[plen];
+	union rt_vlanes index, out;
+	char *p = (char *)(intptr_t)b->val.l;
+	int k;
+
+	memcpy(&index, env->vreg[vi], 16);
+	for (k = 0; k < 4; k++) {
+		int32_t j = index.i[k];
+		if (j < 0) {
+			rt_error(env, N_TR("Subscript is negative."));
+			return false;
+		}
+		if ((uint32_t)j >= (uint32_t)n->val.i) {
+			rt_error(env, N_TR("Array index %ld is out-of-range."),
+				 (long)j);
+			return false;
+		}
+		memcpy(&out.u[k], p + (size_t)(uint32_t)j * 4, 4);
+	}
+	memcpy(env->vreg[vd], &out, 16);
+	return true;
+}

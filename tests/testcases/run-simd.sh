@@ -39,6 +39,51 @@ for tc in simd/*.noct; do
     echo "PASS $tc"
 done
 
+# Draw-image admission probes have no hand-maintained golden files: O0 is
+# the executable reference, and O2 must match it in both interpreter and JIT.
+for tc in simd/drawimage/*.noct; do
+    case "$tc" in
+        *gather-invalid.noct|*gather-negative.noct) continue ;;
+    esac
+    $NOCT -j0 -O0 "$tc" > out.ref 2>&1
+    for mode in "-j -O0" "-j0 -O2" "-j -O2"; do
+        $NOCT $mode "$tc" > out 2>&1
+        if ! diff -q out.ref out > /dev/null 2>&1; then
+            echo "FAIL $tc ($mode differs from -j0 -O0)"
+            diff out.ref out | head -5
+            FAILED=1
+        fi
+    done
+    if ! $NOCT -j0 -O2 --simd-info "$tc" 2>&1 |
+        grep -q 'vectorized'; then
+        echo "FAIL $tc (did not vectorize)"
+        FAILED=1
+    else
+        echo "PASS $tc (O0/O2 match; vectorized)"
+    fi
+done
+
+for mode in "-j0 -O0" "-j0 -O2" "-j -O2"; do
+    if $NOCT $mode simd/drawimage/gather-negative.noct > out 2>&1 ||
+       ! grep -q 'Subscript is negative' out; then
+        echo "FAIL checked gather negative lane ($mode)"
+        FAILED=1
+    else
+        echo "PASS checked gather negative lane ($mode)"
+    fi
+done
+
+# Both scalar and checked-gather paths reject the same first invalid lane.
+for mode in "-j0 -O0" "-j0 -O2" "-j -O2"; do
+    if $NOCT $mode simd/drawimage/gather-invalid.noct > out 2>&1 ||
+       ! grep -q 'Array index 16 is out-of-range' out; then
+        echo "FAIL checked gather invalid lane ($mode)"
+        FAILED=1
+    else
+        echo "PASS checked gather invalid lane ($mode)"
+    fi
+done
+
 # The x86 tiers deliberately use the SSE2 instruction subset for the SSE3
 # ceiling; SSE4.1 only shortens operations such as i32 multiply/extract.
 # On non-x86 backends these ceilings safely reduce to the scalar tier.
@@ -61,7 +106,7 @@ if [ "$(uname -m 2>/dev/null)" = "x86_64" ]; then
     debug=$(NOCT_LIR_VFOR_DEBUG=1 NOCT_JIT_CODEGEN_DEBUG=1 \
         $NOCT -j -O3 simd/blend2.noct 2>&1 >/dev/null)
     if printf '%s\n' "$debug" | grep -q \
-        'noct-lir-vfor: max=13 .*caches=4 ' && \
+        'noct-lir-vfor: max=16 required=[0-9][0-9]* .*caches=4 ' && \
        printf '%s\n' "$debug" | grep -q \
         'noct-jit-codegen: x86_64: func=blend '; then
         echo "PASS x86_64 four-value vector cache/native JIT build"
@@ -186,9 +231,23 @@ else
         echo "PASS O3 FMA bytecode metadata/portable round trip"
     fi
 fi
+
+# New predication/induction/gather opcodes are part of persisted portable
+# bytecode, not an optimizer-runtime side channel.
+cp simd/drawimage/gather-checked.noct "$tmp_dir/gather-checked.noct"
+$NOCT_META --compile -O2 "$tmp_dir/gather-checked.noct" > /dev/null 2>&1
+$NOCT_META -j "$tmp_dir/gather-checked.nb" > "$tmp_dir/gather.out" 2>&1
+$NOCT_META -j0 -O0 simd/drawimage/gather-checked.noct \
+    > "$tmp_dir/gather.ref" 2>&1
+if ! diff -q "$tmp_dir/gather.ref" "$tmp_dir/gather.out" > /dev/null 2>&1; then
+    echo "FAIL checked-gather bytecode portable round trip"
+    FAILED=1
+else
+    echo "PASS checked-gather bytecode portable round trip"
+fi
 rm -rf "$tmp_dir"
 
-rm -f out
+rm -f out out.ref
 
 if [ "$FAILED" -ne 0 ]; then
     echo 'SIMD tests FAILED.'

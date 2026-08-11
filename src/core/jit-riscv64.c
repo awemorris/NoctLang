@@ -3161,9 +3161,8 @@ jit_visit_bytecode(
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;
-                default:
-                        assert(JIT_OP_NOT_IMPLEMENTED);
-                        break;
+		default:
+			return false; /* interpreter fallback for newer bytecode */
                 }
         }
 

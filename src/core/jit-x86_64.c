@@ -868,6 +868,16 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 			if ((ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0)
 				return false;
 			size = 5; break;
+		case OP_VCMPI32X4:
+		case OP_VCMPF32X4:
+		case OP_VSELECT128:
+			size = 5; break;
+		case OP_VMASKSTOREI32X4:
+			size = 7; break;
+		case OP_VINDUCTF32X4:
+			size = 6; break;
+		case OP_VGATHERI32X4_CHECKED:
+			size = 7; break;
 		case OP_VORI32X4I:
 			if (p + 5 > ctx->func->bytecode_size) return false;
 			imm = ctx->func->bytecode[p + 3];
@@ -918,12 +928,13 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 static INLINE bool
 jit_visit_vindex_hint_op(struct jit_context *ctx)
 {
-	int a, b, c, id, lanes, flags;
+	int a, b, c, required_vregs, lanes, flags;
 	int ofs, base_ofs;
 	uint32_t imm_value;
 	CONSUME_TMPVAR(a); CONSUME_TMPVAR(b); CONSUME_TMPVAR(c);
-	CONSUME_IMM8(id); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
-	UNUSED_PARAMETER(id);
+	CONSUME_IMM8(required_vregs); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
+	if (required_vregs > 13 || (flags & VINDEX_FORCE_SCALAR) != 0)
+		ctx->simd_caps = 0;
 	ctx->vector_hint_active = !IS_MSABI && lanes > 0 &&
 		(ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0 &&
 		(flags & VINDEX_CURSOR_ONLY) != 0 &&
@@ -1139,6 +1150,162 @@ jit_visit_vfmaf32x4_op(struct jit_context *ctx)
 		return jit_x86_64_put_vex_rrr(ctx, 2, 1, opcode,
 					      dst, src1, src2);
 	}
+}
+
+static INLINE bool
+jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
+{
+	int dst, src1, src2, pred;
+	int left, right, imm;
+	bool (CDECL *helper)(NoctEnv *, int, int, int);
+
+	CONSUME_IMM8(dst); CONSUME_IMM8(src1);
+	CONSUME_IMM8(src2); CONSUME_IMM8(pred);
+	if (dst < 0 || dst >= 16 || src1 < 0 || src1 >= 16 ||
+	    src2 < 0 || src2 >= 16 || pred < 0 ||
+	    pred >= VCMP_PREDICATE_COUNT) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (IS_MSABI || (ctx->simd_caps & JIT_SIMD_CAP_SSE2) == 0) {
+		src2 = (src2 << 8) | pred;
+		helper = is_float ? ex_vcmpf32x4_helper :
+				    ex_vcmpi32x4_helper;
+		ASM_BINARY_OP(helper);
+		return true;
+	}
+	if (dst >= 13 || src1 >= 13 || src2 >= 13) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (is_float) {
+		left = src1;
+		right = src2;
+		switch (pred) {
+		case VCMP_EQ: imm = 0; break;
+		case VCMP_NE: imm = 4; break; /* unordered-or-not-equal */
+		case VCMP_LT: imm = 1; break;
+		case VCMP_LE: imm = 2; break;
+		case VCMP_GT: imm = 1; left = src2; right = src1; break;
+		case VCMP_GE: imm = 2; left = src2; right = src1; break;
+		default: return false;
+		}
+		if (!jit_x86_64_put_sse_rr(ctx, 0, 1, 0x28, 13, left) ||
+		    !jit_x86_64_put_sse_rr(ctx, 0, 1, 0xc2, 13, right) ||
+		    !jit_put_byte(ctx, (uint8_t)imm))
+			return false;
+	} else {
+		left = src1;
+		right = src2;
+		if (pred == VCMP_LT || pred == VCMP_GE) {
+			left = src2;
+			right = src1;
+		}
+		if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, left))
+			return false;
+		if (pred == VCMP_EQ || pred == VCMP_NE) {
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x76,
+						  13, right))
+				return false;
+		} else if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x66,
+						       13, right)) {
+			return false;
+		}
+		if (pred == VCMP_NE || pred == VCMP_LE || pred == VCMP_GE) {
+			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x76, 14, 14) ||
+			    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xef, 13, 14))
+				return false;
+		}
+	}
+	if (dst != 13 && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+						    dst, 13))
+		return false;
+	return true;
+}
+
+static INLINE bool
+jit_visit_vselect128_op(struct jit_context *ctx)
+{
+	int dst, mask, src1, src2;
+
+	CONSUME_IMM8(dst); CONSUME_IMM8(mask);
+	CONSUME_IMM8(src1); CONSUME_IMM8(src2);
+	if (dst < 0 || dst >= 16 || mask < 0 || mask >= 16 ||
+	    src1 < 0 || src1 >= 16 || src2 < 0 || src2 >= 16) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (IS_MSABI || (ctx->simd_caps & JIT_SIMD_CAP_SSE2) == 0) {
+		src2 = (src1 << 8) | src2;
+		src1 = mask;
+		ASM_BINARY_OP(ex_vselect128_helper);
+		return true;
+	}
+	if (dst >= 13 || mask >= 13 || src1 >= 13 || src2 >= 13) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	/* xmm13 = mask & true; xmm14 = ~mask & false. */
+	if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, mask) ||
+	    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xdb, 13, src1) ||
+	    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 14, mask) ||
+	    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xdf, 14, src2) ||
+	    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, 13, 14))
+		return false;
+	if (dst != 13 && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+						    dst, 13))
+		return false;
+	return true;
+}
+
+static INLINE bool
+jit_visit_vmaskstorei32x4_op(struct jit_context *ctx)
+{
+	int dst, src1, src2;
+	int mask;
+	CONSUME_TMPVAR(dst); CONSUME_TMPVAR(src1);
+	CONSUME_IMM8(src2); CONSUME_IMM8(mask);
+	if (src2 < 0 || src2 >= 16 || mask < 0 || mask >= 16) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	/* LIR requests 16 logical vregs for this region, so x86_64 reaches
+	   this handler only in the memory-canonical direct-scalar tier. */
+	if ((ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	src2 = (src2 << 8) | mask;
+	ASM_BINARY_OP(ex_vmaskstorei32x4_helper);
+	return true;
+}
+
+static INLINE bool
+jit_visit_vinductf32x4_op(struct jit_context *ctx)
+{
+	int dst, src1, src2;
+	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1); CONSUME_TMPVAR(src2);
+	if (dst < 0 || dst >= 16) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	ASM_BINARY_OP(ex_vinductf32x4_helper);
+	return true;
+}
+
+static INLINE bool
+jit_visit_vgatheri32x4_checked_op(struct jit_context *ctx)
+{
+	int dst, src1, plen, vi, src2;
+	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1);
+	CONSUME_TMPVAR(plen); CONSUME_IMM8(vi);
+	if (dst < 0 || dst >= 16 || vi < 0 || vi >= 16) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	src2 = (plen << 8) | vi;
+	ASM_BINARY_OP(ex_vgatheri32x4_checked_helper);
+	return true;
 }
 
 /* Visit a OP_ADD instruction. */
@@ -3830,6 +3997,24 @@ jit_visit_bytecode(
 		case OP_VFMAF32X4:
 			if (!jit_visit_vfmaf32x4_op(ctx)) return false;
 			break;
+		case OP_VCMPI32X4:
+			if (!jit_visit_vcmp_op(ctx, false)) return false;
+			break;
+		case OP_VCMPF32X4:
+			if (!jit_visit_vcmp_op(ctx, true)) return false;
+			break;
+		case OP_VSELECT128:
+			if (!jit_visit_vselect128_op(ctx)) return false;
+			break;
+		case OP_VMASKSTOREI32X4:
+			if (!jit_visit_vmaskstorei32x4_op(ctx)) return false;
+			break;
+		case OP_VINDUCTF32X4:
+			if (!jit_visit_vinductf32x4_op(ctx)) return false;
+			break;
+		case OP_VGATHERI32X4_CHECKED:
+			if (!jit_visit_vgatheri32x4_checked_op(ctx)) return false;
+			break;
                 case OP_IADD:
                 case OP_ISUB:
                 case OP_IMUL:
@@ -3881,9 +4066,8 @@ jit_visit_bytecode(
                         if (!jit_visit_vector_op(ctx, opcode))
                                 return false;
                         break;
-                default:
-                        assert(JIT_OP_NOT_IMPLEMENTED);
-                        break;
+		default:
+			return false; /* interpreter fallback for newer bytecode */
                 }
         }
 
