@@ -348,8 +348,8 @@ struct rt_env {
 	 * lane bytes; never holds references; never scanned by the GC;
 	 * content is dead outside a single vectorized strip region.
 	 * Byte order within a vreg is memory order (lane k of an i32x4
-	 * is bytes 4k..4k+3).  Indices 0..7 are program-visible; 8..15
-	 * are reserved.  All C access goes through memcpy (no
+	 * is bytes 4k..4k+3).  Indices 0..15 are program-visible.  All C
+	 * access goes through memcpy (no
 	 * alignment requirement).
 	 */
 #if defined(__GNUC__) || defined(__clang__)

@@ -1216,6 +1216,7 @@ jit_visit_vori32x4i_op(
 {
 	int dst, src1, imm, shift;
 	int src2;
+	int vd, vs;
 
 	CONSUME_IMM8(dst);
 	CONSUME_IMM8(src1);
@@ -1226,15 +1227,21 @@ jit_visit_vori32x4i_op(
 		ASM_BINARY_OP(ex_vori32x4i_helper);
 		return true;
 	}
-	if (dst != src1) {
+	vd = dst < 8 ? dst : dst < 16 ? dst + 8 : -1;
+	vs = src1 < 8 ? src1 : src1 < 16 ? src1 + 8 : -1;
+	if (vd < 0 || vs < 0) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (vd != vs) {
 		/* mov vD.16b, vS.16b (alias of orr vD.16b,vS.16b,vS.16b) */
 		if (!jit_put_word(ctx, 0x4ea01c00u |
-				 ((uint32_t)src1 << 16) |
-				 ((uint32_t)src1 << 5) | (uint32_t)dst))
+				 ((uint32_t)vs << 16) |
+				 ((uint32_t)vs << 5) | (uint32_t)vd))
 			return false;
 	}
 	if (imm == 0xff && shift == 24) {
-		if (!jit_put_word(ctx, 0x4f0777e0u | (uint32_t)dst))
+		if (!jit_put_word(ctx, 0x4f0777e0u | (uint32_t)vd))
 			return false;
 		return true;
 	}
@@ -3030,9 +3037,10 @@ jit_visit_typed_op(
 
 /*
  * 128-bit SIMD ops (docs/design/06-simd.md): inline NEON, arm64.
- * vreg k -> v k (v0..v7 are caller-saved under AAPCS64, unused by
- * the other emitters, and vector state only lives inside a strip
- * region that emits no calls).  NEON is baseline on AArch64: no
+ * Logical vreg 0..7 maps to v0..v7 and 8..15 maps to v16..v23.
+ * Both ranges are caller-saved under AAPCS64; callee-saved v8..v15
+ * are deliberately skipped.  Vector state lives only inside a strip
+ * region that emits no calls.  NEON is baseline on AArch64: no
  * feature gate.  NEON ALU is three-address, so there is no
  * two-address copy dance and no vd==vb hazard at all.
  */
@@ -3047,6 +3055,14 @@ jit_put_scalar_vreg_base(struct jit_context *ctx, uint32_t rd)
             !jit_put_add(ctx, rd, REG_X0, rd))
                 return false;
         return true;
+}
+
+static INLINE int
+jit_arm64_vreg(int logical)
+{
+	if (logical < 0 || logical >= 16)
+		return -1;
+	return logical < 8 ? logical : logical + 8;
 }
 
 /* Direct scalar lowering used by the forced-scalar capability tier. */
@@ -3257,6 +3273,7 @@ jit_visit_vector_op(
         int a;
         int b;
         int c;
+	int va, vb, vc;
 	uint32_t op_lpc;
 	int cursor_id;
 
@@ -3303,6 +3320,40 @@ jit_visit_vector_op(
         if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
                 return jit_visit_vector_scalar_op(ctx, op, a, b, c);
         }
+	va = vb = vc = 0;
+	switch (op) {
+	case OP_VLOADI32X4:
+	case OP_VLOADF32X4:
+	case OP_VSPLATI32:
+	case OP_VSPLATF32:
+		va = jit_arm64_vreg(a);
+		break;
+	case OP_VSTOREI32X4:
+	case OP_VSTOREF32X4:
+		vc = jit_arm64_vreg(c);
+		break;
+	case OP_VGETLANEI32:
+	case OP_VGETLANEF32:
+		vb = jit_arm64_vreg(b);
+		break;
+	case OP_VMOV128:
+	case OP_VCVTI32F32X4:
+	case OP_VCVTF32I32X4:
+	case OP_VSHLI32X4:
+	case OP_VSHRI32X4:
+		va = jit_arm64_vreg(a);
+		vb = jit_arm64_vreg(b);
+		break;
+	default:
+		va = jit_arm64_vreg(a);
+		vb = jit_arm64_vreg(b);
+		vc = jit_arm64_vreg(c);
+		break;
+	}
+	if (va < 0 || vb < 0 || vc < 0) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
 	op_lpc = ctx->pc_entry[ctx->pc_entry_count - 1].lpc;
 
         switch (op) {
@@ -3321,10 +3372,10 @@ jit_visit_vector_op(
 			if (ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
 				/* ldr qA, [xCursor], #16 */
 				if (!jit_put_word(ctx, 0x3cc10400u |
-						 (rn << 5) | (uint32_t)a))
+						 (rn << 5) | (uint32_t)va))
 					return false;
 			} else if (!jit_put_word(ctx, 0x3dc00000u |
-						 (rn << 5) | (uint32_t)a)) {
+						 (rn << 5) | (uint32_t)va)) {
 				return false;
 			}
 			break;
@@ -3337,7 +3388,7 @@ jit_visit_vector_op(
                         ADD             (REG_X2, REG_X2, REG_X3);
                 }
                 /* ldr qA, [x2] */
-                if (!jit_put_word(ctx, 0x3dc00000 | (2u << 5) | (uint32_t)a))
+		if (!jit_put_word(ctx, 0x3dc00000 | (2u << 5) | (uint32_t)va))
                         return false;
                 break;
         }
@@ -3356,7 +3407,7 @@ jit_visit_vector_op(
 			uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
 			/* str qC, [xCursor], #16 */
 			if (!jit_put_word(ctx, 0x3c810400u |
-					 (rn << 5) | (uint32_t)c))
+					 (rn << 5) | (uint32_t)vc))
 				return false;
 			break;
 		}
@@ -3367,7 +3418,7 @@ jit_visit_vector_op(
                         ADD             (REG_X2, REG_X2, REG_X3);
                 }
                 /* str qC, [x2] */
-                if (!jit_put_word(ctx, 0x3d800000 | (2u << 5) | (uint32_t)c))
+		if (!jit_put_word(ctx, 0x3d800000 | (2u << 5) | (uint32_t)vc))
                         return false;
                 break;
         }
@@ -3379,7 +3430,7 @@ jit_visit_vector_op(
                         LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src + 8));
                 }
                 /* dup vA.4s, w3 */
-                if (!jit_put_word(ctx, 0x4e040c00 | (3u << 5) | (uint32_t)a))
+		if (!jit_put_word(ctx, 0x4e040c00 | (3u << 5) | (uint32_t)va))
                         return false;
                 break;
         }
@@ -3390,7 +3441,7 @@ jit_visit_vector_op(
                 /* umov w3, vB.s[c] (imm5 = (lane << 3) | 4) */
                 if (!jit_put_word(ctx, 0x0e003c00 |
                                   ((((uint32_t)c << 3) | 4u) << 16) |
-                                  ((uint32_t)b << 5) | 3u))
+				  ((uint32_t)vb << 5) | 3u))
                         return false;
                 ASM {
                         /* Tag + full-union value store (w3 is
@@ -3405,65 +3456,65 @@ jit_visit_vector_op(
                 break;
         }
         case OP_VMOV128:
-                if (a != b) {
+                if (va != vb) {
                         /* mov vA.16b, vB.16b (orr vA, vB, vB) */
                         if (!jit_put_word(ctx, 0x4ea01c00 |
-                                          ((uint32_t)b << 16) |
-                                          ((uint32_t)b << 5) | (uint32_t)a))
+					  ((uint32_t)vb << 16) |
+					  ((uint32_t)vb << 5) | (uint32_t)va))
                                 return false;
                 }
                 break;
 	case OP_VCVTI32F32X4:
 		if (!jit_put_word(ctx, 0x4e21d800 |
-				  ((uint32_t)b << 5) | (uint32_t)a))
+				  ((uint32_t)vb << 5) | (uint32_t)va))
 			return false;
 		break;
 	case OP_VCVTF32I32X4:
 		if (!jit_put_word(ctx, 0x4ea1b800 |
-				  ((uint32_t)b << 5) | (uint32_t)a))
+				  ((uint32_t)vb << 5) | (uint32_t)va))
 			return false;
 		break;
         case OP_VADDI32X4:
                 /* add vA.4s, vB.4s, vC.4s */
-                if (!jit_put_word(ctx, 0x4ea08400 | ((uint32_t)c << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                if (!jit_put_word(ctx, 0x4ea08400 | ((uint32_t)vc << 16) |
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
         case OP_VSUBI32X4:
                 /* sub vA.4s, vB.4s, vC.4s */
-                if (!jit_put_word(ctx, 0x6ea08400 | ((uint32_t)c << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                if (!jit_put_word(ctx, 0x6ea08400 | ((uint32_t)vc << 16) |
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
         case OP_VMULI32X4:
                 /* mul vA.4s, vB.4s, vC.4s */
-                if (!jit_put_word(ctx, 0x4ea09c00 | ((uint32_t)c << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                if (!jit_put_word(ctx, 0x4ea09c00 | ((uint32_t)vc << 16) |
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
         case OP_VAND128:
                 /* and vA.16b, vB.16b, vC.16b */
-                if (!jit_put_word(ctx, 0x4e201c00 | ((uint32_t)c << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                if (!jit_put_word(ctx, 0x4e201c00 | ((uint32_t)vc << 16) |
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
         case OP_VOR128:
                 /* orr vA.16b, vB.16b, vC.16b */
-                if (!jit_put_word(ctx, 0x4ea01c00 | ((uint32_t)c << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                if (!jit_put_word(ctx, 0x4ea01c00 | ((uint32_t)vc << 16) |
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
         case OP_VXOR128:
                 /* eor vA.16b, vB.16b, vC.16b */
-                if (!jit_put_word(ctx, 0x6e201c00 | ((uint32_t)c << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                if (!jit_put_word(ctx, 0x6e201c00 | ((uint32_t)vc << 16) |
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
         case OP_VSHLI32X4:
                 /* shl vA.4s, vB.4s, #c (immh:immb = 32 + c) */
                 if (!jit_put_word(ctx, 0x4f005400 |
                                   ((32u + (uint32_t)c) << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
         case OP_VSHRI32X4:
@@ -3471,31 +3522,31 @@ jit_visit_vector_op(
                    the LIR layer never emits c == 0) */
                 if (!jit_put_word(ctx, 0x6f000400 |
                                   ((64u - (uint32_t)c) << 16) |
-                                  ((uint32_t)b << 5) | (uint32_t)a))
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
                         return false;
                 break;
 	case OP_VADDF32X4:
 		/* fadd vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x4e20d400 | ((uint32_t)c << 16) |
-				  ((uint32_t)b << 5) | (uint32_t)a))
+		if (!jit_put_word(ctx, 0x4e20d400 | ((uint32_t)vc << 16) |
+				  ((uint32_t)vb << 5) | (uint32_t)va))
 			return false;
 		break;
 	case OP_VSUBF32X4:
 		/* fsub vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x4ea0d400 | ((uint32_t)c << 16) |
-				  ((uint32_t)b << 5) | (uint32_t)a))
+		if (!jit_put_word(ctx, 0x4ea0d400 | ((uint32_t)vc << 16) |
+				  ((uint32_t)vb << 5) | (uint32_t)va))
 			return false;
 		break;
 	case OP_VMULF32X4:
 		/* fmul vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x6e20dc00 | ((uint32_t)c << 16) |
-				  ((uint32_t)b << 5) | (uint32_t)a))
+		if (!jit_put_word(ctx, 0x6e20dc00 | ((uint32_t)vc << 16) |
+				  ((uint32_t)vb << 5) | (uint32_t)va))
 			return false;
 		break;
 	case OP_VDIVF32X4:
 		/* fdiv vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x6e20fc00 | ((uint32_t)c << 16) |
-				  ((uint32_t)b << 5) | (uint32_t)a))
+		if (!jit_put_word(ctx, 0x6e20fc00 | ((uint32_t)vc << 16) |
+				  ((uint32_t)vb << 5) | (uint32_t)va))
 			return false;
 		break;
         default:

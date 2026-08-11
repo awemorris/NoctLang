@@ -719,7 +719,11 @@ lir_visit_for_block(
  * non-term subtree results occupy stack slots.
  */
 
+#if defined(NOCT_ARCH_ARM64)
+#define VFOR_VREG_MAX		16
+#else
 #define VFOR_VREG_MAX		8
+#endif
 #define VFOR_MAX_CONSTS		8
 #define VFOR_MAX_LOCALS		8
 #define VFOR_CACHE_CANDIDATE_MAX 32
@@ -752,13 +756,12 @@ struct vfor_plan {
 	int cache_candidate_count;
 	struct vfor_cache_entry cache[VFOR_CACHE_MAX];
 	int cache_count;
-	int extra_scratch_reg;
-	int extra_scratch_reg2;
 	bool is_float;
 };
 
 static struct hir_expr *lir_vfor_strip_par(struct hir_expr *e);
 static int lir_vfor_term_vreg(struct vfor_plan *plan, struct hir_expr *e);
+static bool lir_vfor_expr_reads(struct hir_expr *e, const char *sym);
 
 static int
 lir_vfor_local_type(struct vfor_plan *plan, const char *sym)
@@ -939,40 +942,13 @@ lir_vfor_cached_reg(struct vfor_plan *plan, struct hir_expr *e)
 	return -1;
 }
 
-/* Logical stack slot 8 may reuse a constant/invariant proven dead after
-   the cache prelude.  This is the one extra slot blend needs. */
 static int
 lir_vfor_physical_reg(struct vfor_plan *plan, int reg)
 {
+	UNUSED_PARAMETER(plan);
 	if (reg >= 0 && reg < VFOR_VREG_MAX)
 		return reg;
-	if (reg == VFOR_VREG_MAX)
-		return plan->extra_scratch_reg;
-	if (reg == VFOR_VREG_MAX + 1)
-		return plan->extra_scratch_reg2;
 	return -1;
-}
-
-static bool
-lir_vfor_expr_uses_home_outside_cache(struct vfor_plan *plan,
-				      struct hir_expr *e, int home)
-{
-	int i;
-
-	e = lir_vfor_strip_par(e);
-	for (i = 0; i < plan->cache_count; i++) {
-		if (lir_vfor_expr_equal(plan->cache[i].expr, e))
-			return false;
-	}
-	if (e->type == HIR_EXPR_TERM)
-		return lir_vfor_term_vreg(plan, e) == home;
-	if (e->type == HIR_EXPR_CALL)
-		return lir_vfor_expr_uses_home_outside_cache(
-			plan, e->val.call.arg[0], home);
-	return lir_vfor_expr_uses_home_outside_cache(
-			plan, e->val.binary.expr[0], home) ||
-	       lir_vfor_expr_uses_home_outside_cache(
-			plan, e->val.binary.expr[1], home);
 }
 
 /* Map a TERM to its home vreg (const or local). */
@@ -1016,6 +992,93 @@ lir_vfor_value_vreg(struct vfor_plan *plan, struct hir_expr *e)
 	if (e->type == HIR_EXPR_TERM)
 		return lir_vfor_term_vreg(plan, e);
 	return lir_vfor_cached_reg(plan, e);
+}
+
+/* Number of scratch vregs needed in addition to the destination.  Cached
+   values and terms are already resident.  This mirrors lir_vfor_expr(). */
+static int
+lir_vfor_scratch_need(struct vfor_plan *plan, struct hir_expr *e)
+{
+	struct hir_expr *l;
+	struct hir_expr *r;
+	int ln, rn;
+	bool lv, rv;
+
+	e = lir_vfor_strip_par(e);
+	if (e->type == HIR_EXPR_TERM || lir_vfor_cached_reg(plan, e) >= 0)
+		return 0;
+	switch (e->type) {
+	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PLOADF32:
+		return 0;
+	case HIR_EXPR_CALL:
+		return lir_vfor_scratch_need(plan, e->val.call.arg[0]);
+	case HIR_EXPR_SHL:
+	case HIR_EXPR_SHR:
+		return lir_vfor_scratch_need(plan, e->val.binary.expr[0]);
+	default:
+		break;
+	}
+	l = lir_vfor_strip_par(e->val.binary.expr[0]);
+	r = lir_vfor_strip_par(e->val.binary.expr[1]);
+	lv = lir_vfor_value_vreg(plan, l) >= 0;
+	rv = lir_vfor_value_vreg(plan, r) >= 0;
+	ln = lir_vfor_scratch_need(plan, l);
+	rn = lir_vfor_scratch_need(plan, r);
+	if (lv && rv)
+		return 0;
+	if (!lv && rv)
+		return ln;
+	if (lv && !rv) {
+		if (e->type != HIR_EXPR_MINUS && e->type != HIR_EXPR_DIV)
+			return rn;
+		return 1 + rn;
+	}
+	return ln > 1 + rn ? ln : 1 + rn;
+}
+
+static bool
+lir_vfor_plan_fits(struct vfor_plan *plan, struct hir_block *block,
+		   int home_count)
+{
+	struct hir_stmt *stmt;
+	int i;
+	int need;
+
+	plan->stack_base = home_count + plan->cache_count;
+	if (plan->stack_base > VFOR_VREG_MAX)
+		return false;
+	for (i = 0; i < plan->cache_count; i++) {
+		plan->cache[i].reg = home_count + i;
+		plan->cache[i].emitted = false;
+	}
+	/* A cache may consume only caches materialized before it. */
+	for (i = 0; i < plan->cache_count; i++) {
+		need = lir_vfor_scratch_need(plan, plan->cache[i].expr);
+		if (need > 0 && plan->stack_base + need > VFOR_VREG_MAX)
+			return false;
+		plan->cache[i].emitted = true;
+	}
+	for (stmt = block->val.for_.inner->val.basic.stmt_list;
+	     stmt != NULL; stmt = stmt->next) {
+		struct hir_expr *rhs = lir_vfor_strip_par(stmt->rhs);
+		need = lir_vfor_scratch_need(plan, rhs);
+		if (stmt->lhs->type == HIR_EXPR_TERM) {
+			const char *sym = stmt->lhs->val.term.term->val.symbol;
+			if (lir_vfor_expr_reads(stmt->rhs, sym))
+				need++;
+			if (need > 0 && plan->stack_base + need >
+			    VFOR_VREG_MAX)
+				return false;
+		} else if (rhs->type != HIR_EXPR_TERM) {
+			/* The store value itself occupies stack_base. */
+			if (plan->stack_base + 1 + need > VFOR_VREG_MAX)
+				return false;
+		}
+	}
+	for (i = 0; i < plan->cache_count; i++)
+		plan->cache[i].emitted = false;
+	return true;
 }
 
 /* Plan collection walk (mirror of hir_opt_simd.c's collection). */
@@ -1383,8 +1446,6 @@ lir_visit_vfor_block(
 	plan.is_float = !block->val.for_.typed_int_region;
 	plan.counter = block->val.for_.counter_symbol;
 	plan.counter_tmpvar = lir_get_local_index(block, plan.counter);
-	plan.extra_scratch_reg = -1;
-	plan.extra_scratch_reg2 = -1;
 	store_count = 0;
 
 	/* Collect the plan (mirror of the HIR-side budget check). */
@@ -1441,39 +1502,12 @@ lir_visit_vfor_block(
 			}
 		}
 	}
-	plan.stack_base = plan.const_count + plan.inv_count + plan.temp_count;
-	while (plan.cache_count > 0 &&
-	       plan.stack_base + plan.cache_count >= VFOR_VREG_MAX)
+	i = plan.const_count + plan.inv_count + plan.temp_count;
+	while (!lir_vfor_plan_fits(&plan, block, i) && plan.cache_count > 0)
 		plan.cache_count--;
-	for (i = 0; i < plan.cache_count; i++) {
-		plan.cache[i].reg = plan.stack_base + i;
-		plan.cache[i].emitted = false;
-	}
-	plan.stack_base += plan.cache_count;
-	if (plan.stack_base > VFOR_VREG_MAX) {
+	if (!lir_vfor_plan_fits(&plan, block, i)) {
 		lir_fatal("SIMD: vreg budget exceeded.");
 		return false;
-	}
-	/* Recycle the first constant/invariant whose remaining uses are all
-	   covered by cache values. */
-	for (i = 0; i < plan.const_count + plan.inv_count; i++) {
-		bool used = false;
-		for (stmt = block->val.for_.inner->val.basic.stmt_list;
-		     stmt != NULL; stmt = stmt->next) {
-			if (lir_vfor_expr_uses_home_outside_cache(
-				    &plan, stmt->rhs, i)) {
-				used = true;
-				break;
-			}
-		}
-		if (!used) {
-			if (plan.extra_scratch_reg < 0)
-				plan.extra_scratch_reg = i;
-			else {
-				plan.extra_scratch_reg2 = i;
-				break;
-			}
-		}
 	}
 
 	/* Evaluate start/stop once. */

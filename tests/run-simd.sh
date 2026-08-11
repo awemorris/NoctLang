@@ -15,7 +15,7 @@
 NOCT=${NOCT:-../build-static/noct}
 NOCT_META=${NOCT_META:-$NOCT}
 
-MUST_VECTORIZE="blend blend2 mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
+MUST_VECTORIZE="blend blend2 blend2_multigroup mixed_convert remainder tempafter inplace vshift_edges mixed_bases overlap_dynamic restricted_params f32"
 MUST_NOT="overlap_reject u8_reject counter_value carried if_reject budget"
 
 echo 'SIMD tests:'
