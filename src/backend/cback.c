@@ -581,12 +581,14 @@ cback_visit_inc_op(
 	uint32_t *pc)
 {
 	int dst;
+	int step;
 
 	GET_TMPVAR(&dst);
+	GET_U8(&step);
 
 	/* In-place integer increment (same semantics as the interpreter). */
 	fprintf(fp, "    if (env->frame->tmpvar[%d].type != NOCT_VALUE_INT) return false;\n", dst);
-	fprintf(fp, "    env->frame->tmpvar[%d].val.i++;\n", dst);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i += %d;\n", dst, step);
 
 	return true;
 }
@@ -1084,9 +1086,12 @@ cback_visit_pbase_op(
 	uint32_t *pc)
 {
 	int dst, src;
+	int base_id;
 
 	GET_TMPVAR(&dst);
 	GET_TMPVAR(&src);
+	GET_U8(&base_id);
+	UNUSED_PARAMETER(base_id);
 
 	fprintf(fp, "    if (!noct_ex_pbase_helper(env, %d, %d)) return false;\n", dst, src);
 
@@ -1560,6 +1565,64 @@ cback_visit_vector_op(
 	return true;
 }
 
+static INLINE bool
+cback_visit_vindex_hint_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int index_tmp, stop_tmp, remaining_tmp;
+	int index_id, lanes, flags;
+
+	GET_TMPVAR(&index_tmp);
+	GET_TMPVAR(&stop_tmp);
+	GET_TMPVAR(&remaining_tmp);
+	GET_U8(&index_id);
+	GET_U8(&lanes);
+	GET_U8(&flags);
+	UNUSED_PARAMETER(index_tmp);
+	UNUSED_PARAMETER(stop_tmp);
+	UNUSED_PARAMETER(remaining_tmp);
+	UNUSED_PARAMETER(index_id);
+	UNUSED_PARAMETER(lanes);
+	UNUSED_PARAMETER(flags);
+	return true;
+}
+
+static INLINE bool
+cback_visit_subjnz_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int value, decrement;
+	uint32_t target;
+
+	GET_TMPVAR(&value);
+	GET_U8(&decrement);
+	GET_U32(&target);
+	fprintf(fp, "    env->frame->tmpvar[%d].val.i -= %d;\n",
+		value, decrement);
+	fprintf(fp, "    if (env->frame->tmpvar[%d].val.i != 0) goto L_pc_%u;\n",
+		value, target);
+	return true;
+}
+
+static INLINE bool
+cback_visit_vori32x4i_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int vd, vs, imm, shift;
+
+	GET_U8(&vd);
+	GET_U8(&vs);
+	GET_U8(&imm);
+	GET_U8(&shift);
+	fprintf(fp,
+		"    if (!noct_ex_vori32x4i_helper(env, %d, %d, %d)) return false;\n",
+		vd, vs, (imm << 8) | shift);
+	return true;
+}
+
 static bool
 cback_visit_op(
 	struct lir_func *func,
@@ -1875,6 +1938,18 @@ cback_visit_op(
 	case OP_VCVTI32F32X4:
 	case OP_VCVTF32I32X4:
 		if (!cback_visit_vector_op(func, pc, op))
+			return false;
+		break;
+	case OP_VINDEX_HINT:
+		if (!cback_visit_vindex_hint_op(func, pc))
+			return false;
+		break;
+	case OP_SUBJNZ:
+		if (!cback_visit_subjnz_op(func, pc))
+			return false;
+		break;
+	case OP_VORI32X4I:
+		if (!cback_visit_vori32x4i_op(func, pc))
 			return false;
 		break;
 	default:

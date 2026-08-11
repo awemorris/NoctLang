@@ -937,8 +937,10 @@ jit_visit_inc_op(
         struct jit_context *ctx)
 {
         int dst;
+        int step;
 
         CONSUME_TMPVAR(dst);
+        CONSUME_IMM8(step);
 
         dst *= (int)sizeof(struct rt_value);
 
@@ -953,11 +955,57 @@ jit_visit_inc_op(
 
                 /* env->frame->tmpvar[dst].val.i++ */
                 LDR     (REG_R1, REG_R0, 8);            /* tmp = &env->frame->tmpvar[dst].val.i */
-                ADD_IMM (REG_R1, REG_R1, 1);            /* tmp++ */
+                ADD_IMM (REG_R1, REG_R1, (uint32_t)step);
                 STR     (REG_R1, REG_R0, 8);            /* env->frame->tmpvar[dst].val.i = tmp */
         }
 
         return true;
+}
+
+static INLINE bool
+jit_visit_vindex_hint_op(struct jit_context *ctx)
+{
+	int a, b, c, id, lanes, flags;
+	CONSUME_TMPVAR(a); CONSUME_TMPVAR(b); CONSUME_TMPVAR(c);
+	CONSUME_IMM8(id); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
+	UNUSED_PARAMETER(a); UNUSED_PARAMETER(b); UNUSED_PARAMETER(c);
+	UNUSED_PARAMETER(id); UNUSED_PARAMETER(lanes); UNUSED_PARAMETER(flags);
+	return true;
+}
+
+static INLINE bool jit_visit_vori32x4i_op(struct jit_context *ctx)
+{
+	int a,b,c,d; CONSUME_IMM8(a); CONSUME_IMM8(b);
+	CONSUME_IMM8(c); CONSUME_IMM8(d);
+	UNUSED_PARAMETER(a); UNUSED_PARAMETER(b); UNUSED_PARAMETER(c); UNUSED_PARAMETER(d);
+	return false; /* clean interpreter fallback for foreign bytecode */
+}
+
+static INLINE bool
+jit_visit_subjnz_op(struct jit_context *ctx)
+{
+	int value, decrement;
+	uint32_t target_lpc;
+	CONSUME_TMPVAR(value); CONSUME_IMM8(decrement);
+	CONSUME_IMM32(target_lpc);
+	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
+		rt_error(ctx->env, BROKEN_BYTECODE); return false;
+	}
+	value *= (int)sizeof(struct rt_value);
+	ASM {
+		MOVW(REG_R0, (uint32_t)value);
+		ADD(REG_R0, REG_R0, REG_R12);
+		LDR(REG_R1, REG_R0, 8);
+		SUB_IMM(REG_R1, REG_R1, (uint32_t)decrement);
+		STR(REG_R1, REG_R0, 8);
+		CMP_IMM(REG_R1, 0);
+	}
+	ctx->branch_patch[ctx->branch_patch_count].code = ctx->code;
+	ctx->branch_patch[ctx->branch_patch_count].lpc = target_lpc;
+	ctx->branch_patch[ctx->branch_patch_count].type = PATCH_BNE;
+	ctx->branch_patch_count++;
+	ASM { BNE(0); }
+	return true;
 }
 
 /* Visit a OP_ADD instruction. */
@@ -2053,10 +2101,13 @@ jit_visit_pbase_op(
 {
         int dst;
         int src;
+        int base_id;
         uint32_t buf_ofs;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
+        CONSUME_IMM8(base_id);
+        UNUSED_PARAMETER(base_id);
 
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
@@ -3340,6 +3391,9 @@ jit_visit_bytecode(
                         if (!jit_visit_pstoref32_op(ctx))
                                 return false;
                         break;
+		case OP_VINDEX_HINT: if (!jit_visit_vindex_hint_op(ctx)) return false; break;
+		case OP_SUBJNZ: if (!jit_visit_subjnz_op(ctx)) return false; break;
+		case OP_VORI32X4I: if (!jit_visit_vori32x4i_op(ctx)) return false; break;
                 case OP_IADD:
                 case OP_ISUB:
                 case OP_IMUL:

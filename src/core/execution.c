@@ -3571,3 +3571,32 @@ noct_ex_vcvtf32i32x4_helper(NoctEnv *env, int vd, int va, int unused)
 	memcpy(env->vreg[vd], &x, 16);
 	return true;
 }
+
+/*
+ * OR a replicated byte immediate into each 32-bit lane.  The fourth
+ * typed-helper operand packs imm8 in bits 8..15 and shift in bits 0..7;
+ * this keeps the portable helper ABI at (env, int, int, int).
+ */
+NOCT_DLL
+bool
+CDECL
+noct_ex_vori32x4i_helper(
+	NoctEnv *env,
+	int vd,
+	int vs,
+	int packed_imm)
+{
+	union rt_vlanes x;
+	uint32_t value;
+	int shift;
+	int k;
+
+	shift = packed_imm & 0xff;
+	value = (uint32_t)((packed_imm >> 8) & 0xff);
+	value <<= (uint32_t)shift & 31;
+	memcpy(&x, env->vreg[vs], 16);
+	for (k = 0; k < 4; k++)
+		x.u[k] |= value;
+	memcpy(env->vreg[vd], &x, 16);
+	return true;
+}

@@ -975,10 +975,16 @@ jit_visit_inc_op(
         struct jit_context *ctx)
 {
         int dst;
+        int step;
 
-        CONSUME_TMPVAR(dst);
+	CONSUME_TMPVAR(dst);
+	CONSUME_IMM8(step);
+	if (ctx->vector_hint_active &&
+	    dst == ctx->vector_hint_index_tmp &&
+	    step == ctx->vector_hint_lanes)
+		return true;
 
-        dst *= (int)sizeof(struct rt_value);
+	dst *= (int)sizeof(struct rt_value);
 
         /* Increment an integer. */
         ASM {
@@ -991,11 +997,250 @@ jit_visit_inc_op(
 
                 /* env->frame->tmpvar[dst].val.i++ */
                 LDR_IMM         (REG_X3, REG_X2, IMM9(8));                        /* tmp = &env->frame->tmpvar[dst].val.i */
-                ADD_IMM         (REG_X3, REG_X3, IMM12(1));                        /* tmp++ */
+                ADD_IMM         (REG_X3, REG_X3, IMM12(step));
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));                        /* env->frame->tmpvar[dst].val.i = tmp */
         }
 
-        return true;
+	return true;
+}
+
+static uint16_t
+jit_arm64_read_u16(const uint8_t *p)
+{
+	return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
+}
+
+/* Discover the at-most-two packed bases and their last memory opcode. */
+static bool
+jit_arm64_scan_vector_bases(struct jit_context *ctx)
+{
+	uint32_t p;
+	uint32_t size;
+	int base;
+	int i;
+	uint8_t op;
+
+	ctx->vector_base_tmp[0] = -1;
+	ctx->vector_base_tmp[1] = -1;
+	ctx->vector_base_last_lpc[0] = 0;
+	ctx->vector_base_last_lpc[1] = 0;
+	p = ctx->lpc;
+	while (p < ctx->func->bytecode_size) {
+		op = ctx->func->bytecode[p];
+		base = -1;
+		size = 0;
+		switch (op) {
+		case OP_VLOADI32X4:
+		case OP_VLOADF32X4:
+			if (p + 6 > ctx->func->bytecode_size) return false;
+			base = jit_arm64_read_u16(&ctx->func->bytecode[p + 2]);
+			size = 6;
+			break;
+		case OP_VSTOREI32X4:
+		case OP_VSTOREF32X4:
+			if (p + 6 > ctx->func->bytecode_size) return false;
+			base = jit_arm64_read_u16(&ctx->func->bytecode[p + 1]);
+			size = 6;
+			break;
+		case OP_VSPLATI32:
+		case OP_VSPLATF32:
+			size = 4; break;
+		case OP_VGETLANEI32:
+		case OP_VGETLANEF32:
+			size = 5; break;
+		case OP_VMOV128:
+		case OP_VCVTI32F32X4:
+		case OP_VCVTF32I32X4:
+			size = 3; break;
+		case OP_VADDI32X4: case OP_VSUBI32X4:
+		case OP_VMULI32X4: case OP_VAND128:
+		case OP_VOR128: case OP_VXOR128:
+		case OP_VSHLI32X4: case OP_VSHRI32X4:
+		case OP_VADDF32X4: case OP_VSUBF32X4:
+		case OP_VMULF32X4: case OP_VDIVF32X4:
+			size = 4; break;
+		case OP_VORI32X4I:
+			size = 5; break;
+		case OP_INC:
+			size = 4; break;
+		case OP_SUBJNZ:
+			return true;
+		default:
+			return false;
+		}
+		if (p + size > ctx->func->bytecode_size)
+			return false;
+		if (base >= 0) {
+			for (i = 0; i < 2; i++) {
+				if (ctx->vector_base_tmp[i] == base)
+					break;
+				if (ctx->vector_base_tmp[i] < 0) {
+					ctx->vector_base_tmp[i] = base;
+					break;
+				}
+			}
+			if (i >= 2)
+				return false;
+			ctx->vector_base_last_lpc[i] = p;
+		}
+		p += size;
+	}
+	return false;
+}
+
+/* Vector-loop register declaration.  x21 holds the remaining count. */
+static INLINE bool
+jit_visit_vindex_hint_op(
+	struct jit_context *ctx)
+{
+	int index_tmp, stop_tmp, remaining_tmp;
+	int index_id, lanes, flags;
+	int remaining_ofs;
+
+	CONSUME_TMPVAR(index_tmp);
+	CONSUME_TMPVAR(stop_tmp);
+	CONSUME_TMPVAR(remaining_tmp);
+	CONSUME_IMM8(index_id);
+	CONSUME_IMM8(lanes);
+	CONSUME_IMM8(flags);
+	UNUSED_PARAMETER(index_id);
+
+	ctx->vector_hint_active = lanes > 0 &&
+		(ctx->simd_caps & JIT_SIMD_CAP_NEON) != 0 &&
+		(flags & VINDEX_CURSOR_ONLY) != 0 &&
+		jit_arm64_scan_vector_bases(ctx);
+	ctx->vector_hint_index_tmp = index_tmp;
+	ctx->vector_hint_stop_tmp = stop_tmp;
+	ctx->vector_hint_remaining_tmp = remaining_tmp;
+	ctx->vector_hint_lanes = lanes;
+	ctx->vector_hint_flags = flags;
+	remaining_ofs = remaining_tmp * (int)sizeof(struct rt_value);
+	if (ctx->vector_hint_active) {
+		int base0_ofs = ctx->vector_base_tmp[0] *
+			(int)sizeof(struct rt_value);
+		ASM {
+			LDR_W_IMM(REG_X21, REG_X1,
+				    (uint32_t)(remaining_ofs + 8));
+			LDR_IMM(REG_X19, REG_X1, IMM9(base0_ofs + 8));
+		}
+		if (ctx->vector_base_tmp[1] >= 0) {
+			int base1_ofs = ctx->vector_base_tmp[1] *
+				(int)sizeof(struct rt_value);
+			ASM { LDR_IMM(REG_X20, REG_X1, IMM9(base1_ofs + 8)); }
+		}
+	}
+	return true;
+}
+
+/* Semantic countdown latch; accepted hints keep the count in x21. */
+static INLINE bool
+jit_visit_subjnz_op(
+	struct jit_context *ctx)
+{
+	int value, decrement;
+	uint32_t target_lpc;
+	uint32_t *target_code;
+	uint32_t i;
+	int offset;
+	int value_ofs;
+	bool hinted;
+
+	CONSUME_TMPVAR(value);
+	CONSUME_IMM8(decrement);
+	CONSUME_IMM32(target_lpc);
+	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	hinted = ctx->vector_hint_active &&
+		 value == ctx->vector_hint_remaining_tmp &&
+		 decrement == ctx->vector_hint_lanes;
+	value_ofs = value * (int)sizeof(struct rt_value);
+	if (!hinted) {
+		ASM {
+			LDR_W_IMM(REG_X21, REG_X1, (uint32_t)(value_ofs + 8));
+		}
+	}
+
+	/* subs x21, x21, #decrement */
+	if (!jit_put_word(ctx, 0xf1000015u |
+			 ((uint32_t)decrement << 10) | (REG_X21 << 5)))
+		return false;
+	if (!hinted) {
+		ASM {
+			STR_W_IMM(REG_X21, REG_X1, (uint32_t)(value_ofs + 8));
+		}
+	}
+
+	/* A backward loop target is already in the PC map, so emit the
+	   one-word short branch directly. */
+	target_code = NULL;
+	for (i = 0; i < ctx->pc_entry_count; i++) {
+		if (ctx->pc_entry[i].lpc == target_lpc) {
+			target_code = ctx->pc_entry[i].code;
+			break;
+		}
+	}
+	if (target_code == NULL) {
+		rt_error(ctx->env, "Branch target not found.");
+		return false;
+	}
+	offset = (int)((intptr_t)target_code - (intptr_t)ctx->code);
+	if (getenv("NOCT_JIT_FORCE_LONG_BRANCH") == NULL &&
+	    offset >= -1048576 && offset <= 1048572) {
+		ASM { BNE(IMM19(offset)); }
+	} else {
+		ASM {
+			BEQ(IMM19(8));
+			B(offset - 4);
+		}
+	}
+
+	if (hinted && (ctx->vector_hint_flags & VINDEX_WRITEBACK_STOP) != 0) {
+		int index_ofs = ctx->vector_hint_index_tmp *
+			(int)sizeof(struct rt_value);
+		int stop_ofs = ctx->vector_hint_stop_tmp *
+			(int)sizeof(struct rt_value);
+		ASM {
+			LDR_W_IMM(REG_X2, REG_X1, (uint32_t)(stop_ofs + 8));
+			STR_W_IMM(REG_X2, REG_X1, (uint32_t)(index_ofs + 8));
+		}
+	}
+	ctx->vector_hint_active = false;
+	return true;
+}
+
+static INLINE bool
+jit_visit_vori32x4i_op(
+	struct jit_context *ctx)
+{
+	int dst, src1, imm, shift;
+	int src2;
+
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(imm);
+	CONSUME_IMM8(shift);
+	if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+		src2 = (imm << 8) | shift;
+		ASM_BINARY_OP(ex_vori32x4i_helper);
+		return true;
+	}
+	if (dst != src1) {
+		/* mov vD.16b, vS.16b (alias of orr vD.16b,vS.16b,vS.16b) */
+		if (!jit_put_word(ctx, 0x4ea01c00u |
+				 ((uint32_t)src1 << 16) |
+				 ((uint32_t)src1 << 5) | (uint32_t)dst))
+			return false;
+	}
+	if (imm == 0xff && shift == 24) {
+		if (!jit_put_word(ctx, 0x4f0777e0u | (uint32_t)dst))
+			return false;
+		return true;
+	}
+	/* Current LIR only emits the verified opaque-alpha form. */
+	rt_error(ctx->env, BROKEN_BYTECODE);
+	return false;
 }
 
 /* Visit a OP_ADD instruction. */
@@ -2069,10 +2314,12 @@ jit_visit_pbase_op(
 {
         int dst;
         int src;
+        int base_id;
         uint32_t buf_ofs;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
+        CONSUME_IMM8(base_id);
 
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
@@ -2087,6 +2334,11 @@ jit_visit_pbase_op(
                 STR_IMM         (REG_X4, REG_X1, IMM9(dst));
                 STR_IMM         (REG_X2, REG_X1, IMM9(dst + 8));
         }
+	if (base_id == 0) {
+		ASM { ADD_IMM(REG_X19, REG_X2, IMM12(0)); }
+	} else if (base_id == 1) {
+		ASM { ADD_IMM(REG_X20, REG_X2, IMM12(0)); }
+	}
 
         return true;
 }
@@ -3005,6 +3257,8 @@ jit_visit_vector_op(
         int a;
         int b;
         int c;
+	uint32_t op_lpc;
+	int cursor_id;
 
         /* Decode (shapes vary per op; see bytecode.h). */
         switch (op) {
@@ -3049,6 +3303,7 @@ jit_visit_vector_op(
         if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
                 return jit_visit_vector_scalar_op(ctx, op, a, b, c);
         }
+	op_lpc = ctx->pc_entry[ctx->pc_entry_count - 1].lpc;
 
         switch (op) {
         case OP_VLOADI32X4:
@@ -3056,6 +3311,24 @@ jit_visit_vector_op(
         {
                 int base = b * (int)sizeof(struct rt_value);
                 int ofs = c * (int)sizeof(struct rt_value);
+		cursor_id = -1;
+		if (ctx->vector_hint_active) {
+			if (ctx->vector_base_tmp[0] == b) cursor_id = 0;
+			else if (ctx->vector_base_tmp[1] == b) cursor_id = 1;
+		}
+		if (cursor_id >= 0) {
+			uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
+			if (ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
+				/* ldr qA, [xCursor], #16 */
+				if (!jit_put_word(ctx, 0x3cc10400u |
+						 (rn << 5) | (uint32_t)a))
+					return false;
+			} else if (!jit_put_word(ctx, 0x3dc00000u |
+						 (rn << 5) | (uint32_t)a)) {
+				return false;
+			}
+			break;
+		}
                 ASM {
                         /* x1 = &env->frame->tmpvar[0] */
                         LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
@@ -3073,6 +3346,20 @@ jit_visit_vector_op(
         {
                 int base = a * (int)sizeof(struct rt_value);
                 int ofs = b * (int)sizeof(struct rt_value);
+		cursor_id = -1;
+		if (ctx->vector_hint_active) {
+			if (ctx->vector_base_tmp[0] == a) cursor_id = 0;
+			else if (ctx->vector_base_tmp[1] == a) cursor_id = 1;
+		}
+		if (cursor_id >= 0 &&
+		    ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
+			uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
+			/* str qC, [xCursor], #16 */
+			if (!jit_put_word(ctx, 0x3c810400u |
+					 (rn << 5) | (uint32_t)c))
+				return false;
+			break;
+		}
                 ASM {
                         LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
                         LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
@@ -3544,6 +3831,18 @@ jit_visit_bytecode(
                         if (!jit_visit_pstoref32_op(ctx))
                                 return false;
                         break;
+		case OP_VINDEX_HINT:
+			if (!jit_visit_vindex_hint_op(ctx))
+				return false;
+			break;
+		case OP_SUBJNZ:
+			if (!jit_visit_subjnz_op(ctx))
+				return false;
+			break;
+		case OP_VORI32X4I:
+			if (!jit_visit_vori32x4i_op(ctx))
+				return false;
+			break;
                 case OP_IADD:
                 case OP_ISUB:
                 case OP_IMUL:

@@ -33,7 +33,7 @@ enum bytecode {
 	OP_DCONST,		/* 0x08:   8: dst = empty dictionary */
 
 	/* tmpvar calc unary op (dst = op src1) */
-	OP_INC,			/* 0x09:   9: dst = src + 1, assume operands are integers */
+	OP_INC,			/* 0x09:   9: dst += step(imm8), assume dst is integer */
 	OP_NEG,			/* 0x0a:  10: dst = -src */
 	OP_NOT,			/* 0x0b:  11: dst = !src */
 
@@ -94,7 +94,7 @@ enum bytecode {
 	 * Emitted only by the HIR optimizer (hiropt.c) at optimize
 	 * level >= 2.  See docs/design/01-abce.md.
 	 */
-	OP_PBASE,		/* 0x2e:  46: dst = payload address of packed src (long) */
+	OP_PBASE,		/* 0x2e:  46: dst = packed payload; base_id(imm8) is a register hint */
 	OP_PCHECK,		/* 0x2f:  47: dst = (src is packed && elem type == imm8) */
 	OP_TYPEIS,		/* 0x30:  48: dst = (typeof(src) == imm8) */
 	OP_PLOAD8U,		/* 0x31:  49: dst = *(uint8 *)(src1 + src2), no checks */
@@ -204,6 +204,15 @@ enum bytecode {
 	/* ABCE float32 scalar remainder/reference operations. */
 	OP_PLOADF32,		/* 0x6a: 106: dst(float) = base[ofs] */
 	OP_PSTOREF32,		/* 0x6b: 107: base[ofs] = src(float) */
+
+	/* Vector-loop code-generation hints and portable fused operations. */
+	OP_VINDEX_HINT,	/* no-op: index/stop/remaining(u16), id/lanes/flags(imm8) */
+	OP_SUBJNZ,		/* value(u16) -= decrement(imm8); jump target(u32) if nonzero */
+	OP_VORI32X4I,		/* vd = vs | (imm8 << shift), lane-wise; four imm8 operands */
 };
+
+/* OP_VINDEX_HINT flags. */
+#define VINDEX_CURSOR_ONLY	0x01
+#define VINDEX_WRITEBACK_STOP	0x02
 
 #endif

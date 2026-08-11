@@ -975,8 +975,10 @@ jit_visit_inc_op(
 	struct jit_context *ctx)
 {
 	int dst;
+	int step;
 
 	CONSUME_TMPVAR(dst);
+	CONSUME_IMM8(step);
 
 	dst *= (int)sizeof(struct rt_value);
 
@@ -991,10 +993,55 @@ jit_visit_inc_op(
 
 		/* env->frame->tmpvar[dst].val.i++ */
 		LW	(REG_T1, 8, REG_T0);		/* tmp = &env->frame->tmpvar[dst].val.i */
-		ADDI	(REG_T1, REG_T1, IMM12(1));	/* tmp++ */
+		ADDI	(REG_T1, REG_T1, IMM12(step));
 		SW	(REG_T1, 8, REG_T0);		/* env->frame->tmpvar[dst].val.i = tmp */
 	}
 
+	return true;
+}
+
+static INLINE bool
+jit_visit_vindex_hint_op(struct jit_context *ctx)
+{
+	int a,b,c,id,lanes,flags;
+	CONSUME_TMPVAR(a); CONSUME_TMPVAR(b); CONSUME_TMPVAR(c);
+	CONSUME_IMM8(id); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
+	UNUSED_PARAMETER(a); UNUSED_PARAMETER(b); UNUSED_PARAMETER(c);
+	UNUSED_PARAMETER(id); UNUSED_PARAMETER(lanes); UNUSED_PARAMETER(flags);
+	return true;
+}
+
+static INLINE bool jit_visit_vori32x4i_op(struct jit_context *ctx)
+{
+	int a,b,c,d; CONSUME_IMM8(a); CONSUME_IMM8(b);
+	CONSUME_IMM8(c); CONSUME_IMM8(d);
+	UNUSED_PARAMETER(a); UNUSED_PARAMETER(b); UNUSED_PARAMETER(c); UNUSED_PARAMETER(d);
+	return false;
+}
+
+static INLINE bool
+jit_visit_subjnz_op(struct jit_context *ctx)
+{
+	int value,decrement; uint32_t target_lpc;
+	CONSUME_TMPVAR(value); CONSUME_IMM8(decrement); CONSUME_IMM32(target_lpc);
+	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
+		rt_error(ctx->env, BROKEN_BYTECODE); return false;
+	}
+	value *= (int)sizeof(struct rt_value);
+	ASM {
+		ORI(REG_T0, REG_ZERO, IMM12(value)); ADD(REG_T0, REG_S11, REG_T0);
+		LW(REG_T1, 8, REG_T0);
+		ADDI(REG_T1, REG_T1, IMM12(-(int32_t)decrement));
+		SW(REG_T1, 8, REG_T0);
+		ADDI(REG_T0, REG_T1, IMM12(0)); ORI(REG_T1, REG_ZERO, IMM12(0));
+	}
+	ctx->branch_patch[ctx->branch_patch_count].code=ctx->code;
+	ctx->branch_patch[ctx->branch_patch_count].lpc=target_lpc;
+	ctx->branch_patch[ctx->branch_patch_count].type=PATCH_BNE;
+	ctx->branch_patch_count++;
+	ASM { BNE(REG_T0, REG_T1, IMM13(0)); }
+	if (!jit_put_word(ctx, 0x00000013) || !jit_put_word(ctx, 0x00000013))
+		return false;
 	return true;
 }
 
@@ -1995,14 +2042,17 @@ jit_visit_safepoint_op(
  * zeroed. */
 static INLINE bool
 jit_visit_pbase_op(
-	struct jit_context *ctx)
+        struct jit_context *ctx)
 {
-	int dst;
-	int src;
+        int dst;
+        int src;
+        int base_id;
 	uint32_t buf_ofs;
 
 	CONSUME_TMPVAR(dst);
 	CONSUME_TMPVAR(src);
+	CONSUME_IMM8(base_id);
+	UNUSED_PARAMETER(base_id);
 
 	dst *= (int)sizeof(struct rt_value);
 	src *= (int)sizeof(struct rt_value);
@@ -2030,8 +2080,8 @@ jit_visit_plen_op(
         int dst;
         int src;
 
-        CONSUME_TMPVAR(dst);
-        CONSUME_TMPVAR(src);
+	CONSUME_TMPVAR(dst);
+	CONSUME_TMPVAR(src);
 
         /* if (!ex_plen_helper(env, dst, src)) return false; */
         ASM_UNARY_OP(ex_plen_helper);
@@ -3024,6 +3074,9 @@ jit_visit_bytecode(
                         if (!jit_visit_pstoref32_op(ctx))
                                 return false;
                         break;
+		case OP_VINDEX_HINT: if (!jit_visit_vindex_hint_op(ctx)) return false; break;
+		case OP_SUBJNZ: if (!jit_visit_subjnz_op(ctx)) return false; break;
+		case OP_VORI32X4I: if (!jit_visit_vori32x4i_op(ctx)) return false; break;
                 case OP_IADD:
                 case OP_ISUB:
                 case OP_IMUL:

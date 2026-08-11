@@ -51,6 +51,9 @@ static uint32_t tmpvar_count;
 /* ABI/prologue metadata for the function currently being built. */
 static bool has_vector_ops;
 
+/* Per-function virtual PBASE allocation IDs (0/1 are currently useful). */
+static uint8_t pbase_hint_next;
+
 /*
  * Typed-op emission state (docs/design/07-typed-ops.md, D-TOP11).
  * Reset per lir_build().
@@ -251,6 +254,7 @@ lir_build(
 	}
 	bytecode_top = 0;
 	has_vector_ops = false;
+	pbase_hint_next = 0;
 
 	/* Typed-op emission state (design 07). */
 	typed_emit_int_count = 0;
@@ -718,6 +722,16 @@ lir_visit_for_block(
 #define VFOR_VREG_MAX		8
 #define VFOR_MAX_CONSTS		8
 #define VFOR_MAX_LOCALS		8
+#define VFOR_CACHE_CANDIDATE_MAX 32
+#define VFOR_CACHE_MAX		4
+
+struct vfor_cache_entry {
+	struct hir_expr *expr;
+	int count;
+	int size;
+	int reg;
+	bool emitted;
+};
 
 struct vfor_plan {
 	struct hir_block *loop;
@@ -734,10 +748,17 @@ struct vfor_plan {
 	uint8_t temp_type[VFOR_MAX_LOCALS];
 	int temp_count;
 	int stack_base;
+	struct vfor_cache_entry cache_candidate[VFOR_CACHE_CANDIDATE_MAX];
+	int cache_candidate_count;
+	struct vfor_cache_entry cache[VFOR_CACHE_MAX];
+	int cache_count;
+	int extra_scratch_reg;
+	int extra_scratch_reg2;
 	bool is_float;
 };
 
 static struct hir_expr *lir_vfor_strip_par(struct hir_expr *e);
+static int lir_vfor_term_vreg(struct vfor_plan *plan, struct hir_expr *e);
 
 static int
 lir_vfor_local_type(struct vfor_plan *plan, const char *sym)
@@ -798,6 +819,162 @@ lir_vfor_strip_par(struct hir_expr *e)
 	return e;
 }
 
+/* Structural equality for the pure vector-expression grammar. */
+static bool
+lir_vfor_expr_equal(struct hir_expr *a, struct hir_expr *b)
+{
+	a = lir_vfor_strip_par(a);
+	b = lir_vfor_strip_par(b);
+	if (a->type != b->type)
+		return false;
+	switch (a->type) {
+	case HIR_EXPR_TERM:
+		if (a->val.term.term->type != b->val.term.term->type)
+			return false;
+		switch (a->val.term.term->type) {
+		case HIR_TERM_INT:
+			return a->val.term.term->val.i == b->val.term.term->val.i;
+		case HIR_TERM_FLOAT:
+			return memcmp(&a->val.term.term->val.f,
+				      &b->val.term.term->val.f,
+				      sizeof(float)) == 0;
+		case HIR_TERM_SYMBOL:
+			return strcmp(a->val.term.term->val.symbol,
+				      b->val.term.term->val.symbol) == 0;
+		default:
+			return false;
+		}
+	case HIR_EXPR_CALL:
+		return hir_get_intrinsic_call(a) == hir_get_intrinsic_call(b) &&
+		       a->val.call.arg_count == 1 && b->val.call.arg_count == 1 &&
+		       lir_vfor_expr_equal(a->val.call.arg[0], b->val.call.arg[0]);
+	case HIR_EXPR_PLOAD32:
+	case HIR_EXPR_PLOADF32:
+	case HIR_EXPR_PLUS:
+	case HIR_EXPR_MINUS:
+	case HIR_EXPR_MUL:
+	case HIR_EXPR_DIV:
+	case HIR_EXPR_AND:
+	case HIR_EXPR_OR:
+	case HIR_EXPR_XOR:
+	case HIR_EXPR_SHL:
+	case HIR_EXPR_SHR:
+		return lir_vfor_expr_equal(a->val.binary.expr[0],
+					    b->val.binary.expr[0]) &&
+		       lir_vfor_expr_equal(a->val.binary.expr[1],
+					    b->val.binary.expr[1]);
+	default:
+		return false;
+	}
+}
+
+static int
+lir_vfor_expr_size(struct hir_expr *e)
+{
+	e = lir_vfor_strip_par(e);
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		return 1;
+	case HIR_EXPR_CALL:
+		return 1 + lir_vfor_expr_size(e->val.call.arg[0]);
+	default:
+		return 1 + lir_vfor_expr_size(e->val.binary.expr[0]) +
+			lir_vfor_expr_size(e->val.binary.expr[1]);
+	}
+}
+
+static bool
+lir_vfor_cache_eligible(struct vfor_plan *plan, struct hir_expr *e)
+{
+	e = lir_vfor_strip_par(e);
+	if (e->type == HIR_EXPR_PLOAD32 || e->type == HIR_EXPR_PLOADF32)
+		return true;
+	return (e->type == HIR_EXPR_MUL || e->type == HIR_EXPR_MINUS) &&
+		lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT;
+}
+
+static void
+lir_vfor_cache_collect(struct vfor_plan *plan, struct hir_expr *e)
+{
+	int i;
+
+	e = lir_vfor_strip_par(e);
+	if (lir_vfor_cache_eligible(plan, e)) {
+		for (i = 0; i < plan->cache_candidate_count; i++) {
+			if (lir_vfor_expr_equal(plan->cache_candidate[i].expr, e)) {
+				plan->cache_candidate[i].count++;
+				break;
+			}
+		}
+		if (i == plan->cache_candidate_count &&
+		    i < VFOR_CACHE_CANDIDATE_MAX) {
+			plan->cache_candidate[i].expr = e;
+			plan->cache_candidate[i].count = 1;
+			plan->cache_candidate[i].size = lir_vfor_expr_size(e);
+			plan->cache_candidate_count++;
+		}
+	}
+	switch (e->type) {
+	case HIR_EXPR_TERM:
+		break;
+	case HIR_EXPR_CALL:
+		lir_vfor_cache_collect(plan, e->val.call.arg[0]);
+		break;
+	default:
+		lir_vfor_cache_collect(plan, e->val.binary.expr[0]);
+		lir_vfor_cache_collect(plan, e->val.binary.expr[1]);
+		break;
+	}
+}
+
+static int
+lir_vfor_cached_reg(struct vfor_plan *plan, struct hir_expr *e)
+{
+	int i;
+	for (i = 0; i < plan->cache_count; i++) {
+		if (plan->cache[i].emitted &&
+		    lir_vfor_expr_equal(plan->cache[i].expr, e))
+			return plan->cache[i].reg;
+	}
+	return -1;
+}
+
+/* Logical stack slot 8 may reuse a constant/invariant proven dead after
+   the cache prelude.  This is the one extra slot blend needs. */
+static int
+lir_vfor_physical_reg(struct vfor_plan *plan, int reg)
+{
+	if (reg >= 0 && reg < VFOR_VREG_MAX)
+		return reg;
+	if (reg == VFOR_VREG_MAX)
+		return plan->extra_scratch_reg;
+	if (reg == VFOR_VREG_MAX + 1)
+		return plan->extra_scratch_reg2;
+	return -1;
+}
+
+static bool
+lir_vfor_expr_uses_home_outside_cache(struct vfor_plan *plan,
+				      struct hir_expr *e, int home)
+{
+	int i;
+
+	e = lir_vfor_strip_par(e);
+	for (i = 0; i < plan->cache_count; i++) {
+		if (lir_vfor_expr_equal(plan->cache[i].expr, e))
+			return false;
+	}
+	if (e->type == HIR_EXPR_TERM)
+		return lir_vfor_term_vreg(plan, e) == home;
+	if (e->type == HIR_EXPR_CALL)
+		return lir_vfor_expr_uses_home_outside_cache(
+			plan, e->val.call.arg[0], home);
+	return lir_vfor_expr_uses_home_outside_cache(
+			plan, e->val.binary.expr[0], home) ||
+	       lir_vfor_expr_uses_home_outside_cache(
+			plan, e->val.binary.expr[1], home);
+}
+
 /* Map a TERM to its home vreg (const or local). */
 static int
 lir_vfor_term_vreg(struct vfor_plan *plan, struct hir_expr *e)
@@ -830,6 +1007,15 @@ lir_vfor_term_vreg(struct vfor_plan *plan, struct hir_expr *e)
 		}
 	}
 	return -1;
+}
+
+static int
+lir_vfor_value_vreg(struct vfor_plan *plan, struct hir_expr *e)
+{
+	e = lir_vfor_strip_par(e);
+	if (e->type == HIR_EXPR_TERM)
+		return lir_vfor_term_vreg(plan, e);
+	return lir_vfor_cached_reg(plan, e);
 }
 
 /* Plan collection walk (mirror of hir_opt_simd.c's collection). */
@@ -972,8 +1158,20 @@ static bool
 lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 {
 	int op;
+	int cached;
 
 	e = lir_vfor_strip_par(e);
+	dst = lir_vfor_physical_reg(plan, dst);
+	if (dst < 0) {
+		lir_fatal("SIMD: vreg stack overflow.");
+		return false;
+	}
+	cached = lir_vfor_cached_reg(plan, e);
+	if (cached >= 0) {
+		if (cached == dst)
+			return true;
+		return lir_vfor_put3(OP_VMOV128, 1, dst, 1, cached, 0, 0, 0);
+	}
 
 	switch (e->type) {
 	case HIR_EXPR_TERM:
@@ -1002,12 +1200,8 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 	{
 		struct hir_expr *arg = lir_vfor_strip_par(e->val.call.arg[0]);
 		int src;
-		if (arg->type == HIR_EXPR_TERM) {
-			src = lir_vfor_term_vreg(plan, arg);
-			if (src < 0) {
-				lir_fatal("SIMD: unplanned conversion operand.");
-				return false;
-			}
+		src = lir_vfor_value_vreg(plan, arg);
+		if (src >= 0) {
 		} else {
 			if (!lir_vfor_expr(plan, dst, sp, arg))
 				return false;
@@ -1023,12 +1217,8 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 		struct hir_expr *x = lir_vfor_strip_par(e->val.binary.expr[0]);
 		int count = e->val.binary.expr[1]->val.term.term->val.i;
 		int src;
-		if (x->type == HIR_EXPR_TERM) {
-			src = lir_vfor_term_vreg(plan, x);
-			if (src < 0) {
-				lir_fatal("SIMD: unplanned term.");
-				return false;
-			}
+		src = lir_vfor_value_vreg(plan, x);
+		if (src >= 0) {
 		} else {
 			if (!lir_vfor_expr(plan, dst, sp, x))
 				return false;
@@ -1055,6 +1245,60 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 		bool commutative = (e->type != HIR_EXPR_MINUS &&
 				    e->type != HIR_EXPR_DIV);
 		int va, vb;
+		bool lvalue, rvalue;
+
+		/* A logical right shift by 24 already produces an 8-bit value;
+		   the source-level & 0xff is redundant. */
+		if (e->type == HIR_EXPR_AND) {
+			struct hir_expr *shifted = NULL;
+			struct hir_expr *mask = NULL;
+			if (l->type == HIR_EXPR_SHR) {
+				shifted = l; mask = r;
+			} else if (r->type == HIR_EXPR_SHR) {
+				shifted = r; mask = l;
+			}
+			if (shifted != NULL && mask->type == HIR_EXPR_TERM &&
+			    mask->val.term.term->type == HIR_TERM_INT &&
+			    mask->val.term.term->val.i == 255 &&
+			    shifted->val.binary.expr[1]->type == HIR_EXPR_TERM &&
+			    shifted->val.binary.expr[1]->val.term.term->type ==
+				HIR_TERM_INT &&
+			    shifted->val.binary.expr[1]->val.term.term->val.i == 24)
+				return lir_vfor_expr(plan, dst, sp, shifted);
+		}
+
+		/* Preserve opaque-alpha intent as one portable vector immediate
+		   operation.  ARM64 lowers this to one ORR-immediate. */
+#if defined(NOCT_ARCH_ARM64) || defined(NOCT_ARCH_X86_64) || \
+    defined(NOCT_ARCH_X86)
+		if (e->type == HIR_EXPR_OR) {
+			struct hir_expr *opaque = NULL;
+			struct hir_expr *other = NULL;
+			if (l->type == HIR_EXPR_SHL) {
+				opaque = l; other = r;
+			} else if (r->type == HIR_EXPR_SHL) {
+				opaque = r; other = l;
+			}
+			if (opaque != NULL &&
+			    opaque->val.binary.expr[0]->type == HIR_EXPR_TERM &&
+			    opaque->val.binary.expr[0]->val.term.term->type ==
+				HIR_TERM_INT &&
+			    opaque->val.binary.expr[0]->val.term.term->val.i == 255 &&
+			    opaque->val.binary.expr[1]->type == HIR_EXPR_TERM &&
+			    opaque->val.binary.expr[1]->val.term.term->type ==
+				HIR_TERM_INT &&
+			    opaque->val.binary.expr[1]->val.term.term->val.i == 24) {
+				if (!lir_vfor_expr(plan, dst, sp, other))
+					return false;
+				if (!lir_put_opcode(OP_VORI32X4I) ||
+				    !lir_put_imm8((uint8_t)dst) ||
+				    !lir_put_imm8((uint8_t)dst) ||
+				    !lir_put_imm8(0xff) || !lir_put_imm8(24))
+					return false;
+				return true;
+			}
+		}
+#endif
 
 		switch (e->type) {
 		case HIR_EXPR_PLUS:  op = lir_vfor_expr_type(plan, e) == NOCT_VALUE_FLOAT ? OP_VADDF32X4 : OP_VADDI32X4; break;
@@ -1066,33 +1310,21 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 		default:             op = OP_VXOR128;   break;
 		}
 
-		if (l->type == HIR_EXPR_TERM && r->type == HIR_EXPR_TERM) {
-			va = lir_vfor_term_vreg(plan, l);
-			vb = lir_vfor_term_vreg(plan, r);
-			if (va < 0 || vb < 0) {
-				lir_fatal("SIMD: unplanned term.");
-				return false;
-			}
+		va = lir_vfor_value_vreg(plan, l);
+		vb = lir_vfor_value_vreg(plan, r);
+		lvalue = va >= 0;
+		rvalue = vb >= 0;
+		if (lvalue && rvalue) {
 			/* dst is stack or an unread home: never == vb. */
 			return lir_vfor_put3(op, 1, dst, 1, va, 1, vb, 1);
 		}
-		if (l->type != HIR_EXPR_TERM && r->type == HIR_EXPR_TERM) {
+		if (!lvalue && rvalue) {
 			/* Build the left side in dst, combine in place. */
 			if (!lir_vfor_expr(plan, dst, sp, l))
 				return false;
-			vb = lir_vfor_term_vreg(plan, r);
-			if (vb < 0) {
-				lir_fatal("SIMD: unplanned term.");
-				return false;
-			}
 			return lir_vfor_put3(op, 1, dst, 1, dst, 1, vb, 1);
 		}
-		if (l->type == HIR_EXPR_TERM && r->type != HIR_EXPR_TERM) {
-			va = lir_vfor_term_vreg(plan, l);
-			if (va < 0) {
-				lir_fatal("SIMD: unplanned term.");
-				return false;
-			}
+		if (lvalue && !rvalue) {
 			if (commutative) {
 				/* Build the right side in dst. */
 				if (!lir_vfor_expr(plan, dst, sp, r))
@@ -1101,24 +1333,26 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 						     1, va, 1);
 			}
 			/* SUB needs operand order: rhs into a slot. */
-			if (sp >= VFOR_VREG_MAX) {
+			if (lir_vfor_physical_reg(plan, sp) < 0) {
 				lir_fatal("SIMD: vreg stack overflow.");
 				return false;
 			}
 			if (!lir_vfor_expr(plan, sp, sp + 1, r))
 				return false;
-			return lir_vfor_put3(op, 1, dst, 1, va, 1, sp, 1);
+			return lir_vfor_put3(op, 1, dst, 1, va, 1,
+					     lir_vfor_physical_reg(plan, sp), 1);
 		}
 		/* Both non-term: left in dst, right in a slot. */
 		if (!lir_vfor_expr(plan, dst, sp, l))
 			return false;
-		if (sp >= VFOR_VREG_MAX) {
+		if (lir_vfor_physical_reg(plan, sp) < 0) {
 			lir_fatal("SIMD: vreg stack overflow.");
 			return false;
 		}
 		if (!lir_vfor_expr(plan, sp, sp + 1, r))
 			return false;
-		return lir_vfor_put3(op, 1, dst, 1, dst, 1, sp, 1);
+		return lir_vfor_put3(op, 1, dst, 1, dst, 1,
+				     lir_vfor_physical_reg(plan, sp), 1);
 	}
 	default:
 		lir_fatal("SIMD: unexpected vector expression.");
@@ -1132,11 +1366,10 @@ lir_visit_vfor_block(
 {
 	struct vfor_plan plan;
 	uint32_t loop_addr;
-	uint32_t exit_patch_pos;
-	int start_tmpvar, stop_tmpvar, cmp_tmpvar, guard_tmpvar;
+	int start_tmpvar, stop_tmpvar, remaining_tmpvar, guard_tmpvar;
 	int scratch_tmpvar;
 	struct hir_stmt *stmt;
-	int i;
+	int i, pass, store_count;
 
 	assert(block->type == HIR_BLOCK_FOR);
 	assert(block->val.for_.is_vector);
@@ -1150,6 +1383,9 @@ lir_visit_vfor_block(
 	plan.is_float = !block->val.for_.typed_int_region;
 	plan.counter = block->val.for_.counter_symbol;
 	plan.counter_tmpvar = lir_get_local_index(block, plan.counter);
+	plan.extra_scratch_reg = -1;
+	plan.extra_scratch_reg2 = -1;
+	store_count = 0;
 
 	/* Collect the plan (mirror of the HIR-side budget check). */
 	for (stmt = block->val.for_.inner->val.basic.stmt_list;
@@ -1174,16 +1410,70 @@ lir_visit_vfor_block(
 			}
 			if (!lir_vfor_collect(&plan, stmt->rhs))
 				return false;
+			lir_vfor_cache_collect(&plan, stmt->rhs);
 		} else {
 			/* PSTORE32/PSTOREF32: value expr only. */
 			if (!lir_vfor_collect(&plan, stmt->rhs))
 				return false;
+			lir_vfor_cache_collect(&plan, stmt->rhs);
+			store_count++;
+		}
+	}
+
+	/* One-store vector bodies have no intervening memory clobber.  Select
+	   repeated loads first, then repeated floating blend expressions in
+	   source order (pix_a before inverse-alpha in blend2). */
+	if (store_count == 1) {
+		for (pass = 0; pass < 2 && plan.cache_count < VFOR_CACHE_MAX;
+		     pass++) {
+			for (i = 0; i < plan.cache_candidate_count &&
+			     plan.cache_count < VFOR_CACHE_MAX; i++) {
+				struct hir_expr *ce = lir_vfor_strip_par(
+					plan.cache_candidate[i].expr);
+				bool is_load = ce->type == HIR_EXPR_PLOAD32 ||
+					ce->type == HIR_EXPR_PLOADF32;
+				if (plan.cache_candidate[i].count < 2 ||
+				    (pass == 0) != is_load)
+					continue;
+				plan.cache[plan.cache_count] =
+					plan.cache_candidate[i];
+				plan.cache_count++;
+			}
 		}
 	}
 	plan.stack_base = plan.const_count + plan.inv_count + plan.temp_count;
+	while (plan.cache_count > 0 &&
+	       plan.stack_base + plan.cache_count >= VFOR_VREG_MAX)
+		plan.cache_count--;
+	for (i = 0; i < plan.cache_count; i++) {
+		plan.cache[i].reg = plan.stack_base + i;
+		plan.cache[i].emitted = false;
+	}
+	plan.stack_base += plan.cache_count;
 	if (plan.stack_base > VFOR_VREG_MAX) {
 		lir_fatal("SIMD: vreg budget exceeded.");
 		return false;
+	}
+	/* Recycle the first constant/invariant whose remaining uses are all
+	   covered by cache values. */
+	for (i = 0; i < plan.const_count + plan.inv_count; i++) {
+		bool used = false;
+		for (stmt = block->val.for_.inner->val.basic.stmt_list;
+		     stmt != NULL; stmt = stmt->next) {
+			if (lir_vfor_expr_uses_home_outside_cache(
+				    &plan, stmt->rhs, i)) {
+				used = true;
+				break;
+			}
+		}
+		if (!used) {
+			if (plan.extra_scratch_reg < 0)
+				plan.extra_scratch_reg = i;
+			else {
+				plan.extra_scratch_reg2 = i;
+				break;
+			}
+		}
 	}
 
 	/* Evaluate start/stop once. */
@@ -1258,26 +1548,40 @@ lir_visit_vfor_block(
 	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
 		return false;
 
-	/* Loop head: exit when counter == stop. */
-	loop_addr = (uint32_t)bytecode_top;
-	if (!lir_increment_tmpvar(&cmp_tmpvar))
+	/* remaining = stop - start.  The strip-loop guard above proves a
+	   positive multiple of four, so the countdown latch is sufficient. */
+	if (!lir_increment_tmpvar(&remaining_tmpvar))
 		return false;
-	if (!lir_put_opcode(OP_EQI))
+	if (!lir_put_opcode(OP_ISUB))
 		return false;
-	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
-		return false;
-	if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar))
+	if (!lir_put_tmpvar((uint16_t)remaining_tmpvar))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)stop_tmpvar))
 		return false;
-	if (!lir_put_opcode(OP_JMPIFEQ))
+	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
 		return false;
-	if (!lir_put_tmpvar((uint16_t)cmp_tmpvar))
+
+	/* Declare register-allocation intent.  Portable consumers ignore it. */
+	if (!lir_put_opcode(OP_VINDEX_HINT))
 		return false;
-	/* Local forward label: patch after the back edge. */
-	exit_patch_pos = (uint32_t)bytecode_top;
-	if (!lir_put_u32(0xffffffff))
+	if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar) ||
+	    !lir_put_tmpvar((uint16_t)stop_tmpvar) ||
+	    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
+	    !lir_put_imm8(0) || !lir_put_imm8(4) ||
+	    !lir_put_imm8(VINDEX_CURSOR_ONLY | VINDEX_WRITEBACK_STOP))
 		return false;
+
+	/* First recurrent body opcode. */
+	loop_addr = (uint32_t)bytecode_top;
+
+	/* Materialize the selected per-iteration value DAG in dependency
+	   order.  Earlier entries become operands of later entries. */
+	for (i = 0; i < plan.cache_count; i++) {
+		if (!lir_vfor_expr(&plan, plan.cache[i].reg,
+				   plan.stack_base, plan.cache[i].expr))
+			return false;
+		plan.cache[i].emitted = true;
+	}
 
 	/* The vector body. */
 	for (stmt = block->val.for_.inner->val.basic.stmt_list;
@@ -1338,16 +1642,20 @@ lir_visit_vfor_block(
 		}
 	}
 
-	/* i += 4 (OP_INC is inline on every backend that matters). */
+	/* i += 4 (the vector step is explicit in OP_INC). */
 	block->val.for_.inc_addr = (uint32_t)bytecode_top;
 	block->cont_addr = (uint32_t)bytecode_top;
-	for (i = 0; i < 4; i++) {
-		if (!lir_put_opcode(OP_INC))
-			return false;
-		if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar))
-			return false;
-	}
-	if (!lir_put_opcode(OP_JMP))
+	if (!lir_put_opcode(OP_INC))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)plan.counter_tmpvar))
+		return false;
+	if (!lir_put_imm8(4))
+		return false;
+	if (!lir_put_opcode(OP_SUBJNZ))
+		return false;
+	if (!lir_put_tmpvar((uint16_t)remaining_tmpvar))
+		return false;
+	if (!lir_put_imm8(4))
 		return false;
 	if (!lir_put_imm32(loop_addr))
 		return false;
@@ -1355,13 +1663,6 @@ lir_visit_vfor_block(
 	/* exit label: extract each temp's lane 3 (= iteration mid-1,
 	   the last executed strip iteration; the remainder loop
 	   overwrites these when it runs at all). */
-	{
-		uint32_t addr = (uint32_t)bytecode_top;
-		bytecode[exit_patch_pos] = (uint8_t)((addr >> 24) & 0xff);
-		bytecode[exit_patch_pos + 1] = (uint8_t)((addr >> 16) & 0xff);
-		bytecode[exit_patch_pos + 2] = (uint8_t)((addr >> 8) & 0xff);
-		bytecode[exit_patch_pos + 3] = (uint8_t)(addr & 0xff);
-	}
 	for (i = 0; i < plan.temp_count; i++) {
 		int idx = lir_get_local_index(block, plan.temp[i]);
 		if (!lir_vfor_put3(plan.temp_type[i] == NOCT_VALUE_FLOAT ?
@@ -1372,7 +1673,7 @@ lir_visit_vfor_block(
 			return false;
 	}
 
-	lir_decrement_tmpvar(cmp_tmpvar);
+	lir_decrement_tmpvar(remaining_tmpvar);
 	lir_decrement_tmpvar(stop_tmpvar);
 	lir_decrement_tmpvar(start_tmpvar);
 
@@ -1496,6 +1797,8 @@ lir_visit_for_range_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)loop_tmpvar))
 		return false;
+	if (!lir_put_imm8(1))
+		return false;
 
 	/* Put a back-edge jump. */
 	if (!lir_put_opcode(OP_JMP))
@@ -1603,6 +1906,8 @@ lir_visit_for_kv_block(
 	if (!lir_put_opcode(OP_INC)) 		/* i++ */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
+		return false;
+	if (!lir_put_imm8(1))
 		return false;
 
 	/*
@@ -1718,6 +2023,8 @@ lir_visit_for_v_block(
 	if (!lir_put_opcode(OP_INC)) 		/* i++ */
 		return false;
 	if (!lir_put_tmpvar((uint16_t)i_tmpvar))
+		return false;
+	if (!lir_put_imm8(1))
 		return false;
 
 	/*
@@ -2354,6 +2661,11 @@ lir_visit_abce_unary_expr(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)opr_tmpvar))
 		return false;
+	if (opcode == OP_PBASE) {
+		uint8_t base_id = pbase_hint_next < 2 ? pbase_hint_next++ : 0xff;
+		if (!lir_put_imm8(base_id))
+			return false;
+	}
 
 	lir_decrement_tmpvar(opr_tmpvar);
 
@@ -3512,7 +3824,8 @@ static bool
 lir_put_opcode(
 	uint8_t opcode)
 {
-	if (opcode >= OP_VLOADI32X4 && opcode <= OP_VCVTF32I32X4)
+	if ((opcode >= OP_VLOADI32X4 && opcode <= OP_VCVTF32I32X4) ||
+	    opcode == OP_VORI32X4I)
 		has_vector_ops = true;
 	if (!lir_put_u8(opcode))
 		return false;
@@ -3999,8 +4312,11 @@ lir_dump(
 		case OP_INC:
 		{
 			uint16_t dst;
+			uint8_t step;
 			IMM2(dst);
-			printf("%04d: INC(dst:%d)\n", ofs, dst);
+			IMM1(step);
+			printf("%04d: INC(dst:%d, step:%u)\n", ofs, dst,
+			       (unsigned)step);
 			break;
 		}
 		case OP_NOT:
@@ -4135,9 +4451,12 @@ lir_dump(
 		{
 			uint16_t dst;
 			uint16_t src;
+			uint8_t base_id;
 			IMM2(dst);
 			IMM2(src);
-			printf("%04d: PBASE(dst:%d, src:%d)\n", ofs, dst, src);
+			IMM1(base_id);
+			printf("%04d: PBASE(dst:%d, src:%d, base:%u)\n", ofs,
+			       dst, src, (unsigned)base_id);
 			break;
 		}
 		case OP_PLEN:
@@ -4386,6 +4705,37 @@ lir_dump(
 				printf("%04d: %s(vd:%d, va:%d, vb:%d)\n", ofs, nm, i1, i2, i3);
 				break;
 			}
+			break;
+		}
+		case OP_VINDEX_HINT:
+		{
+			uint16_t index_tmp, stop_tmp, remaining_tmp;
+			uint8_t index_id, lanes, flags;
+			IMM2(index_tmp); IMM2(stop_tmp); IMM2(remaining_tmp);
+			IMM1(index_id); IMM1(lanes); IMM1(flags);
+			printf("%04d: VINDEX_HINT(index:%d, stop:%d, remaining:%d, id:%u, lanes:%u, flags:0x%02x)\n",
+			       ofs, index_tmp, stop_tmp, remaining_tmp,
+			       (unsigned)index_id, (unsigned)lanes,
+			       (unsigned)flags);
+			break;
+		}
+		case OP_SUBJNZ:
+		{
+			uint16_t value;
+			uint8_t decrement;
+			uint32_t target;
+			IMM2(value); IMM1(decrement); IMM4(target);
+			printf("%04d: SUBJNZ(value:%d, decrement:%u, target:%u)\n",
+			       ofs, value, (unsigned)decrement, (unsigned)target);
+			break;
+		}
+		case OP_VORI32X4I:
+		{
+			uint8_t vd, vs, imm, shift;
+			IMM1(vd); IMM1(vs); IMM1(imm); IMM1(shift);
+			printf("%04d: VORI32X4I(vd:%u, vs:%u, imm:0x%02x, shift:%u)\n",
+			       ofs, (unsigned)vd, (unsigned)vs, (unsigned)imm,
+			       (unsigned)shift);
 			break;
 		}
 		case OP_ISHL:

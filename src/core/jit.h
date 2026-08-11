@@ -114,6 +114,7 @@
 #define ex_vsubf32x4_helper noct_ex_vsubf32x4_helper
 #define ex_vmulf32x4_helper noct_ex_vmulf32x4_helper
 #define ex_vdivf32x4_helper noct_ex_vdivf32x4_helper
+#define ex_vori32x4i_helper noct_ex_vori32x4i_helper
 #define ex_ploadf32_helper noct_ex_ploadf32_helper
 #define ex_pstoref32_helper noct_ex_pstoref32_helper
 
@@ -212,6 +213,14 @@ struct jit_context {
 	uint32_t simd_caps;
 	bool has_vector_ops;
 	int vector_kind;	/* 0 unknown, 1 integer, 2 float region */
+	bool vector_hint_active;
+	int vector_hint_index_tmp;
+	int vector_hint_stop_tmp;
+	int vector_hint_remaining_tmp;
+	int vector_hint_lanes;
+	int vector_hint_flags;
+	int vector_base_tmp[2];
+	uint32_t vector_base_last_lpc[2];
 
 	/* Top of the mapped code area. */
 	void *code_top;

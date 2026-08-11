@@ -424,19 +424,21 @@ rt_visit_inc_op(
         struct rt_func *func,
         uint32_t *pc)
 {
-        struct rt_value *val;
-        int dst;
+	struct rt_value *val;
+	int dst;
+	int step;
 
         DEBUG_TRACE(*pc, "INC");
 
-        GET_TMPVAR(&dst);
+	GET_TMPVAR(&dst);
+	GET_U8(&step);
 
         val = &env->frame->tmpvar[dst];
         if (val->type != NOCT_VALUE_INT) {
                 rt_error(env, BROKEN_BYTECODE);
                 return false;
         }
-        val->val.i++;
+	val->val.i += step;
 
         return true;
 }
@@ -1003,9 +1005,18 @@ rt_visit_pbase_op(
         struct rt_func *func,
         uint32_t *pc)
 {
-        DEBUG_TRACE(*pc, "PBASE");
+	int dst;
+	int src;
+	int base_id;
 
-        UNARY_OP(ex_pbase_helper);
+	DEBUG_TRACE(*pc, "PBASE");
+
+	GET_TMPVAR(&dst);
+	GET_TMPVAR(&src);
+	GET_U8(&base_id);
+	UNUSED_PARAMETER(base_id);
+
+	return ex_pbase_helper(env, dst, src);
 }
 
 /* Visit a OP_PLEN instruction. */
@@ -1379,6 +1390,77 @@ rt_visit_vector_op(
         return true;
 }
 
+/* Consume the vector-loop allocation declaration.  It is a hint only. */
+static INLINE bool
+rt_visit_vindex_hint_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int index_tmp, stop_tmp, remaining_tmp;
+	int index_id, lanes, flags;
+
+	UNUSED_PARAMETER(env);
+	GET_TMPVAR(&index_tmp);
+	GET_TMPVAR(&stop_tmp);
+	GET_TMPVAR(&remaining_tmp);
+	GET_U8(&index_id);
+	GET_U8(&lanes);
+	GET_U8(&flags);
+	UNUSED_PARAMETER(index_tmp);
+	UNUSED_PARAMETER(stop_tmp);
+	UNUSED_PARAMETER(remaining_tmp);
+	UNUSED_PARAMETER(index_id);
+	UNUSED_PARAMETER(lanes);
+	UNUSED_PARAMETER(flags);
+	return true;
+}
+
+/* Semantic fallback for the fused vector-loop latch. */
+static INLINE bool
+rt_visit_subjnz_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int value, decrement;
+	uint32_t target;
+	struct rt_value *v;
+
+	GET_TMPVAR(&value);
+	GET_U8(&decrement);
+	GET_U32(&target);
+	if (target >= func->bytecode_size) {
+		rt_error(env, "Broken bytecode.");
+		return false;
+	}
+	v = &env->frame->tmpvar[value];
+	if (v->type != NOCT_VALUE_INT) {
+		rt_error(env, "SUBJNZ operand is not an integer.");
+		return false;
+	}
+	v->val.i -= decrement;
+	if (v->val.i != 0)
+		*pc = target;
+	return true;
+}
+
+static INLINE bool
+rt_visit_vori32x4i_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int vd, vs, imm, shift;
+
+	UNUSED_PARAMETER(func);
+	GET_U8(&vd);
+	GET_U8(&vs);
+	GET_U8(&imm);
+	GET_U8(&shift);
+	return ex_vori32x4i_helper(env, vd, vs, (imm << 8) | shift);
+}
+
 /* Visit an instruction. */
 static bool
 rt_visit_op(
@@ -1697,6 +1779,18 @@ rt_visit_op(
                 if (!rt_visit_vector_op(env, func, pc, op))
                         return false;
                 break;
+	case OP_VINDEX_HINT:
+		if (!rt_visit_vindex_hint_op(env, func, pc))
+			return false;
+		break;
+	case OP_SUBJNZ:
+		if (!rt_visit_subjnz_op(env, func, pc))
+			return false;
+		break;
+	case OP_VORI32X4I:
+		if (!rt_visit_vori32x4i_op(env, func, pc))
+			return false;
+		break;
         default:
                 rt_error(env, "Unknown opcode %d at pc=%d.", func->bytecode[*pc], *pc);
                 return false;
