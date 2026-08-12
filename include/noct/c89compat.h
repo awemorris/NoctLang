@@ -193,12 +193,12 @@ extern "C" {
  */
 
 /* Windows */
-#if defined(_WIN32) && !defined(NOCT_USE_UNITY)
+#if defined(_WIN32) && !defined(NOCT_TARGET_UNITY)
 #define NOCT_TARGET_WINDOWS
 #endif
 
 /* macOS / iOS */
-#if !defined(NOCT_USE_UNITY)
+#if !defined(NOCT_TARGET_UNITY)
 #if defined(__GNUC__)
 #if defined(__APPLE__) && __has_include(<TargetConditionals.h>)
 #include <TargetConditionals.h>
@@ -232,7 +232,7 @@ extern "C" {
 #endif
 
 /* FreeBSD */
-#if defined(__FreeBSD__) && !defined(NOCT_USE_UNITY)
+#if defined(__FreeBSD__) && !defined(NOCT_TARGET_UNITY)
 #define NOCT_TARGET_FREEBSD
 #ifndef NOCT_TARGET_POSIX
 #define NOCT_TARGET_POSIX
@@ -388,8 +388,23 @@ typedef unsigned long uintptr_t;
 #include <limits.h>
 
 #if defined(__WATCOMC__)
+#ifndef INT32_MAX
+#define INT32_MAX ((int32_t)0x7fffffffL)
+#endif
+#ifndef INT32_MIN
+#define INT32_MIN (-INT32_MAX - 1L)
+#endif
+#ifndef INT64_MAX
+#define INT64_MAX ((int64_t)0x7fffffffffffffffLL)
+#endif
+#ifndef INT64_MIN
+#define INT64_MIN (-INT64_MAX - 1LL)
+#endif
 #ifndef UINT32_MAX
 #define UINT32_MAX ((uint32_t)0xffffffffUL)
+#endif
+#ifndef UINT64_MAX
+#define UINT64_MAX ((uint64_t)0xffffffffffffffffULL)
 #endif
 #ifndef SIZE_MAX
 #define SIZE_MAX ((size_t)-1)

@@ -19,12 +19,12 @@
 #include <noct/beui.h>
 #include "beui-pc98-gdc.h"
 
-#include <stdint.h>
-
 #define NOCT_BEUI_CIRRUS_WIDTH 640U
 #define NOCT_BEUI_CIRRUS_HEIGHT 480U
 #define NOCT_BEUI_CIRRUS_STRIDE_8 NOCT_BEUI_CIRRUS_WIDTH
 #define NOCT_BEUI_CIRRUS_STRIDE_24 (NOCT_BEUI_CIRRUS_WIDTH * 3U)
+#define NOCT_BEUI_CIRRUS_VISIBLE_BYTES \
+	(NOCT_BEUI_CIRRUS_STRIDE_24 * NOCT_BEUI_CIRRUS_HEIGHT)
 
 struct noct_beui_pc98_cirrus {
 	void *io_context;

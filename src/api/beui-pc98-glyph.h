@@ -10,8 +10,6 @@
 #include <noct/beui.h>
 #include "beui-pc98-gdc.h"
 
-#include <stdint.h>
-
 struct noct_beui_pc98_glyph {
 	void *io_context;
 	uint8_t (*port_in8)(void *context, uint16_t port);

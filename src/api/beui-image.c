@@ -15,7 +15,6 @@
 #include <noct/beui.h>
 
 #include <limits.h>
-#include <stdint.h>
 #include <string.h>
 
 struct bmp_layout {

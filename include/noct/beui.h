@@ -21,7 +21,6 @@
 #include <noct/noct.h>
 
 #include <stddef.h>
-#include <stdint.h>
 
 struct noct_beui_rect {
 	unsigned x;

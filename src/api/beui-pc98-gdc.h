@@ -14,8 +14,6 @@
 
 #include <noct/beui.h>
 
-#include <stdint.h>
-
 #define NOCT_BEUI_GDC_PLANE_BYTES (640U * 400U / 8U)
 
 typedef int (*noct_beui_display_reset_fn)(void *context);
