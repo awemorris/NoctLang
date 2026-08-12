@@ -75,6 +75,10 @@ noct_beui_init_with_hint(unsigned preferred_bits_per_pixel)
 	state.display_open = 1;
 	state.close_requested = 0;
 	state.pointer_buttons = 0;
+	/* Input typed before the graphics session belongs to the caller's
+	 * previous screen.  Discard it before the application begins waiting
+	 * for BeUI keys, just as close() drains keys before returning. */
+	noct_beui_drain_input();
 	if (state.display.width == 0 || state.display.height == 0)
 		goto fail;
 	/* A pointer starts centred so scripts never read a stale origin. */

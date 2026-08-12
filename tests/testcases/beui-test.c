@@ -201,6 +201,7 @@ test_lifecycle(void)
 	CHECK(!noct_beui_init());
 	CHECK(noct_beui_bind(&hal));
 	CHECK(noct_beui_init());
+	CHECK(mock.drain_count == 1);
 	CHECK(noct_beui_init());
 	CHECK(noct_beui_is_open());
 	CHECK(noct_beui_get_display_info(&info));
@@ -211,10 +212,10 @@ test_lifecycle(void)
 	CHECK(mock.pointer_start_count == 1);
 	CHECK(mock.pointer_poll_count == 1);
 	CHECK(mock.flush_count == 1);
-	/* Closing drains held keys so they never leak to the caller. */
-	CHECK(mock.drain_count >= 1);
-
 	noct_beui_close();
+	/* Initialization discards type-ahead from the previous screen and
+	 * closing drains held keys so neither direction leaks input. */
+	CHECK(mock.drain_count >= 3);
 	noct_beui_close();
 	CHECK(!noct_beui_is_open());
 	CHECK(mock.pointer_stop_count == 1);
