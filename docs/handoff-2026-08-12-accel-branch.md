@@ -129,9 +129,9 @@ teardown are covered by `tests/accel/async*.noct` and
 
 - **OpenGL:** implemented and hardware-validated.  This is the production
   backend for this branch.
-- **Vulkan:** a retained implementation/prototype exists and has compile/test
-  coverage, but this handoff does not claim current hardware execution for
-  managed programs or generated ONNX models.
+- **Vulkan:** synchronous single-kernel managed DOALL execution and persistent
+  `_ptr` resources are hardware-validated on Linux.  Multi-kernel programs,
+  DOSUM, raw kernels, and generated ONNX models are not yet Vulkan claims.
 - **D3D12:** not implemented or required.  Do not introduce a D3D12 assumption
   into Linux paths.
 
@@ -378,7 +378,7 @@ native development set is approximately:
 ```sh
 sudo apt install build-essential cmake pkg-config \
   bison flex libfl-dev \
-  libepoxy-dev libegl1-mesa-dev mesa-utils \
+  libegl-dev libgles-dev mesa-utils \
   python3
 ```
 
@@ -386,11 +386,13 @@ Bison/Flex are needed when regenerating grammar outputs; ordinary builds can
 use the tracked generated sources.  Python 3 is needed for the deterministic
 test fixture builders, not for production ONNX conversion.
 
-Optional Vulkan compilation needs the distribution equivalents of Vulkan
-headers/loader and Shaderc (`libvulkan-dev`, `libshaderc-dev`, and usually
-`vulkan-tools`/a driver).  Vulkan execution is not part of the validated claim.
+Vulkan compilation needs the distribution equivalents of Vulkan
+headers/loader and Shaderc (`libvulkan-dev` and `libshaderc-dev`).  The Vulkan
+gate also uses `glslc`, `spirv-val`, `vulkan-tools`, and the Khronos validation
+layer; on Debian these are provided by `glslc`, `spirv-tools`, `vulkan-tools`,
+and `vulkan-validationlayers` in addition to a hardware Vulkan driver.
 
-A representative full OpenGL build is:
+A representative full OpenGL ES build is:
 
 ```sh
 cmake -S . -B build-opengl \
@@ -410,6 +412,15 @@ cmake -S . -B build-opengl \
   -DNOCT_ENABLE_ACCEL_OPENGL=ON \
   -DNOCT_ENABLE_ACCEL_VULKAN=OFF
 cmake --build build-opengl -j2
+```
+
+The checked-in Linux Vulkan preset and its hardware gate are:
+
+```sh
+cmake --preset linux-vulkan
+cmake --build build-linux-vulkan -j2
+cd tests
+NOCT=../build-linux-vulkan/noct sh ./run-accel-vulkan.sh
 ```
 
 Create `build-static` from the same configuration with both accelerator
@@ -613,9 +624,9 @@ Do not add or infer:
 Choose one bounded project and add a new plan/gate before changing semantics.
 The currently coherent options are:
 
-1. validate and harden the existing Vulkan raw-kernel path on real hardware,
-   then separately decide whether managed programs and generated models are in
-   scope;
+1. extend the validated Vulkan single-kernel managed path to accelerator
+   programs (multi-kernel DOALL and DOSUM), then validate raw kernels as a
+   separate gate before considering generated models;
 2. extend managed DOSUM publication so a later DOALL may consume an implicit
    one-element device result without host readback;
 3. design FAST multicore automatic parallelization on top of the common loop

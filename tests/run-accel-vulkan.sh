@@ -7,8 +7,9 @@ NOCT=${NOCT:-../build-vulkan/noct}
 echo 'Accelerator Vulkan tests:'
 
 for tc in accel/cpu-call.noct accel/vulkan-wide.noct \
-	  accel/vulkan-float.noct accel/vulkan-int.noct accel/async.noct \
-	  accel/vulkan-resource.noct; do
+	  accel/vulkan-float.noct accel/vulkan-int.noct \
+	  accel/vulkan-resource.noct accel/branch.noct \
+	  accel/neighbor.noct accel/convert.noct accel/unsafe-index.noct; do
 	for mode in '-j0' '-j'; do
 		NOCT_VULKAN_VALIDATION=1 "$NOCT" --accel=vulkan --accel-info \
 			$mode -O2 "$tc" > out 2> accel.log
@@ -23,9 +24,13 @@ for tc in accel/cpu-call.noct accel/vulkan-wide.noct \
 	echo "PASS $tc"
 done
 
-NOCT_ACCEL_DEBUG=1 "$NOCT" --disable-accel --accel-info \
+if NOCT_ACCEL_DEBUG=1 "$NOCT" --disable-accel --accel-info \
 	-j0 -O2 accel/cpu-call.noct \
-	> out 2> accel.log
+	> out 2> accel.log; then
+	echo 'FAIL GPU-only accelerator function ran with acceleration disabled'
+	exit 1
+fi
+grep -F 'has no CPU fallback.' out >/dev/null
 awk '/^#version 450/{copy=1} copy && /^ACCEL: kernel/{exit} copy{print}' \
 	accel.log > accel.comp
 glslc -fshader-stage=compute accel.comp -o accel.spv

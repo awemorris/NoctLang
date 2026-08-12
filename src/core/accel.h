@@ -237,6 +237,10 @@ struct accel_event {
 
 int accel_vulkan_dispatch(struct rt_env *env, struct rt_func *func,
 			  uint32_t arg_count, struct rt_value *arg);
+int accel_vulkan_copy_to(struct rt_env *env, struct rt_packed *resource,
+			 size_t offset, size_t size);
+int accel_vulkan_copy_from(struct rt_env *env, struct rt_packed *resource,
+			   size_t offset, size_t size);
 void accel_vulkan_cleanup(struct rt_vm *vm);
 int accel_opengl_dispatch(struct rt_env *env, struct rt_func *func,
 			  uint32_t arg_count, struct rt_value *arg);

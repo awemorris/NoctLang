@@ -802,8 +802,11 @@ example `accel var state = Accel.float32(1024);`, and passed explicitly through
 an `_ptr` parameter.  Host code cannot subscript an accelerator resource.
 
 Managed programs, generated kernels, buffer expressions, bindings, and step
-order survive `.nb` and `.nap` serialization.  OpenGL is the validated Linux
-execution backend; Vulkan descriptors remain compile-only and unvalidated.
+order survive `.nb` and `.nap` serialization.  OpenGL ES is the complete
+validated Linux execution backend.  Vulkan is validated for synchronous
+single-kernel managed DOALL calls, including persistent `_ptr` resources and
+serialized `.nb`/`.nap` input; multi-kernel programs and DOSUM remain outside
+the Vulkan execution claim.
 
 ## Raw GPU functions
 

@@ -474,9 +474,11 @@ synchronous source form.  The `copyToAccelAsync` and `copyFromAccelAsync`
 variants have the same five arguments as their synchronous forms and return an
 event.  Offsets and lengths are bytes and are checked before submission.
 
-OpenGL compute through headless EGL is the validated Linux execution path.
-Vulkan is retained as an unvalidated compile-only backend, and D3D12 is not a
-Noct Linux accelerator backend.
+OpenGL ES compute through headless EGL is the complete validated Linux
+execution path.  Vulkan is also validated for synchronous single-kernel
+managed DOALL calls with host-copy and persistent `_ptr` buffers; multi-kernel
+programs, DOSUM, raw dispatch, and generated models remain outside its current
+execution claim.  D3D12 is not a Noct Linux accelerator backend.
 
 ## Checked binary and model-weight APIs
 

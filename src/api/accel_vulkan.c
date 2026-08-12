@@ -16,6 +16,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+struct accel_vk_resource;
+
 struct accel_vk_runtime {
 	VkInstance instance;
 	VkPhysicalDevice physical_device;
@@ -24,6 +26,7 @@ struct accel_vk_runtime {
 	uint32_t queue_family;
 	VkCommandPool command_pool;
 	char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+	struct accel_vk_resource *resources;
 	bool unavailable;
 };
 
@@ -42,6 +45,11 @@ struct accel_vk_buffer {
 	VkDeviceSize size;
 };
 
+struct accel_vk_resource {
+	struct accel_vk_buffer storage;
+	struct accel_vk_resource *next;
+};
+
 static void accel_vk_destroy_runtime(struct accel_vk_runtime *vk);
 static struct accel_vk_runtime *accel_vk_get_runtime(struct rt_env *env);
 static bool accel_vk_make_pipeline(struct rt_env *env,
@@ -53,14 +61,26 @@ static bool accel_vk_make_buffer(struct accel_vk_runtime *vk,
 				 VkDeviceSize size, struct accel_vk_buffer *buffer);
 static void accel_vk_free_buffer(struct accel_vk_runtime *vk,
 				 struct accel_vk_buffer *buffer);
+static struct accel_vk_resource *accel_vk_get_resource(
+	struct rt_env *env, struct rt_packed *packed);
 
 static void
 accel_vk_destroy_runtime(
 	struct accel_vk_runtime *vk)
 {
+	struct accel_vk_resource *resource;
+	struct accel_vk_resource *next;
+
 	if (vk == NULL)
 		return;
 	if (vk->device != VK_NULL_HANDLE) {
+		resource = vk->resources;
+		while (resource != NULL) {
+			next = resource->next;
+			accel_vk_free_buffer(vk, &resource->storage);
+			noct_free(resource);
+			resource = next;
+		}
 		if (vk->command_pool != VK_NULL_HANDLE)
 			vkDestroyCommandPool(vk->device, vk->command_pool, NULL);
 		vkDestroyDevice(vk->device, NULL);
@@ -300,7 +320,7 @@ accel_vk_make_pipeline(
 	scalar_count = 0;
 	memset(bindings, 0, sizeof(bindings));
 	for (i = 0; i < kernel->param_count; i++) {
-		if (kernel->param_access[i] == ACCEL_ACCESS_NONE) {
+		if (kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR) {
 			scalar_count++;
 			continue;
 		}
@@ -438,6 +458,118 @@ accel_vk_free_buffer(
 	memset(buffer, 0, sizeof(*buffer));
 }
 
+static size_t
+accel_vk_element_width(
+	int type)
+{
+	switch (type) {
+	case NOCT_PACKED_INT8:
+	case NOCT_PACKED_UINT8:
+		return 1;
+	case NOCT_PACKED_INT16:
+	case NOCT_PACKED_UINT16:
+		return 2;
+	case NOCT_PACKED_INT32:
+	case NOCT_PACKED_UINT32:
+	case NOCT_PACKED_FLOAT32:
+		return 4;
+	case NOCT_PACKED_INT64:
+	case NOCT_PACKED_UINT64:
+	case NOCT_PACKED_FLOAT64:
+		return 8;
+	default:
+		return 0;
+	}
+}
+
+static struct accel_vk_resource *
+accel_vk_get_resource(
+	struct rt_env *env,
+	struct rt_packed *packed)
+{
+	struct accel_vk_runtime *vk;
+	struct accel_vk_resource *resource;
+	size_t width;
+	size_t size;
+
+	if (!packed->is_accel_resource)
+		return NULL;
+	if (packed->accel_backend_data != NULL)
+		return packed->accel_backend_data;
+	vk = accel_vk_get_runtime(env);
+	if (vk == NULL)
+		return NULL;
+	width = accel_vk_element_width(packed->type);
+	if (width == 0 || packed->elem_size > SIZE_MAX / width)
+		return NULL;
+	size = packed->elem_size * width;
+	resource = noct_calloc(1, sizeof(*resource));
+	if (resource == NULL) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	if (!accel_vk_make_buffer(vk, (VkDeviceSize)size,
+				  &resource->storage)) {
+		noct_free(resource);
+		return NULL;
+	}
+	memcpy(resource->storage.mapped, packed->packed_buffer, size);
+	resource->next = vk->resources;
+	vk->resources = resource;
+	packed->accel_backend_data = resource;
+	if (env->vm->config.accel_info)
+		fprintf(stderr,
+			"ACCEL: Vulkan persistent resource allocated (%lu bytes)\n",
+			(unsigned long)size);
+	return resource;
+}
+
+int
+accel_vulkan_copy_to(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	size_t offset,
+	size_t size)
+{
+	struct accel_vk_resource *resource;
+
+	resource = accel_vk_get_resource(env, packed);
+	if (resource == NULL)
+		return ACCEL_DISPATCH_FALLBACK;
+	if (offset > resource->storage.size ||
+	    size > resource->storage.size - offset) {
+		rt_error(env, "Vulkan accelerator upload range is out-of-bounds.");
+		return ACCEL_DISPATCH_ERROR;
+	}
+	if (size != 0)
+		memcpy((char *)resource->storage.mapped + offset,
+		       (char *)packed->packed_buffer + offset, size);
+	return ACCEL_DISPATCH_OK;
+}
+
+int
+accel_vulkan_copy_from(
+	struct rt_env *env,
+	struct rt_packed *packed,
+	size_t offset,
+	size_t size)
+{
+	struct accel_vk_resource *resource;
+
+	resource = accel_vk_get_resource(env, packed);
+	if (resource == NULL)
+		return ACCEL_DISPATCH_FALLBACK;
+	if (offset > resource->storage.size ||
+	    size > resource->storage.size - offset) {
+		rt_error(env, "Vulkan accelerator download range is out-of-bounds.");
+		return ACCEL_DISPATCH_ERROR;
+	}
+	if (size != 0)
+		memcpy((char *)packed->packed_buffer + offset,
+		       (char *)resource->storage.mapped + offset, size);
+	return ACCEL_DISPATCH_OK;
+}
+
 int
 accel_vulkan_dispatch(
 	struct rt_env *env,
@@ -449,6 +581,8 @@ accel_vulkan_dispatch(
 	struct accel_vk_runtime *vk;
 	struct accel_vk_pipeline *pipeline;
 	struct accel_vk_buffer buffers[NOCT_ARG_MAX];
+	struct accel_vk_buffer *binding[NOCT_ARG_MAX];
+	struct accel_vk_resource *resource;
 	VkDescriptorPoolSize pool_size;
 	VkDescriptorPoolCreateInfo pool_info;
 	VkDescriptorPool descriptor_pool;
@@ -478,9 +612,6 @@ accel_vulkan_dispatch(
 	kernel = func->accel_kernel;
 	if (kernel == NULL || !kernel->eligible || arg_count != kernel->param_count)
 		return ACCEL_DISPATCH_FALLBACK;
-	for (i = 0; i < arg_count; i++)
-		if (kernel->param_transport[i] == ACCEL_TRANSPORT_DEVICE_PTR)
-			return ACCEL_DISPATCH_FALLBACK;
 	count = 0;
 	if (kernel->dispatch_param >= 0) {
 		if (arg[kernel->dispatch_param].type != NOCT_VALUE_INT ||
@@ -489,7 +620,7 @@ accel_vulkan_dispatch(
 		count = (uint32_t)arg[kernel->dispatch_param].val.i;
 	}
 	for (i = 0; i < arg_count; i++) {
-		if (kernel->param_access[i] == ACCEL_ACCESS_NONE) {
+		if (kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR) {
 			if (arg[i].type != kernel->param_type[i])
 				return ACCEL_DISPATCH_FALLBACK;
 			continue;
@@ -501,7 +632,7 @@ accel_vulkan_dispatch(
 		if ((size_t)count > packed_size)
 			return ACCEL_DISPATCH_FALLBACK;
 		for (j = 0; j < i; j++) {
-			if (kernel->param_access[j] != ACCEL_ACCESS_NONE &&
+			if (kernel->param_transport[j] != ACCEL_TRANSPORT_SCALAR &&
 			    arg[j].val.packed == arg[i].val.packed)
 				return ACCEL_DISPATCH_FALLBACK;
 		}
@@ -515,26 +646,35 @@ accel_vulkan_dispatch(
 		return ACCEL_DISPATCH_FALLBACK;
 	pipeline = kernel->backend_data;
 	memset(buffers, 0, sizeof(buffers));
+	memset(binding, 0, sizeof(binding));
 	descriptor_pool = VK_NULL_HANDLE;
 	command = VK_NULL_HANDLE;
 	fence = VK_NULL_HANDLE;
 	submitted = false;
 	result = ACCEL_DISPATCH_FALLBACK;
 	for (i = 0; i < arg_count; i++) {
-		if (kernel->param_access[i] == ACCEL_ACCESS_NONE) continue;
+		if (kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR) continue;
+		if (kernel->param_transport[i] == ACCEL_TRANSPORT_DEVICE_PTR) {
+			resource = accel_vk_get_resource(env, arg[i].val.packed);
+			if (resource == NULL)
+				goto cleanup;
+			binding[i] = &resource->storage;
+			continue;
+		}
 		byte_size = arg[i].val.packed->elem_size * 4;
 		if (!accel_vk_make_buffer(vk, (VkDeviceSize)byte_size, &buffers[i]))
 			goto cleanup;
-		if (kernel->param_access[i] == ACCEL_ACCESS_IN)
+		binding[i] = &buffers[i];
+		if (kernel->param_transport[i] == ACCEL_TRANSPORT_COPY_IN)
 			memcpy(buffers[i].mapped, arg[i].val.packed->packed_buffer, byte_size);
 	}
 	descriptor_count = 0;
 	memset(buffer_info, 0, sizeof(buffer_info));
 	memset(writes, 0, sizeof(writes));
 	for (i = 0; i < arg_count; i++) {
-		if (kernel->param_access[i] == ACCEL_ACCESS_NONE) continue;
-		buffer_info[descriptor_count].buffer = buffers[i].buffer;
-		buffer_info[descriptor_count].range = buffers[i].size;
+		if (kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR) continue;
+		buffer_info[descriptor_count].buffer = binding[i]->buffer;
+		buffer_info[descriptor_count].range = binding[i]->size;
 		writes[descriptor_count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		writes[descriptor_count].dstBinding = i;
 		writes[descriptor_count].descriptorCount = 1;
@@ -567,7 +707,7 @@ accel_vulkan_dispatch(
 	push_count = 0;
 	push[push_count++] = count;
 	for (i = 0; i < arg_count; i++) {
-		if (kernel->param_access[i] != ACCEL_ACCESS_NONE) continue;
+		if (kernel->param_transport[i] != ACCEL_TRANSPORT_SCALAR) continue;
 		if (arg[i].type == NOCT_VALUE_FLOAT)
 			memcpy(&push[push_count], &arg[i].val.f, 4);
 		else
@@ -631,7 +771,7 @@ accel_vulkan_dispatch(
 		goto cleanup;
 	}
 	for (i = 0; i < arg_count; i++) {
-		if (kernel->param_access[i] == ACCEL_ACCESS_OUT)
+		if (kernel->param_transport[i] == ACCEL_TRANSPORT_COPY_OUT)
 			memcpy(arg[i].val.packed->packed_buffer, buffers[i].mapped,
 			       (size_t)count * 4);
 	}

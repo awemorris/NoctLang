@@ -14,12 +14,14 @@
 #include <string.h>
 #include <ctype.h>
 
-#if defined(_WIN32) || defined(NOCT_TARGET_DOS4G)
+#if defined(NOCT_TARGET_WINDOWS) || defined(NOCT_TARGET_DOS4G)
 #include <direct.h>
 #define module_getcwd(buf, size) _getcwd((buf), (int)(size))
-#else
+#elif defined(NOCT_TARGET_POSIX)
 #include <unistd.h>
 #define module_getcwd(buf, size) getcwd((buf), (size))
+#else
+#define module_getcwd(buf, size) NULL
 #endif
 
 static char *

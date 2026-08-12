@@ -612,6 +612,11 @@ accel_backend_copy(
 			return accel_opengl_copy_to(env, resource, offset, size);
 		return accel_opengl_copy_from(env, resource, offset, size);
 	}
+	if (env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_VULKAN) {
+		if (to_accel)
+			return accel_vulkan_copy_to(env, resource, offset, size);
+		return accel_vulkan_copy_from(env, resource, offset, size);
+	}
 	return ACCEL_DISPATCH_FALLBACK;
 }
 
@@ -831,6 +836,34 @@ accel_vulkan_dispatch(
 	UNUSED_PARAMETER(func);
 	UNUSED_PARAMETER(arg_count);
 	UNUSED_PARAMETER(arg);
+	return ACCEL_DISPATCH_FALLBACK;
+}
+
+int
+accel_vulkan_copy_to(
+	struct rt_env *env,
+	struct rt_packed *resource,
+	size_t offset,
+	size_t size)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(resource);
+	UNUSED_PARAMETER(offset);
+	UNUSED_PARAMETER(size);
+	return ACCEL_DISPATCH_FALLBACK;
+}
+
+int
+accel_vulkan_copy_from(
+	struct rt_env *env,
+	struct rt_packed *resource,
+	size_t offset,
+	size_t size)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(resource);
+	UNUSED_PARAMETER(offset);
+	UNUSED_PARAMETER(size);
 	return ACCEL_DISPATCH_FALLBACK;
 }
 

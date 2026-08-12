@@ -5,12 +5,13 @@
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-/* Headless OpenGL compute backend.  WSLg uses Mesa's D3D12 Gallium driver. */
+/* Headless OpenGL ES compute backend using EGL. */
 
 #include "../core/runtime.h"
 
-#include <epoxy/egl.h>
-#include <epoxy/gl.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl31.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,6 +85,9 @@ static char *accel_gl_make_source(const char *source, size_t source_size,
 static char *accel_gl_replace(const char *source, const char *from,
 			      const char *to, size_t *output_size);
 static bool accel_gl_check_error(struct rt_env *env, const char *operation);
+static bool accel_gl_read_buffer(struct rt_env *env, GLenum target,
+				 GLintptr offset, GLsizeiptr size, void *destination,
+				 const char *operation);
 static int accel_gl_dispatch_internal(struct rt_env *env, struct rt_func *func,
 				      uint32_t arg_count,
 				      struct rt_value *arg,
@@ -142,17 +146,14 @@ accel_gl_get_runtime(
 	const GLubyte *renderer;
 	static const EGLint config_attributes[] = {
 		EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-		EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
 		EGL_RED_SIZE, 8,
 		EGL_GREEN_SIZE, 8,
 		EGL_BLUE_SIZE, 8,
 		EGL_NONE,
 	};
 	static const EGLint context_attributes[] = {
-		EGL_CONTEXT_MAJOR_VERSION_KHR, 4,
-		EGL_CONTEXT_MINOR_VERSION_KHR, 3,
-		EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR,
-		EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
+		EGL_CONTEXT_CLIENT_VERSION, 3,
 		EGL_NONE,
 	};
 	static const EGLint surface_attributes[] = {
@@ -174,10 +175,16 @@ accel_gl_get_runtime(
 	gl->context = EGL_NO_CONTEXT;
 	gl->surface = EGL_NO_SURFACE;
 	env->vm->accel_runtime = gl;
-	gl->display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+#if defined(EGL_PLATFORM_SURFACELESS_MESA)
+	/* Prefer a display-server-independent context for SSH and services. */
+	gl->display = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA,
+					    EGL_DEFAULT_DISPLAY, NULL);
+#endif
+	if (gl->display == EGL_NO_DISPLAY)
+		gl->display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
 	if (gl->display == EGL_NO_DISPLAY ||
 	    !eglInitialize(gl->display, &major, &minor) ||
-	    !eglBindAPI(EGL_OPENGL_API) ||
+	    !eglBindAPI(EGL_OPENGL_ES_API) ||
 	    !eglChooseConfig(gl->display, config_attributes, &config, 1,
 			     &config_count) || config_count != 1)
 		goto unavailable;
@@ -200,13 +207,13 @@ accel_gl_get_runtime(
 			sizeof(gl->renderer) - 1);
 		gl->renderer[sizeof(gl->renderer) - 1] = '\0';
 	}
-	if ((gl_major < 4 || (gl_major == 4 && gl_minor < 3)) ||
+	if ((gl_major < 3 || (gl_major == 3 && gl_minor < 1)) ||
 	    ssbo_bindings < NOCT_ARG_MAX ||
 	    ubo_bindings <= ACCEL_GL_PUSH_BINDING ||
 	    accel_gl_is_software_renderer((const char *)renderer)) {
 		if (env->vm->config.accel_info) {
 			fprintf(stderr,
-				"ACCEL: OpenGL device rejected: %s (OpenGL %d.%d)\n",
+				"ACCEL: OpenGL device rejected: %s (OpenGL ES %d.%d)\n",
 				gl->renderer[0] != '\0' ? gl->renderer : "unknown",
 				gl_major, gl_minor);
 			if (accel_gl_is_software_renderer((const char *)renderer))
@@ -216,7 +223,7 @@ accel_gl_get_runtime(
 		goto unavailable;
 	}
 	if (env->vm->config.accel_info)
-		fprintf(stderr, "ACCEL: OpenGL device: %s (OpenGL %d.%d, EGL %d.%d)\n",
+		fprintf(stderr, "ACCEL: OpenGL device: %s (OpenGL ES %d.%d, EGL %d.%d)\n",
 			gl->renderer, gl_major, gl_minor, major, minor);
 	return gl;
 
@@ -298,7 +305,8 @@ accel_gl_make_source(
 	size_t size4;
 
 	UNUSED_PARAMETER(source_size);
-	stage1 = accel_gl_replace(source, "#version 450", "#version 430 core",
+	stage1 = accel_gl_replace(source, "#version 450",
+				  "#version 310 es\nprecision highp float;\nprecision highp int;",
 				  &size1);
 	if (stage1 == NULL)
 		return NULL;
@@ -488,6 +496,39 @@ accel_gl_check_error(
 	rt_error(env, "OpenGL accelerator %s failed (0x%x).", operation,
 		 (unsigned int)error);
 	return false;
+}
+
+/* GLES has no glGetBufferSubData(); map the bound buffer for readback. */
+static bool
+accel_gl_read_buffer(
+	struct rt_env *env,
+	GLenum target,
+	GLintptr offset,
+	GLsizeiptr size,
+	void *destination,
+	const char *operation)
+{
+	void *mapped;
+	GLboolean unmapped;
+
+	if (size == 0)
+		return true;
+	mapped = glMapBufferRange(target, offset, size, GL_MAP_READ_BIT);
+	if (mapped == NULL) {
+		if (accel_gl_check_error(env, operation))
+			rt_error(env, "OpenGL ES accelerator %s returned no mapping.",
+				 operation);
+		return false;
+	}
+	memcpy(destination, mapped, (size_t)size);
+	unmapped = glUnmapBuffer(target);
+	if (unmapped != GL_TRUE) {
+		if (accel_gl_check_error(env, operation))
+			rt_error(env, "OpenGL ES accelerator %s lost mapped data.",
+				 operation);
+		return false;
+	}
+	return true;
 }
 
 static size_t
@@ -862,9 +903,13 @@ accel_gl_dispatch_program(
 		desc = &program->buffer[i];
 		if (desc->download) {
 			glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[i].name);
-			glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-					   (GLsizeiptr)buffers[i].size,
-					   arg[desc->outer_param].val.packed->packed_buffer);
+			if (!accel_gl_read_buffer(env, GL_SHADER_STORAGE_BUFFER, 0,
+						  (GLsizeiptr)buffers[i].size,
+						  arg[desc->outer_param].val.packed->packed_buffer,
+						  "program output readback")) {
+				result = ACCEL_DISPATCH_ERROR;
+				goto cleanup;
+			}
 		}
 		if (resources[i] != NULL &&
 		    (program->outer_param_effect[desc->outer_param] &
@@ -1129,9 +1174,13 @@ accel_gl_dispatch_internal(
 		if (kernel->param_transport[i] != ACCEL_TRANSPORT_COPY_OUT)
 			continue;
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[i].name);
-		glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-				   (GLsizeiptr)((size_t)count * 4),
-				   arg[i].val.packed->packed_buffer);
+		if (!accel_gl_read_buffer(env, GL_SHADER_STORAGE_BUFFER, 0,
+					  (GLsizeiptr)((size_t)count * 4),
+					  arg[i].val.packed->packed_buffer,
+					  "output readback")) {
+			result = ACCEL_DISPATCH_ERROR;
+			goto cleanup;
+		}
 	}
 	if (!accel_gl_check_error(env, "output readback")) {
 		result = ACCEL_DISPATCH_ERROR;
@@ -1375,9 +1424,11 @@ accel_opengl_copy_from(
 	}
 	if (size != 0) {
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, resource->buffer);
-		glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, (GLintptr)offset,
-				   (GLsizeiptr)size,
-				   (char *)packed->packed_buffer + offset);
+		if (!accel_gl_read_buffer(env, GL_SHADER_STORAGE_BUFFER,
+					  (GLintptr)offset, (GLsizeiptr)size,
+					  (char *)packed->packed_buffer + offset,
+					  "persistent resource download"))
+			return ACCEL_DISPATCH_ERROR;
 		if (!accel_gl_check_error(env, "persistent resource download"))
 			return ACCEL_DISPATCH_ERROR;
 		if (offset == 0 && size == resource->size)
@@ -1510,9 +1561,11 @@ accel_opengl_sync_cpu(
 				continue;
 			glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 			glBindBuffer(GL_SHADER_STORAGE_BUFFER, resource->buffer);
-			glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-					   (GLsizeiptr)resource->size,
-					   arg[i].val.packed->packed_buffer);
+			if (!accel_gl_read_buffer(env, GL_SHADER_STORAGE_BUFFER, 0,
+						  (GLsizeiptr)resource->size,
+						  arg[i].val.packed->packed_buffer,
+						  "CPU fallback resource download"))
+				return false;
 			if (!accel_gl_check_error(env,
 						  "CPU fallback resource download"))
 				return false;
@@ -1563,10 +1616,10 @@ accel_opengl_join(
 	     submission->output_resource->version == submission->output_version)) {
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER,
 			     submission->buffers[submission->output_index].name);
-		glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-				   (GLsizeiptr)((size_t)submission->count * 4),
-				   event->output.val.packed->packed_buffer);
-		ok = accel_gl_check_error(env, "asynchronous output readback");
+		ok = accel_gl_read_buffer(env, GL_SHADER_STORAGE_BUFFER, 0,
+					  (GLsizeiptr)((size_t)submission->count * 4),
+					  event->output.val.packed->packed_buffer,
+					  "asynchronous output readback");
 		if (ok && submission->output_resource != NULL &&
 		    (submission->output_host_was_current ||
 		     (size_t)submission->count * 4 ==
@@ -1575,11 +1628,11 @@ accel_opengl_join(
 				submission->output_resource->version;
 	} else if (ok && submission->kind == ACCEL_GL_SUBMISSION_COPY_FROM) {
 		glBindBuffer(GL_COPY_READ_BUFFER, submission->transfer_buffer);
-		glGetBufferSubData(GL_COPY_READ_BUFFER, 0,
-				   (GLsizeiptr)submission->transfer_size,
-				   (char *)event->output.val.packed->packed_buffer +
-				   submission->destination_offset);
-		ok = accel_gl_check_error(env, "asynchronous download commit");
+		ok = accel_gl_read_buffer(env, GL_COPY_READ_BUFFER, 0,
+					  (GLsizeiptr)submission->transfer_size,
+					  (char *)event->output.val.packed->packed_buffer +
+					  submission->destination_offset,
+					  "asynchronous download commit");
 	} else if (!ok) {
 		rt_error(env, "OpenGL accelerator event wait failed (0x%x).",
 			 (unsigned int)wait_result);

@@ -58,6 +58,7 @@ static bool accel_is_counter(struct accel_emit *ctx, struct hir_expr *expr);
 static bool accel_index_offset(struct accel_emit *ctx, struct hir_expr *expr,
 			      int *offset);
 static void accel_record_range(struct accel_emit *ctx, int param, int offset);
+static const char *accel_glsl_type(int packed_type);
 static bool accel_emit_expr(struct accel_emit *ctx, struct hir_expr *expr,
 			    int expected_type);
 static bool accel_emit_stmt(struct accel_emit *ctx, struct hir_stmt *stmt,
@@ -239,6 +240,8 @@ accel_emit_term(
 	int expected_type)
 {
 	int param;
+	int actual_type;
+	const char *constructor;
 
 	switch (term->type) {
 	case HIR_TERM_INT:
@@ -251,14 +254,26 @@ accel_emit_term(
 		return accel_put(ctx, "float(%.9g)", (double)term->val.f);
 	case HIR_TERM_SYMBOL:
 		if (strcmp(term->val.symbol,
-			   ctx->loop->val.for_.counter_symbol) == 0)
-			return accel_put(ctx, "i");
+			   ctx->loop->val.for_.counter_symbol) == 0) {
+			if (expected_type == NOCT_PACKED_UINT32)
+				return accel_put(ctx, "i");
+			constructor = accel_glsl_type(expected_type);
+			if (constructor == NULL) break;
+			return accel_put(ctx, "%s(i)", constructor);
+		}
 		param = accel_param_index(ctx, term->val.symbol);
 		if (param >= 0 &&
 		    ctx->kernel->param_transport[param] == ACCEL_TRANSPORT_SCALAR &&
 		    (ctx->kernel->param_type[param] == NOCT_VALUE_INT ||
-		     ctx->kernel->param_type[param] == NOCT_VALUE_FLOAT))
-			return accel_put(ctx, "pc.p%d", param);
+		     ctx->kernel->param_type[param] == NOCT_VALUE_FLOAT)) {
+			actual_type = ctx->kernel->param_type[param] == NOCT_VALUE_FLOAT ?
+				NOCT_PACKED_FLOAT32 : NOCT_PACKED_INT32;
+			if (actual_type == expected_type)
+				return accel_put(ctx, "pc.p%d", param);
+			constructor = accel_glsl_type(expected_type);
+			if (constructor == NULL) break;
+			return accel_put(ctx, "%s(pc.p%d)", constructor, param);
+		}
 		break;
 	default:
 		break;
@@ -305,6 +320,8 @@ accel_emit_expr(
 	int param;
 	int offset;
 	bool constant_index;
+	bool convert;
+	const char *constructor;
 
 	if (expr == NULL) {
 		ctx->reason = ACCEL_REJECT_EXPRESSION;
@@ -363,10 +380,17 @@ accel_emit_expr(
 		ctx->kernel->param_effect[param] |= ACCEL_EFFECT_READ;
 		if (!constant_index)
 			accel_record_range(ctx, param, offset);
+		convert = ctx->kernel->param_packed_type[param] != expected_type;
+		constructor = convert ? accel_glsl_type(expected_type) : NULL;
+		if (convert && constructor == NULL) {
+			ctx->reason = ACCEL_REJECT_EXPRESSION;
+			return false;
+		}
+		if (convert && !accel_put(ctx, "%s(", constructor)) return false;
 		if (!accel_put(ctx, "p%d.words[", param)) return false;
 		if (!accel_emit_expr(ctx, expr->val.binary.expr[1], NOCT_PACKED_UINT32))
 			return false;
-		return accel_put(ctx, "]");
+		return accel_put(ctx, convert ? "])" : "]");
 	}
 	if (expr->type == HIR_EXPR_CALL) {
 		int intrinsic;
@@ -1556,13 +1580,13 @@ accel_try_build_dosum_at(
 			    func->val.func.param_packed_type[output_param]) ||
 	    !accel_put(&ctx,
 		";} partial[lid]=value; barrier();\n"
-		" if(lid<32) partial[lid]+=partial[lid+32]; barrier();\n"
-		" if(lid<16) partial[lid]+=partial[lid+16]; barrier();\n"
-		" if(lid<8) partial[lid]+=partial[lid+8]; barrier();\n"
-		" if(lid<4) partial[lid]+=partial[lid+4]; barrier();\n"
-		" if(lid<2) partial[lid]+=partial[lid+2]; barrier();\n"
-		" if(lid<1) partial[lid]+=partial[lid+1]; barrier();\n"
-		" if(lid==0) pr.words[gl_WorkGroupID.x]=partial[0];\n}\n"))
+		" if(lid<32u) partial[lid]+=partial[lid+32u]; barrier();\n"
+		" if(lid<16u) partial[lid]+=partial[lid+16u]; barrier();\n"
+		" if(lid<8u) partial[lid]+=partial[lid+8u]; barrier();\n"
+		" if(lid<4u) partial[lid]+=partial[lid+4u]; barrier();\n"
+		" if(lid<2u) partial[lid]+=partial[lid+2u]; barrier();\n"
+		" if(lid<1u) partial[lid]+=partial[lid+1u]; barrier();\n"
+		" if(lid==0u) pr.words[gl_WorkGroupID.x]=partial[0];\n}\n"))
 		goto failed;
 	if (!gpu_ir_finalize_kernel(map_kernel, ctx.text, ctx.size,
 				    error, sizeof(error)))
@@ -1607,13 +1631,13 @@ accel_try_build_dosum_at(
 		"shared %s partial[64]; void main(){uint lid=gl_LocalInvocationID.x;"
 		"uint gid=gl_GlobalInvocationID.x;%s v=%s;if(gid<pc.element_count)v=a.words[gid];"
 		"partial[lid]=v;barrier();"
-		"if(lid<32)partial[lid]+=partial[lid+32];barrier();"
-		"if(lid<16)partial[lid]+=partial[lid+16];barrier();"
-		"if(lid<8)partial[lid]+=partial[lid+8];barrier();"
-		"if(lid<4)partial[lid]+=partial[lid+4];barrier();"
-		"if(lid<2)partial[lid]+=partial[lid+2];barrier();"
-		"if(lid<1)partial[lid]+=partial[lid+1];barrier();"
-		"if(lid==0)b.words[gl_WorkGroupID.x]=partial[0];}\n",
+		"if(lid<32u)partial[lid]+=partial[lid+32u];barrier();"
+		"if(lid<16u)partial[lid]+=partial[lid+16u];barrier();"
+		"if(lid<8u)partial[lid]+=partial[lid+8u];barrier();"
+		"if(lid<4u)partial[lid]+=partial[lid+4u];barrier();"
+		"if(lid<2u)partial[lid]+=partial[lid+2u];barrier();"
+		"if(lid<1u)partial[lid]+=partial[lid+1u];barrier();"
+		"if(lid==0u)b.words[gl_WorkGroupID.x]=partial[0];}\n",
 		type, type, type, type, zero))
 		goto failed;
 	if (!gpu_ir_finalize_kernel(fold_kernel, ctx.text, ctx.size,
