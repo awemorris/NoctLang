@@ -101,7 +101,9 @@ struct file_mapping {
 #endif
 };
 
+#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
 static void file_mapping_finalizer(void *native_pointer);
+#endif
 static bool cfunc_FileUtil_mmap_impl(NoctEnv *env, int packed_type,
 				     size_t element_width);
 
@@ -291,6 +293,7 @@ noct_register_api_file(NoctEnv *env)
 	return true;
 }
 
+#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
 static bool
 fileutil_get_nonnegative_u64(NoctEnv *env, uint32_t index, NoctValue *value,
 			     uint64_t *result)
@@ -368,6 +371,7 @@ file_mapping_finalizer(void *native_pointer)
 	mapping->magic = 0;
 	noct_free(mapping);
 }
+#endif
 
 static bool
 cfunc_FileUtil_mmap_impl(NoctEnv *env, int packed_type, size_t element_width)

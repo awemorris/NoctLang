@@ -35,7 +35,7 @@
 #if !defined(NOCT_MEMORY_SMALL)
 #define ARENA_SIZE		(64 * 1024 * 1024)
 #else
-#define ARENA_SIZE		(512 * 1024)
+#define ARENA_SIZE		(1024 * 1024)
 #endif
 
 /* List-add function. */

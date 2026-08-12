@@ -204,6 +204,11 @@ rt_destroy_vm(
 	struct rt_env *env, *next_env;
 	struct rt_func *func, *next_func;
 
+	/* The fast-prototype cache owns process-global copies allocated through
+	 * this VM's active allocator.  Release them before that allocator's
+	 * arena can be reset or replaced by another VM. */
+	hir_fast_prototypes_reset();
+
 	/* Free the JIT region. */
 	if (vm->config.jit_enable)
 		jit_free(vm->env_list);

@@ -67,6 +67,8 @@ jit_page_size(void)
 	return (size_t)info.dwPageSize;
 #elif defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
 	return 16;
+#elif defined(NOCT_TARGET_ZEDBSD)
+	return 4096;
 #else
 	long size = sysconf(_SC_PAGESIZE);
 

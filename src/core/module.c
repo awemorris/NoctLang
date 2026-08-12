@@ -17,7 +17,7 @@
 #if defined(NOCT_TARGET_WINDOWS) || defined(NOCT_TARGET_DOS4G)
 #include <direct.h>
 #define module_getcwd(buf, size) _getcwd((buf), (int)(size))
-#elif defined(NOCT_TARGET_POSIX)
+#elif defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_PC98BE)
 #include <unistd.h>
 #define module_getcwd(buf, size) getcwd((buf), (size))
 #else

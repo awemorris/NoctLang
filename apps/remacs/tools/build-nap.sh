@@ -38,6 +38,6 @@ cat editor/buffer.noct \
     editor/redisplay.noct \
     editor/boot.noct > "$BUNDLE"
 
-"$NOCT" --compile "$BUNDLE"
+"$NOCT" --compile -O2 "$BUNDLE"
 mv "$OUT/remacs-all.nb" "$OUT/remacs.nap"
 echo "Built $OUT/remacs.nap"
