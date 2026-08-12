@@ -803,10 +803,10 @@ an `_ptr` parameter.  Host code cannot subscript an accelerator resource.
 
 Managed programs, generated kernels, buffer expressions, bindings, and step
 order survive `.nb` and `.nap` serialization.  OpenGL ES is the complete
-validated Linux execution backend.  Vulkan is validated for synchronous
-single-kernel managed DOALL calls, including persistent `_ptr` resources and
-serialized `.nb`/`.nap` input; multi-kernel programs and DOSUM remain outside
-the Vulkan execution claim.
+validated Linux execution backend. Vulkan is validated for synchronous
+managed programs containing multiple ordered DOALL and additive DOSUM steps,
+including local intermediates, persistent `_ptr` resources, and serialized
+`.nb`/`.nap` input. Raw GPU dispatch remains OpenGL ES-only.
 
 ## Raw GPU functions
 

@@ -2,7 +2,7 @@
 
 set -eu
 
-NOCT=${NOCT:-../../build-linux-opengl/noct}
+NOCT=${NOCT:-../build-opengl/noct}
 NOCT_OPENGL_RENDERER_PATTERN=${NOCT_OPENGL_RENDERER_PATTERN:-}
 
 check_hardware_renderer()
@@ -24,7 +24,7 @@ for tc in accel/cpu-call.noct accel/vulkan-wide.noct \
 	  accel/vulkan-float.noct accel/vulkan-int.noct \
 	  accel/vulkan-resource.noct \
 	  accel/branch.noct accel/neighbor.noct accel/convert.noct \
-	  accel/unsafe-index.noct accel/multi-doall.noct \
+	  accel/unsafe-index.noct accel/grid-stride.noct accel/multi-doall.noct \
 	  accel/multi-doall-local.noct accel/dosum.noct \
 	  accel/doall-dosum.noct accel/doall-dosum-doall.noct \
 	  accel/multi-dosum.noct; do

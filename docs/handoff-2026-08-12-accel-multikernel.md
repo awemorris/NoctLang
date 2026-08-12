@@ -15,9 +15,10 @@ the program boundary, local Packed intermediates stay in device buffers across
 steps, and host output is downloaded after the last step.  A missing/disabled
 backend or any rejected program is an error; there is no CPU replay.
 
-The executed backend is headless EGL/OpenGL.  The native gate passed on Mesa
-Intel Iris Xe (Alder Lake GT2), OpenGL 4.6 / EGL 1.5.  Vulkan execution was not
-tested or enabled by this work.  D3D12 is out of scope on Linux.
+The original executed backend was headless EGL/OpenGL. A later 2026-08-12
+update added Vulkan execution of the same managed program descriptors,
+including multiple ordered DOALL and DOSUM steps, and hardware-validated it on
+the same Intel Iris Xe machine. D3D12 remains out of scope on Linux.
 
 No SIMD implementation or ONNX converter/generated-model source was changed.
 
@@ -78,7 +79,8 @@ checked endpoints are both `131`.
 - int8/int16/int64/float64 managed arithmetic;
 - asynchronous `Accel.call`, overlap, dependency scheduling, multiple queues,
   CPU parallelization, or CPU/GPU simultaneous work;
-- Vulkan execution or any D3D12/HLSL path.
+- raw Vulkan execution or any D3D12/HLSL path. Managed Vulkan multi-kernel
+  execution was added after the original implementation range above.
 
 Unknown or unsupported cases must remain deterministic compile errors.  Do not
 restore the former serial GPU fallback or a hidden CPU fallback.

@@ -129,9 +129,10 @@ the `tests/test.sh accel-opengl` suite.
 
 - **OpenGL:** implemented and hardware-validated.  This is the production
   backend for this branch.
-- **Vulkan:** synchronous single-kernel managed DOALL execution and persistent
-  `_ptr` resources are hardware-validated on Linux.  Multi-kernel programs,
-  DOSUM, raw kernels, and generated ONNX models are not yet Vulkan claims.
+- **Vulkan:** synchronous managed execution with multiple ordered DOALL and
+  additive DOSUM steps, local intermediates, and persistent `_ptr` resources
+  is hardware-validated on Linux. Raw kernels and generated ONNX models are
+  not yet Vulkan claims.
 - **D3D12:** not implemented or required.  Do not introduce a D3D12 assumption
   into Linux paths.
 
@@ -620,9 +621,8 @@ Do not add or infer:
 Choose one bounded project and add a new plan/gate before changing semantics.
 The currently coherent options are:
 
-1. extend the validated Vulkan single-kernel managed path to accelerator
-   programs (multi-kernel DOALL and DOSUM), then validate raw kernels as a
-   separate gate before considering generated models;
+1. validate raw Vulkan kernels as a separate gate before considering generated
+   models; managed multi-kernel DOALL/DOSUM programs are now validated;
 2. extend managed DOSUM publication so a later DOALL may consume an implicit
    one-element device result without host readback;
 3. design FAST multicore automatic parallelization on top of the common loop

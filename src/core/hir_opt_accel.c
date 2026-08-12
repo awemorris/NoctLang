@@ -917,10 +917,11 @@ accel_build_glsl(
 	}
 	if (!accel_put(ctx, "} pc;\nvoid main() {\n")) return false;
 	if (!accel_put(ctx, "    uint i = gl_GlobalInvocationID.x;\n"
-			      "    if (i >= pc.element_count) return;\n"))
+			      "    uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;\n"
+			      "    for (; i < pc.element_count; i += stride) {\n"))
 		return false;
-	if (!accel_emit_body(ctx, 4)) return false;
-	return accel_put(ctx, "}\n");
+	if (!accel_emit_body(ctx, 8)) return false;
+	return accel_put(ctx, "    }\n}\n");
 }
 
 static int

@@ -9,7 +9,11 @@ echo 'Accelerator Vulkan tests:'
 for tc in accel/cpu-call.noct accel/vulkan-wide.noct \
 	  accel/vulkan-float.noct accel/vulkan-int.noct \
 	  accel/vulkan-resource.noct accel/branch.noct \
-	  accel/neighbor.noct accel/convert.noct accel/unsafe-index.noct; do
+	  accel/neighbor.noct accel/convert.noct accel/unsafe-index.noct \
+	  accel/grid-stride.noct \
+	  accel/multi-doall.noct accel/multi-doall-local.noct \
+	  accel/dosum.noct accel/doall-dosum.noct \
+	  accel/doall-dosum-doall.noct accel/multi-dosum.noct; do
 	for mode in '-j0' '-j'; do
 		NOCT_VULKAN_VALIDATION=1 "$NOCT" --accel=vulkan --accel-info \
 			$mode -O2 "$tc" > out 2> accel.log
@@ -47,6 +51,18 @@ if grep -F 'CPU fallback' accel.log >/dev/null; then
 	echo 'FAIL accelerator bytecode used CPU fallback'
 	exit 1
 fi
+for tc in multi-doall doall-dosum-doall multi-dosum; do
+	cp "accel/$tc.noct" "$tmp_dir/$tc.noct"
+	"$NOCT" --compile -O2 "$tmp_dir/$tc.noct"
+	NOCT_VULKAN_VALIDATION=1 "$NOCT" --accel=vulkan --accel-info \
+		-j "$tmp_dir/$tc.nb" > out 2> accel.log
+	diff "accel/$tc.noct.out" out
+	grep -F 'compiling Vulkan pipeline' accel.log >/dev/null
+	if grep -F 'CPU fallback' accel.log >/dev/null; then
+		echo "FAIL $tc Vulkan bytecode used CPU fallback"
+		exit 1
+	fi
+done
 rm -rf "$tmp_dir"
 
 app_path="accel/.tmp-vulkan-resource-$$.nap"

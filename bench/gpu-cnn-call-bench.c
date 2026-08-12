@@ -25,6 +25,8 @@
 
 #define CALIBRATION_NS UINT64_C(500000000)
 
+static bool single_invocation;
+
 struct result {
 	const char *mode;
 	int iterations;
@@ -108,6 +110,8 @@ static bool
 call_iterations(NoctEnv *env, const char *name, int iterations,
 		NoctValue *arg, NoctValue *ret)
 {
+	if (single_invocation)
+		return noct_enter_vm(env, name, 0, NULL, ret);
 	return noct_make_int(env, arg, iterations) &&
 		noct_enter_vm(env, name, 1, arg, ret);
 }
@@ -176,7 +180,7 @@ verify(NoctEnv *env, const char *name, NoctValue *ret)
 	    !noct_get_int(env, ret, &valid))
 		return false;
 	if (valid != 1) {
-		fprintf(stderr, "%s returned incorrect logits\n", name);
+		fprintf(stderr, "%s verification failed\n", name);
 		return false;
 	}
 	return true;
@@ -193,6 +197,31 @@ run_mode(NoctEnv *env, const char *mode, const char *run_name,
 	int iterations;
 	int warm_iterations;
 	int i;
+
+	if (single_invocation) {
+		elapsed = malloc((size_t)samples * sizeof(*elapsed));
+		if (elapsed == NULL)
+			return false;
+		for (i = 0; i < samples; i++) {
+			if (!measure(env, run_name, 1, arg, ret, &elapsed[i]) ||
+			    !verify(env, verify_name, ret)) {
+				free(elapsed);
+				return false;
+			}
+			fprintf(stderr, "sample,%s,%d/%d,one-call,%.3f s\n",
+				mode, i + 1, samples,
+				(double)elapsed[i] / 1000000000.0);
+		}
+		qsort(elapsed, (size_t)samples, sizeof(*elapsed), compare_u64);
+		result->mode = mode;
+		result->iterations = 1;
+		result->samples = samples;
+		result->best = elapsed[0];
+		result->median = elapsed[samples / 2];
+		result->worst = elapsed[samples - 1];
+		free(elapsed);
+		return true;
+	}
 
 	if (!calibrate(env, run_name, initial, target_ns, arg, ret, &iterations))
 		return false;
@@ -257,6 +286,9 @@ main(int argc, char *argv[])
 	uint64_t target_ns;
 	uint64_t warmup_ns;
 	int samples;
+	const char *backend;
+	const char *gpu_mode;
+	bool skip_cpu;
 	int status = 1;
 
 	if (argc != 10) {
@@ -272,6 +304,14 @@ main(int argc, char *argv[])
 		return 2;
 	target_ns = (uint64_t)(target_seconds * 1000000000.0);
 	warmup_ns = (uint64_t)(warmup_seconds * 1000000000.0);
+	single_invocation = getenv("NOCT_BENCH_SINGLE_INVOCATION") != NULL;
+	skip_cpu = getenv("NOCT_BENCH_SKIP_CPU") != NULL;
+	backend = getenv("NOCT_BENCH_ACCEL_BACKEND");
+	if (backend != NULL && strcmp(backend, "vulkan") == 0) {
+		gpu_mode = "gpu-vulkan";
+	} else {
+		gpu_mode = "gpu-opengl-es";
+	}
 	source = read_file(argv[4]);
 	if (source == NULL) {
 		fprintf(stderr, "cannot read %s\n", argv[4]);
@@ -280,10 +320,10 @@ main(int argc, char *argv[])
 
 	noct_set_default_config(&config);
 	config.jit_enable = true;
-	config.jit_threshold = 0;
 	config.optimize_level = 2;
 	config.accel_enable = true;
-	config.accel_backend = NOCT_ACCEL_BACKEND_OPENGL;
+	config.accel_backend = backend != NULL && strcmp(backend, "vulkan") == 0 ?
+		NOCT_ACCEL_BACKEND_VULKAN : NOCT_ACCEL_BACKEND_OPENGL;
 	if (!noct_create_vm(&vm, &env, &config) ||
 	    !noct_pin_local(env, 2, &arg, &ret) ||
 	    !noct_register_source(env, argv[4], source) ||
@@ -292,28 +332,32 @@ main(int argc, char *argv[])
 		goto cleanup;
 	}
 
-	/* First calls finish JIT and all four OpenGL pipeline compilations. */
-	if (!call_iterations(env, argv[6], 1, &arg, &ret) ||
-	    !verify(env, argv[7], &ret) ||
+	/* First calls finish JIT and accelerator pipeline compilation. */
+	if ((!skip_cpu &&
+	     (!call_iterations(env, argv[6], 1, &arg, &ret) ||
+	      !verify(env, argv[7], &ret))) ||
 	    !call_iterations(env, argv[8], 1, &arg, &ret) ||
 	    !verify(env, argv[9], &ret) ||
-	    !run_mode(env, "cpu-jit", argv[6], argv[7],
-		1024, target_ns, warmup_ns, samples, &arg, &ret, &cpu) ||
-	    !run_mode(env, "gpu-opengl", argv[8], argv[9],
+	    (!skip_cpu && !run_mode(env, "cpu-jit", argv[6], argv[7],
+		1024, target_ns, warmup_ns, samples, &arg, &ret, &cpu)) ||
+	    !run_mode(env, gpu_mode, argv[8], argv[9],
 		1, target_ns, warmup_ns, samples, &arg, &ret, &gpu)) {
 		print_vm_error(env);
 		goto cleanup;
 	}
 
 	printf("mode,iterations,samples,best_ms,median_ms,worst_ms,median_ns_per_forward,forwards_per_second\n");
-	print_result(&cpu);
+	if (!skip_cpu)
+		print_result(&cpu);
 	print_result(&gpu);
-	printf("comparison,cpu_ns_per_forward,gpu_ns_per_forward,gpu_speedup\n");
-	printf("cpu-vs-gpu,%.3f,%.3f,%.6f\n",
-		(double)cpu.median / (double)cpu.iterations,
-		(double)gpu.median / (double)gpu.iterations,
-		((double)cpu.median / (double)cpu.iterations) /
-		((double)gpu.median / (double)gpu.iterations));
+	if (!skip_cpu) {
+		printf("comparison,cpu_ns_per_forward,gpu_ns_per_forward,gpu_speedup\n");
+		printf("cpu-vs-gpu,%.3f,%.3f,%.6f\n",
+			(double)cpu.median / (double)cpu.iterations,
+			(double)gpu.median / (double)gpu.iterations,
+			((double)cpu.median / (double)cpu.iterations) /
+			((double)gpu.median / (double)gpu.iterations));
+	}
 	status = 0;
 
 cleanup:

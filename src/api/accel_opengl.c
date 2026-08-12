@@ -778,8 +778,11 @@ accel_gl_dispatch_program(
 		}
 		group_count = (trip_count + step->block_size - 1U) /
 			step->block_size;
-		if (group_count > (uint32_t)max_group_count)
-			goto cleanup;
+		if (group_count > (uint32_t)max_group_count) {
+			if (step->kind != ACCEL_STEP_DOALL_DISPATCH)
+				goto cleanup;
+			group_count = (uint32_t)max_group_count;
+		}
 		if (!accel_gl_make_pipeline(env, gl, kernel,
 					    kernel->name, step->block_size,
 					    &pipeline))
@@ -1034,7 +1037,7 @@ accel_gl_dispatch_internal(
 	group_count = kernel->parallel_mode == ACCEL_PARALLEL_SERIAL ?
 		1U : (count + local_size - 1U) / local_size;
 	if (group_count > (uint32_t)max_group_count)
-		goto cleanup;
+		group_count = (uint32_t)max_group_count;
 	for (i = 0; i < arg_count; i++) {
 		if (kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR)
 			continue;

@@ -8,12 +8,12 @@ set -eu
 
 bench_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=$(CDPATH= cd -- "$bench_dir/.." && pwd)
-BUILD_DIR=${BUILD_DIR:-"$repo_dir/build-opengl"}
+BUILD_DIR=${BUILD_DIR:-"$repo_dir/build-linux-opengl"}
 CC=${CC:-cc}
 TARGET_SECONDS=${TARGET_SECONDS:-30}
 WARMUP_SECONDS=${WARMUP_SECONDS:-30}
 SAMPLES=${SAMPLES:-3}
-SOURCE="$repo_dir/tests/testcases/accel/gpu-cnn-forward.noct"
+SOURCE="$repo_dir/tests/accel/gpu-cnn-forward.noct"
 
 case "$SAMPLES" in
 *[!0-9]*|'') echo "SAMPLES must be a positive odd integer" >&2; exit 2 ;;
@@ -36,7 +36,7 @@ benchmark="$tmp_dir/gpu-cnn-call-bench"
 	-I"$repo_dir/include" \
 	"$bench_dir/gpu-cnn-call-bench.c" \
 	"$BUILD_DIR/libnoct.a" "$BUILD_DIR/libnoctapi.a" \
-	-lm -lutil -lepoxy -o "$benchmark"
+	-lm -lutil $(pkg-config --libs egl glesv2) -o "$benchmark"
 
 echo "TARGET_SECONDS=$TARGET_SECONDS WARMUP_SECONDS=$WARMUP_SECONDS SAMPLES=$SAMPLES" >&2
 echo "Expected default duration: about 4 minutes plus calibration." >&2

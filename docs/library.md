@@ -475,10 +475,11 @@ variants have the same five arguments as their synchronous forms and return an
 event.  Offsets and lengths are bytes and are checked before submission.
 
 OpenGL ES compute through headless EGL is the complete validated Linux
-execution path.  Vulkan is also validated for synchronous single-kernel
-managed DOALL calls with host-copy and persistent `_ptr` buffers; multi-kernel
-programs, DOSUM, raw dispatch, and generated models remain outside its current
-execution claim.  D3D12 is not a Noct Linux accelerator backend.
+execution path. Vulkan is validated for synchronous managed programs with
+multiple ordered DOALL and additive DOSUM steps, local intermediates, host-copy
+buffers, persistent `_ptr` buffers, and serialized program descriptors. Raw
+dispatch and generated models remain outside its current execution claim.
+D3D12 is not a Noct Linux accelerator backend.
 
 ## Checked binary and model-weight APIs
 

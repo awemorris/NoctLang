@@ -1,8 +1,15 @@
 🌙 Noct Programming Language
 ============================
 
-`Noct` is a tiny yet mighty programming language for sandboxed scripting.
+`Noct` is a tiny yet mighty programming language for:
+
+- Application integration such as sandboxed game scripting (ANSI C, no external dependencies)
+- Small systems such as embedded Linux in flash memory
+
 Its syntax is lightweight, but its runtime is built for high-end performance.
+
+- Automatic SIMD vectorization
+- Automatic GPU acceleration (OpenGL ES and Vulkan)
 
 **Small enough to learn today, powerful enough to ship tomorrow!**
 
@@ -14,6 +21,12 @@ Its syntax is lightweight, but its runtime is built for high-end performance.
 
 Only about 200 KB — with a fast JIT compiler, a robust generational GC,
 and a clean C/JS-like syntax featuring a novel Dictionary-based OOP model.
+
+- 100KB with Interpreter
+- 200KB with Interpreter + JIT
+- 400KB with Interpreter + JIT + Optimization
+- 700KB with Interpreter + JIT + Optimization + SIMD
+- 800KB with Interpreter + JIT + Optimization + SIMD + GPU
 
 JIT execution is typically 4-13x faster than interpreter execution.
 
@@ -38,6 +51,11 @@ For example, in
 and
 [Suika3](https://github.com/awemorris/suika3),
 they integrate Noct with game-specific APIs and refer to it as Ray scripting.
+
+### High Performance Acceleration
+
+Automatic parallelization and/or vectorization for multicore CPU, SIMD
+instruction, and GPU compute shader.
 
 ---
 
@@ -69,13 +87,18 @@ Our current roadmap is:
 
 ## Platform Support
 
-### JIT Backends:
+### JIT Backends (optional):
 
 - x86, x86_64
 - ARMv7, Arm64
 - RISC-V 32/64
 - PowerPC 32/64
 - MIPS 32/64
+
+### GPU Backends (optional):
+
+- OpenGL ES
+- Vulkan
 
 ### Supported OSes:
 
@@ -92,8 +115,11 @@ policies. Noct runs there with interpreter or AOT compilation.
 
 ### Speedup
 
-A synthetic benchmark shows that our JIT compiler speeds up execution
-time by 4.1-13.5 times.
+Our JIT compiler achieves speedups of upto 300 times for SIMD, 525
+times for GPU, and 50 times for scalar CPU.
+
+A synthetic benchmark shows that our JIT compiler
+speeds up execution time by 4.1-13.5 times.
 
 ```
 func main() {
@@ -126,6 +152,7 @@ found together in scripting languages:
 - **Portable ANSI C** — No dependencies; runs everywhere.
 - **Tiny Footprint** — Runtime fits in ~200 KB.
 - **AOT Compilation** — Translate to C for JIT-restricted platforms. (e.g. iOS, Android)
+- **Easy HPC** — Automatic parallelzation and vectorization.
 
 While most languages compromise on at least one of these,  
 Noct delivers all without sacrificing clarity or speed.
@@ -284,21 +311,22 @@ noct --elisp script.el script.noct
 ### Optimization and Parallelization Options
 
 ```
-  -O, -O0..-O3, -O9   ... optimization preset (`-O` is the default)
+  -O, -O[0-3], -O9     ... optimization preset (`-O` is the default)
   -j, -j0              ... eager JIT (default), or interpreter only
   --cpu[=N]            ... enable CPU automatic parallelization
   --cpu-pe=N           ... processing elements (default: logical CPUs)
   --cpu-affinity=LIST  ... logical CPU IDs, for example 0,2,4,8
-  --cpu-list            ... show NUMA/core/SMT topology and exit
-  --gpu                 ... enable GPU automatic parallelization
-  --gpu-name=NAME       ... select one GPU
-  --gpu-list            ... list GPU devices and exit
+  --cpu-list           ... show NUMA/core/SMT topology and exit
+  --gpu                ... enable GPU automatic parallelization
+  --gpu-name=NAME      ... select one GPU
+  --gpu-list           ... list GPU devices and exit
 ```
 
-`-O` and `-O1` enable weak typing, typed operations and CSE; `-O2` adds
-ABCE/SIMD; `-O3` permits fused FMA semantics. `-O9` also enables CPU and GPU
-automatic parallelization. The CPU/GPU execution backends may be absent in a
-given build; the CLI/configuration surface is available for those backends.
+`-O` and `-O1` enable weak typing, typed operations and CSE. `-O2`
+adds ABCE/SIMD. `-O3` permits fused FMA semantics. `-O9` also enables
+CPU and GPU automatic parallelization. The CPU/GPU execution backends
+may be absent in a given build. The CLI/configuration surface is
+available for those backends.
 
 ### Garbage Collection Options
 

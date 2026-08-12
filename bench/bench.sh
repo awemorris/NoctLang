@@ -17,6 +17,8 @@ Commands:
   drawimage-alpha
                 Measure the canonical DRAW_IMAGE_ALPHA function at O2/O3.
                 SAMPLES, PIXELS, LEVELS, CPU and NOCT_BUILD are configurable.
+  multi-doall   Compare one large five-stage CPU/JIT calculation with managed
+                OpenGL ES and Vulkan __accel calls. SAMPLES is configurable.
   help          Show this command list.
 
 The benchmark scripts honor NOCT.  The SIMD runner also honors RUNS,
@@ -36,6 +38,7 @@ abce)           exec sh ./run-bench.sh "$@" ;;
 simd)           exec sh ./run-simd-bench.sh "$@" ;;
 simd-report)    exec sh ./report-simd-bench.sh "$@" ;;
 drawimage-alpha) exec sh ./drawimage/run-alpha.sh "$@" ;;
+multi-doall)     exec sh ./run-multi-doall-bench.sh "$@" ;;
 *)
     echo "Unknown benchmark command: $command" >&2
     echo "Run '$0 help' for the command list." >&2
