@@ -112,6 +112,10 @@ struct rt_value {
 };
 
 /* Configuration  */
+#define NOCT_ACCEL_BACKEND_NONE    0
+#define NOCT_ACCEL_BACKEND_VULKAN  1
+#define NOCT_ACCEL_BACKEND_OPENGL  2
+
 struct rt_config {
 	/* Enable JIT. */
 	bool jit_enable;
@@ -124,6 +128,11 @@ struct rt_config {
 
 	/* Report successfully vectorized loops. */
 	bool simd_info;
+
+	/* Accelerator runtime and stable diagnostics. */
+	bool accel_enable;
+	bool accel_info;
+	uint8_t accel_backend;
 
 	/* CPU automatic parallelization level; zero disables it. */
 	int auto_parallel;

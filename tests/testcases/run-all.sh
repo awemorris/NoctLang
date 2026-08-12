@@ -9,7 +9,7 @@ echo 'NoctLang Test Suites'
 echo
 
 for suite in \
-    syntax cli-options typing typedop abce cse simd class scoping app \
+    syntax cli-options typing typedop abce cse parallel-analysis simd class scoping app \
     thread httpserver webapp process fileutil-mmap
 do
     sh "run-$suite.sh"

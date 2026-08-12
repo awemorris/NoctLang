@@ -1,5 +1,10 @@
 /* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
 
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ */
+
 /* Bytecode backend, including the multi-source executable .nap writer. */
 
 #include <noct/noct.h>
@@ -59,6 +64,8 @@ static struct app_name *app_init_tail;
 static struct app_name *app_public;
 static struct app_name *app_source;
 static struct app_name *app_source_tail;
+static struct app_name *app_prototype_source;
+static struct app_name *app_prototype_source_tail;
 static uint32_t app_func_count;
 static uint32_t app_init_count;
 static uint32_t app_main_count;
@@ -139,6 +146,89 @@ bcback_write_header(FILE *out, const char *source, uint32_t count)
 }
 
 static bool
+bcback_write_accel_program(FILE *out, const struct accel_program *program)
+{
+	uint32_t i, j;
+	const struct accel_buffer_desc *buffer;
+	const struct accel_kernel *kernel;
+	const struct accel_program_step *step;
+
+	if (program == NULL) return true;
+	if (fprintf(out, "Accelerator Program\n%u %d %u %u %u %u %u\n",
+		    program->descriptor_version, program->source_line,
+		    program->outer_param_count, program->expr_count,
+		    program->buffer_count, program->kernel_count,
+		    program->step_count) < 0) return false;
+	for (i = 0; i < program->outer_param_count; i++) {
+		const struct accel_param_range *range;
+		range = &program->outer_param_range[i];
+		if (fprintf(out, "%u %d %d %lld %lld\n",
+			    program->outer_param_effect[i], range->status,
+			    range->has_access ? 1 : 0,
+			    (long long)range->min_offset,
+			    (long long)range->max_offset) < 0) return false;
+	}
+	for (i = 0; i < program->expr_count; i++)
+		if (fprintf(out, "%d %d %d %d %lld\n", program->expr[i].op,
+			    program->expr[i].left, program->expr[i].right,
+			    program->expr[i].ref,
+			    (long long)program->expr[i].value) < 0) return false;
+	for (i = 0; i < program->buffer_count; i++) {
+		buffer = &program->buffer[i];
+		if (fprintf(out,
+			    "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n%s\n",
+			    buffer->id, buffer->source_line, buffer->origin,
+			    buffer->outer_param, buffer->element_kind,
+			    buffer->element_width, buffer->length_expr,
+			    buffer->read_start_expr, buffer->read_end_expr,
+			    buffer->write_start_expr, buffer->write_end_expr,
+			    buffer->first_step, buffer->last_step,
+			    buffer->initially_defined ? 1 : 0,
+			    buffer->upload ? 1 : 0, buffer->download ? 1 : 0,
+			    buffer->name) < 0) return false;
+	}
+	for (i = 0; i < program->kernel_count; i++) {
+		kernel = program->kernel[i];
+		if (fprintf(out, "%u %d %d %d %d %d %d %u\n%s\n",
+			    kernel->descriptor_version, kernel->func_kind,
+			    kernel->eligible ? 1 : 0, kernel->rejection_reason,
+			    kernel->parallel_mode, kernel->source_line,
+			    kernel->dispatch_param, kernel->param_count,
+			    kernel->name) < 0) return false;
+		for (j = 0; j < kernel->param_count; j++)
+			if (fprintf(out, "%d %d %d %u %d %d %lld %lld\n",
+				    kernel->param_type[j], kernel->param_packed_type[j],
+				    kernel->param_transport[j], kernel->param_effect[j],
+				    kernel->param_range[j].status,
+				    kernel->param_range[j].has_access ? 1 : 0,
+				    (long long)kernel->param_range[j].min_offset,
+				    (long long)kernel->param_range[j].max_offset) < 0)
+				return false;
+		if (fprintf(out, "%u %lu\n", kernel->content_hash,
+			    (unsigned long)kernel->glsl_size) < 0) return false;
+		if (kernel->glsl_size != 0 &&
+		    fwrite(kernel->glsl, 1, kernel->glsl_size, out) !=
+			kernel->glsl_size) return false;
+		if (fprintf(out, "\n") < 0) return false;
+	}
+	for (i = 0; i < program->step_count; i++) {
+		step = &program->step[i];
+		if (fprintf(out, "%d %d %d %d %d %u %d %d %d %d %d %u\n",
+			    step->kind, step->source_line, step->kernel,
+			    step->fold_kernel, step->trip_expr, step->block_size,
+			    step->result_buffer, step->scratch_buffer,
+			    step->scratch_buffer2,
+			    step->reduction_operator, step->reduction_type,
+			    step->binding_count) < 0) return false;
+		for (j = 0; j < step->binding_count; j++)
+			if (fprintf(out, "%d %d %d\n", step->binding[j].kind,
+				    step->binding[j].kernel_param,
+				    step->binding[j].value) < 0) return false;
+	}
+	return fprintf(out, "End Accelerator Program\n") >= 0;
+}
+
+static bool
 bcback_write_function(FILE *out, const struct lir_func *f)
 {
 	uint32_t j;
@@ -156,6 +246,41 @@ bcback_write_function(FILE *out, const struct lir_func *f)
 		if (fprintf(out, "Parameter Types\n") < 0) return false;
 		for (j = 0; j < f->param_count; j++)
 			if (fprintf(out, "%d\n", f->param_type[j]) < 0) return false;
+	}
+	any = 0;
+	for (j = 0; j < f->param_count; j++)
+		if (f->param_accel_access[j] != ACCEL_ACCESS_NONE) any = 1;
+	if (any) {
+		if (fprintf(out, "Parameter Accel Access\n") < 0) return false;
+		for (j = 0; j < f->param_count; j++)
+			if (fprintf(out, "%d\n", f->param_accel_access[j]) < 0)
+				return false;
+	}
+	any = 0;
+	for (j = 0; j < f->param_count; j++)
+		if (f->param_accel_transport[j] == ACCEL_TRANSPORT_DEVICE_PTR)
+			any = 1;
+	if (any) {
+		if (fprintf(out, "Parameter Accel Transport\n") < 0) return false;
+		for (j = 0; j < f->param_count; j++)
+			if (fprintf(out, "%d\n", f->param_accel_transport[j]) < 0)
+				return false;
+		if (fprintf(out, "Parameter Accel Effects\n") < 0) return false;
+		for (j = 0; j < f->param_count; j++)
+			if (fprintf(out, "%u\n", f->param_accel_effect[j]) < 0)
+				return false;
+	}
+	if (f->accel_kernel != NULL && f->func_kind == NOCT_FUNC_ACCEL) {
+		if (fprintf(out, "Parameter Accel Ranges\n") < 0) return false;
+		for (j = 0; j < f->param_count; j++) {
+			const struct accel_param_range *range;
+			range = &f->accel_kernel->param_range[j];
+			if (fprintf(out, "%d %d %lld %lld\n", range->status,
+				    range->has_access ? 1 : 0,
+				    (long long)range->min_offset,
+				    (long long)range->max_offset) < 0)
+				return false;
+		}
 	}
 	any = 0;
 	for (j = 0; j < f->param_count; j++)
@@ -179,6 +304,65 @@ bcback_write_function(FILE *out, const struct lir_func *f)
 		    f->return_packed_type, f->return_type_checked ? 1 : 0) < 0)
 		return false;
 	if (f->has_vector_ops && fprintf(out, "Vector Ops\n1\n") < 0)
+		return false;
+	if (f->func_kind != NOCT_FUNC_NORMAL &&
+	    fprintf(out, "Function Kind\n%d\n", f->func_kind) < 0)
+		return false;
+	if (f->func_kind == NOCT_FUNC_FAST) {
+		const struct fast_signature *sig;
+		sig = &f->fast_signature;
+		if (!sig->valid ||
+		    fprintf(out, "Fast Signature\n%d\n%u\n",
+			    sig->version, sig->param_count) < 0)
+			return false;
+		for (j = 0; j < sig->param_count; j++) {
+			int axis;
+			const struct fast_param_contract *param;
+			param = &sig->param[j];
+			if (fprintf(out, "%d %d %d %d",
+				    param->value_type, param->packed_type,
+				    param->restricted ? 1 : 0, param->rank) < 0)
+				return false;
+			for (axis = 0; axis < NOCT_FAST_RANK_MAX; axis++) {
+				const struct fast_extent *extent;
+				extent = &param->extent[axis];
+				if (fprintf(out, " %d %lld %d", extent->kind,
+					    (long long)extent->constant,
+					    extent->param_index) < 0)
+					return false;
+			}
+			if (fprintf(out, "\n") < 0) return false;
+		}
+		if (fprintf(out, "%d\n", sig->return_type) < 0)
+			return false;
+	}
+	if (f->accel_kernel != NULL && f->accel_kernel->parallel_mode !=
+	    ACCEL_PARALLEL_NOT_APPLICABLE &&
+	    fprintf(out, "Accelerator Parallel Mode\n%d\n",
+		    f->accel_kernel->parallel_mode) < 0)
+		return false;
+	if (f->func_kind != NOCT_FUNC_NORMAL && f->accel_kernel != NULL) {
+		const struct accel_kernel *kernel;
+		size_t glsl_size;
+
+		kernel = f->accel_kernel;
+		glsl_size = kernel != NULL ? kernel->glsl_size : 0;
+		if (fprintf(out, "Accelerator\n%d\n%d\n%d\n%d\n%d\n%u\n"
+			    "GLSL Size\n%lu\n",
+			    kernel != NULL && kernel->eligible ? 1 : 0,
+			    kernel != NULL ? kernel->rejection_reason : 0,
+			    kernel != NULL ? kernel->source_line : 0,
+			    kernel != NULL ? kernel->output_param : -1,
+			    kernel != NULL ? kernel->dispatch_param : -1,
+			    kernel != NULL ? kernel->content_hash : 0,
+			    (unsigned long)glsl_size) < 0)
+			return false;
+		if (glsl_size != 0 &&
+		    fwrite(kernel->glsl, 1, glsl_size, out) != glsl_size)
+			return false;
+		if (fprintf(out, "\n") < 0) return false;
+	}
+	if (!bcback_write_accel_program(out, f->accel_program))
 		return false;
 	if (f->has_fma_ops && fprintf(out, "FMA Ops\n1\n") < 0)
 		return false;
@@ -254,7 +438,7 @@ noct_bcback_translate(const char *source_file_name, const char *source_data)
 		struct hir_block *hfunc = hir_get_function(i);
 		struct lir_func *lfunc;
 		if (!hir_optimize_func(hfunc, bcback_optimize_level,
-				       bcback_simd_info)) {
+				       bcback_simd_info, false)) {
 			printf(N_TR("Error: %s\n"), hir_get_error_message());
 			goto cleanup;
 		}
@@ -313,6 +497,7 @@ noct_bcback_app_abort(void)
 	app_free_names(app_init_head);
 	app_free_names(app_public);
 	app_free_names(app_source);
+	app_free_names(app_prototype_source);
 	m = app_module_list;
 	while (m != NULL) {
 		struct app_module *next = m->next;
@@ -327,10 +512,12 @@ noct_bcback_app_abort(void)
 	app_func_head = app_func_tail = NULL;
 	app_init_head = app_init_tail = NULL;
 	app_public = app_source = app_source_tail = NULL;
+	app_prototype_source = app_prototype_source_tail = NULL;
 	app_func_count = app_init_count = app_main_count = app_main_params = 0;
 	app_module_list = NULL;
 	app_require_path_ready = false;
 	app_active = false;
+	hir_fast_prototypes_reset();
 }
 
 static bool
@@ -412,6 +599,7 @@ noct_bcback_app_start(const char *out_file_name)
 		return false;
 	}
 	app_require_path_ready = true;
+	hir_fast_prototypes_reset();
 	app_active = true;
 	return true;
 }
@@ -476,6 +664,117 @@ app_free_require_names(char **name, uint32_t count)
 	for (i = 0; i < count; i++)
 		free(name[i]);
 	free(name);
+}
+
+static bool
+app_prototype_seen(const char *key)
+{
+	struct app_name *entry;
+
+	for (entry = app_prototype_source; entry != NULL; entry = entry->next)
+		if (strcmp(entry->name, key) == 0)
+			return true;
+	return false;
+}
+
+static bool
+app_scan_source_internal(const char *source_file_name,
+			 const char *source_data, const char *key)
+{
+	char *logical_name;
+	char **require_name;
+	uint32_t require_count;
+	uint32_t i;
+	bool ast_ready;
+	bool ok;
+
+	if (app_prototype_seen(key))
+		return true;
+	if (!app_add_name(&app_prototype_source,
+			  &app_prototype_source_tail, key, NULL))
+		return false;
+	logical_name = NULL;
+	require_name = NULL;
+	require_count = 0;
+	ast_ready = false;
+	ok = false;
+	if (!bcback_path_is_relative(source_file_name) ||
+	    (!bcback_has_suffix(source_file_name, ".noct") &&
+	     !bcback_has_suffix(source_file_name, ".nct")))
+		goto cleanup;
+	logical_name = bcback_normalize_path(source_file_name);
+	if (logical_name == NULL)
+		goto cleanup;
+	ast_ready = true;
+	if (!ast_build(logical_name, source_data)) {
+		printf(N_TR("Error: %s:%d: %s\n"), ast_get_file_name(),
+		       ast_get_error_line(), ast_get_error_message());
+		goto cleanup;
+	}
+	if (!hir_fast_prototypes_collect()) {
+		printf(N_TR("Error: %s:%d: %s\n"), logical_name,
+		       hir_get_error_line(), hir_get_error_message());
+		goto cleanup;
+	}
+	require_count = ast_get_require_count();
+	if (require_count != 0) {
+		require_name = calloc(require_count, sizeof(*require_name));
+		if (require_name == NULL)
+			goto cleanup;
+		for (i = 0; i < require_count; i++) {
+			require_name[i] = bcback_strdup(ast_get_require_name(i));
+			if (require_name[i] == NULL)
+				goto cleanup;
+		}
+	}
+	ast_cleanup();
+	ast_ready = false;
+	for (i = 0; i < require_count; i++) {
+		char *physical;
+		char *dependency_logical;
+		char *dependency_data;
+
+		if (!module_resolve(&app_require_path, require_name[i], &physical,
+				    &dependency_logical, &dependency_data)) {
+			printf("Cannot resolve required module \"%s\" from %s.\n",
+			       require_name[i], logical_name);
+			goto cleanup;
+		}
+		if (!app_scan_source_internal(dependency_logical,
+					      dependency_data, physical)) {
+			free(physical);
+			free(dependency_logical);
+			free(dependency_data);
+			goto cleanup;
+		}
+		free(physical);
+		free(dependency_logical);
+		free(dependency_data);
+	}
+	ok = true;
+cleanup:
+	if (ast_ready)
+		ast_cleanup();
+	app_free_require_names(require_name, require_count);
+	free(logical_name);
+	return ok;
+}
+
+NOCT_DLL bool
+noct_bcback_app_scan_source(const char *source_file_name,
+			    const char *source_data)
+{
+	char *key;
+	bool result;
+
+	if (!app_active)
+		return false;
+	key = module_path_key(source_file_name);
+	if (key == NULL)
+		return false;
+	result = app_scan_source_internal(source_file_name, source_data, key);
+	free(key);
+	return result;
 }
 
 static bool
@@ -575,7 +874,8 @@ app_add_source_internal(const char *source_file_name,
 	for (i = 0; i < count; i++) {
 		struct hir_block *h = hir_get_function(i);
 		struct lir_func *l;
-		if (!hir_optimize_func(h, bcback_optimize_level, bcback_simd_info)) {
+		if (!hir_optimize_func(h, bcback_optimize_level, bcback_simd_info,
+				       false)) {
 			printf(N_TR("Error: %s\n"), hir_get_error_message()); goto cleanup;
 		}
 		if (!lir_build(h, &l)) {
@@ -640,6 +940,8 @@ noct_bcback_app_add_source(const char *source_file_name,
 
 	if (!app_active)
 		return false;
+	if (!noct_bcback_app_scan_source(source_file_name, source_data))
+		return false;
 	key = module_path_key(source_file_name);
 	if (key == NULL)
 		return false;
@@ -670,7 +972,7 @@ app_build_aggregate(void)
 		goto cleanup_ast;
 	}
 	h = hir_get_function(0);
-	if (!hir_optimize_func(h, bcback_optimize_level, bcback_simd_info) ||
+	if (!hir_optimize_func(h, bcback_optimize_level, bcback_simd_info, false) ||
 	    !lir_build(h, &l))
 		goto cleanup_hir;
 	if (!app_append_func(l)) { lir_cleanup(l); goto cleanup_hir; }

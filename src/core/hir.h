@@ -13,6 +13,8 @@
 #define NOCT_HIR_H
 
 #include <noct/noct.h>
+#include "accel.h"
+#include "fast.h"
 
 /* Compiler-only return annotation; it is not a runtime NoctValue tag. */
 #define HIR_TYPE_VOID (-2)
@@ -125,6 +127,33 @@ struct hir_stmt;
 struct hir_expr;
 struct hir_term;
 struct hir_local;
+struct ast_func;
+
+/* Source-level storage retained for target-neutral parallel analysis. */
+enum hir_local_storage {
+	HIR_LOCAL_STORAGE_UNKNOWN = -1,
+	HIR_LOCAL_STORAGE_SCALAR,
+	HIR_LOCAL_STORAGE_LOGICAL_BUFFER,
+	HIR_LOCAL_STORAGE_REDUCTION
+};
+
+enum hir_local_declaration_kind {
+	HIR_LOCAL_DECL_UNKNOWN = -1,
+	HIR_LOCAL_DECL_PARAMETER,
+	HIR_LOCAL_DECL_LET,
+	HIR_LOCAL_DECL_VAR,
+	HIR_LOCAL_DECL_LOOP_COUNTER,
+	HIR_LOCAL_DECL_SYNTHETIC
+};
+
+/* Exact scalar spelling needed where NOCT_VALUE_INT is too coarse. */
+enum hir_declared_scalar_kind {
+	HIR_DECL_SCALAR_UNKNOWN = -1,
+	HIR_DECL_SCALAR_INT32,
+	HIR_DECL_SCALAR_UINT32,
+	HIR_DECL_SCALAR_FLOAT32,
+	HIR_DECL_SCALAR_OTHER
+};
 
 /* HIR Block */
 struct hir_block {
@@ -177,12 +206,20 @@ struct hir_block {
 
 			/* rpacked* source annotation. */
 			bool param_restricted[HIR_PARAM_SIZE];
+			int param_accel_access[HIR_PARAM_SIZE];
+			int param_accel_transport[HIR_PARAM_SIZE];
+			unsigned int param_accel_effect[HIR_PARAM_SIZE];
 
 			/* Optional declared return tag and packed element kind. */
 			int return_type;
 			int return_packed_type;
 			bool is_static;
 			bool is_inline;
+			bool is_accel;
+			int func_kind;
+			struct fast_signature fast_signature;
+			struct accel_kernel *accel_kernel;
+			struct accel_program *accel_program;
 
 			/* File name. */
 			char *file_name;
@@ -467,6 +504,23 @@ struct hir_local {
 	 */
 	int proven_type;
 
+	/*
+	 * Source declaration facts.  Keep unknown values at -1: zero is a
+	 * valid Noct value/packed tag and a valid scalar storage class.
+	 * These fields describe the source program and are not optimizer
+	 * proofs; optimizer passes must continue to use proven_type.
+	 */
+	bool is_parameter;
+	bool is_let;
+	int declaration_kind;
+	int declared_type;
+	int declared_scalar_kind;
+	int declared_packed_type;
+	int storage_class;
+	int declaration_line;
+	const struct hir_stmt *declaration_stmt;
+	const struct hir_expr *initializer;
+
 	/* Next. */
 	struct hir_local *next;
 };
@@ -476,6 +530,19 @@ struct hir_local {
  */
 bool
 hir_build(void);
+
+/*
+ * Side-effect-free __fast prototype registry used while compiling a require
+ * graph.  Entries own their names and survive ast_cleanup()/hir_cleanup().
+ */
+void hir_fast_prototypes_reset(void);
+bool hir_fast_prototype_add(const char *name, int func_kind,
+			    const struct fast_signature *signature);
+bool hir_fast_prototypes_collect(void);
+const struct fast_signature *hir_fast_prototype_find(const char *name);
+
+bool hir_gpu_build_kernel(struct hir_block *func, struct ast_func *afunc,
+			  char *error, size_t error_size);
 
 /*
  * Free constructed HIR functions.
@@ -518,6 +585,10 @@ hir_get_error_line(void);
 const char *
 hir_get_error_message(void);
 
+/* Set a deterministic error from a mandatory post-build compiler pass. */
+void
+hir_set_error(int line, const char *message);
+
 /* Return an immutable intrinsic ID for a call expression. */
 int
 hir_get_intrinsic_call(
@@ -538,6 +609,7 @@ bool
 hir_optimize_func(
 	struct hir_block *func_block,
 	int level,
-	bool simd_info);
+	bool simd_info,
+	bool accel_info);
 
 #endif

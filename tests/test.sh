@@ -19,6 +19,7 @@ Main suites:
   abce             Array-bounds-check elimination.
   cse              Common-subexpression elimination.
   simd             SIMD vectorization, fallback and bytecode tests.
+  fast             __fast functions, exact shapes and row-major indexing.
   class            Class freezing and top-level declarations.
   scoping          Block scope, let and TDZ behavior.
   app              .nap packaging and require resolution.
@@ -28,6 +29,7 @@ Main suites:
   webapp           Web application framework tests.
   process          Process API tests.
   mmap [build-dir] FileUtil mmap and Packed native-finalizer tests.
+  parallel-analysis Target-neutral loop fact/classification tests.
 
 Toolchain/integration suites:
   api [build-dir]  Embed/API backend test (default: build-static).
@@ -72,6 +74,7 @@ typedop)         run_script run-typedop.sh "$@" ;;
 abce)            run_script run-abce.sh "$@" ;;
 cse)             run_script run-cse.sh "$@" ;;
 simd)            run_script run-simd.sh "$@" ;;
+fast)            run_script run-fast.sh "$@" ;;
 class)           run_script run-class.sh "$@" ;;
 scoping)         run_script run-scoping.sh "$@" ;;
 app)             run_script run-app.sh "$@" ;;
@@ -81,6 +84,7 @@ httpserver)      run_script run-httpserver.sh "$@" ;;
 webapp)          run_script run-webapp.sh "$@" ;;
 process)         run_script run-process.sh "$@" ;;
 mmap)            run_script run-fileutil-mmap.sh "$@" ;;
+parallel-analysis) run_script run-parallel-analysis.sh "$@" ;;
 api)             run_script run-api-backend.sh "$@" ;;
 ctrans)          run_script run-ctrans.sh "$@" ;;
 repl)            run_script run-repl.sh "$@" ;;

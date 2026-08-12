@@ -1452,19 +1452,19 @@ noct_ex_gt_helper(
 		switch (src2_val->type) {
 		case NOCT_VALUE_INT:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = (src1_val->val.i > src2_val->val.i) ? 1 : 0;
+			dst_val->val.i = (src1_val->val.l > (int64_t)src2_val->val.i) ? 1 : 0;
 			break;
 		case NOCT_VALUE_LONG:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = ((int64_t)src1_val->val.i > src2_val->val.l) ? 1 : 0;
+			dst_val->val.i = (src1_val->val.l > src2_val->val.l) ? 1 : 0;
 			break;
 		case NOCT_VALUE_FLOAT:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = ((float)src1_val->val.i > src2_val->val.f) ? 1 : 0;
+			dst_val->val.i = ((float)src1_val->val.l > src2_val->val.f) ? 1 : 0;
 			break;
 		case NOCT_VALUE_DOUBLE:
 			dst_val->type = NOCT_VALUE_INT;
-			dst_val->val.i = ((double)src1_val->val.i > src2_val->val.lf) ? 1 : 0;
+			dst_val->val.i = ((double)src1_val->val.l > src2_val->val.lf) ? 1 : 0;
 			break;
 		default:
 			rt_error(env, N_TR("Value is not a number."));
@@ -2409,6 +2409,7 @@ noct_ex_call_helper(
 	struct rt_func *callee;
 	struct rt_value ret;
 	int i;
+	int arg_index;
 
 	/* Get a function. */
 	if (env->frame->tmpvar[func].type != NOCT_VALUE_FUNC) {
@@ -2435,8 +2436,11 @@ noct_ex_call_helper(
 	}
 
 	/* Get values of arguments. */
-	for (i = 0; i < arg_count; i++)
-		arg_val[i] = env->frame->tmpvar[arg[i]];
+	for (i = 0; i < arg_count; i++) {
+		memcpy(&arg_index, (const unsigned char *)arg +
+		       (size_t)i * sizeof(arg_index), sizeof(arg_index));
+		arg_val[i] = env->frame->tmpvar[arg_index];
+	}
 
 	/* Do call. */
 	if (!rt_call(env, callee, (uint32_t)arg_count, &arg_val[0], &ret)) {
@@ -2479,6 +2483,7 @@ noct_ex_thiscall_helper(
 	bool inject_this;
 	int call_arg_count;
 	int i;
+	int arg_index;
 
 	UNUSED_PARAMETER(name);
 	UNUSED_PARAMETER(name_len);
@@ -2525,8 +2530,12 @@ noct_ex_thiscall_helper(
 	/* Get values of arguments. */
 	if (inject_this)
 		arg_val[0] = *obj_val;
-	for (i = 0; i < arg_count; i++)
-		arg_val[i + (inject_this ? 1 : 0)] = env->frame->tmpvar[arg[i]];
+	for (i = 0; i < arg_count; i++) {
+		memcpy(&arg_index, (const unsigned char *)arg +
+		       (size_t)i * sizeof(arg_index), sizeof(arg_index));
+		arg_val[i + (inject_this ? 1 : 0)] =
+			env->frame->tmpvar[arg_index];
+	}
 
 	/* Do call. */
 	if (!rt_call(env, callee, (uint32_t)call_arg_count, &arg_val[0], &ret)) {

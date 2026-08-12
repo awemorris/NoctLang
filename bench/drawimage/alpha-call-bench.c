@@ -1,3 +1,10 @@
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ */
+
 /* Measure DRAW_IMAGE_ALPHA across a fixed pixel count and one call boundary. */
 
 #define _POSIX_C_SOURCE 200809L

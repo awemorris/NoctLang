@@ -304,6 +304,39 @@ parse_options(
 			file_arg++;
 			continue;
 		}
+		if (strcmp(argv[i], "--accel=vulkan") == 0) {
+#if !defined(NOCT_USE_ACCEL_VULKAN)
+			wide_printf(N_TR("Vulkan accelerator support is not available in this build.\n"));
+			return false;
+#else
+			config.accel_enable = true;
+			config.accel_backend = NOCT_ACCEL_BACKEND_VULKAN;
+			file_arg++;
+			continue;
+#endif
+		}
+		if (strcmp(argv[i], "--accel=opengl") == 0) {
+#if !defined(NOCT_USE_ACCEL_OPENGL)
+			wide_printf(N_TR("OpenGL accelerator support is not available in this build.\n"));
+			return false;
+#else
+			config.accel_enable = true;
+			config.accel_backend = NOCT_ACCEL_BACKEND_OPENGL;
+			file_arg++;
+			continue;
+#endif
+		}
+		if (strcmp(argv[i], "--disable-accel") == 0) {
+			config.accel_enable = false;
+			config.accel_backend = NOCT_ACCEL_BACKEND_NONE;
+			file_arg++;
+			continue;
+		}
+		if (strcmp(argv[i], "--accel-info") == 0) {
+			config.accel_info = true;
+			file_arg++;
+			continue;
+		}
 		if (strncmp(argv[i], "--path=", 7) == 0) {
 			if (argv[i][7] == '\0' ||
 			    require_path_count == (uint32_t)(sizeof(require_path) /

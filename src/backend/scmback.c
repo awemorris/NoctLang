@@ -176,6 +176,24 @@ noct_scmback_translate(
 
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(i);
+		if (hfunc->val.func.func_kind == NOCT_FUNC_GPU) {
+			printf("%s", N_TR("Error: __gpu func is not supported by the Scheme transpiler.\n"));
+			hir_cleanup();
+			ast_cleanup();
+			return false;
+		}
+		if (hfunc->val.func.func_kind == NOCT_FUNC_ACCEL) {
+			printf("%s", N_TR("Error: __accel func is GPU-only and is not supported by the Scheme transpiler.\n"));
+			hir_cleanup();
+			ast_cleanup();
+			return false;
+		}
+		if (hfunc->val.func.func_kind == NOCT_FUNC_FAST) {
+			printf("%s", N_TR("Error: __fast func is not supported by the Scheme transpiler.\n"));
+			hir_cleanup();
+			ast_cleanup();
+			return false;
+		}
 		cur_func = hfunc;
 
 		/* Check if it is a main function. */

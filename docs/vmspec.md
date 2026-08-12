@@ -705,6 +705,19 @@ the NoctVM architecture.
 
 ## 10. Appendix: Opcode List
 
+Raw `__gpu func` math calls do not add VM opcodes.  The compiler classifies
+GPU-only `Accel.*` scalar math operations while lowering the raw function, and
+stores backend-independent raw-kernel descriptor metadata alongside ordinary
+bytecode/application data.  The descriptor includes typed parameters,
+restricted resource ranges, launch requirements, and generated backend source;
+the bytecode loader validates all lengths and ranges before exposing it.
+
+`.nb` and `.nap` may therefore contain raw accelerator descriptors, but an
+ordinary VM instruction never represents `ACCEL_MATH`, `ACCEL_REDUCE`, or
+`ACCEL_TENSOR`.  Disabled or unavailable GPU execution is a runtime error, not
+an instruction-level CPU fallback.  C, Elisp, and Scheme translation of raw
+GPU functions is explicitly unsupported.
+
 | Mnemonic            | Opcode | Description                               |
 |---------------------|--------|-------------------------------------------|
 | `NOP`               | 0x00   | No operation                              |
@@ -748,3 +761,13 @@ the NoctVM architecture.
 | `JMPIFFALSE`        | 0x26   | Jump if false                             |
 | `JMPIFEQ`           | 0x27   | Jump if EQI result is false               |
 | `LINEINFO`          | 0x28   | Annotate line number for debugging        |
+# Fast function metadata
+
+Function kind values 0 through 2 retain their existing meaning.  Kind 3 is a
+CPU-executable `__fast func`.  A kind-3 bytecode function must carry a versioned
+`Fast Signature` section containing every formal's runtime value tag, Packed
+element kind, restrict flag, rank, and constant-or-parameter extent descriptors,
+plus the declared return tag.  The current signature version is 1.  Loaders
+reject a fast function with missing metadata, an unknown version, a rank above
+8, or an invalid function kind.  Older non-fast artifacts have no such section
+and remain valid.

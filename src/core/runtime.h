@@ -13,13 +13,15 @@
 #define NOCT_RUNTIME_H
 
 #include <noct/noct.h>
+#include "accel.h"
+#include "fast.h"
 #include "gc.h"
 #include "module.h"
 
 /*
  * Maximum number of the stack depth.
  */
-#define RT_FRAME_MAX		32
+#define RT_FRAME_MAX		512
 
 /*
  * Maximum number of the tmpvar in a stack.
@@ -174,6 +176,10 @@ struct rt_packed {
 	/* Packed type. */
 	int packed_typed;
 
+	/* True for storage created by a typed Accel resource constructor. */
+	bool is_accel_resource;
+	void *accel_backend_data;
+
 	/* Buffer pointer. */
 	void *packed_buffer;
 
@@ -202,6 +208,9 @@ struct rt_func {
 
 	/* rpacked* source annotation. */
 	bool param_restricted[NOCT_ARG_MAX];
+	int param_accel_access[NOCT_ARG_MAX];
+	int param_accel_transport[NOCT_ARG_MAX];
+	unsigned int param_accel_effect[NOCT_ARG_MAX];
 
 	/* Optional declared return type contract. */
 	int return_type;
@@ -216,6 +225,11 @@ struct rt_func {
 	uint32_t tmpvar_size;
 	/* ABI/prologue metadata: bytecode contains OP_V* instructions. */
 	bool has_vector_ops;
+	bool is_accel;
+	int func_kind;
+	struct fast_signature fast_signature;
+	struct accel_kernel *accel_kernel;
+	struct accel_program *accel_program;
 	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
 	bool has_fma_ops;
 
@@ -225,6 +239,7 @@ struct rt_func {
 
 	/* Function pointer. (if a cfunc) */
 	bool (*cfunc)(struct rt_env *env);
+	bool cfunc_variadic;
 
 	/* Next. */
 	struct rt_func *next;
@@ -270,6 +285,7 @@ struct rt_frame {
 	 * Current running function.
 	 */
 	struct rt_func *func;
+	uint32_t arg_count;
 
 	/*
 	 * Pinned C local variables.
@@ -406,6 +422,8 @@ struct rt_vm {
 
 	/* Config. */
 	struct rt_config config;
+	void *accel_runtime;
+	struct accel_event accel_event[ACCEL_EVENT_MAX];
 
 	/* GC nest counter. */
 	int gc_in_progress_counter;

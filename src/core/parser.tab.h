@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_AST_YY_SRC_CORE_PARSER_TAB_H_INCLUDED
-# define YY_AST_YY_SRC_CORE_PARSER_TAB_H_INCLUDED
+#ifndef YY_AST_YY_PARSER_TAB_H_INCLUDED
+# define YY_AST_YY_PARSER_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -124,9 +124,17 @@ extern int ast_yydebug;
     TOKEN_STATIC = 325,            /* TOKEN_STATIC  */
     TOKEN_INLINE = 326,            /* TOKEN_INLINE  */
     TOKEN_REQUIRE = 327,           /* TOKEN_REQUIRE  */
-    TOKEN_NOT = 328,               /* TOKEN_NOT  */
-    UNARYMINUS = 329,              /* UNARYMINUS  */
-    CALL = 330                     /* CALL  */
+    TOKEN_ACCEL = 328,             /* TOKEN_ACCEL  */
+    TOKEN_GPU = 329,               /* TOKEN_GPU  */
+    TOKEN_DUNDER_ACCEL = 330,      /* TOKEN_DUNDER_ACCEL  */
+    TOKEN_DUNDER_GPU = 331,        /* TOKEN_DUNDER_GPU  */
+    TOKEN_DUNDER_FAST = 332,       /* TOKEN_DUNDER_FAST  */
+    TOKEN_GPU_LAUNCH_L = 333,      /* TOKEN_GPU_LAUNCH_L  */
+    TOKEN_GPU_LAUNCH_R = 334,      /* TOKEN_GPU_LAUNCH_R  */
+    TOKEN_SHARED = 335,            /* TOKEN_SHARED  */
+    TOKEN_NOT = 336,               /* TOKEN_NOT  */
+    UNARYMINUS = 337,              /* UNARYMINUS  */
+    CALL = 338                     /* CALL  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -135,7 +143,7 @@ extern int ast_yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 132 "src/core/parser.y"
+#line 140 "parser.y"
 
 	int ival;
 	int64_t lval;
@@ -154,7 +162,7 @@ union YYSTYPE
 	struct ast_kv_list *kv_list;
 	struct ast_kv *kv;
 
-#line 158 "src/core/parser.tab.h"
+#line 166 "parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -183,10 +191,10 @@ extern YYLTYPE ast_yylloc;
 int ast_yyparse (void *scanner);
 
 /* "%code provides" blocks.  */
-#line 128 "src/core/parser.y"
+#line 136 "parser.y"
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 
-#line 191 "src/core/parser.tab.h"
+#line 199 "parser.tab.h"
 
-#endif /* !YY_AST_YY_SRC_CORE_PARSER_TAB_H_INCLUDED  */
+#endif /* !YY_AST_YY_PARSER_TAB_H_INCLUDED  */

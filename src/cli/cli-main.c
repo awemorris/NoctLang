@@ -136,6 +136,10 @@ void show_usage(void)
 	wide_printf(N_TR("  --gpu-name=NAME       ... select one GPU by name\n"));
 	wide_printf(N_TR("  --gpu-list            ... show GPU devices and exit\n"));
 	wide_printf(N_TR("  --simd-info          ... report successfully vectorized loops\n"));
+	wide_printf(N_TR("  --accel=vulkan       ... enable the Vulkan accelerator\n"));
+	wide_printf(N_TR("  --accel=opengl       ... enable the OpenGL compute accelerator\n"));
+	wide_printf(N_TR("  --disable-accel      ... force accelerator CPU fallback\n"));
+	wide_printf(N_TR("  --accel-info         ... report kernel generation and fallback\n"));
 	wide_printf(N_TR("  --path=DIRS          ... require search path (colon-separated)\n"));
 	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-graduate-size=N ... second GC space size in bytes\n"));

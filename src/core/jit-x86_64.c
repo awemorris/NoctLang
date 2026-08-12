@@ -2345,7 +2345,7 @@ jit_visit_call_op(
                 }
                 arg_addr = (uint64_t)(intptr_t)ctx->code;
                 for (i = 0; i < arg_count; i++) {
-                        *(int *)ctx->code = arg[i];
+                        memcpy(ctx->code, &arg[i], sizeof(arg[i]));
                         ctx->code = (uint8_t *)ctx->code + 4;
                 }
         } else {
@@ -2436,7 +2436,7 @@ jit_visit_thiscall_op(
         }
         arg_addr = (uint64_t)(intptr_t)ctx->code;
         for (i = 0; i < arg_count; i++) {
-                *(int *)ctx->code = arg[i];
+                memcpy(ctx->code, &arg[i], sizeof(arg[i]));
                 ctx->code = (uint8_t *)ctx->code + 4;
         }
 

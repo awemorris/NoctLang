@@ -13,6 +13,7 @@
 #define NOCT_AST_H
 
 #include <noct/noct.h>
+#include "accel.h"
 
 /* Statement Type */
 enum ast_stmt_type {
@@ -111,6 +112,8 @@ struct ast_func {
 	/* File-local functions are already mangled at AST construction time. */
 	bool is_static;
 	bool is_inline;
+	bool is_accel;
+	int func_kind;
 
 	/* Statement list */
 	struct ast_stmt_list *stmt_list;
@@ -158,6 +161,7 @@ struct ast_stmt {
 			struct ast_expr *rhs;
 			bool is_var;
 			bool is_let;
+			bool is_shared;
 
 			/* Type annotation, or NULL. */
 			char *type_name;
@@ -405,6 +409,10 @@ ast_get_require_count(void);
 
 const char *
 ast_get_require_name(uint32_t index);
+
+/* True when a source symbol names a top-level typed accelerator resource. */
+bool
+ast_is_accel_resource_symbol(const char *name);
 
 /*
  * Get the error message.

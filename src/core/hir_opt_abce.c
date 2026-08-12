@@ -1570,6 +1570,62 @@ abce_rewrite_block(struct abce_ctx *ctx, struct hir_block *b)
  * Guard construction.
  */
 
+static const struct fast_param_contract *
+abce_fast_contract(struct abce_ctx *ctx, int packed_index)
+{
+	uint32_t i;
+	const struct fast_signature *signature;
+
+	if (ctx->func_block->val.func.func_kind != NOCT_FUNC_FAST)
+		return NULL;
+	signature = &ctx->func_block->val.func.fast_signature;
+	if (!signature->valid)
+		return NULL;
+	for (i = 0; i < ctx->func_block->val.func.param_count; i++) {
+		if (strcmp(ctx->func_block->val.func.param_name[i],
+			   ctx->packed[packed_index]) == 0 &&
+		    i < signature->param_count &&
+		    signature->param[i].value_type == NOCT_VALUE_PACKED)
+			return &signature->param[i];
+	}
+	return NULL;
+}
+
+static struct hir_expr *
+abce_fast_extent_expr(struct abce_ctx *ctx, int packed_index)
+{
+	const struct fast_param_contract *contract;
+	struct hir_expr *product;
+	int axis;
+
+	contract = abce_fast_contract(ctx, packed_index);
+	if (contract == NULL || contract->rank < 1)
+		return NULL;
+	product = abce_mk_expr_int(1);
+	for (axis = 0; axis < contract->rank; axis++) {
+		const struct fast_extent *extent;
+		struct hir_expr *factor;
+		extent = &contract->extent[axis];
+		factor = NULL;
+		if (extent->kind == FAST_EXTENT_CONST &&
+		    extent->constant <= INT_MAX)
+			factor = abce_mk_expr_int((int)extent->constant);
+		else if (extent->kind == FAST_EXTENT_PARAM &&
+			 extent->param_index >= 0 &&
+			 (uint32_t)extent->param_index <
+				ctx->func_block->val.func.param_count)
+			factor = abce_mk_expr_symbol(
+				ctx->func_block->val.func.param_name[
+					extent->param_index]);
+		if (factor == NULL)
+			return NULL;
+		product = abce_mk_binary(HIR_EXPR_MUL, product, factor);
+		if (product == NULL)
+			return NULL;
+	}
+	return product;
+}
+
 static struct hir_expr *
 abce_mk_endpoint(struct abce_ctx *ctx, struct abce_site *site, bool at_hi)
 {
@@ -1644,6 +1700,9 @@ abce_mk_guard(struct abce_ctx *ctx)
 
 	/* PCHECK(p_k, <bet_k>) for every packed. */
 	for (i = 0; i < ctx->packed_count; i++) {
+		/* A FAST caller has already checked the exact element contract. */
+		if (abce_fast_contract(ctx, i) != NULL)
+			continue;
 		e = abce_mk_binary(HIR_EXPR_PCHECK,
 				   abce_mk_expr_symbol(ctx->packed[i]),
 				   abce_mk_expr_int(ctx->packed_bet[i]));
@@ -1669,20 +1728,32 @@ abce_mk_guard(struct abce_ctx *ctx)
 				   abce_mk_endpoint(ctx, &ctx->sites[i], false),
 				   abce_mk_expr_int(0));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
-		e = abce_mk_binary(HIR_EXPR_LT,
-				   abce_mk_endpoint(ctx, &ctx->sites[i], false),
-				   abce_mk_unary(HIR_EXPR_PLEN,
-						 abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index])));
+		{
+			struct hir_expr *extent;
+			extent = abce_fast_extent_expr(
+				ctx, ctx->sites[i].packed_index);
+			if (extent == NULL)
+				extent = abce_mk_unary(HIR_EXPR_PLEN,
+					abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index]));
+			e = abce_mk_binary(HIR_EXPR_LT,
+				abce_mk_endpoint(ctx, &ctx->sites[i], false), extent);
+		}
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 		/* f(hi-1) >= 0 && f(hi-1) < PLEN(p) */
 		e = abce_mk_binary(HIR_EXPR_GTE,
 				   abce_mk_endpoint(ctx, &ctx->sites[i], true),
 				   abce_mk_expr_int(0));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
-		e = abce_mk_binary(HIR_EXPR_LT,
-				   abce_mk_endpoint(ctx, &ctx->sites[i], true),
-				   abce_mk_unary(HIR_EXPR_PLEN,
-						 abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index])));
+		{
+			struct hir_expr *extent;
+			extent = abce_fast_extent_expr(
+				ctx, ctx->sites[i].packed_index);
+			if (extent == NULL)
+				extent = abce_mk_unary(HIR_EXPR_PLEN,
+					abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index]));
+			e = abce_mk_binary(HIR_EXPR_LT,
+				abce_mk_endpoint(ctx, &ctx->sites[i], true), extent);
+		}
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 	}
 

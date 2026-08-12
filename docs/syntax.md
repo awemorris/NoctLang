@@ -744,3 +744,145 @@ Executes a compact GC.
 ```
 GC.compactGC();
 ```
+
+## Managed GPU accelerator functions
+
+`__accel func` declares a synchronous GPU-only orchestration function.  It must
+return `void`, is invoked only through `Accel.call`, and has no executable CPU
+fallback.  A disabled or unavailable accelerator backend is therefore a
+runtime error.  ANSI C, Emacs Lisp, and Scheme translation reject managed
+accelerator functions.
+
+Buffer parameters use typed restricted transport annotations:
+
+- `_in`, for example `rpackedfloat_in`, receives read-only host Packed data;
+- `_out`, for example `rpackedfloat_out`, receives write-only host Packed
+  data; and
+- `_ptr`, for example `rpackedfloat_ptr`, receives an existing `Accel.*`
+  resource and may be read or written as inferred from the function body.
+
+Restricted buffer arguments must not alias.  `_in` and `_out` are transferred
+once at the managed program boundary; device-local intermediates and `_ptr`
+data remain on the GPU between generated kernels.
+
+The accepted initial body is an ordered sequence of zero-based, unit-step
+ranged loops.  Independent loops become DOALL kernels.  Canonical typed
+additive reductions may occur before, between, or after those loops.  Each is
+published by the immediately following `_out[0] = accumulator` or
+`_ptr[0] = accumulator` store and owns distinct scratch buffers.  Unsupported
+dependence, calls, loop forms, or reduction forms are compile errors.
+
+Local typed Packed construction declares a logical device buffer rather than
+performing a host allocation:
+
+```noct
+__accel func square_sum(input: rpackedfloat_in,
+                      output: rpackedfloat_out,
+                      count: int): void {
+    let squared = Packed.float32(count);
+    for (i in 0..count) {
+        squared[i] = input[i] * input[i];
+    }
+    var sum: float = 0.0;
+    for (i in 0..count) {
+        sum += squared[i];
+    }
+    output[0] = sum;
+}
+
+func main() {
+    let input = Packed.float32(65);
+    let output = Packed.float32(1);
+    Accel.call(square_sum, input, output, 65);
+}
+```
+
+Persistent device storage is declared at top level with `accel var`, for
+example `accel var state = Accel.float32(1024);`, and passed explicitly through
+an `_ptr` parameter.  Host code cannot subscript an accelerator resource.
+
+Managed programs, generated kernels, buffer expressions, bindings, and step
+order survive `.nb` and `.nap` serialization.  OpenGL is the validated Linux
+execution backend; Vulkan descriptors remain compile-only and unvalidated.
+
+## Raw GPU functions
+
+`__gpu func` declares a GPU-required raw kernel.  It must return `void`; host
+code launches it with `kernel<<<grid, block>>>(...)` or the explicit
+accelerator dispatch API.  A raw kernel cannot execute on the CPU.  Its buffer
+parameters use typed restricted pointers such as `rpackedfloat_ptr`, and one
+accelerator resource must not be passed through two restricted parameters in
+the same launch.
+
+The checked source subset supports constant nonnegative ranged `for` loops,
+scoped scalar locals and reassignment, conditionals, raw buffer indexing,
+`globalIdx`, shared storage, and uniform `syncthreads()`.  Loop bounds and
+specialized tensor sizes are compile-time integers.  The compiler rejects
+dynamic bounds, host resource subscripting, divergent barriers, early return
+around a barrier, unsupported calls, or output ranges exceeding descriptor
+metadata.
+
+Inside `__gpu func` only, `Accel.sigmoid`, `Accel.tanh`, `Accel.exp`,
+`Accel.log`, and `Accel.sqrt` are compiler-recognized scalar math calls.
+`Accel.float32FromBits(bits)` constructs the exact float32 bit pattern.  These
+names are not ordinary runtime functions, dictionary members, first-class
+values, or VM opcodes; using them outside `__gpu func` is a compile error.
+
+Raw GPU source and its descriptor survive `.nb` and `.nap` serialization.
+The ANSI C, Emacs Lisp, and Scheme transpilers reject `__gpu func` explicitly;
+use the Noct VM with an enabled accelerator backend.
+# `__fast func`
+
+`__fast func` defines a statically constrained CPU function intended for
+automatic optimization and future multicore parallelization.  Every parameter,
+explicit local, and return value must have an explicit primitive type.  The
+allowed primitive types are `int`, `long`, `float`, and `double`; `void` is also
+allowed as a return type.
+
+Packed parameters must use an `rpacked*` element type and an exact shape:
+
+```noct
+__fast func scale(image: rpackedfloat(3, 224, 224), factor: float): void {
+    for (c in 0..3) {
+        for (y in 0..224) {
+            for (x in 0..224) {
+                image[c, y, x] = image[c, y, x] * factor;
+            }
+        }
+    }
+}
+```
+
+Shape rank is 1 through 8.  Each extent is a positive integer literal or the
+name of an `int`/`long` parameter.  The shape is exact: `(10, 5, 2)` requires a
+100-element Packed object.  Multi-dimensional indices are zero-based and use C
+row-major order (the last axis is contiguous).  Each axis is checked separately
+on the safe path.
+
+Calls check primitive tags, Packed element kinds, dynamic extent positivity,
+checked shape products, exact element counts, and the `rpacked` restrict
+contract before entering the callee.  Different `rpacked` formal parameters
+must receive different Packed objects.  A validated fast-to-fast direct call
+reuses its caller's established contract and does not repeat the runtime
+preflight; calls from ordinary code and external APIs always perform it.
+
+Inside a fast function, globals, closures, methods, and ordinary functions are
+not available.  Direct calls to other fast functions and the compiler-owned
+`min`, `max`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
+`atan2`, `exp`, `ln`, `log2`, `log10`, and numeric conversion intrinsics are
+allowed.  Obvious affine out-of-bounds accesses are compile errors; accesses
+that cannot be proven are retained as checked operations.
+
+Public fast functions in required source modules are resolved from a
+side-effect-free prototype scan.  Scanning records only names and contracts;
+it does not register functions or execute module initializers.  A required
+prototype with a conflicting kind or contract is a compile/link error.
+`static inline __fast func` remains file-local and is not exported.
+
+With the optimizer enabled, the exact caller contract supplies Packed element
+kind, element count, and disjointness facts to ABCE/SIMD.  Consequently a
+vectorized fast loop does not need the ordinary Packed type/length or alias
+range guards.  Statically bounded multi-dimensional accesses are flattened to
+their row-major expression before ABCE, so a contiguous final-axis loop can be
+vectorized.  Unknown accesses and optimizer-off builds retain the checked
+scalar path; declaring a function fast never makes an unproved access unsafe.

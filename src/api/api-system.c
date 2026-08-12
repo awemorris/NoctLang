@@ -34,6 +34,7 @@ static bool cfunc_System_runCommand(NoctEnv *env);
 static bool cfunc_System_getOSName(NoctEnv *env);
 static bool cfunc_System_checkFileExists(NoctEnv *env);
 static bool cfunc_System_pcall(NoctEnv *env);
+static bool cfunc_System_error(NoctEnv *env);
 static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size);
 
 /* FFI table. */
@@ -101,6 +102,13 @@ static struct ffi_item ffi_items[] = {
 		{"f", "a", "b"},
 		cfunc_System_pcall
 	},
+	{
+		"System.error",
+		"error",
+		1,
+		{"message"},
+		cfunc_System_error
+	},
 };
 
 /*
@@ -148,6 +156,24 @@ noct_register_api_system(
 	}
 
 	return true;
+}
+
+/* Raise a caller-supplied hard runtime error. */
+static bool
+cfunc_System_error(NoctEnv *env)
+{
+	NoctValue message;
+	const char *text;
+
+	if (!noct_pin_local(env, 1, &message))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &message, &text)) {
+		(void)noct_unpin_local(env, 1, &message);
+		return false;
+	}
+	noct_error(env, "%s", text);
+	(void)noct_unpin_local(env, 1, &message);
+	return false;
 }
 
 /* Implementation of import() */

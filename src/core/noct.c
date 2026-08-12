@@ -30,6 +30,9 @@ noct_set_default_config(
 	config->optimize_level         = 1;
 	config->lineinfo               = true;
 	config->simd_info              = false;
+	config->accel_enable           = false;
+	config->accel_info             = false;
+	config->accel_backend          = NOCT_ACCEL_BACKEND_NONE;
 	config->auto_parallel          = 0;
 	config->cpu_pe                 = 0;
 	config->cpu_affinity           = NULL;
@@ -139,6 +142,71 @@ noct_register_cfunc(
 	if (!rt_register_cfunc(env, name, param_count, param_name, cfunc, ret_func))
 		return false;
 
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_ex_mark_accel_func(
+	NoctFunc *func)
+{
+	assert(func != NULL);
+	func->is_accel = true;
+	func->func_kind = NOCT_FUNC_ACCEL;
+	return true;
+}
+
+NOCT_DLL
+bool
+noct_ex_mark_fast_func(
+	NoctFunc *func,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *rank,
+	const int *extent_kind,
+	const int64_t *extent_value)
+{
+	uint32_t i;
+	int axis;
+
+	if (func == NULL || param_count != func->param_count ||
+	    param_count > NOCT_ARG_MAX || value_type == NULL ||
+	    packed_type == NULL || rank == NULL || extent_kind == NULL ||
+	    extent_value == NULL)
+		return false;
+	fast_signature_init(&func->fast_signature);
+	func->fast_signature.valid = true;
+	func->fast_signature.param_count = param_count;
+	func->fast_signature.return_type = return_type;
+	func->func_kind = NOCT_FUNC_FAST;
+	func->return_type = return_type;
+	for (i = 0; i < param_count; i++) {
+		struct fast_param_contract *contract;
+		if (rank[i] < 0 || rank[i] > NOCT_FAST_RANK_MAX)
+			return false;
+		contract = &func->fast_signature.param[i];
+		contract->value_type = value_type[i];
+		contract->packed_type = packed_type[i];
+		contract->restricted = value_type[i] == NOCT_VALUE_PACKED;
+		contract->rank = rank[i];
+		func->param_type[i] = value_type[i];
+		func->param_packed_type[i] = packed_type[i];
+		func->param_restricted[i] = contract->restricted;
+		for (axis = 0; axis < NOCT_FAST_RANK_MAX; axis++) {
+			int offset;
+			offset = (int)i * NOCT_FAST_RANK_MAX + axis;
+			contract->extent[axis].kind = extent_kind[offset];
+			if (extent_kind[offset] == FAST_EXTENT_CONST)
+				contract->extent[axis].constant = extent_value[offset];
+			else if (extent_kind[offset] == FAST_EXTENT_PARAM)
+				contract->extent[axis].param_index =
+					(int)extent_value[offset];
+			else if (extent_kind[offset] != FAST_EXTENT_NONE)
+				return false;
+		}
+	}
 	return true;
 }
 

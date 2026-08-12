@@ -43,11 +43,13 @@
  */
 
 #include "hir_opt.h"
+#include "hir_parallel.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <limits.h>
 
 /* Program-visible vregs (must match the LIR planner's budget). */
 #define SIMD_VREG_MAX		16
@@ -81,7 +83,9 @@ struct simd_base {
 	const char *base_sym;	/* $abceN_baseK local        */
 	const char *packed_sym;	/* the packed local (for PLEN) */
 	bool restricted;	/* rpacked* function parameter */
+	bool has_read;
 	bool has_store;
+	int element_kind;
 	int off_count;
 	struct simd_off off[SIMD_MAX_OFFS];
 };
@@ -113,6 +117,9 @@ struct simd_ctx {
 	bool is_float;
 	bool has_checked_gather;
 	bool has_fp_induction;
+	struct hir_memory_catalog parallel_catalog;
+	struct hir_loop_summary *parallel_summary;
+	struct hir_doall_result parallel_memory;
 
 	/* New local names. */
 	char mid_name[32];
@@ -1110,51 +1117,33 @@ static bool
 simd_parse_index(struct simd_ctx *ctx, struct hir_expr *f,
 		 struct simd_off *out)
 {
-	struct hir_expr *a;
-	struct hir_expr *b;
+	struct hir_affine_index index;
 
 	memset(out, 0, sizeof(*out));
-	if (f->type == HIR_EXPR_TERM &&
-	    f->val.term.term->type == HIR_TERM_SYMBOL &&
-	    strcmp(f->val.term.term->val.symbol, ctx->counter) == 0) {
+	if (!hir_parallel_normalize_index(f, ctx->counter, &index) ||
+	    index.kind != HIR_AFFINE_COUNTER_OFFSET)
+		return false;
+	if (index.invariant_symbol == NULL && index.offset == 0) {
 		out->shape = SIMD_SHAPE_I;
 		return true;
 	}
-	if (f->type != HIR_EXPR_PLUS && f->type != HIR_EXPR_MINUS)
-		return false;
-	a = f->val.binary.expr[0];
-	b = f->val.binary.expr[1];
-	if (a->type != HIR_EXPR_TERM || b->type != HIR_EXPR_TERM)
-		return false;
-	if (a->val.term.term->type == HIR_TERM_SYMBOL &&
-	    strcmp(a->val.term.term->val.symbol, ctx->counter) == 0) {
-		out->shape = (f->type == HIR_EXPR_PLUS) ?
-			SIMD_SHAPE_I_PLUS_U : SIMD_SHAPE_I_MINUS_U;
-		if (b->val.term.term->type == HIR_TERM_INT) {
-			out->u_is_const = true;
-			out->u_const = b->val.term.term->val.i;
-		} else if (b->val.term.term->type == HIR_TERM_SYMBOL) {
-			out->u_name = b->val.term.term->val.symbol;
+	if (index.invariant_symbol != NULL) {
+		out->shape = index.invariant_sign < 0 ?
+			SIMD_SHAPE_I_MINUS_U : SIMD_SHAPE_I_PLUS_U;
+		out->u_name = index.invariant_symbol;
+	} else {
+		out->u_is_const = true;
+		if (index.offset < 0) {
+			if (index.offset == INT_MIN)
+				return false;
+			out->shape = SIMD_SHAPE_I_MINUS_U;
+			out->u_const = -index.offset;
 		} else {
-			return false;
+			out->shape = SIMD_SHAPE_I_PLUS_U;
+			out->u_const = index.offset;
 		}
-		return true;
 	}
-	if (f->type == HIR_EXPR_PLUS &&
-	    b->val.term.term->type == HIR_TERM_SYMBOL &&
-	    strcmp(b->val.term.term->val.symbol, ctx->counter) == 0) {
-		out->shape = SIMD_SHAPE_U_PLUS_I;
-		if (a->val.term.term->type == HIR_TERM_INT) {
-			out->u_is_const = true;
-			out->u_const = a->val.term.term->val.i;
-		} else if (a->val.term.term->type == HIR_TERM_SYMBOL) {
-			out->u_name = a->val.term.term->val.symbol;
-		} else {
-			return false;
-		}
-		return true;
-	}
-	return false;
+	return true;
 }
 
 static bool
@@ -1178,6 +1167,7 @@ simd_note_site(struct simd_ctx *ctx, struct hir_expr *site, bool is_store)
 	struct simd_base *base;
 	struct simd_off off;
 	const char *base_sym;
+	int site_kind;
 	int i;
 	bool is_float = site->type == HIR_EXPR_PLOADF32 ||
 			 site->type == HIR_EXPR_PSTOREF32;
@@ -1201,6 +1191,7 @@ simd_note_site(struct simd_ctx *ctx, struct hir_expr *site, bool is_store)
 	if (!simd_parse_index(ctx, index_expr, &off))
 		return false;
 
+	site_kind = is_float ? NOCT_PACKED_FLOAT32 : NOCT_PACKED_INT32;
 	base = simd_find_base(ctx, base_sym);
 	if (base == NULL) {
 		if (ctx->base_count >= SIMD_MAX_BASES)
@@ -1208,7 +1199,11 @@ simd_note_site(struct simd_ctx *ctx, struct hir_expr *site, bool is_store)
 		base = &ctx->bases[ctx->base_count++];
 		memset(base, 0, sizeof(*base));
 		base->base_sym = base_sym;
-	}
+		base->element_kind = site_kind;
+	} else if (base->element_kind != site_kind)
+		return false;
+	if (!is_store)
+		base->has_read = true;
 	if (is_store)
 		base->has_store = true;
 
@@ -1240,7 +1235,10 @@ simd_note_gather(struct simd_ctx *ctx, struct hir_expr *site)
 		base = &ctx->bases[ctx->base_count++];
 		memset(base, 0, sizeof(*base));
 		base->base_sym = base_sym;
-	}
+		base->element_kind = NOCT_PACKED_INT32;
+	} else if (base->element_kind != NOCT_PACKED_INT32)
+		return false;
+	base->has_read = true;
 	ctx->kind_set = true;
 	ctx->has_checked_gather = true;
 	return true;
@@ -1584,12 +1582,7 @@ simd_check_body(struct simd_ctx *ctx, struct hir_block *body)
 				d = d + 1;
 			if (d > ctx->max_depth)
 				ctx->max_depth = d;
-			/* E6: a TEMP read before its first assignment
-			   is loop-carried.  simd_check_expr registered
-			   any prior read into inv[]; if this symbol is
-			   there, it was read first. */
-			if (simd_in_list(ctx->inv, ctx->inv_count, sym))
-				SIMD_REJECT("E6 loop-carried temp");
+			/* The common scalar-effect summary owns the carried check. */
 			if (!simd_in_list(ctx->temp, ctx->temp_count, sym)) {
 				if (ctx->temp_count >= SIMD_MAX_LOCALS)
 					SIMD_REJECT("E6 temp cap");
@@ -1626,16 +1619,6 @@ simd_check_body(struct simd_ctx *ctx, struct hir_block *body)
 				ctx->max_depth = m;
 		} else {
 			SIMD_REJECT("E1 store width");
-		}
-	}
-
-	/* E7 (same-base): a stored base with mixed offsets. */
-	{
-		int i;
-		for (i = 0; i < ctx->base_count; i++) {
-			if (ctx->bases[i].has_store &&
-			    ctx->bases[i].off_count > 1)
-				SIMD_REJECT("E7 mixed offsets");
 		}
 	}
 
@@ -1719,6 +1702,132 @@ simd_find_environment(struct simd_ctx *ctx)
 	ctx->hi_name = ctx->loop->val.for_.stop->val.term.term->val.symbol;
 
 	return true;
+}
+
+static bool
+simd_is_fp_induction_symbol(
+	struct simd_ctx *ctx,
+	const char *symbol)
+{
+	struct hir_stmt *stmt;
+	struct hir_expr *lhs;
+
+	if (!ctx->has_fp_induction || ctx->loop->val.for_.inner == NULL ||
+	    ctx->loop->val.for_.inner->type != HIR_BLOCK_BASIC)
+		return false;
+	for (stmt = ctx->loop->val.for_.inner->val.basic.stmt_list;
+	     stmt != NULL; stmt = stmt->next) {
+		lhs = stmt->lhs;
+		if (lhs != NULL && lhs->type == HIR_EXPR_TERM &&
+		    lhs->val.term.term->type == HIR_TERM_SYMBOL &&
+		    strcmp(lhs->val.term.term->val.symbol, symbol) == 0 &&
+		    stmt->rhs != NULL && stmt->rhs->type == HIR_EXPR_VINDUCTF32)
+			return true;
+	}
+	return false;
+}
+
+static bool
+simd_build_parallel_facts(
+	struct simd_ctx *ctx,
+	bool *safe,
+	const char **reason)
+{
+	struct hir_memory_object object;
+	const struct hir_scalar_effect *scalar;
+	uint32_t i;
+
+	*safe = false;
+	*reason = "internal";
+	hir_memory_catalog_init(&ctx->parallel_catalog);
+	ctx->parallel_catalog.allow_non_affine_reads = true;
+	for (i = 0; i < (uint32_t)ctx->base_count; i++) {
+		memset(&object, 0, sizeof(object));
+		object.id = (int)i;
+		object.symbol = ctx->bases[i].base_sym;
+		object.source_line = ctx->loop->line;
+		object.element_kind = ctx->bases[i].element_kind;
+		object.element_width = 4;
+		object.storage = HIR_MEMORY_STORAGE_PARAMETER;
+		/*
+		 * Logical Packed identity is not sufficient for normal func:
+		 * preallocated buffers can partially overlap.  Preserve every
+		 * cross-object write pair as a runtime alias requirement.
+		 */
+		object.alias_kind = HIR_ALIAS_MAY_ALIAS;
+		object.alias_class = (int)i;
+		object.readable = ctx->bases[i].has_read;
+		object.writable = ctx->bases[i].has_store;
+		if (!hir_memory_catalog_add(&ctx->parallel_catalog, &object)) {
+			*reason = "catalog";
+			return true;
+		}
+	}
+	if (!hir_loop_analyze(ctx->func, ctx->loop, &ctx->parallel_catalog,
+			      &ctx->parallel_summary))
+		return false;
+	if (ctx->parallel_summary->analysis_status != HIR_ANALYSIS_COMPLETE) {
+		*reason = hir_parallel_reason_string(
+			ctx->parallel_summary->analysis_reason);
+		return true;
+	}
+	for (i = 0; i < ctx->parallel_summary->scalar_count; i++) {
+		scalar = &ctx->parallel_summary->scalar[i];
+		if (scalar->is_counter || scalar->writes == 0)
+			continue;
+		if (simd_is_fp_induction_symbol(ctx, scalar->symbol))
+			continue;
+		/*
+		 * A write-before-read scalar is SIMD-private/lastprivate; the
+		 * existing planner handles its optional live-out extraction.
+		 */
+		if (scalar->read_before_write) {
+			*reason = "scalar-carried";
+			return true;
+		}
+	}
+	if (!hir_doall_classify_memory(ctx->parallel_summary,
+					&ctx->parallel_memory))
+		return false;
+	if (ctx->parallel_memory.classification == HIR_PAR_CLASS_DEPENDENT) {
+		*reason = hir_parallel_reason_string(ctx->parallel_memory.reason);
+		return true;
+	}
+	if (ctx->parallel_memory.classification == HIR_PAR_CLASS_UNKNOWN &&
+	    ctx->parallel_memory.reason != HIR_PAR_REASON_MAY_ALIAS) {
+		*reason = hir_parallel_reason_string(ctx->parallel_memory.reason);
+		return true;
+	}
+	*safe = true;
+	*reason = ctx->parallel_memory.alias_requirement_count != 0 ?
+		"runtime-alias-guard" : "none";
+	return true;
+}
+
+static bool
+simd_alias_required(
+	const struct simd_ctx *ctx,
+	int first,
+	int second)
+{
+	uint32_t i;
+
+	for (i = 0; i < ctx->parallel_memory.alias_requirement_count; i++) {
+		if (ctx->parallel_memory.alias_requirement[i].first_object_id == first &&
+		    ctx->parallel_memory.alias_requirement[i].second_object_id == second)
+			return true;
+	}
+	return false;
+}
+
+static void
+simd_free_parallel_facts(
+	struct simd_ctx *ctx)
+{
+	if (ctx->parallel_summary != NULL) {
+		hir_loop_summary_free(ctx->parallel_summary);
+		ctx->parallel_summary = NULL;
+	}
 }
 
 /* Count the function's locals (frame-budget check). */
@@ -1955,7 +2064,11 @@ simd_vectorize(struct simd_ctx *ctx)
 			struct simd_base *Q = &ctx->bases[j];
 			struct hir_expr *p_end, *q_end, *disj;
 			bool same_offs;
-			if (!P->has_store && !Q->has_store)
+			if (!simd_alias_required(ctx, i, j))
+				continue;
+			/* Distinct FAST rpacked formals are disjoint by caller contract. */
+			if (ctx->func->val.func.func_kind == NOCT_FUNC_FAST &&
+			    P->restricted && Q->restricted)
 				continue;
 			/* end = base + 4L * PLEN(packed) */
 			p_end = simd_mk_binary(HIR_EXPR_PLUS,
@@ -2133,6 +2246,8 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 		struct hir_block *normalized_body;
 		struct hir_stmt *original_body;
 		struct hir_stmt *inlined_body;
+		bool parallel_safe;
+		const char *parallel_reason;
 
 		ctx = hir_malloc(sizeof(struct simd_ctx));
 		if (ctx == NULL) {
@@ -2196,6 +2311,43 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 					simd_reject_reason);
 			continue;
 		}
+		if (!simd_build_parallel_facts(ctx, &parallel_safe,
+					       &parallel_reason)) {
+			normalized_body->val.basic.stmt_list = original_body;
+			loops[i]->val.for_.inner = source_body;
+			return false;
+		}
+		if (getenv("NOCT_SIMD_ANALYSIS_COMPARE") != NULL) {
+			uint32_t si;
+			fprintf(stderr,
+				"SIMD-COMMON: %s:%d legacy=accept common=%s reason=%s accesses=%u scalars=%u alias-guards=%u\n",
+				hir_file_name, loops[i]->line,
+				parallel_safe ? "accept" : "reject",
+				parallel_reason,
+				(unsigned int)ctx->parallel_summary->access_count,
+				(unsigned int)ctx->parallel_summary->scalar_count,
+				(unsigned int)ctx->parallel_memory.alias_requirement_count);
+			for (si = 0; si < ctx->parallel_summary->scalar_count; si++) {
+				const struct hir_scalar_effect *se =
+					&ctx->parallel_summary->scalar[si];
+				fprintf(stderr,
+					"SIMD-COMMON-SCALAR: %s reads=%u writes=%u read-before-write=%d counter=%d\n",
+					se->symbol, (unsigned int)se->reads,
+					(unsigned int)se->writes,
+					se->read_before_write, se->is_counter);
+			}
+		}
+		if (!parallel_safe) {
+			simd_free_parallel_facts(ctx);
+			normalized_body->val.basic.stmt_list = original_body;
+			loops[i]->val.for_.inner = source_body;
+			if (getenv("NOCT_SIMD_DEBUG") != NULL)
+				fprintf(stderr,
+					"SIMD: %s:%d: rejected (common %s)\n",
+					hir_file_name, loops[i]->line,
+					parallel_reason);
+			continue;
+		}
 
 		/* Frame budget: locals we would add. */
 		{
@@ -2209,6 +2361,7 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 				}
 			}
 			if (simd_count_locals(ctx) + adds > 112) {
+				simd_free_parallel_facts(ctx);
 				normalized_body->val.basic.stmt_list = original_body;
 				loops[i]->val.for_.inner = source_body;
 				if (getenv("NOCT_SIMD_DEBUG") != NULL)
@@ -2219,8 +2372,10 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 			}
 		}
 
-		if (!simd_vectorize(ctx))
+		if (!simd_vectorize(ctx)) {
+			simd_free_parallel_facts(ctx);
 			return false;
+		}
 
 		if (simd_info)
 			fprintf(stderr,
@@ -2236,6 +2391,7 @@ hir_opt_simd_func(struct hir_block *func_block, bool simd_info)
 				ctx->inv_count, ctx->temp_count,
 				ctx->max_depth, ctx->body_cost,
 				ctx->min_trip);
+		simd_free_parallel_facts(ctx);
 	}
 
 	return true;

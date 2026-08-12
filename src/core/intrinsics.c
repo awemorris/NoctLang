@@ -83,6 +83,14 @@ static bool rt_intrin_Type_of(NoctEnv *env);
 static bool rt_intrin_GC_youngGC(NoctEnv *env);
 static bool rt_intrin_GC_oldGC(NoctEnv *env);
 static bool rt_intrin_GC_compactGC(NoctEnv *env);
+static bool rt_intrin_Fast_index2(NoctEnv *env);
+static bool rt_intrin_Fast_index3(NoctEnv *env);
+static bool rt_intrin_Fast_index4(NoctEnv *env);
+static bool rt_intrin_Fast_index5(NoctEnv *env);
+static bool rt_intrin_Fast_index6(NoctEnv *env);
+static bool rt_intrin_Fast_index7(NoctEnv *env);
+static bool rt_intrin_Fast_index8(NoctEnv *env);
+static bool rt_intrin_Fast_math(NoctEnv *env);
 
 struct intrin_item {
 	const char *package_name;
@@ -96,6 +104,32 @@ struct intrin_item {
 	{"Long",	"from",		"Long.from",		rt_intrin_Long_from,		1, {"val"}},
 	{"Float",	"from",		"Float.from",		rt_intrin_Float_from,		1, {"val"}},
 	{"Double",	"from",		"Double.from",		rt_intrin_Double_from,		1, {"val"}},
+	{"$Fast", "index2", "$Fast.index2", rt_intrin_Fast_index2, 4, {"i0", "d0", "i1", "d1"}},
+	{"$Fast", "index3", "$Fast.index3", rt_intrin_Fast_index3, 6, {"i0", "d0", "i1", "d1", "i2", "d2"}},
+	{"$Fast", "index4", "$Fast.index4", rt_intrin_Fast_index4, 8, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3"}},
+	{"$Fast", "index5", "$Fast.index5", rt_intrin_Fast_index5, 10, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3", "i4", "d4"}},
+	{"$Fast", "index6", "$Fast.index6", rt_intrin_Fast_index6, 12, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3", "i4", "d4", "i5", "d5"}},
+	{"$Fast", "index7", "$Fast.index7", rt_intrin_Fast_index7, 14, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3", "i4", "d4", "i5", "d5", "i6", "d6"}},
+	{"$Fast", "index8", "$Fast.index8", rt_intrin_Fast_index8, 16, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3", "i4", "d4", "i5", "d5", "i6", "d6", "i7", "d7"}},
+	{"$FastMath", "min", "$FastMath.min", rt_intrin_Fast_math, 2, {"a", "b"}},
+	{"$FastMath", "max", "$FastMath.max", rt_intrin_Fast_math, 2, {"a", "b"}},
+	{"$FastMath", "abs", "$FastMath.abs", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "sqrt", "$FastMath.sqrt", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "sin", "$FastMath.sin", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "cos", "$FastMath.cos", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "tan", "$FastMath.tan", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "asin", "$FastMath.asin", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "acos", "$FastMath.acos", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "atan", "$FastMath.atan", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "atan2", "$FastMath.atan2", rt_intrin_Fast_math, 2, {"y", "x"}},
+	{"$FastMath", "exp", "$FastMath.exp", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "ln", "$FastMath.ln", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "log2", "$FastMath.log2", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "log10", "$FastMath.log10", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "int", "$FastMath.int", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "long", "$FastMath.long", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "float", "$FastMath.float", rt_intrin_Fast_math, 1, {"x"}},
+	{"$FastMath", "double", "$FastMath.double", rt_intrin_Fast_math, 1, {"x"}},
 	{"String",	"from",		"String.from",		rt_intrin_String_from,		1, {"val"}},
 	{"String",	"charCount",	"String.charCount",	rt_intrin_String_charCount,	1, {"s"}},
 	{"String",	"charAt",	"String.charAt",	rt_intrin_String_charAt,	2, {"s", "index"}},
@@ -216,8 +250,210 @@ rt_register_intrinsics(
 	    !om_freeze_dict(env, &pkg) ||
 	    !rt_mark_global_const(env, "Float"))
 		return false;
+	if (!rt_register_accel_intrinsics(env))
+		return false;
 
 	return true;
+}
+
+static bool
+rt_intrin_Fast_index(NoctEnv *env, int rank)
+{
+	int axis;
+	uint64_t offset;
+	NoctValue ret;
+
+	offset = 0;
+	for (axis = 0; axis < rank; axis++) {
+		NoctValue index_value;
+		NoctValue extent_value;
+		int64_t index;
+		int64_t extent;
+
+		if (!noct_get_arg(env, (uint32_t)(axis * 2), &index_value) ||
+		    !noct_get_arg(env, (uint32_t)(axis * 2 + 1), &extent_value))
+			return false;
+		if (index_value.type == NOCT_VALUE_INT)
+			index = index_value.val.i;
+		else if (index_value.type == NOCT_VALUE_LONG)
+			index = index_value.val.l;
+		else {
+			noct_error(env, "A __fast array index must be int or long.");
+			return false;
+		}
+		if (extent_value.type == NOCT_VALUE_INT)
+			extent = extent_value.val.i;
+		else if (extent_value.type == NOCT_VALUE_LONG)
+			extent = extent_value.val.l;
+		else {
+			noct_error(env, "A __fast shape extent must be int or long.");
+			return false;
+		}
+		if (extent <= 0 || index < 0 || index >= extent) {
+			noct_error(env, "Index out of bounds.");
+			return false;
+		}
+		if (offset > ((uint64_t)INT64_MAX - (uint64_t)index) /
+			     (uint64_t)extent) {
+			noct_error(env, "__fast row-major index overflow.");
+			return false;
+		}
+		offset = offset * (uint64_t)extent + (uint64_t)index;
+	}
+	ret.type = NOCT_VALUE_LONG;
+	ret.val.l = (int64_t)offset;
+	return noct_set_return(env, &ret);
+}
+
+static bool rt_intrin_Fast_index2(NoctEnv *env) { return rt_intrin_Fast_index(env, 2); }
+static bool rt_intrin_Fast_index3(NoctEnv *env) { return rt_intrin_Fast_index(env, 3); }
+static bool rt_intrin_Fast_index4(NoctEnv *env) { return rt_intrin_Fast_index(env, 4); }
+static bool rt_intrin_Fast_index5(NoctEnv *env) { return rt_intrin_Fast_index(env, 5); }
+static bool rt_intrin_Fast_index6(NoctEnv *env) { return rt_intrin_Fast_index(env, 6); }
+static bool rt_intrin_Fast_index7(NoctEnv *env) { return rt_intrin_Fast_index(env, 7); }
+static bool rt_intrin_Fast_index8(NoctEnv *env) { return rt_intrin_Fast_index(env, 8); }
+
+static bool
+rt_fast_numeric_double(NoctEnv *env, uint32_t index, NoctValue *value,
+		       double *number)
+{
+	if (!noct_get_arg(env, index, value)) return false;
+	switch (value->type) {
+	case NOCT_VALUE_INT: *number = (double)value->val.i; break;
+	case NOCT_VALUE_LONG: *number = (double)value->val.l; break;
+	case NOCT_VALUE_FLOAT: *number = (double)value->val.f; break;
+	case NOCT_VALUE_DOUBLE: *number = value->val.lf; break;
+	default:
+		noct_error(env, "A __fast numeric intrinsic requires numeric arguments.");
+		return false;
+	}
+	return true;
+}
+
+static double
+rt_fast_minmax_double(double a, double b, bool maximum)
+{
+	if (a != a) return b;
+	if (b != b) return a;
+	if (a == 0.0 && b == 0.0) {
+		bool a_negative;
+		bool b_negative;
+		a_negative = 1.0 / a < 0.0;
+		b_negative = 1.0 / b < 0.0;
+		if (maximum)
+			return a_negative && !b_negative ? b : a;
+		return !a_negative && b_negative ? b : a;
+	}
+	return maximum ? (a > b ? a : b) : (a < b ? a : b);
+}
+
+static bool
+rt_intrin_Fast_math(NoctEnv *env)
+{
+	const char *name;
+	NoctValue a, b, ret;
+	double x, y, z;
+
+	name = env->frame->func->name;
+	if (strncmp(name, "$FastMath.", 10) == 0) name += 10;
+	if (!rt_fast_numeric_double(env, 0, &a, &x)) return false;
+	memset(&ret, 0, sizeof(ret));
+	if (strcmp(name, "int") == 0) {
+		ret.type = NOCT_VALUE_INT; ret.val.i = (int32_t)x;
+		return noct_set_return(env, &ret);
+	}
+	if (strcmp(name, "long") == 0) {
+		ret.type = NOCT_VALUE_LONG; ret.val.l = (int64_t)x;
+		return noct_set_return(env, &ret);
+	}
+	if (strcmp(name, "float") == 0) {
+		ret.type = NOCT_VALUE_FLOAT; ret.val.f = (float)x;
+		return noct_set_return(env, &ret);
+	}
+	if (strcmp(name, "double") == 0) {
+		ret.type = NOCT_VALUE_DOUBLE; ret.val.lf = x;
+		return noct_set_return(env, &ret);
+	}
+	if (strcmp(name, "abs") == 0) {
+		ret.type = a.type;
+		if (a.type == NOCT_VALUE_INT)
+			ret.val.i = a.val.i < 0 ?
+				(int32_t)(0U - (uint32_t)a.val.i) : a.val.i;
+		else if (a.type == NOCT_VALUE_LONG)
+			ret.val.l = a.val.l < 0 ?
+				(int64_t)(0ULL - (uint64_t)a.val.l) : a.val.l;
+		else if (a.type == NOCT_VALUE_FLOAT)
+			ret.val.f = (float)fabs((double)a.val.f);
+		else if (a.type == NOCT_VALUE_DOUBLE)
+			ret.val.lf = fabs(a.val.lf);
+		else return false;
+		return noct_set_return(env, &ret);
+	}
+	if (strcmp(name, "min") == 0 || strcmp(name, "max") == 0 ||
+	    strcmp(name, "atan2") == 0) {
+		if (!rt_fast_numeric_double(env, 1, &b, &y)) return false;
+		if (a.type != b.type) {
+			noct_error(env, "A __fast binary intrinsic requires operands of the same type.");
+			return false;
+		}
+		if (strcmp(name, "atan2") == 0) {
+			if (a.type == NOCT_VALUE_FLOAT) {
+				ret.type = NOCT_VALUE_FLOAT;
+				ret.val.f = (float)atan2((double)a.val.f,
+						       (double)b.val.f);
+			} else if (a.type == NOCT_VALUE_DOUBLE) {
+				ret.type = NOCT_VALUE_DOUBLE;
+				ret.val.lf = atan2(a.val.lf, b.val.lf);
+			} else {
+				noct_error(env, "atan2() requires float or double operands.");
+				return false;
+			}
+			return noct_set_return(env, &ret);
+		}
+		ret.type = a.type;
+		if (a.type == NOCT_VALUE_INT)
+			ret.val.i = strcmp(name, "min") == 0 ?
+				(a.val.i < b.val.i ? a.val.i : b.val.i) :
+				(a.val.i > b.val.i ? a.val.i : b.val.i);
+		else if (a.type == NOCT_VALUE_LONG)
+			ret.val.l = strcmp(name, "min") == 0 ?
+				(a.val.l < b.val.l ? a.val.l : b.val.l) :
+				(a.val.l > b.val.l ? a.val.l : b.val.l);
+		else if (a.type == NOCT_VALUE_FLOAT)
+			ret.val.f = (float)rt_fast_minmax_double(
+				(double)a.val.f, (double)b.val.f,
+				strcmp(name, "max") == 0);
+		else if (a.type == NOCT_VALUE_DOUBLE)
+			ret.val.lf = rt_fast_minmax_double(a.val.lf, b.val.lf,
+				strcmp(name, "max") == 0);
+		else return false;
+		return noct_set_return(env, &ret);
+	}
+	if (a.type != NOCT_VALUE_FLOAT && a.type != NOCT_VALUE_DOUBLE) {
+		noct_error(env, "A __fast transcendental intrinsic requires float or double.");
+		return false;
+	}
+	if (strcmp(name, "sqrt") == 0) z = sqrt(x);
+	else if (strcmp(name, "sin") == 0) z = sin(x);
+	else if (strcmp(name, "cos") == 0) z = cos(x);
+	else if (strcmp(name, "tan") == 0) z = tan(x);
+	else if (strcmp(name, "asin") == 0) z = asin(x);
+	else if (strcmp(name, "acos") == 0) z = acos(x);
+	else if (strcmp(name, "atan") == 0) z = atan(x);
+	else if (strcmp(name, "exp") == 0) z = exp(x);
+	else if (strcmp(name, "ln") == 0) z = log(x);
+	else if (strcmp(name, "log2") == 0) z = log(x) / log(2.0);
+	else if (strcmp(name, "log10") == 0) z = log10(x);
+	else {
+		noct_error(env, "Unknown __fast numeric intrinsic.");
+		return false;
+	}
+	if (a.type == NOCT_VALUE_FLOAT) {
+		ret.type = NOCT_VALUE_FLOAT; ret.val.f = (float)z;
+	} else {
+		ret.type = NOCT_VALUE_DOUBLE; ret.val.lf = z;
+	}
+	return noct_set_return(env, &ret);
 }
 
 /*

@@ -21,5 +21,11 @@ func main() {
     print(l != 2.5lf);
     if (l != 4999999999) { print("ne"); } else { print("eq"); }
 
+    // long LHS with > must read the full 64-bit payload for every RHS type.
+    print(l > 2000000000);
+    print(l > 4000000000);
+    print(l > 4000000000.0);
+    print(l > 4000000000.0lf);
+
     return 0;
 }

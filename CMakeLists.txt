@@ -20,6 +20,7 @@ option(NOCT_ENABLE_API            "Enable standard API"                   OFF)
 option(NOCT_ENABLE_API_SYSTEM     "Enable the System standard API"        OFF)
 option(NOCT_ENABLE_API_CONSOLE    "Enable the Console standard API"       OFF)
 option(NOCT_ENABLE_API_FILE       "Enable the File standard API"          OFF)
+option(NOCT_ENABLE_MODEL_WEIGHTS  "Enable immutable NWT1 model weights"   OFF)
 option(NOCT_ENABLE_API_THREAD     "Enable the Thread standard API"        OFF)
 option(NOCT_ENABLE_API_HTTPSERVER "Enable the HttpServer standard API"    OFF)
 option(NOCT_ENABLE_API_TERM       "Enable the Term non-standard API"      OFF)
@@ -32,6 +33,8 @@ option(NOCT_ENABLE_ELBACKEND      "Enable Emacs Lisp backend"             OFF)
 option(NOCT_ENABLE_SCMBACKEND     "Enable Scheme backend"                 OFF)
 option(NOCT_ENABLE_REPL           "Enable reusable REPL and CLI mode"     OFF)
 option(NOCT_ENABLE_OPTIMIZER      "Enable the HIR optimizer"              OFF)
+option(NOCT_ENABLE_ACCEL_VULKAN   "Enable the Vulkan compute accelerator" OFF)
+option(NOCT_ENABLE_ACCEL_OPENGL   "Enable the OpenGL compute accelerator" OFF)
 option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
 
 #
@@ -160,7 +163,17 @@ set(
   src/core/parser.tab.c    # Parser
   src/core/ast.c           # AST construction (called from parser)
   src/core/module.c        # Source module search path and resolver
+  src/core/accel_ops.c     # Stable compiler-only raw GPU operation registry
+  src/core/accel_program.c # Owned multi-kernel accelerator descriptors
+  src/core/fast.c          # __fast function type and shape contracts
   src/core/hir.c           # HIR (AST->HIR construction)
+  src/core/hir_loop_analyze.c # Target-neutral loop effect analysis
+  src/core/hir_doall.c      # Target-neutral DOALL classification
+  src/core/hir_dosum.c      # Target-neutral additive reduction analysis
+  src/core/hir_opt_accel.c # Mandatory accel extraction (all optimization levels)
+  src/core/hir_gpu.c       # Mandatory raw GPU validation/GLSL extraction
+  src/core/gpu_ir.c        # Shared typed GPU kernel IR and validation
+  src/core/gpu_glsl.c      # Deterministic GLSL emission from GPU IR
   src/core/lir.c           # LIR (HIR->LIR construction)
   src/core/noct.c          # Public functions
   src/core/runtime.c       # Runtime main part
@@ -169,6 +182,7 @@ set(
   src/core/execution.c     # Runtime execution helper part
   src/core/gc.c            # Runtime GC part
   src/core/intrinsics.c    # Intrinsics
+  src/api/accel.c          # Accelerator common runtime and CPU fallback
   src/api/regex.c          # Regex engine (used by the Regex.* intrinsics)
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
@@ -183,6 +197,27 @@ if(NOCT_ENABLE_OPTIMIZER)
     src/core/hir_opt_cse.c   # HIR optimizer (CSE pass)
     src/core/hir_opt_typed.c # HIR optimizer (Stage B type lattice)
   )
+endif()
+
+if(NOCT_ENABLE_ACCEL_VULKAN)
+  if(NOT (WIN32 OR UNIX) OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_VULKAN is supported only on desktop Windows/Linux builds")
+  endif()
+  find_package(Vulkan REQUIRED)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+  list(APPEND NOCT_BASE_SOURCE src/api/accel_vulkan.c)
+  add_definitions(-DNOCT_USE_ACCEL_VULKAN=1)
+endif()
+
+if(NOCT_ENABLE_ACCEL_OPENGL)
+  if(NOT UNIX OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_OPENGL currently requires a desktop Unix build")
+  endif()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(EPOXY REQUIRED IMPORTED_TARGET epoxy)
+  list(APPEND NOCT_BASE_SOURCE src/api/accel_opengl.c)
+  add_definitions(-DNOCT_USE_ACCEL_OPENGL=1)
 endif()
 
 # Determine the object model source file.
@@ -288,9 +323,17 @@ endif()
 if(NOCT_ENABLE_API_CONSOLE)
   list(APPEND NOCT_API_SOURCE src/api/api-console.c)
 endif()
+if(NOCT_ENABLE_MODEL_WEIGHTS AND NOT NOCT_ENABLE_API_FILE)
+  message(FATAL_ERROR "NOCT_ENABLE_MODEL_WEIGHTS requires NOCT_ENABLE_API_FILE=ON")
+endif()
 if(NOCT_ENABLE_API_FILE)
   list(APPEND NOCT_API_SOURCE src/api/api-file.c)
+  list(APPEND NOCT_API_SOURCE src/api/api-binary.c)
+  list(APPEND NOCT_API_SOURCE src/core/sha256.c)
   list(APPEND NOCT_API_SOURCE src/api/jisx0208.c)
+  if(NOCT_ENABLE_MODEL_WEIGHTS)
+    list(APPEND NOCT_API_SOURCE src/api/api-weights.c)
+  endif()
 endif()
 if(NOCT_ENABLE_API_THREAD AND NOCT_ENABLE_MULTITHREAD)
   list(APPEND NOCT_API_SOURCE src/api/api-thread.c)
@@ -479,6 +522,11 @@ if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
   target_compile_definitions(noctapi PRIVATE NOCT_USE_PROCESS)
 endif()
 
+if(NOCT_ENABLE_API AND NOCT_ENABLE_MODEL_WEIGHTS)
+  target_compile_definitions(noct PRIVATE NOCT_USE_MODEL_WEIGHTS)
+  target_compile_definitions(noctapi PRIVATE NOCT_USE_MODEL_WEIGHTS)
+endif()
+
 # ---
 
 #
@@ -517,6 +565,14 @@ endif()
 if(    NOT MSVC
    AND NOT CMAKE_C_COMPILER_ID MATCHES "Watcom")
   target_link_libraries(noct PUBLIC m)
+endif()
+
+if(NOCT_ENABLE_ACCEL_VULKAN)
+  target_link_libraries(noct PUBLIC Vulkan::Vulkan PkgConfig::SHADERC)
+endif()
+
+if(NOCT_ENABLE_ACCEL_OPENGL)
+  target_link_libraries(noct PUBLIC PkgConfig::EPOXY)
 endif()
 
 if(NOCT_ENABLE_I18N_INTL)

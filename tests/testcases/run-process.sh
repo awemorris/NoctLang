@@ -1,9 +1,10 @@
 #!/bin/sh
 set -eu
+NOCT=${NOCT:-../../build-mt-debug/noct}
 echo 'Process API tests'
 for tc in process/*.noct; do
     echo "$tc"
-    ../../build-mt-debug/noct -j0 "$tc" > out
+    "$NOCT" -j0 "$tc" > out
     diff "$tc.out" out
 done
 rm -f out

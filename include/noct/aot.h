@@ -51,6 +51,25 @@ bool
 init_aot_code(
 	NoctEnv *env);
 
+/* Restore compiler-only metadata after registering a translated function. */
+NOCT_DLL
+bool
+noct_ex_mark_accel_func(
+	NoctFunc *func);
+
+/* Restore a generated __fast function's caller-side contract. */
+NOCT_DLL
+bool
+noct_ex_mark_fast_func(
+	NoctFunc *func,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *rank,
+	const int *extent_kind,
+	const int64_t *extent_value);
+
 /*
  * AOT Execution Helpers
  *

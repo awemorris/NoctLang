@@ -120,6 +120,28 @@ compile_app(int argc, char *argv[], int first)
 			}
 		}
 	}
+	/* Collect all public __fast contracts before compiling any body.  This
+	 * makes direct calls independent of explicit input order and scans require
+	 * dependencies without executing their initializers. */
+	for (i = first + 1; i < argc; i++) {
+		char *source_data;
+		size_t source_length;
+		if (strcmp(output, argv[i]) == 0) {
+			printf("Noct App output and input paths must differ.\n");
+			noct_bcback_app_abort();
+			return false;
+		}
+		if (!load_file_content(argv[i], &source_data, &source_length)) {
+			noct_bcback_app_abort();
+			return false;
+		}
+		if (!noct_bcback_app_scan_source(argv[i], source_data)) {
+			free(source_data);
+			noct_bcback_app_abort();
+			return false;
+		}
+		free(source_data);
+	}
 	for (i = first + 1; i < argc; i++) {
 		char *source_data;
 		size_t source_length;

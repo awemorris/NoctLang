@@ -1438,3 +1438,19 @@ extern size_t noct_conf_gc_lop_threshold = 32 * 1024;
 ```
 size_t noct_conf_gc_promotion_threshold = 2;
 ```
+
+## Raw GPU model execution
+
+`NoctConfig` selects accelerator execution with `accel_enable` and
+`accel_backend`.  Backend constants are `NOCT_ACCEL_BACKEND_NONE`,
+`NOCT_ACCEL_BACKEND_VULKAN`, and `NOCT_ACCEL_BACKEND_OPENGL`.  The completed
+ONNX model gate is OpenGL; selecting a constant does not imply that an optional
+backend has passed the raw-model ladder.
+
+Generated ONNX packages are ordinary Noct modules/apps and use the public
+model functions documented in `docs/library.md`.  A host embedding the VM must
+provide the explicit external NWT1 path to `modelInitialize`, keep input and
+output as distinct exact-size `Packed.float32` values, and treat inference as
+synchronous and non-reentrant.  Backend failure is returned as a VM error;
+there is no generated C inference path, DNN runtime, or CPU replay.  The C,
+Elisp, and Scheme source translators reject raw `__gpu func` model source.

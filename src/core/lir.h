@@ -13,6 +13,8 @@
 #define NOCT_LIR_H
 
 #include <noct/noct.h>
+#include "accel.h"
+#include "fast.h"
 
 #define LIR_PARAM_SIZE		32
 
@@ -38,6 +40,9 @@ struct lir_func {
 	int param_packed_type[LIR_PARAM_SIZE];
 	/* rpacked* source annotation. */
 	bool param_restricted[LIR_PARAM_SIZE];
+	int param_accel_access[LIR_PARAM_SIZE];
+	int param_accel_transport[LIR_PARAM_SIZE];
+	unsigned int param_accel_effect[LIR_PARAM_SIZE];
 	/* Optional declared return tag and packed element kind. */
 	int return_type;
 	int return_packed_type;
@@ -45,6 +50,11 @@ struct lir_func {
 	bool return_type_checked;
 	/* Bytecode contains at least one OP_V* instruction. */
 	bool has_vector_ops;
+	bool is_accel;
+	int func_kind;
+	struct fast_signature fast_signature;
+	struct accel_kernel *accel_kernel;
+	struct accel_program *accel_program;
 	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
 	bool has_fma_ops;
 	uint32_t tmpvar_size;

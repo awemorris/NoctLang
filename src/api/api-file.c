@@ -8,6 +8,9 @@
 /* API: File.* */
 
 #include <noct/noct.h>
+#include "runtime.h"
+#include "objectmodel.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +48,8 @@ static bool cfunc_File_tell(NoctEnv *env);
 static bool cfunc_File_seek(NoctEnv *env);
 static bool cfunc_File_read(NoctEnv *env);
 static bool cfunc_File_write(NoctEnv *env);
+static bool cfunc_File_readExact(NoctEnv *env);
+static bool cfunc_File_writeAll(NoctEnv *env);
 static void file_finalizer(void *native_pointer);
 static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
 static bool cfunc_FileUtil_listDirectory(NoctEnv *env);
@@ -59,6 +64,22 @@ static bool cfunc_FileUtil_tryWriteText(NoctEnv *env);
 static bool cfunc_FileUtil_tryReadText(NoctEnv *env);
 static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
 static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
+static bool cfunc_FileUtil_makeDirectoryExclusive(NoctEnv *env);
+
+bool noct_register_api_binary(NoctEnv *env);
+#if defined(NOCT_USE_MODEL_WEIGHTS)
+bool noct_register_api_weights(NoctEnv *env);
+#endif
+
+#define FILE_HANDLE_MAGIC 0x4e46494cU
+
+struct file_handle {
+	uint32_t magic;
+	struct rt_vm *owner;
+	FILE *file;
+	bool closed;
+};
+
 static bool cfunc_FileUtil_mmap8(NoctEnv *env);
 static bool cfunc_FileUtil_mmap16(NoctEnv *env);
 static bool cfunc_FileUtil_mmap32(NoctEnv *env);
@@ -212,6 +233,8 @@ static struct ffi_item ffi_items[] = {
 	{"File.seek",	"File", "seek",		2, {"file", "offset"},	cfunc_File_seek},
 	{"File.read",	"File", "read",		2, {"file", "len"},	cfunc_File_read},
 	{"File.write",	"File", "write",	4, {"file", "data", "offset", "size"},	cfunc_File_write},
+	{"File.readExact", "File", "readExact", 2, {"file", "byteCount"}, cfunc_File_readExact},
+	{"File.writeAll", "File", "writeAll", 4, {"file", "bytes", "byteOffset", "byteCount"}, cfunc_File_writeAll},
 
 	{"FileUtil.checkFileExists",	"FileUtil", "checkFileExists",	1, {"path"},		cfunc_FileUtil_checkFileExists},
 	{"FileUtil.listDirectory",	"FileUtil", "listDirectory",	1, {"path"},		cfunc_FileUtil_listDirectory},
@@ -226,6 +249,7 @@ static struct ffi_item ffi_items[] = {
 	{"FileUtil.tryReadText",	"FileUtil", "tryReadText",	1, {"path"},		cfunc_FileUtil_tryReadText},
 	{"FileUtil.readForEachLine",	"FileUtil", "readForEachLine",	2, {"path", "func"},	cfunc_FileUtil_readForEachLine},
 	{"FileUtil.writeForEachLine",	"FileUtil", "writeForEachLine",	2, {"path", "lines"},	cfunc_FileUtil_writeForEachLine},
+	{"FileUtil.makeDirectoryExclusive", "FileUtil", "makeDirectoryExclusive", 1, {"path"}, cfunc_FileUtil_makeDirectoryExclusive},
 	{"FileUtil.mmap8",		"FileUtil", "mmap8",		5, {"path", "offset", "size", "allow_read", "allow_write"}, cfunc_FileUtil_mmap8},
 	{"FileUtil.mmap16",		"FileUtil", "mmap16",		5, {"path", "offset", "size", "allow_read", "allow_write"}, cfunc_FileUtil_mmap16},
 	{"FileUtil.mmap32",		"FileUtil", "mmap32",		5, {"path", "offset", "size", "allow_read", "allow_write"}, cfunc_FileUtil_mmap32},
@@ -260,6 +284,12 @@ noct_register_api_file(NoctEnv *env)
 					     ffi_items[i].field_name, &funcval))
 			return false;
 	}
+	if (!noct_register_api_binary(env))
+		return false;
+#if defined(NOCT_USE_MODEL_WEIGHTS)
+	if (!noct_register_api_weights(env))
+		return false;
+#endif
 	return true;
 }
 
@@ -669,23 +699,48 @@ cleanup:
 static bool
 get_file(NoctEnv *env, NoctValue *value, FILE **file)
 {
+	struct file_handle *handle;
+	void *native_pointer;
 	void (*finalizer)(void *);
 
-	if (!noct_get_dict_native_pointer(env, value, (void **)file,
+	if (!noct_get_dict_native_pointer(env, value, &native_pointer,
 					  &finalizer))
 		return false;
-	if (*file == NULL) {
+	if (finalizer != file_finalizer || native_pointer == NULL) {
+		noct_error(env, N_TR("File handle kind mismatch."));
+		return false;
+	}
+	handle = (struct file_handle *)native_pointer;
+	if (handle->magic != FILE_HANDLE_MAGIC) {
+		noct_error(env, N_TR("File handle is invalid."));
+		return false;
+	}
+	if (handle->owner != env->vm) {
+		noct_error(env, N_TR("File handle belongs to a different VM."));
+		return false;
+	}
+	if (handle->closed || handle->file == NULL) {
 		noct_error(env, N_TR("File is closed."));
 		return false;
 	}
+	*file = handle->file;
 	return true;
 }
 
 static void
 file_finalizer(void *native_pointer)
 {
-	if (native_pointer != NULL)
-		(void)fclose((FILE *)native_pointer);
+	struct file_handle *handle;
+	handle = (struct file_handle *)native_pointer;
+	if (handle == NULL) return;
+	if (handle->magic == FILE_HANDLE_MAGIC) {
+		if (!handle->closed && handle->file != NULL)
+			(void)fclose(handle->file);
+		handle->file = NULL;
+		handle->closed = true;
+		handle->magic = 0;
+	}
+	noct_free(handle);
 }
 
 static bool
@@ -693,6 +748,7 @@ cfunc_File_open(NoctEnv *env)
 {
 	NoctValue path, mode, ret;
 	const char *path_s, *mode_s;
+	struct file_handle *handle = NULL;
 	FILE *file = NULL;
 	bool installed = false;
 	bool ok = false;
@@ -712,8 +768,17 @@ cfunc_File_open(NoctEnv *env)
 		noct_error(env, N_TR("Cannot open file %s."), path_s);
 		goto cleanup;
 	}
+	handle = noct_malloc(sizeof(*handle));
+	if (handle == NULL) {
+		noct_error(env, N_TR("Out of memory."));
+		goto cleanup;
+	}
+	handle->magic = FILE_HANDLE_MAGIC;
+	handle->owner = env->vm;
+	handle->file = file;
+	handle->closed = false;
 	if (!noct_make_empty_dict(env, &ret) ||
-	    !noct_set_dict_native_pointer(env, &ret, file, file_finalizer))
+	    !noct_set_dict_native_pointer(env, &ret, handle, file_finalizer))
 		goto cleanup;
 	installed = true;
 	if (!noct_set_return(env, &ret))
@@ -728,8 +793,10 @@ cleanup:
 		 * fclose on a native pointer that is still reachable by the VM.
 		 */
 		if (!installed ||
-		    noct_set_dict_native_pointer(env, &ret, NULL, NULL))
+		    noct_set_dict_native_pointer(env, &ret, NULL, NULL)) {
 			(void)fclose(file);
+			if (handle != NULL) noct_free(handle);
+		}
 	}
 	(void)noct_unpin_local(env, 3, &path, &mode, &ret);
 	return ok;
@@ -739,6 +806,9 @@ static bool
 cfunc_File_close(NoctEnv *env)
 {
 	NoctValue file_value, ret;
+	struct file_handle *handle;
+	void *native_pointer;
+	void (*finalizer)(void *);
 	FILE *file;
 	bool ok = false;
 
@@ -747,18 +817,143 @@ cfunc_File_close(NoctEnv *env)
 	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
 	    !get_file(env, &file_value, &file))
 		goto cleanup;
-	/* Clear the finalizer before fclose frees the native stream. */
-	if (!noct_set_dict_native_pointer(env, &file_value, NULL, NULL))
+	if (!noct_get_dict_native_pointer(env, &file_value, &native_pointer,
+					  &finalizer))
 		goto cleanup;
+	handle = (struct file_handle *)native_pointer;
+	if (finalizer != file_finalizer || handle == NULL ||
+	    handle->magic != FILE_HANDLE_MAGIC) {
+		noct_error(env, N_TR("File handle kind mismatch."));
+		goto cleanup;
+	}
 	if (fclose(file) != 0) {
+		handle->file = NULL;
+		handle->closed = true;
 		noct_error(env, N_TR("File close error."));
 		goto cleanup;
 	}
+	handle->file = NULL;
+	handle->closed = true;
 	if (!noct_set_return_make_int(env, &ret, 0))
 		goto cleanup;
 	ok = true;
 cleanup:
 	(void)noct_unpin_local(env, 2, &file_value, &ret);
+	return ok;
+}
+
+static bool
+cfunc_File_readExact(NoctEnv *env)
+{
+	NoctValue file_value, count_value, ret;
+	FILE *file;
+	size_t count, actual;
+	void *buffer;
+	bool ok;
+	buffer = NULL; ok = false;
+	if (!noct_pin_local(env, 3, &file_value, &count_value, &ret)) return false;
+	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
+	    !noct_get_arg_check_int_long(env, 1, &count_value, &count) ||
+	    !get_file(env, &file_value, &file)) goto cleanup;
+	if ((count_value.type == NOCT_VALUE_INT && count_value.val.i < 0) ||
+	    (count_value.type == NOCT_VALUE_LONG && count_value.val.l < 0) ||
+	    count == 0) {
+		noct_error(env, N_TR("Exact read byte count must be positive."));
+		goto cleanup;
+	}
+	if (!noct_make_packed(env, &ret, NOCT_PACKED_UINT8,
+			      count, count, NULL, NULL, NULL) ||
+	    !noct_get_packed_pointer(env, &ret, &buffer)) goto cleanup;
+	actual = fread(buffer, 1, count, file);
+	if (actual != count) {
+		if (ferror(file)) noct_error(env, N_TR("File read error."));
+		else noct_error(env, N_TR("Unexpected end of file."));
+		goto cleanup;
+	}
+	if (!noct_set_return(env, &ret)) goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+	return ok;
+}
+
+static bool
+cfunc_File_writeAll(NoctEnv *env)
+{
+	NoctValue file_value, bytes_value, offset_value, count_value, ret;
+	FILE *file;
+	void *pointer;
+	size_t size, offset, count, written, actual;
+	bool ok;
+	ok = false;
+	if (!noct_pin_local(env, 5, &file_value, &bytes_value, &offset_value,
+			    &count_value, &ret)) return false;
+	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
+	    !noct_get_arg_check_packed(env, 1, &bytes_value, NOCT_PACKED_UINT8) ||
+	    !noct_get_arg_check_int_long(env, 2, &offset_value, &offset) ||
+	    !noct_get_arg_check_int_long(env, 3, &count_value, &count) ||
+	    !get_file(env, &file_value, &file) ||
+	    !noct_get_packed_size(env, &bytes_value, &size) ||
+	    !noct_get_packed_pointer(env, &bytes_value, &pointer)) goto cleanup;
+	if ((offset_value.type == NOCT_VALUE_INT && offset_value.val.i < 0) ||
+	    (offset_value.type == NOCT_VALUE_LONG && offset_value.val.l < 0) ||
+	    (count_value.type == NOCT_VALUE_INT && count_value.val.i < 0) ||
+	    (count_value.type == NOCT_VALUE_LONG && count_value.val.l < 0) ||
+	    offset > size || count > size - offset) {
+		noct_error(env, N_TR("File.writeAll range is out-of-bounds."));
+		goto cleanup;
+	}
+	written = 0;
+	while (written < count) {
+		actual = fwrite((const uint8_t *)pointer + offset + written,
+				1, count - written, file);
+		if (actual == 0) {
+			noct_error(env, N_TR("File write error."));
+			goto cleanup;
+		}
+		written += actual;
+	}
+	if (!noct_set_return_make_int(env, &ret, 0)) goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 5, &file_value, &bytes_value, &offset_value,
+			       &count_value, &ret);
+	return ok;
+}
+
+static bool
+cfunc_FileUtil_makeDirectoryExclusive(NoctEnv *env)
+{
+	NoctValue path_value, ret;
+	const char *path;
+	int result;
+	bool ok;
+	ok = false;
+	if (!noct_pin_local(env, 2, &path_value, &ret)) return false;
+	if (!noct_get_arg_check_string(env, 0, &path_value, &path)) goto cleanup;
+	if (path[0] == '\0') {
+		noct_error(env, N_TR("Directory path must not be empty."));
+		goto cleanup;
+	}
+#if defined(NOCT_TARGET_WINDOWS) || defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98DOS)
+	result = _mkdir(path);
+#elif defined(NOCT_TARGET_POSIX)
+	result = mkdir(path, 0777);
+#else
+	result = -1;
+	errno = ENOSYS;
+#endif
+	if (result != 0) {
+		if (errno == EEXIST)
+			noct_error(env, N_TR("Output directory already exists."));
+		else
+			noct_error(env, N_TR("Cannot create output directory %s."), path);
+		goto cleanup;
+	}
+	if (!noct_set_return_make_int(env, &ret, 0)) goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &path_value, &ret);
 	return ok;
 }
 

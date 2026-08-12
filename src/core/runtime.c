@@ -42,6 +42,10 @@ static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
+static bool rt_read_accel_program(struct rt_env *env, uint8_t *data,
+				  size_t size, uint32_t *pos,
+				  struct lir_func *lfunc,
+				  const char **next_line);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_report_jit_result(struct rt_func *func, bool success);
 static void rt_commit_jit(struct rt_env *env);
@@ -88,12 +92,22 @@ struct rt_module {
 static bool rt_register_source_internal(struct rt_env *env,
 					const char *file_name,
 					const char *source_text,
-					struct rt_module *module);
+					struct rt_module *module,
+					bool prepare_fast_prototypes);
 static struct rt_module *rt_find_module(struct rt_vm *vm, const char *key);
 static struct rt_module *rt_add_module(struct rt_env *env, char *key,
 				       char *logical_name);
 static void rt_remove_module(struct rt_vm *vm, struct rt_module *module);
 static void rt_cleanup_modules(struct rt_vm *vm);
+
+#define RT_FAST_SCAN_MAX 256
+struct rt_fast_scan_context {
+	char *key[RT_FAST_SCAN_MAX];
+	uint32_t count;
+};
+static bool rt_prepare_fast_prototypes(struct rt_env *env,
+				       const char *file_name,
+				       const char *source_text);
 
 /*
  * Initialization
@@ -193,6 +207,7 @@ rt_destroy_vm(
 	/* Free the JIT region. */
 	if (vm->config.jit_enable)
 		jit_free(vm->env_list);
+	accel_runtime_cleanup(vm);
 
 	/* Free global variables. */
 	rt_cleanup_global(vm->env_list);
@@ -314,6 +329,8 @@ rt_free_func(
 	}
 	noct_free(func->file_name);
 	noct_free(func->bytecode);
+	accel_kernel_free(func->accel_kernel);
+	accel_program_free(func->accel_program);
 
 	if (func->jit_code != NULL)
 		func->jit_code = NULL;
@@ -462,6 +479,152 @@ rt_detach_thread_env(
  * Compilation
  */
 
+static bool
+rt_fast_scan_seen(struct rt_fast_scan_context *context, const char *key)
+{
+	uint32_t i;
+
+	for (i = 0; i < context->count; i++)
+		if (strcmp(context->key[i], key) == 0)
+			return true;
+	return false;
+}
+
+static bool
+rt_fast_scan_source(struct rt_env *env, const char *file_name,
+		    const char *source_text,
+		    struct rt_fast_scan_context *context)
+{
+	uint32_t require_count;
+	uint32_t i;
+	char **require_name;
+	bool result;
+
+	require_count = 0;
+	require_name = NULL;
+	result = false;
+	if (!ast_build(file_name, source_text)) {
+		strncpy(env->file_name, ast_get_file_name(), sizeof(env->file_name) - 1);
+		env->line = ast_get_error_line();
+		rt_error(env, "%s", ast_get_error_message());
+		goto cleanup_ast;
+	}
+	if (!hir_fast_prototypes_collect()) {
+		strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
+		env->file_name[sizeof(env->file_name) - 1] = '\0';
+		env->line = hir_get_error_line();
+		rt_error(env, "%s", hir_get_error_message());
+		goto cleanup_ast;
+	}
+	require_count = ast_get_require_count();
+	if (require_count != 0) {
+		require_name = noct_malloc(sizeof(*require_name) * require_count);
+		if (require_name == NULL) {
+			rt_out_of_memory(env);
+			goto cleanup_ast;
+		}
+		memset(require_name, 0, sizeof(*require_name) * require_count);
+		for (i = 0; i < require_count; i++) {
+			require_name[i] = noct_strdup(ast_get_require_name(i));
+			if (require_name[i] == NULL) {
+				rt_out_of_memory(env);
+				goto cleanup_ast;
+			}
+		}
+	}
+	ast_cleanup();
+
+	for (i = 0; i < require_count; i++) {
+		char *physical;
+		char *logical;
+		char *data;
+		struct rt_module *loaded;
+
+		if (!module_resolve(&env->vm->require_path, require_name[i],
+				    &physical, &logical, &data)) {
+			strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
+			env->file_name[sizeof(env->file_name) - 1] = '\0';
+			rt_error(env, "Cannot resolve required module '%s'.",
+				 require_name[i]);
+			goto cleanup_names;
+		}
+		loaded = rt_find_module(env->vm, physical);
+		if (loaded != NULL && loaded->state == RT_MODULE_LOADED) {
+			free(physical);
+			free(logical);
+			free(data);
+			continue;
+		}
+		if (rt_fast_scan_seen(context, physical)) {
+			free(physical);
+			free(logical);
+			free(data);
+			continue;
+		}
+		if (context->count >= RT_FAST_SCAN_MAX) {
+			free(physical);
+			free(logical);
+			free(data);
+			rt_error(env, "The require graph is too large for __fast prototype scanning.");
+			goto cleanup_names;
+		}
+		context->key[context->count++] = physical;
+		if (!rt_fast_scan_source(env, logical, data, context)) {
+			free(logical);
+			free(data);
+			goto cleanup_names;
+		}
+		free(logical);
+		free(data);
+	}
+	result = true;
+	goto cleanup_names;
+
+cleanup_ast:
+	ast_cleanup();
+cleanup_names:
+	for (i = 0; i < require_count; i++)
+		noct_free(require_name != NULL ? require_name[i] : NULL);
+	noct_free(require_name);
+	return result;
+}
+
+static bool
+rt_prepare_fast_prototypes(struct rt_env *env, const char *file_name,
+			   const char *source_text)
+{
+	struct rt_fast_scan_context context;
+	struct rt_func *func;
+	char *root_key;
+	uint32_t i;
+	bool result;
+
+	memset(&context, 0, sizeof(context));
+	hir_fast_prototypes_reset();
+	func = env->vm->func_list;
+	while (func != NULL) {
+		const struct fast_signature *signature;
+		signature = func->func_kind == NOCT_FUNC_FAST ?
+			&func->fast_signature : NULL;
+		if (!hir_fast_prototype_add(func->name, func->func_kind, signature)) {
+			env->line = hir_get_error_line();
+			rt_error(env, "%s", hir_get_error_message());
+			return false;
+		}
+		func = func->next;
+	}
+	root_key = module_path_key(file_name);
+	if (root_key == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	context.key[context.count++] = root_key;
+	result = rt_fast_scan_source(env, file_name, source_text, &context);
+	for (i = 0; i < context.count; i++)
+		free(context.key[i]);
+	return result;
+}
+
 /*
  * Register functions from a souce text.
  */
@@ -506,7 +669,8 @@ rt_register_source(
 		free(logical);
 		return false;
 	}
-	result = rt_register_source_internal(env, file_name, source_text, module);
+	result = rt_register_source_internal(env, file_name, source_text, module,
+					     true);
 	/* A failed registration can still have published earlier functions.
 	 * Keep those pointers executable until registration becomes transactional. */
 	rt_commit_jit(env);
@@ -525,7 +689,8 @@ rt_register_source_internal(
 	struct rt_env *env,
 	const char *file_name,
 	const char *source_text,
-	struct rt_module *module)
+	struct rt_module *module,
+	bool prepare_fast_prototypes)
 {
 	struct hir_block *hfunc;
 	struct lir_func *lfunc;
@@ -539,6 +704,9 @@ rt_register_source_internal(
 	require_count = 0;
 	require_name = NULL;
 	init_func_name[0] = '\0';
+	if (prepare_fast_prototypes &&
+	    !rt_prepare_fast_prototypes(env, file_name, source_text))
+		goto failed;
 
 	do {
 		/* Do parse and build AST. */
@@ -588,7 +756,8 @@ rt_register_source_internal(
 			hfunc = hir_get_function(i);
 			if (!hir_optimize_func(hfunc,
 					       env->vm->config.optimize_level,
-					       env->vm->config.simd_info)) {
+					       env->vm->config.simd_info,
+					       env->vm->config.accel_info)) {
 				rt_error(env, "%s", hir_get_error_message());
 				break;
 			}
@@ -671,7 +840,7 @@ rt_register_source_internal(
 			goto failed;
 		}
 		if (!rt_register_source_internal(env, dependency->logical_name,
-					 data, dependency)) {
+					 data, dependency, false)) {
 			free(data);
 			goto failed;
 		}
@@ -728,11 +897,17 @@ rt_register_lir(
 		func->param_type[i] = -1;
 		func->param_packed_type[i] = -1;
 		func->param_restricted[i] = false;
+		func->param_accel_access[i] = ACCEL_ACCESS_NONE;
+		func->param_accel_transport[i] = ACCEL_TRANSPORT_SCALAR;
+		func->param_accel_effect[i] = ACCEL_EFFECT_NONE;
 	}
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_type[i] = lir->param_type[i];
 		func->param_packed_type[i] = lir->param_packed_type[i];
 		func->param_restricted[i] = lir->param_restricted[i];
+		func->param_accel_access[i] = lir->param_accel_access[i];
+		func->param_accel_transport[i] = lir->param_accel_transport[i];
+		func->param_accel_effect[i] = lir->param_accel_effect[i];
 	}
 	func->return_type = lir->return_type;
 	func->return_packed_type = lir->return_packed_type;
@@ -755,6 +930,19 @@ rt_register_lir(
 	}
 	func->tmpvar_size = lir->tmpvar_size;
 	func->has_vector_ops = lir->has_vector_ops;
+	func->is_accel = lir->is_accel;
+	func->func_kind = lir->func_kind;
+	func->fast_signature = lir->fast_signature;
+	func->accel_kernel = accel_kernel_clone(lir->accel_kernel);
+	if (lir->accel_kernel != NULL && func->accel_kernel == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	func->accel_program = accel_program_clone(lir->accel_program);
+	if (lir->accel_program != NULL && func->accel_program == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
 	func->has_fma_ops = lir->has_fma_ops;
 	func->file_name = noct_strdup(lir->file_name);
 	if (func->file_name == NULL) {
@@ -900,6 +1088,206 @@ rt_register_bytecode(
 
 /* Register a function from bytecode file data. */
 static bool
+rt_read_accel_program(
+	struct rt_env *env,
+	uint8_t *data,
+	size_t size,
+	uint32_t *pos,
+	struct lir_func *lfunc,
+	const char **next_line)
+{
+	struct accel_program *program;
+	struct accel_buffer_desc *buffer;
+	struct accel_kernel *kernel;
+	struct accel_program_step *step;
+	const char *line;
+	unsigned int version, outer_count, expr_count, buffer_count;
+	unsigned int kernel_count, step_count;
+	unsigned int i, j, u0, u1;
+	int source_line, b[16];
+	long long ll0, ll1;
+	unsigned long glsl_size;
+	char validation_error[128];
+
+	UNUSED_PARAMETER(env);
+	program = noct_calloc(1, sizeof(*program));
+	if (program == NULL) return false;
+	line = rt_read_bytecode_line(data, size, pos);
+	if (line == NULL || sscanf(line, "%u %d %u %u %u %u %u", &version,
+		&source_line, &outer_count, &expr_count, &buffer_count,
+		&kernel_count, &step_count) != 7 ||
+	    version != ACCEL_PROGRAM_VERSION || outer_count > NOCT_ARG_MAX ||
+	    expr_count > ACCEL_PROGRAM_MAX_EXPRS ||
+	    buffer_count > ACCEL_PROGRAM_MAX_BUFFERS ||
+	    kernel_count > ACCEL_PROGRAM_MAX_KERNELS ||
+	    step_count > ACCEL_PROGRAM_MAX_STEPS)
+		goto failed;
+	program->descriptor_version = version;
+	program->source_line = source_line;
+	program->outer_param_count = outer_count;
+	program->expr_count = expr_count;
+	program->buffer_count = buffer_count;
+	program->name = noct_strdup(lfunc->func_name);
+	program->source_name = noct_strdup(lfunc->file_name);
+	program->expr = noct_calloc(expr_count, sizeof(*program->expr));
+	program->buffer = noct_calloc(buffer_count, sizeof(*program->buffer));
+	program->kernel = noct_calloc(kernel_count, sizeof(*program->kernel));
+	program->step = noct_calloc(step_count, sizeof(*program->step));
+	if (program->name == NULL || program->source_name == NULL ||
+	    (expr_count != 0 && program->expr == NULL) ||
+	    (buffer_count != 0 && program->buffer == NULL) ||
+	    (kernel_count != 0 && program->kernel == NULL) ||
+	    (step_count != 0 && program->step == NULL)) goto failed;
+	for (i = 0; i < outer_count; i++) {
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || sscanf(line, "%u %d %u %lld %lld", &u0,
+			&program->outer_param_range[i].status, &u1, &ll0, &ll1) != 5)
+			goto failed;
+		program->outer_param_effect[i] = u0;
+		program->outer_param_range[i].has_access = u1 != 0;
+		program->outer_param_range[i].min_offset = (int64_t)ll0;
+		program->outer_param_range[i].max_offset = (int64_t)ll1;
+	}
+	for (i = 0; i < expr_count; i++) {
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || sscanf(line, "%d %d %d %d %lld",
+			&program->expr[i].op, &program->expr[i].left,
+			&program->expr[i].right, &program->expr[i].ref, &ll0) != 5)
+			goto failed;
+		program->expr[i].value = (int64_t)ll0;
+	}
+	for (i = 0; i < buffer_count; i++) {
+		buffer = &program->buffer[i];
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || sscanf(line,
+			"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+			&b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6],
+			&b[7], &b[8], &b[9], &b[10], &b[11], &b[12],
+			&b[13], &b[14], &b[15]) != 16) goto failed;
+		buffer->id=b[0]; buffer->source_line=b[1]; buffer->origin=b[2];
+		buffer->outer_param=b[3]; buffer->element_kind=b[4];
+		buffer->element_width=b[5]; buffer->length_expr=b[6];
+		buffer->read_start_expr=b[7]; buffer->read_end_expr=b[8];
+		buffer->write_start_expr=b[9]; buffer->write_end_expr=b[10];
+		buffer->first_step=b[11]; buffer->last_step=b[12];
+		buffer->initially_defined=b[13]!=0; buffer->upload=b[14]!=0;
+		buffer->download=b[15]!=0;
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || (buffer->name = noct_strdup(line)) == NULL)
+			goto failed;
+	}
+	for (i = 0; i < kernel_count; i++) {
+		kernel = noct_calloc(1, sizeof(*kernel));
+		if (kernel == NULL) goto failed;
+		program->kernel[i] = kernel;
+		program->kernel_count++;
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || sscanf(line, "%u %d %u %d %d %d %d %u",
+			&kernel->descriptor_version, &kernel->func_kind, &u0,
+			&kernel->rejection_reason, &kernel->parallel_mode,
+			&kernel->source_line, &kernel->dispatch_param,
+			&kernel->param_count) != 8 ||
+		    kernel->param_count > NOCT_ARG_MAX) goto failed;
+		kernel->eligible = u0 != 0;
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || (kernel->name = noct_strdup(line)) == NULL)
+			goto failed;
+		kernel->source_name = noct_strdup(lfunc->file_name);
+		if (kernel->source_name == NULL) goto failed;
+		for (j = 0; j < kernel->param_count; j++) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL || sscanf(line, "%d %d %d %u %d %u %lld %lld",
+				&kernel->param_type[j], &kernel->param_packed_type[j],
+				&kernel->param_transport[j], &u0,
+				&kernel->param_range[j].status, &u1, &ll0, &ll1) != 8)
+				goto failed;
+			kernel->param_access[j] = kernel->param_transport[j];
+			kernel->param_effect[j] = u0;
+			kernel->param_range[j].has_access = u1 != 0;
+			kernel->param_range[j].min_offset = (int64_t)ll0;
+			kernel->param_range[j].max_offset = (int64_t)ll1;
+		}
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || sscanf(line, "%u %lu", &kernel->content_hash,
+			&glsl_size) != 2 || glsl_size >= size - *pos) goto failed;
+		kernel->glsl_size = (size_t)glsl_size;
+		kernel->glsl = noct_malloc(kernel->glsl_size + 1);
+		if (kernel->glsl == NULL) goto failed;
+		memcpy(kernel->glsl, data + *pos, kernel->glsl_size);
+		kernel->glsl[kernel->glsl_size] = '\0';
+		*pos += (uint32_t)kernel->glsl_size;
+		if (*pos >= size || data[*pos] != '\n') goto failed;
+		(*pos)++;
+	}
+	for (i = 0; i < step_count; i++) {
+		step = &program->step[i];
+		line = rt_read_bytecode_line(data, size, pos);
+		if (line == NULL || sscanf(line,
+			"%d %d %d %d %d %u %d %d %d %d %d %u", &step->kind,
+			&step->source_line, &step->kernel, &step->fold_kernel,
+			&step->trip_expr, &step->block_size, &step->result_buffer,
+			&step->scratch_buffer, &step->scratch_buffer2,
+			&step->reduction_operator, &step->reduction_type,
+			&step->binding_count) != 12 ||
+		    step->binding_count > NOCT_ARG_MAX) goto failed;
+		for (j = 0; j < step->binding_count; j++) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL || sscanf(line, "%d %d %d",
+				&step->binding[j].kind, &step->binding[j].kernel_param,
+				&step->binding[j].value) != 3) goto failed;
+		}
+	}
+	program->step_count = step_count;
+	line = rt_read_bytecode_line(data, size, pos);
+	if (line == NULL || strcmp(line, "End Accelerator Program") != 0 ||
+	    !accel_program_validate(program, validation_error,
+				    sizeof(validation_error))) goto failed;
+	lfunc->accel_program = program;
+	*next_line = rt_read_bytecode_line(data, size, pos);
+	return true;
+failed:
+	accel_program_free(program);
+	return false;
+}
+
+static bool
+rt_parse_fast_param_line(const char *line, struct fast_param_contract *param)
+{
+	long long value[4 + NOCT_FAST_RANK_MAX * 3];
+	const char *p;
+	char *tail;
+	int i;
+
+	p = line;
+	for (i = 0; i < 4 + NOCT_FAST_RANK_MAX * 3; i++) {
+		while (*p == ' ' || *p == '\t') p++;
+		if (*p == '\0') return false;
+		value[i] = strtoll(p, &tail, 10);
+		if (tail == p) return false;
+		p = tail;
+	}
+	while (*p == ' ' || *p == '\t') p++;
+	if (*p != '\0') return false;
+	param->value_type = (int)value[0];
+	param->packed_type = (int)value[1];
+	param->restricted = value[2] != 0;
+	param->rank = (int)value[3];
+	if (param->rank < 0 || param->rank > NOCT_FAST_RANK_MAX)
+		return false;
+	for (i = 0; i < NOCT_FAST_RANK_MAX; i++) {
+		int n;
+		n = 4 + i * 3;
+		param->extent[i].kind = (int)value[n];
+		param->extent[i].constant = (int64_t)value[n + 1];
+		param->extent[i].param_index = (int)value[n + 2];
+		if (param->extent[i].kind < FAST_EXTENT_NONE ||
+		    param->extent[i].kind > FAST_EXTENT_PARAM)
+			return false;
+	}
+	return true;
+}
+
+static bool
 rt_register_bytecode_function(
 	struct rt_env *env,
 	uint8_t *data,
@@ -913,8 +1301,13 @@ rt_register_bytecode_function(
 	const char *line;
 	uint32_t i;
 	bool succeeded;
+	struct accel_param_range loaded_range[LIR_PARAM_SIZE];
+	int loaded_parallel_mode;
 
 	memset(&lfunc, 0, sizeof(lfunc));
+	fast_signature_init(&lfunc.fast_signature);
+	memset(loaded_range, 0, sizeof(loaded_range));
+	loaded_parallel_mode = ACCEL_PARALLEL_NOT_APPLICABLE;
 	lfunc.file_name = file_name;
 	lfunc.return_type = -1;
 	lfunc.return_packed_type = -1;
@@ -922,6 +1315,9 @@ rt_register_bytecode_function(
 		lfunc.param_type[i] = -1;
 		lfunc.param_packed_type[i] = -1;
 		lfunc.param_restricted[i] = false;
+		lfunc.param_accel_access[i] = ACCEL_ACCESS_NONE;
+		lfunc.param_accel_transport[i] = ACCEL_TRANSPORT_SCALAR;
+		lfunc.param_accel_effect[i] = ACCEL_EFFECT_NONE;
 	}
 
 	succeeded = false;
@@ -988,6 +1384,65 @@ rt_register_bytecode_function(
 				break;
 			line = rt_read_bytecode_line(data, size, pos);
 		}
+		if (line != NULL && strcmp(line, "Parameter Accel Access") == 0) {
+			for (i = 0; i < lfunc.param_count; i++) {
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL)
+					break;
+			lfunc.param_accel_access[i] = atoi(line);
+			lfunc.param_accel_transport[i] =
+				lfunc.param_accel_access[i];
+			lfunc.param_accel_effect[i] =
+				lfunc.param_accel_access[i] == ACCEL_ACCESS_IN ?
+				ACCEL_EFFECT_READ : ACCEL_EFFECT_WRITE;
+			}
+			if (i != lfunc.param_count)
+				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Parameter Accel Transport") == 0) {
+			for (i = 0; i < lfunc.param_count; i++) {
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL)
+					break;
+				lfunc.param_accel_transport[i] = atoi(line);
+			}
+			if (i != lfunc.param_count)
+				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Parameter Accel Effects") == 0) {
+			for (i = 0; i < lfunc.param_count; i++) {
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL)
+					break;
+				lfunc.param_accel_effect[i] =
+					(unsigned int)strtoul(line, NULL, 10);
+			}
+			if (i != lfunc.param_count)
+				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Parameter Accel Ranges") == 0) {
+			for (i = 0; i < lfunc.param_count; i++) {
+				int status;
+				int has_access;
+				long long min_offset;
+				long long max_offset;
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL || sscanf(line, "%d %d %lld %lld",
+							 &status, &has_access,
+							 &min_offset, &max_offset) != 4)
+					break;
+				loaded_range[i].status = status;
+				loaded_range[i].has_access = has_access != 0;
+				loaded_range[i].min_offset = (int64_t)min_offset;
+				loaded_range[i].max_offset = (int64_t)max_offset;
+			}
+			if (i != lfunc.param_count)
+				break;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
 		if (line != NULL && strcmp(line, "Parameter Packed Types") == 0) {
 			for (i = 0; i < lfunc.param_count; i++) {
 				line = rt_read_bytecode_line(data, size, pos);
@@ -1032,6 +1487,158 @@ rt_register_bytecode_function(
 			lfunc.has_vector_ops = atoi(line) != 0;
 			line = rt_read_bytecode_line(data, size, pos);
 		}
+		if (line != NULL && strcmp(line, "Function Kind") == 0) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			lfunc.func_kind = atoi(line);
+			if (lfunc.func_kind < NOCT_FUNC_NORMAL ||
+			    lfunc.func_kind > NOCT_FUNC_FAST)
+				break;
+			lfunc.is_accel = lfunc.func_kind == NOCT_FUNC_ACCEL;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Fast Signature") == 0) {
+			int version;
+			uint32_t fast_count;
+
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) break;
+			version = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) break;
+			fast_count = (uint32_t)strtoul(line, NULL, 10);
+			if (version != NOCT_FAST_SIGNATURE_VERSION ||
+			    fast_count != lfunc.param_count ||
+			    fast_count > NOCT_ARG_MAX)
+				break;
+			fast_signature_init(&lfunc.fast_signature);
+			lfunc.fast_signature.valid = true;
+			lfunc.fast_signature.param_count = fast_count;
+			for (i = 0; i < fast_count; i++) {
+				line = rt_read_bytecode_line(data, size, pos);
+				if (line == NULL || !rt_parse_fast_param_line(
+						line, &lfunc.fast_signature.param[i]))
+					break;
+			}
+			if (i != fast_count) break;
+			for (i = 0; i < fast_count; i++) {
+				int axis;
+				struct fast_param_contract *contract;
+				contract = &lfunc.fast_signature.param[i];
+				if (contract->value_type != lfunc.param_type[i] ||
+				    contract->packed_type != lfunc.param_packed_type[i])
+					break;
+				for (axis = 0; axis < contract->rank; axis++) {
+					struct fast_extent *extent;
+					extent = &contract->extent[axis];
+					if ((extent->kind == FAST_EXTENT_CONST &&
+					     extent->constant <= 0) ||
+					    (extent->kind == FAST_EXTENT_PARAM &&
+					     (extent->param_index < 0 ||
+					      (uint32_t)extent->param_index >= fast_count ||
+					      (lfunc.param_type[extent->param_index] != NOCT_VALUE_INT &&
+					       lfunc.param_type[extent->param_index] != NOCT_VALUE_LONG))) ||
+					    (extent->kind != FAST_EXTENT_CONST &&
+					     extent->kind != FAST_EXTENT_PARAM))
+						break;
+				}
+				if (axis != contract->rank) break;
+			}
+			if (i != fast_count) break;
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) break;
+			lfunc.fast_signature.return_type = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Accelerator Parallel Mode") == 0) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			loaded_parallel_mode = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Accelerator") == 0) {
+			struct accel_kernel *kernel;
+			size_t glsl_size;
+
+			kernel = noct_calloc(1, sizeof(*kernel));
+			if (kernel == NULL)
+				break;
+			kernel->output_param = -1;
+			kernel->dispatch_param = -1;
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			kernel->eligible = atoi(line) != 0;
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			kernel->rejection_reason = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			kernel->source_line = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			kernel->output_param = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			kernel->dispatch_param = atoi(line);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			kernel->content_hash = (uint32_t)strtoul(line, NULL, 10);
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL || strcmp(line, "GLSL Size") != 0) {
+				accel_kernel_free(kernel); break;
+			}
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			glsl_size = (size_t)strtoul(line, NULL, 10);
+			if (glsl_size > size - *pos ||
+			    glsl_size == size - *pos) {
+				accel_kernel_free(kernel); break;
+			}
+			if (glsl_size != 0) {
+				kernel->glsl = noct_malloc(glsl_size + 1);
+				if (kernel->glsl == NULL) {
+					accel_kernel_free(kernel); break;
+				}
+				memcpy(kernel->glsl, data + *pos, glsl_size);
+				kernel->glsl[glsl_size] = '\0';
+			}
+			kernel->glsl_size = glsl_size;
+			*pos += (uint32_t)glsl_size;
+			if (*pos >= size || data[*pos] != '\n') {
+				accel_kernel_free(kernel); break;
+			}
+			(*pos)++;
+			kernel->name = noct_strdup(lfunc.func_name);
+			kernel->source_name = noct_strdup(file_name);
+			if (kernel->name == NULL || kernel->source_name == NULL) {
+				accel_kernel_free(kernel); break;
+			}
+			kernel->param_count = lfunc.param_count;
+			for (i = 0; i < lfunc.param_count; i++) {
+				kernel->param_type[i] = lfunc.param_type[i];
+				kernel->param_packed_type[i] = lfunc.param_packed_type[i];
+				kernel->param_access[i] = lfunc.param_accel_access[i];
+				kernel->param_transport[i] =
+					lfunc.param_accel_transport[i];
+				kernel->param_effect[i] = lfunc.param_accel_effect[i];
+				kernel->param_range[i] = loaded_range[i];
+			}
+			if (lfunc.func_kind == NOCT_FUNC_NORMAL)
+				lfunc.func_kind = NOCT_FUNC_ACCEL;
+			lfunc.is_accel = lfunc.func_kind == NOCT_FUNC_ACCEL;
+			kernel->descriptor_version = 2;
+			kernel->func_kind = lfunc.func_kind;
+			kernel->parallel_mode = loaded_parallel_mode;
+			lfunc.accel_kernel = kernel;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+		if (line != NULL && strcmp(line, "Accelerator Program") == 0) {
+			if (!rt_read_accel_program(env, data, size, pos, &lfunc,
+						   &line))
+				break;
+		}
 		if (line != NULL && strcmp(line, "FMA Ops") == 0) {
 			line = rt_read_bytecode_line(data, size, pos);
 			if (line == NULL)
@@ -1039,6 +1646,9 @@ rt_register_bytecode_function(
 			lfunc.has_fma_ops = atoi(line) != 0;
 			line = rt_read_bytecode_line(data, size, pos);
 		}
+		if (lfunc.func_kind == NOCT_FUNC_FAST &&
+		    !lfunc.fast_signature.valid)
+			break;
 
 		/* Check "Temporary Size". */
 		if (line == NULL || strcmp(line, "Temporary Size") != 0)
@@ -1082,6 +1692,8 @@ rt_register_bytecode_function(
 		if (lfunc.param_name[i] != NULL)
 			noct_free(lfunc.param_name[i]);
 	}
+	accel_kernel_free(lfunc.accel_kernel);
+	accel_program_free(lfunc.accel_program);
 
 	if (!succeeded) {
 		noct_error(env, N_TR("Failed to load bytecode data."));
@@ -1152,6 +1764,7 @@ rt_register_cfunc(
 		func->param_type[i] = -1;
 		func->param_packed_type[i] = -1;
 		func->param_restricted[i] = false;
+		func->param_accel_access[i] = ACCEL_ACCESS_NONE;
 	}
 	for (i = 0; i < param_count; i++) {
 		func->param_name[i] = noct_strdup(param_name[i]);
@@ -1167,6 +1780,10 @@ rt_register_cfunc(
 	global.val.func = func;
 	if (!rt_set_global(env, name, &global))
 		return false;
+
+	/* Keep native functions on the VM-owned function list too. */
+	func->next = env->vm->func_list;
+	env->vm->func_list = func;
 
 	if (ret_func != NULL)
 		*ret_func = func;
@@ -1220,6 +1837,100 @@ rt_call_with_name(
 /*
  * Call a function.
  */
+static bool
+rt_check_fast_call(struct rt_env *env, struct rt_func *func,
+		   uint32_t arg_count, struct rt_value *arg)
+{
+	const struct fast_signature *sig;
+	uint32_t i;
+
+	sig = &func->fast_signature;
+	if (!sig->valid || sig->version != NOCT_FAST_SIGNATURE_VERSION ||
+	    sig->param_count != arg_count) {
+		rt_error(env, "Invalid __fast function signature for '%s'.", func->name);
+		return false;
+	}
+	for (i = 0; i < arg_count; i++) {
+		const struct fast_param_contract *contract;
+		int axis;
+		size_t elements;
+
+		contract = &sig->param[i];
+		if (arg[i].type != contract->value_type) {
+			rt_error(env, "__fast call '%s': argument %u has the wrong primitive type.",
+				 func->name, (unsigned int)i + 1);
+			return false;
+		}
+		if (contract->value_type != NOCT_VALUE_PACKED)
+			continue;
+		if (arg[i].val.packed == NULL ||
+		    arg[i].val.packed->type != contract->packed_type) {
+			rt_error(env, "__fast call '%s': argument %u has the wrong packed element type.",
+				 func->name, (unsigned int)i + 1);
+			return false;
+		}
+		elements = 1;
+		for (axis = 0; axis < contract->rank; axis++) {
+			const struct fast_extent *extent;
+			uint64_t value;
+
+			extent = &contract->extent[axis];
+			if (extent->kind == FAST_EXTENT_CONST) {
+				value = (uint64_t)extent->constant;
+			} else if (extent->kind == FAST_EXTENT_PARAM &&
+				   extent->param_index >= 0 &&
+				   (uint32_t)extent->param_index < arg_count) {
+				struct rt_value *extent_arg;
+				extent_arg = &arg[extent->param_index];
+				if (extent_arg->type == NOCT_VALUE_INT) {
+					if (extent_arg->val.i <= 0) value = 0;
+					else value = (uint64_t)(uint32_t)extent_arg->val.i;
+				} else if (extent_arg->type == NOCT_VALUE_LONG) {
+					if (extent_arg->val.l <= 0) value = 0;
+					else value = (uint64_t)extent_arg->val.l;
+				} else {
+					value = 0;
+				}
+			} else {
+				value = 0;
+			}
+			if (value == 0) {
+				rt_error(env, "__fast call '%s': shape extents must be positive.",
+					 func->name);
+				return false;
+			}
+			if (value > (uint64_t)SIZE_MAX ||
+			    elements > SIZE_MAX / (size_t)value) {
+				rt_error(env, "__fast call '%s': shape element count overflow.",
+					 func->name);
+				return false;
+			}
+			elements *= (size_t)value;
+		}
+		if (arg[i].val.packed->elem_size != elements) {
+			rt_error(env, "__fast call '%s': argument %u does not match the exact shape.",
+				 func->name, (unsigned int)i + 1);
+			return false;
+		}
+	}
+	for (i = 0; i < arg_count; i++) {
+		uint32_t j;
+		if (!sig->param[i].restricted ||
+		    sig->param[i].value_type != NOCT_VALUE_PACKED)
+			continue;
+		for (j = i + 1; j < arg_count; j++) {
+			if (sig->param[j].restricted &&
+			    sig->param[j].value_type == NOCT_VALUE_PACKED &&
+			    arg[i].val.packed == arg[j].val.packed) {
+				rt_error(env, "__fast call '%s': restricted packed arguments must be distinct objects.",
+					 func->name);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 bool
 rt_call(
 	struct rt_env *env,
@@ -1230,6 +1941,33 @@ rt_call(
 {
 	char old_file_name[256];
 	uint32_t i;
+	bool trusted_fast_caller;
+
+	if (func->func_kind == NOCT_FUNC_ACCEL || func->is_accel) {
+		rt_error(env, N_TR("Accelerator function '%s' must be invoked with Accel.call()."),
+			 func->name);
+		return false;
+	}
+	if (func->func_kind == NOCT_FUNC_GPU) {
+		rt_error(env, N_TR("GPU function '%s' cannot execute on the CPU."),
+			 func->name);
+		return false;
+	}
+	if ((!func->cfunc_variadic && arg_count != func->param_count) ||
+	    (func->cfunc_variadic && arg_count < func->param_count)) {
+		noct_error(env, N_TR("%s(): Function arguments not match."), func->name);
+		return false;
+	}
+	/* A compiled FAST body can issue only statically resolved FAST calls.
+	 * HIR validation has already checked the exact primitive, element, shape
+	 * mapping, and restricted-argument contract.  Its own external entry was
+	 * preflighted, so repeating the same complete check at every internal call
+	 * is unnecessary.  Normal/C/API callers always take the full path. */
+	trusted_fast_caller = env->frame != NULL && env->frame->func != NULL &&
+		env->frame->func->func_kind == NOCT_FUNC_FAST;
+	if (func->func_kind == NOCT_FUNC_FAST && !trusted_fast_caller &&
+	    !rt_check_fast_call(env, func, arg_count, arg))
+		return false;
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/* Make a safepoint. */
@@ -1239,6 +1977,7 @@ rt_call(
 	/* Allocate a frame for this call. */
 	if (!rt_enter_frame(env, func))
 		return false;
+	env->frame->arg_count = arg_count;
 
 	/*
 	 * Every exit below must pop the frame. Leaving it behind would
@@ -1248,11 +1987,6 @@ rt_call(
 	 */
 
 	/* Pass args. */
-	if (arg_count != func->param_count) {
-		noct_error(env, N_TR("%s(): Function arguments not match."), func->name);
-		rt_leave_frame(env);
-		return false;
-	}
 	for (i = 0; i < arg_count; i++)
 		env->frame->tmpvar[i] = arg[i];
 
@@ -2090,6 +2824,10 @@ rt_get_packed_elem(
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
 	assert(val != NULL);
+	if (packed->val.packed->is_accel_resource) {
+		rt_error(env, "Accelerator resources cannot be subscripted by host code.");
+		return false;
+	}
 	if (packed->val.packed->packed_buffer == NULL) {
 		rt_error(env, N_TR("Packed is unmapped."));
 		return false;
@@ -2161,6 +2899,10 @@ rt_set_packed_elem(
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
 	assert(val != NULL);
+	if (packed->val.packed->is_accel_resource) {
+		rt_error(env, "Accelerator resources cannot be subscripted by host code.");
+		return false;
+	}
 	if (packed->val.packed->packed_buffer == NULL) {
 		rt_error(env, N_TR("Packed is unmapped."));
 		return false;

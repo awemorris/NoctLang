@@ -162,6 +162,12 @@ System.shell("ls -lha");
 
 ### System.getOSName()
 
+### System.error(message)
+
+Raises a hard runtime error with the supplied string.  Execution does not
+continue after this call.  It is intended for command-line tools that must
+reject invalid input with a precise diagnostic.
+
 ---
 
 ## Console
@@ -430,3 +436,90 @@ if (key == (Term.CTRL | 0x71)) {   // C-q
     Term.close();
 }
 ```
+
+## Accelerator resources and execution
+
+The `Accel` package owns persistent GPU buffers, managed calls, raw-kernel
+dispatch, transfers, and completion events.
+
+```noct
+accel var state = Accel.float32(1024);
+
+Accel.call(managedFunction, arg0, ...);
+event = Accel.dispatchAsync(rawGpuFunction, gridSize, blockSize, arg0, ...);
+Accel.join(event);
+
+Accel.copyToAccel(hostPacked, hostByteOffset,
+                  accelResource, accelByteOffset, byteLength);
+Accel.copyFromAccel(accelResource, accelByteOffset,
+                    hostPacked, hostByteOffset, byteLength);
+```
+
+Resource constructors are `Accel.int8`, `Accel.uint8`, `Accel.int16`,
+`Accel.uint16`, `Accel.int32`, `Accel.uint32`, `Accel.int64`, `Accel.uint64`,
+`Accel.float32`, and `Accel.float64`.  Construction requires a positive element
+count and returns opaque device storage; host Noct code cannot subscript it.
+The currently validated managed and raw computation types are int32, uint32,
+and float32.
+
+`Accel.call` accepts a directly resolved `__accel func` followed by arguments
+matching its scalar, `_in`, `_out`, and `_ptr` annotations.  It uploads required
+host input once, executes the versioned kernel program in source order, and
+downloads required host output once.  It is synchronous.  It never invokes a
+CPU body when compilation, binding, backend selection, or GPU execution fails.
+
+`Accel.dispatchAsync` is for a raw `__gpu func`; it returns an event consumed by
+`Accel.join`.  Kernel launch syntax `kernel<<<grid, block>>>(...)` provides the
+synchronous source form.  The `copyToAccelAsync` and `copyFromAccelAsync`
+variants have the same five arguments as their synchronous forms and return an
+event.  Offsets and lengths are bytes and are checked before submission.
+
+OpenGL compute through headless EGL is the validated Linux execution path.
+Vulkan is retained as an unvalidated compile-only backend, and D3D12 is not a
+Noct Linux accelerator backend.
+
+## Checked binary and model-weight APIs
+
+The following APIs are available when the File/Binary and model-weight build
+features are enabled.  They are used by the production ONNX converter and its
+generated GPU package, but are not tied to an ONNX or DNN runtime namespace.
+
+```
+File.readExact(file, byteCount)
+File.writeAll(file, bytes, byteOffset, byteCount)
+FileUtil.makeDirectoryExclusive(path)
+
+Binary.readVarintUnsigned(bytes, offset, limit)
+Binary.readVarintSigned(bytes, offset, limit)
+Binary.skipVarint(bytes, offset, limit)
+Binary.readU32LE(bytes, offset)
+Binary.readI64LE(bytes, offset)
+Binary.writeU32LE(bytes, offset, value)
+Binary.writeU64LE(bytes, offset, value)
+Binary.readFloat32LE(path, elementCount)
+Binary.writeFloat32LE(path, packed)
+
+Hash.sha256(bytes)
+Hash.sha256Bytes(bytes)
+
+Weights.open(path, expectedPackSha256)
+Weights.loadFloat32(handle, entryIndex, expectedName, expectedShape)
+Weights.close(handle)
+```
+
+All offsets, sizes, ranges, endianness, complete-file hashes, and NWT1 entry
+metadata are checked.  `Weights.open` authenticates the complete immutable
+pack before returning a handle; `loadFloat32` then verifies the expected
+ordered name and shape.  Handles are VM-owned and `close` is idempotent.
+
+The ONNX converter is invoked as:
+
+```
+noct --path=tools/onnx2noct tools/onnx2noct/main.noct \
+  --output=OUT [--emit-main=yes|no] MODEL.onnx
+```
+
+It publishes `model.weights`, bound `gpu/model.noct`, optional
+`gpu/main.noct`, and manifest-last `manifest.json`.  Generated models export
+`modelInfo`, `modelInitialize`, `modelWarmup`, `modelInfer`, and
+`modelShutdown`.  Execution requires a GPU backend and has no CPU fallback.

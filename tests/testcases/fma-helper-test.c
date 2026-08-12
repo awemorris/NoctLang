@@ -1,3 +1,10 @@
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ */
+
 /* Direct portable VFMA helper and alias-semantics test. */
 
 #include <noct/noct.h>

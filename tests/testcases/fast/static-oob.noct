@@ -1,0 +1,10 @@
+__fast func bad(data: rpackeduint32(100)): void {
+    for (i in 0..1000) {
+        data[i] = 0;
+    }
+}
+
+func main() {
+    var data = Packed.uint32(100);
+    bad(data);
+}

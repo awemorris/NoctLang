@@ -1085,6 +1085,8 @@ rt_gc_alloc_packed(
 		packed->size = size;
 		packed->elem_size = elem_size;
 		packed->packed_typed = false;
+		packed->is_accel_resource = false;
+		packed->accel_backend_data = NULL;
 		packed->packed_buffer = p;
 		packed->native_pointer = NULL;
 		packed->native_finalizer = NULL;
@@ -1148,6 +1150,8 @@ rt_gc_alloc_packed_graduate(
 		packed->size = size;
 		packed->elem_size = elem_size;
 		packed->packed_typed = false;
+		packed->is_accel_resource = false;
+		packed->accel_backend_data = NULL;
 		packed->packed_buffer = p;
 		packed->native_pointer = native_pointer;
 		packed->native_finalizer = native_finalizer;
@@ -1236,6 +1240,8 @@ rt_gc_alloc_packed_tenure(
 		packed->size = size;
 		packed->elem_size = elem_size;
 		packed->packed_typed = false;
+		packed->is_accel_resource = false;
+		packed->accel_backend_data = NULL;
 		packed->packed_buffer = p;
 		packed->native_pointer = native_pointer;
 		packed->native_finalizer = native_finalizer;
@@ -1477,6 +1483,16 @@ rt_gc_young_gc_body(
 			if (!rt_gc_copy_young_object(env, &env->vm->pinned[i]->val.obj))
 				return;
 		}
+	}
+	/* Live accelerator events own their retained launch arguments. */
+	{
+		uint32_t ei, vi;
+		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
+			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
+				if (IS_REF_VAL(&env->vm->accel_event[ei].retained[vi]))
+					if (!rt_gc_copy_young_object(env,
+						&env->vm->accel_event[ei].retained[vi].val.obj))
+						return;
 	}
 
 	/* For all remember set objects. */
@@ -1757,6 +1773,13 @@ rt_gc_verify_young(
 	}
 	for (i = 0; i < env->vm->pinned_count; i++)
 		VERIFY_ROOT(env->vm->pinned[i], "vm-pinned");
+	{
+		uint32_t ei, vi;
+		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
+			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
+				VERIFY_ROOT(&env->vm->accel_event[ei].retained[vi],
+					    "accelerator-event");
+	}
 
 	while (stack_top > 0) {
 		struct rt_gc_object *o = stack[--stack_top];
@@ -1994,6 +2017,9 @@ rt_gc_copy_young_object(
 
 		/* If this is an array or dictionary, get the forwarder. */
 		rt_gc_array_dict_follow_newer(env, obj);
+		/* A queued slot in an obsolete resized container may be cleared. */
+		if (*obj == NULL)
+			continue;
 
 		/* If already processed. */
 		if ((*obj)->is_marked) {
@@ -2160,6 +2186,8 @@ rt_gc_array_dict_follow_newer(
 	struct rt_gc_object **obj)
 {
 	UNUSED_PARAMETER(env);
+	if (obj == NULL || *obj == NULL)
+		return;
 
 	if ((*obj)->type == RT_GC_TYPE_ARRAY) {
 		struct rt_array *arr = (struct rt_array *)*obj;
@@ -2368,6 +2396,9 @@ rt_gc_promote_packed(
 
 	if (old_packed->size != 0)
 		memcpy(new_packed->packed_buffer, old_packed->packed_buffer, old_packed->size);
+	new_packed->packed_typed = old_packed->packed_typed;
+	new_packed->is_accel_resource = old_packed->is_accel_resource;
+	new_packed->accel_backend_data = old_packed->accel_backend_data;
 	old_packed->native_pointer = NULL;
 	old_packed->native_finalizer = NULL;
 
@@ -2567,6 +2598,9 @@ rt_gc_copy_packed_to_graduate(
 	/* If not a preallocated. (that means packed_buffer is not managed by GC)  */
 	if (old_obj->size != 0)
 		memcpy(new_obj->packed_buffer, old_obj->packed_buffer, old_obj->size);
+	new_obj->packed_typed = old_obj->packed_typed;
+	new_obj->is_accel_resource = old_obj->is_accel_resource;
+	new_obj->accel_backend_data = old_obj->accel_backend_data;
 	old_obj->native_pointer = NULL;
 	old_obj->native_finalizer = NULL;
 
@@ -2667,6 +2701,15 @@ rt_gc_old_gc_body(
 				return;
 		}
 	}
+	{
+		uint32_t ei, vi;
+		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
+			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
+				if (IS_REF_VAL(&env->vm->accel_event[ei].retained[vi]))
+					if (!rt_gc_mark_old_object(env,
+						&env->vm->accel_event[ei].retained[vi].val.obj))
+						return;
+	}
 
 	/*
 	 * Sweep.
@@ -2715,6 +2758,9 @@ rt_gc_mark_old_object(
 
 		/* Follow the newer array/dict. */
 		rt_gc_array_dict_follow_newer(env, obj);
+		/* A queued slot in an obsolete resized container may be cleared. */
+		if (*obj == NULL)
+			continue;
 
 		/* If already marked, skip. */
 		if ((*obj)->is_marked)
@@ -3053,6 +3099,13 @@ rt_gc_compact_gc_body(
 	/* For all pinned C global variables. */
 	for (i = 0; i < env->vm->pinned_count; i++)
 		rt_gc_compact_update_value(env, env->vm->pinned[i]);
+	{
+		uint32_t ei, vi;
+		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
+			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
+				rt_gc_compact_update_value(env,
+					&env->vm->accel_event[ei].retained[vi]);
+	}
 
 	/*
 	 * Phase 2: Slide tenure objects in ascending address order.
