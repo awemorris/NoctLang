@@ -63,7 +63,7 @@ owner-approved static artifact or a new dynamic-shape design.
 - MinGW x86_64 builds; OpenWatcom DOS4GW builds with its pre-existing missing
   optional `wstub.exe` warning after successful link.
 
-The legacy `tests/run-elisp.sh` golden comparison is a documented pre-Stage-J
+The legacy `tests/testcases/run-elisp.sh` golden comparison is a documented pre-Stage-J
 baseline: the current transpiler output differs from its checked-in legacy
 goldens, while the Stage J diff changes neither the transpiler nor those
 goldens.  Raw `__gpu func` rejection for C/Elisp/Scheme is covered and passes in

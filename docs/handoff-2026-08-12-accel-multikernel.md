@@ -62,7 +62,7 @@ No SIMD implementation or ONNX converter/generated-model source was changed.
 - downstream DOALL access to an `_ptr[0]` result without host synchronization.
 
 The representative GPU-resident pipelines are covered by
-`tests/accel/doall-dosum-doall.noct` and `tests/accel/multi-dosum.noct`.  The
+`tests/testcases/accel/doall-dosum-doall.noct` and `tests/testcases/accel/multi-dosum.noct`.  The
 first keeps a local uint32 buffer and one reduction result on the GPU.  The
 second executes DOALL, DOSUM, DOALL, DOSUM, DOALL in source order with two
 local buffers, two persistent results, and no intermediate host copy.  Its

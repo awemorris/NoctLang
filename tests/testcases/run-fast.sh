@@ -2,7 +2,7 @@
 
 set -eu
 
-NOCT=${NOCT:-../../build-stage-b-static-full/noct}
+NOCT=${NOCT:-../../build-static/noct}
 TMP=$(mktemp -d)
 REQUIRED_APP=fast/.tmp-fast-required-$$.nap
 MULTI_APP=fast/.tmp-fast-multi-$$.nap

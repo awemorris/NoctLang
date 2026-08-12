@@ -1292,7 +1292,7 @@ Until separately validated:
   execute a new descriptor;
 - a raw launch reports a clear unsupported-backend runtime error;
 - shader-source/golden and compile-only checks are allowed;
-- `tests/run-accel-vulkan.sh` execution remains intentionally unrun.
+- `tests/testcases/run-accel-vulkan.sh` execution remains intentionally unrun.
 
 Hardware-backed OpenGL is the development and runtime debugging backend for
 this plan.  Native Linux may use surfaceless EGL; WSL2 Mesa D3D12 remains an
@@ -1629,9 +1629,9 @@ Gate:
 
 Use:
 
-- `tests/run-accel.sh` for syntax, compiler, CPU, bytecode, and fallback;
-- `tests/run-accel-opengl.sh` for platform-selected hardware-backed OpenGL;
-- do not invoke `tests/run-accel-vulkan.sh`: the existing script performs Vulkan
+- `tests/testcases/run-accel.sh` for syntax, compiler, CPU, bytecode, and fallback;
+- `tests/testcases/run-accel-opengl.sh` for platform-selected hardware-backed OpenGL;
+- do not invoke `tests/testcases/run-accel-vulkan.sh`: the existing script performs Vulkan
   execution. Until validation is explicitly reopened, the Vulkan gate is only
   `cmake --build build-vulkan`. Put backend-neutral GLSL/shader golden checks in
   a separate compiler/static runner.

@@ -915,19 +915,19 @@ must not depend on OpenGL headers, shader syntax, or a live GPU.
 ### 13.4 Tests
 
 ```text
-tests/accel/gpu-math-*.noct
-tests/accel/gpu-loop-*.noct
-tests/dnn/models.lock
-tests/onnx2noct/fixtures/
-tests/onnx2noct/golden/
-tests/onnx2noct/oracle/
+tests/testcases/accel/gpu-math-*.noct
+tests/testcases/accel/gpu-loop-*.noct
+tests/testcases/dnn/models.lock
+tests/testcases/onnx2noct/fixtures/
+tests/testcases/onnx2noct/golden/
+tests/testcases/onnx2noct/oracle/
 tests/generated-models/
-tests/run-onnx2noct.sh
-tests/run-onnx-gpu-opengl.sh
-tests/run-onnx-gpu-vulkan.sh      # add only in the later Vulkan stage
+tests/testcases/run-onnx2noct.sh
+tests/testcases/run-onnx-gpu-opengl.sh
+tests/testcases/run-onnx-gpu-vulkan.sh      # add only in the later Vulkan stage
 ```
 
-The name `tests/dnn/models.lock` may be retained for compatibility even though
+The name `tests/testcases/dnn/models.lock` may be retained for compatibility even though
 there is no DNN runtime; do not interpret the directory name as permission to
 reintroduce `DNN.*`.
 
@@ -942,7 +942,7 @@ the first incomplete gate precisely.
 
 - land this design as the new authority and mark design 17/old handoff
   superseded;
-- create `tests/dnn/models.lock` with exact URL, SHA-256, byte size,
+- create `tests/testcases/dnn/models.lock` with exact URL, SHA-256, byte size,
   license/source notice, IR, opsets, I/O, operators, and attributes for
   MNIST-12, project CIFAR opset 12, SqueezeNet 1.1 opset 7, and Tiny YOLOv2
   opset 8;

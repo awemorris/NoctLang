@@ -1012,7 +1012,7 @@ Gate:
 
 ## 14. Test matrix
 
-Keep `tests/run-accel.sh` and `tests/run-accel-opengl.sh` authoritative; add
+Keep `tests/testcases/run-accel.sh` and `tests/testcases/run-accel-opengl.sh` authoritative; add
 focused runners where useful.
 
 | Area | Required cases |
@@ -1036,20 +1036,20 @@ focused runners where useful.
 Recurring commands, adjusted to actual build directories:
 
 ```sh
-NOCT=/path/to/noct sh tests/run-accel.sh
+NOCT=/path/to/noct sh tests/testcases/run-accel.sh
 
 EGL_PLATFORM=surfaceless \
 NOCT_OPENGL_RENDERER_PATTERN=Intel \
 NOCT=/path/to/opengl/noct \
-sh tests/run-accel-opengl.sh
+sh tests/testcases/run-accel-opengl.sh
 
 NOCT=/path/to/full/noct \
 NOCT_META=/path/to/full/noct \
 sh tests/test.sh all
 
-sh tests/run-accel-serialization-hardening.sh
-sh tests/run-onnx-package-opengl.sh
-sh tests/run-onnx-mnist-opengl.sh
+sh tests/testcases/run-accel-serialization.sh
+sh tests/testcases/run-onnx-package-opengl.sh
+sh tests/testcases/run-onnx-mnist-opengl.sh
 ```
 
 Run CIFAR/SqueezeNet gates at the final stage when locked assets are available.
@@ -1090,9 +1090,9 @@ src/backend/cback.c
 src/backend/elback.c
 src/backend/scmback.c
 
-tests/accel/*
-tests/run-accel.sh
-tests/run-accel-opengl.sh
+tests/testcases/accel/*
+tests/testcases/run-accel.sh
+tests/testcases/run-accel-opengl.sh
 serialization/relocation hardening runners
 
 docs/design/16-accel-vulkan.md at final sync

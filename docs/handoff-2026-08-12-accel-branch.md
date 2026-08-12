@@ -1,4 +1,4 @@
-# `accel` branch comprehensive handoff — 2026-08-12
+# `accel` branch comprehensive handoff 窶・2026-08-12
 
 ## 1. Repository snapshot
 
@@ -122,8 +122,8 @@ Accel.copyFromAccel(...);
 
 OpenGL transfers and dispatches can be queued asynchronously.  Resource
 coherence, pending events, pinned Packed objects, failure cleanup, and VM
-teardown are covered by `tests/accel/async*.noct` and
-`tests/run-accel-opengl.sh`.
+teardown are covered by `tests/testcases/accel/async*.noct` and
+the `tests/test.sh accel-opengl` suite.
 
 ### 4.3 Backend status
 
@@ -165,7 +165,7 @@ Currently accepted important cases:
 - multiple zero-based, unit-step top-level DOALL loops;
 - multiple canonical additive DOSUM reductions for `int32`, `uint32`, and
   `float32`;
-- DOALL→DOSUM→DOALL and interleaved multiple reductions;
+- DOALL竊奪OSUM竊奪OALL and interleaved multiple reductions;
 - local `Packed.int32/uint32/float32(length)` device intermediates;
 - structured supported branches and proven independent affine accesses;
 - reduction publication through an immediately following `_out[0]` or
@@ -368,7 +368,7 @@ model.
 
 Python is used only by deterministic test fixture/oracle tools.  The extended
 locked-model oracle environment is pinned in
-`tests/onnx2noct/oracle/requirements.txt`.
+`tests/testcases/onnx2noct/oracle/requirements.txt`.
 
 ## 8. Build dependencies and suggested configurations
 
@@ -395,7 +395,7 @@ and `vulkan-validationlayers` in addition to a hardware Vulkan driver.
 A representative full OpenGL ES build is:
 
 ```sh
-cmake -S . -B build-opengl \
+cmake -S . -B build-linux-opengl \
   -DCMAKE_BUILD_TYPE=Debug \
   -DNOCT_ENABLE_CLI=ON \
   -DNOCT_ENABLE_STATIC=ON \
@@ -411,7 +411,7 @@ cmake -S . -B build-opengl \
   -DNOCT_ENABLE_REPL=ON \
   -DNOCT_ENABLE_ACCEL_OPENGL=ON \
   -DNOCT_ENABLE_ACCEL_VULKAN=OFF
-cmake --build build-opengl -j2
+cmake --build build-linux-opengl -j2
 ```
 
 The checked-in Linux Vulkan preset and its hardware gate are:
@@ -419,8 +419,7 @@ The checked-in Linux Vulkan preset and its hardware gate are:
 ```sh
 cmake --preset linux-vulkan
 cmake --build build-linux-vulkan -j2
-cd tests
-NOCT=../build-linux-vulkan/noct sh ./run-accel-vulkan.sh
+NOCT="$PWD/build-linux-vulkan/noct" sh tests/test.sh accel-vulkan
 ```
 
 Create `build-static` from the same configuration with both accelerator
@@ -454,13 +453,13 @@ Use absolute `NOCT` paths for runners that change into temporary directories.
 ### 9.1 CPU/compiler regression
 
 ```sh
-NOCT="$PWD/build-opengl/noct" sh tests/test.sh syntax
-NOCT="$PWD/build-opengl/noct" sh tests/test.sh typing
-NOCT="$PWD/build-opengl/noct" sh tests/test.sh scoping
-FAST_EXPECT_SIMD=1 NOCT="$PWD/build-opengl/noct" sh tests/test.sh fast
-NOCT="$PWD/build-opengl/noct" sh tests/test.sh simd
-NOCT="$PWD/build-opengl/noct" sh tests/test.sh app
-NOCT="$PWD/build-opengl/noct" sh tests/test.sh ctrans build-opengl
+NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh syntax
+NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh typing
+NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh scoping
+FAST_EXPECT_SIMD=1 NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh fast
+NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh simd
+NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh app
+NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh ctrans build-linux-opengl
 ```
 
 The FAST suite covers source/JIT/interpreter, bytecode, Noct App prototype
@@ -470,17 +469,16 @@ plus multidimensional final-axis SIMD.
 
 ### 9.2 Target-neutral accelerator tests
 
-Run these from `tests/`:
+Run these from the repository root:
 
 ```sh
-cd tests
-NOCT=../build-static/noct sh run-accel.sh
-NOCT=../build-noopt/noct sh run-accel-analysis.sh
+NOCT="$PWD/build-static/noct" sh tests/test.sh accel
+NOCT="$PWD/build-noopt/noct" sh tests/test.sh accel-analysis
 ```
 
-`run-accel.sh` is a backend-disabled/static compiler suite and intentionally
+The `accel` command is a backend-disabled/static compiler suite and intentionally
 checks that `--accel=opengl` is rejected.  Do not use an OpenGL-enabled binary
-for that runner.  Use `run-accel-opengl.sh` for hardware execution.
+for that runner.  Use `tests/test.sh accel-opengl` for hardware execution.
 
 ### 9.3 OpenGL hardware tests
 
@@ -488,9 +486,8 @@ On a headless Mesa system, `EGL_PLATFORM=surfaceless` is usually sufficient.
 On a desktop session, expose the appropriate display/session environment.
 
 ```sh
-cd tests
 EGL_PLATFORM=surfaceless \
-NOCT="$PWD/../build-opengl/noct" sh run-accel-opengl.sh
+NOCT="$PWD/build-linux-opengl/noct" sh tests/test.sh accel-opengl
 ```
 
 The runner rejects llvmpipe, softpipe, and other software renderers.  It covers
@@ -500,28 +497,27 @@ resources, copies, asynchronous events, serialization, and JIT/interpreter.
 ### 9.4 ONNX converter and generated GPU tests
 
 ```sh
-NOCT="$PWD/build-opengl/noct" sh tests/run-onnx2noct.sh
+NOCT="$PWD/build-static/noct" sh tests/test.sh onnx2noct
 
-cd tests
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-gpu-opengl.sh
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-gpu-conv-opengl.sh
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-gpu-contraction-opengl.sh
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-gpu-pool-opengl.sh
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-gpu-concat-opengl.sh
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-gpu-reduce-opengl.sh
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-gpu-batchnorm-opengl.sh
-EGL_PLATFORM=surfaceless NOCT="$PWD/../build-opengl/noct" \
-  sh run-onnx-package-opengl.sh
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-gpu
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-conv
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-contraction
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-pool
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-concat
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-reduce
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-batchnorm
+EGL_PLATFORM=surfaceless NOCT="$PWD/build-linux-opengl/noct" \
+  sh tests/test.sh onnx-package
 ```
 
-The core Stage D–H converter suite uses Python's standard library for fixture
+The core Stage D窶滴 converter suite uses Python's standard library for fixture
 generation.  ONNX Runtime is needed only for the optional independent oracle
 and locked-model comparisons.
 
@@ -537,7 +533,7 @@ UBSAN_OPTIONS=halt_on_error=1 \
 NOCT="$PWD/build-asan/noct" sh tests/test.sh fast
 ```
 
-Use an OpenGL-enabled sanitizer build for `run-accel-opengl.sh` and the ONNX
+Use an OpenGL-enabled sanitizer build for `tests/test.sh accel-opengl` and the ONNX
 hardware runners.
 
 ## 10. Validation evidence at handoff
@@ -587,7 +583,7 @@ final-HEAD guarantee.
 kernel registry/families, model emitter, and package emitter.  The production
 entry point is `tools/onnx2noct/main.noct`.
 
-`tests/onnx2noct/` contains deterministic fixtures, goldens, package
+`tests/testcases/onnx2noct/` contains deterministic fixtures, goldens, package
 verification, oracle tooling, and locked model metadata.  Performance and
 correctness baselines are under `docs/bench/`.
 

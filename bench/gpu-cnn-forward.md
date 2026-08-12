@@ -8,7 +8,7 @@ the flattened CUDA execution model used by `fp_preact_c1`, `fp_preact_s1`,
 and `fp_preact_f` in `layer.cu`.
 
 That repository does not declare a license. No source or weights are copied.
-`tests/accel/gpu-cnn-forward.noct` is an independent, smaller network that
+`tests/testcases/accel/gpu-cnn-forward.noct` is an independent, smaller network that
 keeps the convolution, subsampling, and dense topology.
 
 ## Test network
@@ -32,7 +32,7 @@ use the same weights, arithmetic order, and exact-logit regression oracle.
 From `tests/`:
 
 ```sh
-GALLIUM_DRIVER=d3d12 ../build-opengl/noct --accel=opengl \
+GALLIUM_DRIVER=d3d12 ../build-linux-opengl/noct --accel=opengl \
     -j -O2 accel/gpu-cnn-forward.noct
 ```
 

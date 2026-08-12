@@ -11,7 +11,7 @@ CC=${CC:-cc}
 TARGET_SECONDS=${TARGET_SECONDS:-30}
 WARMUP_SECONDS=${WARMUP_SECONDS:-30}
 SAMPLES=${SAMPLES:-3}
-SOURCE="$repo_dir/tests/accel/gpu-cifar10-forward.noct"
+SOURCE="$repo_dir/tests/testcases/accel/gpu-cifar10-forward.noct"
 
 case "$SAMPLES" in
 *[!0-9]*|'') echo "SAMPLES must be a positive odd integer" >&2; exit 2 ;;
