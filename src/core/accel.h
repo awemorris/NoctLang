@@ -81,11 +81,13 @@ struct accel_kernel {
 	int dispatch_param;
 	char *glsl;
 	size_t glsl_size;
+	char *hlsl;
+	size_t hlsl_size;
 	uint32_t content_hash;
 	void *backend_data;
 };
 
-#define ACCEL_PROGRAM_VERSION 2
+#define ACCEL_PROGRAM_VERSION 3
 #define ACCEL_PROGRAM_MAX_EXPRS 256
 #define ACCEL_PROGRAM_MAX_BUFFERS 64
 #define ACCEL_PROGRAM_MAX_KERNELS 64
@@ -242,6 +244,24 @@ int accel_vulkan_copy_to(struct rt_env *env, struct rt_packed *resource,
 int accel_vulkan_copy_from(struct rt_env *env, struct rt_packed *resource,
 			   size_t offset, size_t size);
 void accel_vulkan_cleanup(struct rt_vm *vm);
+int accel_dx12_dispatch(struct rt_env *env, struct rt_func *func,
+			uint32_t arg_count, struct rt_value *arg);
+int accel_dx12_dispatch_raw(struct rt_env *env, struct rt_func *func,
+			    uint32_t grid_size, uint32_t block_size,
+			    uint32_t arg_count, struct rt_value *arg,
+			    struct accel_event *event);
+bool accel_dx12_join(struct rt_env *env, struct accel_event *event);
+bool accel_dx12_list_devices(void);
+int accel_dx12_copy_async(struct rt_env *env, bool to_accel,
+			  struct rt_packed *source, size_t source_offset,
+			  struct rt_packed *destination,
+			  size_t destination_offset, size_t size,
+			  struct accel_event *event);
+int accel_dx12_copy_to(struct rt_env *env, struct rt_packed *resource,
+		       size_t offset, size_t size);
+int accel_dx12_copy_from(struct rt_env *env, struct rt_packed *resource,
+			 size_t offset, size_t size);
+void accel_dx12_cleanup(struct rt_vm *vm);
 int accel_opengl_dispatch(struct rt_env *env, struct rt_func *func,
 			  uint32_t arg_count, struct rt_value *arg);
 int accel_opengl_dispatch_async(struct rt_env *env, struct rt_func *func,

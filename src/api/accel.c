@@ -390,6 +390,12 @@ accel_copy_async(
 			env, to_accel, op.source.val.packed, op.source_offset,
 			op.destination.val.packed, op.destination_offset,
 			op.length, event);
+	} else if (env->vm->config.accel_enable &&
+		   env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12) {
+		copy_result = accel_dx12_copy_async(
+			env, to_accel, op.source.val.packed, op.source_offset,
+			op.destination.val.packed, op.destination_offset,
+			op.length, event);
 	}
 	if (copy_result == ACCEL_DISPATCH_ERROR) {
 		event->state = ACCEL_EVENT_FREE;
@@ -575,6 +581,8 @@ accel_backend_name(
 		return "Vulkan";
 	case NOCT_ACCEL_BACKEND_OPENGL:
 		return "OpenGL";
+	case NOCT_ACCEL_BACKEND_DX12:
+		return "DirectX 12";
 	default:
 		return "disabled";
 	}
@@ -592,6 +600,8 @@ accel_backend_dispatch(
 		return accel_vulkan_dispatch(env, func, arg_count, arg);
 	case NOCT_ACCEL_BACKEND_OPENGL:
 		return accel_opengl_dispatch(env, func, arg_count, arg);
+	case NOCT_ACCEL_BACKEND_DX12:
+		return accel_dx12_dispatch(env, func, arg_count, arg);
 	default:
 		return ACCEL_DISPATCH_FALLBACK;
 	}
@@ -616,6 +626,11 @@ accel_backend_copy(
 		if (to_accel)
 			return accel_vulkan_copy_to(env, resource, offset, size);
 		return accel_vulkan_copy_from(env, resource, offset, size);
+	}
+	if (env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12) {
+		if (to_accel)
+			return accel_dx12_copy_to(env, resource, offset, size);
+		return accel_dx12_copy_from(env, resource, offset, size);
 	}
 	return ACCEL_DISPATCH_FALLBACK;
 }
@@ -718,17 +733,23 @@ rt_intrin_Accel_dispatchAsync(
 		}
 	}
 	if (!env->vm->config.accel_enable ||
-	    env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_OPENGL) {
-		rt_error(env, "Accel.dispatchAsync(): __gpu func requires the OpenGL backend.");
+	    (env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_OPENGL &&
+	     env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_DX12)) {
+		rt_error(env, "Accel.dispatchAsync(): __gpu func requires the OpenGL backend or DirectX 12 backend.");
 		return false;
 	}
 	if (!accel_reserve_event(env, &event_id, &event)) return false;
 	event->retained[0] = kernel_value;
 	for (i = 0; i < arg_count; i++) event->retained[i + 1] = arg[i];
 	event->retained_count = arg_count + 1;
-	result = accel_opengl_dispatch_raw_async(env, func,
-		(uint32_t)grid_value.val.i, (uint32_t)block_value.val.i,
-		arg_count, arg, event);
+	if (env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_OPENGL)
+		result = accel_opengl_dispatch_raw_async(env, func,
+			(uint32_t)grid_value.val.i, (uint32_t)block_value.val.i,
+			arg_count, arg, event);
+	else
+		result = accel_dx12_dispatch_raw(env, func,
+			(uint32_t)grid_value.val.i, (uint32_t)block_value.val.i,
+			arg_count, arg, event);
 	if (result != ACCEL_DISPATCH_OK) {
 		event->retained_count = 0;
 		event->state = ACCEL_EVENT_FREE;
@@ -768,7 +789,8 @@ rt_intrin_Accel_dispatchSync(
 		rt_error(env, "Synchronous gpu launch produced a stale event.");
 		return false;
 	}
-	ok = accel_opengl_join(env, event);
+	ok = env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12 ?
+		accel_dx12_join(env, event) : accel_opengl_join(env, event);
 	event->retained_count = 0;
 	event->state = ACCEL_EVENT_JOINED;
 	if (!ok)
@@ -807,11 +829,14 @@ rt_intrin_Accel_join(
 	}
 	ok = true;
 	if (event->state == ACCEL_EVENT_SUBMITTED) {
-		if (env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_OPENGL) {
+		if (env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_OPENGL &&
+		    env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_DX12) {
 			rt_error(env, "Accel.join(): event backend is unavailable.");
 			ok = false;
 		} else {
-			ok = accel_opengl_join(env, event);
+			ok = env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12 ?
+				accel_dx12_join(env, event) :
+				accel_opengl_join(env, event);
 		}
 	}
 	/* A join always consumes the event, including a failed device wait. */
@@ -869,6 +894,115 @@ accel_vulkan_copy_from(
 
 void
 accel_vulkan_cleanup(
+	struct rt_vm *vm)
+{
+	UNUSED_PARAMETER(vm);
+}
+#endif
+
+#if !defined(NOCT_USE_ACCEL_DX12)
+int
+accel_dx12_dispatch(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t arg_count,
+	struct rt_value *arg)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(func);
+	UNUSED_PARAMETER(arg_count);
+	UNUSED_PARAMETER(arg);
+	return ACCEL_DISPATCH_FALLBACK;
+}
+
+int
+accel_dx12_dispatch_raw(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t grid_size,
+	uint32_t block_size,
+	uint32_t arg_count,
+	struct rt_value *arg,
+	struct accel_event *event)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(func);
+	UNUSED_PARAMETER(grid_size);
+	UNUSED_PARAMETER(block_size);
+	UNUSED_PARAMETER(arg_count);
+	UNUSED_PARAMETER(arg);
+	UNUSED_PARAMETER(event);
+	return ACCEL_DISPATCH_FALLBACK;
+}
+
+bool
+accel_dx12_join(
+	struct rt_env *env,
+	struct accel_event *event)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(event);
+	return false;
+}
+
+bool
+accel_dx12_list_devices(void)
+{
+	return false;
+}
+
+int
+accel_dx12_copy_async(
+	struct rt_env *env,
+	bool to_accel,
+	struct rt_packed *source,
+	size_t source_offset,
+	struct rt_packed *destination,
+	size_t destination_offset,
+	size_t size,
+	struct accel_event *event)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(to_accel);
+	UNUSED_PARAMETER(source);
+	UNUSED_PARAMETER(source_offset);
+	UNUSED_PARAMETER(destination);
+	UNUSED_PARAMETER(destination_offset);
+	UNUSED_PARAMETER(size);
+	UNUSED_PARAMETER(event);
+	return ACCEL_DISPATCH_FALLBACK;
+}
+
+int
+accel_dx12_copy_to(
+	struct rt_env *env,
+	struct rt_packed *resource,
+	size_t offset,
+	size_t size)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(resource);
+	UNUSED_PARAMETER(offset);
+	UNUSED_PARAMETER(size);
+	return ACCEL_DISPATCH_FALLBACK;
+}
+
+int
+accel_dx12_copy_from(
+	struct rt_env *env,
+	struct rt_packed *resource,
+	size_t offset,
+	size_t size)
+{
+	UNUSED_PARAMETER(env);
+	UNUSED_PARAMETER(resource);
+	UNUSED_PARAMETER(offset);
+	UNUSED_PARAMETER(size);
+	return ACCEL_DISPATCH_FALLBACK;
+}
+
+void
+accel_dx12_cleanup(
 	struct rt_vm *vm)
 {
 	UNUSED_PARAMETER(vm);
@@ -1021,6 +1155,9 @@ accel_runtime_cleanup(
 	case NOCT_ACCEL_BACKEND_OPENGL:
 		accel_opengl_cleanup(vm);
 		break;
+	case NOCT_ACCEL_BACKEND_DX12:
+		accel_dx12_cleanup(vm);
+		break;
 	default:
 		break;
 	}
@@ -1041,6 +1178,7 @@ accel_kernel_clone(
 	dst->name = NULL;
 	dst->source_name = NULL;
 	dst->glsl = NULL;
+	dst->hlsl = NULL;
 	dst->backend_data = NULL;
 	if (src->name != NULL) {
 		dst->name = noct_strdup(src->name);
@@ -1059,6 +1197,13 @@ accel_kernel_clone(
 		memcpy(dst->glsl, src->glsl, src->glsl_size);
 		dst->glsl[src->glsl_size] = '\0';
 	}
+	if (src->hlsl != NULL) {
+		dst->hlsl = noct_malloc(src->hlsl_size + 1);
+		if (dst->hlsl == NULL)
+			goto failed;
+		memcpy(dst->hlsl, src->hlsl, src->hlsl_size);
+		dst->hlsl[src->hlsl_size] = '\0';
+	}
 	return dst;
 
 failed:
@@ -1075,5 +1220,6 @@ accel_kernel_free(
 	noct_free(kernel->name);
 	noct_free(kernel->source_name);
 	noct_free(kernel->glsl);
+	noct_free(kernel->hlsl);
 	noct_free(kernel);
 }

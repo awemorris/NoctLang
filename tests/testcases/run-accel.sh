@@ -127,7 +127,7 @@ if "$NOCT" -j0 accel/gpu-dispatch.noct > out 2>&1; then
 	echo 'FAIL gpu dispatch used a CPU fallback without OpenGL'
 	exit 1
 fi
-grep -F '__gpu func requires the OpenGL backend.' out
+grep -F '__gpu func requires the OpenGL backend' out
 
 if "$NOCT" -j0 accel/gpu-barrier-divergent.noct > out 2>&1; then
 	echo 'FAIL divergent raw GPU barrier was accepted'
@@ -217,6 +217,8 @@ cp accel/cpu-call.noct "$tmp_dir/cpu-call.noct"
 "$NOCT" --compile -O2 "$tmp_dir/cpu-call.noct"
 grep -a -F 'Accelerator' "$tmp_dir/cpu-call.nb" >/dev/null
 grep -a -F 'GLSL Size' "$tmp_dir/cpu-call.nb" >/dev/null
+grep -a -F 'HLSL Size' "$tmp_dir/cpu-call.nb" >/dev/null
+grep -a -F 'RWStructuredBuffer<uint>' "$tmp_dir/cpu-call.nb" >/dev/null
 if "$NOCT" --disable-accel -j0 "$tmp_dir/cpu-call.nb" \
 	> out 2>&1; then
 	echo 'FAIL accelerator bytecode executed on the CPU'

@@ -5,7 +5,7 @@
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-/* Version-1 accelerator eligibility analysis and deterministic GLSL 450. */
+/* Accelerator eligibility analysis and deterministic GPU source emission. */
 
 #include "ast.h"
 #include "hir.h"
@@ -42,6 +42,7 @@ struct accel_emit {
 	int reason;
 	int min_index;
 	bool analysis_only;
+	bool hlsl;
 	bool shifted_read[NOCT_ARG_MAX];
 	bool written[NOCT_ARG_MAX];
 	uint32_t local_buffer_count;
@@ -67,8 +68,10 @@ static bool accel_emit_blocks(struct accel_emit *ctx, struct hir_block *block,
 			      int packed_type, int indent,
 			      int *statement_count);
 static bool accel_emit_body(struct accel_emit *ctx, int indent);
-static bool accel_build_glsl(struct accel_emit *ctx,
-			     struct accel_kernel *kernel);
+static bool accel_build_shader(struct accel_emit *ctx,
+			       struct accel_kernel *kernel, bool hlsl);
+static bool accel_store_hlsl(struct accel_kernel *kernel,
+			     const char *source, size_t source_size);
 static bool accel_build_program(struct hir_block *func,
 				struct accel_kernel **outer_kernel,
 				struct hir_block **loop,
@@ -104,6 +107,25 @@ accel_reason_name(
 	default:
 		return "unknown pattern";
 	}
+}
+
+static bool
+accel_store_hlsl(
+	struct accel_kernel *kernel,
+	const char *source,
+	size_t source_size)
+{
+	char *copy;
+
+	copy = noct_malloc(source_size + 1);
+	if (copy == NULL)
+		return false;
+	memcpy(copy, source, source_size);
+	copy[source_size] = '\0';
+	noct_free(kernel->hlsl);
+	kernel->hlsl = copy;
+	kernel->hlsl_size = source_size;
+	return true;
 }
 
 static bool
@@ -269,10 +291,12 @@ accel_emit_term(
 			actual_type = ctx->kernel->param_type[param] == NOCT_VALUE_FLOAT ?
 				NOCT_PACKED_FLOAT32 : NOCT_PACKED_INT32;
 			if (actual_type == expected_type)
-				return accel_put(ctx, "pc.p%d", param);
+				return accel_put(ctx, ctx->hlsl ? "pc_p%d" : "pc.p%d",
+						 param);
 			constructor = accel_glsl_type(expected_type);
 			if (constructor == NULL) break;
-			return accel_put(ctx, "%s(pc.p%d)", constructor, param);
+			return accel_put(ctx, ctx->hlsl ? "%s(pc_p%d)" :
+					 "%s(pc.p%d)", constructor, param);
 		}
 		break;
 	default:
@@ -387,7 +411,8 @@ accel_emit_expr(
 			return false;
 		}
 		if (convert && !accel_put(ctx, "%s(", constructor)) return false;
-		if (!accel_put(ctx, "p%d.words[", param)) return false;
+		if (!accel_put(ctx, ctx->hlsl ? "p%d[" : "p%d.words[", param))
+			return false;
 		if (!accel_emit_expr(ctx, expr->val.binary.expr[1], NOCT_PACKED_UINT32))
 			return false;
 		return accel_put(ctx, convert ? "])" : "]");
@@ -480,7 +505,8 @@ accel_emit_stmt(
 	ctx->written[param] = true;
 	ctx->kernel->param_effect[param] |= ACCEL_EFFECT_WRITE;
 	accel_record_range(ctx, param, 0);
-	if (!accel_put(ctx, "%*sp%d.words[i] = ", indent, "", param))
+	if (!accel_put(ctx, ctx->hlsl ? "%*sp%d[i] = " :
+					 "%*sp%d.words[i] = ", indent, "", param))
 		return false;
 	if (!accel_emit_expr(ctx, stmt->rhs, packed_type)) return false;
 	return accel_put(ctx, ";\n");
@@ -745,9 +771,10 @@ accel_glsl_type(
 }
 
 static bool
-accel_build_glsl(
+accel_build_shader(
 	struct accel_emit *ctx,
-	struct accel_kernel *kernel)
+	struct accel_kernel *kernel,
+	bool hlsl)
 {
 	struct hir_block *block;
 	struct hir_expr *stop;
@@ -759,7 +786,8 @@ accel_build_glsl(
 	struct hir_loop_summary *summary;
 	struct hir_doall_result doall;
 	struct hir_local *local;
-	kernel->descriptor_version = 2;
+	ctx->hlsl = hlsl;
+	kernel->descriptor_version = 3;
 	kernel->func_kind = NOCT_FUNC_ACCEL;
 
 	for (i = 0; i < ctx->func->val.func.param_count; i++) {
@@ -894,31 +922,51 @@ accel_build_glsl(
 	}
 	kernel->parallel_mode = ACCEL_PARALLEL_DOALL;
 
-	if (!accel_put(ctx, "#version 450\n"
-			      "layout(local_size_x = %d, local_size_y = 1, local_size_z = 1) in;\n",
-			      kernel->parallel_mode == ACCEL_PARALLEL_DOALL ? 64 : 1))
+	if (hlsl) {
+		if (!accel_put(ctx, "// Noct HLSL SM 5.1\n"))
+			return false;
+	} else if (!accel_put(ctx, "#version 450\n"
+				     "layout(local_size_x = %d, local_size_y = 1, local_size_z = 1) in;\n",
+				     kernel->parallel_mode == ACCEL_PARALLEL_DOALL ? 64 : 1))
 		return false;
 	for (i = 0; i < kernel->param_count; i++) {
 		if (kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR) continue;
 		type = accel_glsl_type(kernel->param_packed_type[i]);
-		qualifier = kernel->param_transport[i] == ACCEL_TRANSPORT_COPY_IN ?
-			"readonly" : kernel->param_transport[i] == ACCEL_TRANSPORT_COPY_OUT ?
-			"writeonly" : "";
-		if (!accel_put(ctx,
-			"layout(set = 0, binding = %u, std430) %s buffer P%u { %s words[]; } p%u;\n",
-			i, qualifier, i, type, i)) return false;
+		if (hlsl) {
+			if (!accel_put(ctx,
+				"RWStructuredBuffer<%s> p%u : register(u%u);\n",
+				type, i, i)) return false;
+		} else {
+			qualifier = kernel->param_transport[i] == ACCEL_TRANSPORT_COPY_IN ?
+				"readonly" : kernel->param_transport[i] == ACCEL_TRANSPORT_COPY_OUT ?
+				"writeonly" : "";
+			if (!accel_put(ctx,
+				"layout(set = 0, binding = %u, std430) %s buffer P%u { %s words[]; } p%u;\n",
+				i, qualifier, i, type, i)) return false;
+		}
 	}
-	if (!accel_put(ctx, "layout(push_constant) uniform PushConstants {\n"
-			      "    uint element_count;\n")) return false;
+	if (!accel_put(ctx, hlsl ? "cbuffer NoctPush : register(b0) {\n"
+					"    uint element_count;\n"
+					"    uint dispatch_stride;\n" :
+					"layout(push_constant) uniform PushConstants {\n"
+					"    uint element_count;\n")) return false;
 	for (i = 0; i < kernel->param_count; i++) {
 		if (kernel->param_transport[i] != ACCEL_TRANSPORT_SCALAR) continue;
 		type = kernel->param_type[i] == NOCT_VALUE_FLOAT ? "float" : "int";
-		if (!accel_put(ctx, "    %s p%u;\n", type, i)) return false;
+		if (!accel_put(ctx, hlsl ? "    %s pc_p%u;\n" :
+					 "    %s p%u;\n", type, i)) return false;
 	}
-	if (!accel_put(ctx, "} pc;\nvoid main() {\n")) return false;
-	if (!accel_put(ctx, "    uint i = gl_GlobalInvocationID.x;\n"
-			      "    uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;\n"
-			      "    for (; i < pc.element_count; i += stride) {\n"))
+	if (!accel_put(ctx, hlsl ?
+			"};\n[numthreads(64, 1, 1)]\n"
+			"void main(uint3 dispatch_id : SV_DispatchThreadID) {\n" :
+			"} pc;\nvoid main() {\n")) return false;
+	if (!accel_put(ctx, hlsl ?
+			"    uint i = dispatch_id.x;\n"
+			"    uint stride = dispatch_stride;\n"
+			"    for (; i < element_count; i += stride) {\n" :
+			"    uint i = gl_GlobalInvocationID.x;\n"
+			"    uint stride = gl_NumWorkGroups.x * gl_WorkGroupSize.x;\n"
+			"    for (; i < pc.element_count; i += stride) {\n"))
 		return false;
 	if (!accel_emit_body(ctx, 8)) return false;
 	return accel_put(ctx, "    }\n}\n");
@@ -1282,7 +1330,7 @@ accel_build_doall_kernel(
 	ctx.func = func;
 	ctx.loop = loop;
 	ctx.kernel = kernel;
-	(void)accel_build_glsl(&ctx, kernel);
+	(void)accel_build_shader(&ctx, kernel, false);
 	if (ctx.reason != ACCEL_REJECT_NONE) {
 		accel_kernel_free(kernel);
 		return NULL;
@@ -1291,6 +1339,20 @@ accel_build_doall_kernel(
 	kernel->source_line = loop->line;
 	if (!gpu_ir_finalize_kernel(kernel, ctx.text, ctx.size,
 				    error, sizeof(error))) {
+		accel_kernel_free(kernel);
+		return NULL;
+	}
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.func = func;
+	ctx.loop = loop;
+	ctx.kernel = kernel;
+	kernel->param_count = func->val.func.param_count;
+	kernel->output_param = -1;
+	kernel->dispatch_param = -1;
+	memset(kernel->param_effect, 0, sizeof(kernel->param_effect));
+	memset(kernel->param_range, 0, sizeof(kernel->param_range));
+	if (!accel_build_shader(&ctx, kernel, true) ||
+	    !accel_store_hlsl(kernel, ctx.text, ctx.size)) {
 		accel_kernel_free(kernel);
 		return NULL;
 	}
@@ -1592,6 +1654,51 @@ accel_try_build_dosum_at(
 	if (!gpu_ir_finalize_kernel(map_kernel, ctx.text, ctx.size,
 				    error, sizeof(error)))
 		goto failed;
+	memset(ctx.text, 0, sizeof(ctx.text));
+	ctx.size = 0;
+	ctx.hlsl = true;
+	if (!accel_put(&ctx, "// Noct HLSL SM 5.1\n"))
+		goto failed;
+	for (i = 0; i < scratch_param; i++) {
+		const char *pt;
+		if (map_kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR)
+			continue;
+		pt = accel_glsl_type(map_kernel->param_packed_type[i]);
+		if (pt == NULL || !accel_put(&ctx,
+			"RWStructuredBuffer<%s> p%u : register(u%u);\n",
+			pt, i, i)) goto failed;
+	}
+	if (!accel_put(&ctx,
+		"RWStructuredBuffer<%s> pr : register(u%u);\n"
+		"cbuffer NoctPush : register(b0) { uint element_count; uint dispatch_stride;\n",
+		type, scratch_param)) goto failed;
+	for (i = 0; i < func->val.func.param_count; i++) {
+		if (map_kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR &&
+		    !accel_put(&ctx, "    %s pc_p%u;\n",
+			map_kernel->param_type[i] == NOCT_VALUE_FLOAT ? "float" : "int", i))
+			goto failed;
+	}
+	if (!accel_put(&ctx,
+		"};\ngroupshared %s partial[64];\n[numthreads(64,1,1)]\n"
+		"void main(uint3 dispatch_id:SV_DispatchThreadID,uint3 group_id:SV_GroupID,uint3 local_id:SV_GroupThreadID){\n"
+		" uint lid=local_id.x; uint gid=dispatch_id.x;\n"
+		" %s value=%s; for(uint i=gid;i<element_count;i+=dispatch_stride){ value+=",
+		type, type, zero) ||
+	    !accel_emit_expr(&ctx, (struct hir_expr *)dosum.mapped_expr,
+			    func->val.func.param_packed_type[output_param]) ||
+	    !accel_put(&ctx,
+		";} partial[lid]=value; GroupMemoryBarrierWithGroupSync();\n"
+		" if(lid<32u) partial[lid]+=partial[lid+32u]; GroupMemoryBarrierWithGroupSync();\n"
+		" if(lid<16u) partial[lid]+=partial[lid+16u]; GroupMemoryBarrierWithGroupSync();\n"
+		" if(lid<8u) partial[lid]+=partial[lid+8u]; GroupMemoryBarrierWithGroupSync();\n"
+		" if(lid<4u) partial[lid]+=partial[lid+4u]; GroupMemoryBarrierWithGroupSync();\n"
+		" if(lid<2u) partial[lid]+=partial[lid+2u]; GroupMemoryBarrierWithGroupSync();\n"
+		" if(lid<1u) partial[lid]+=partial[lid+1u]; GroupMemoryBarrierWithGroupSync();\n"
+		" if(lid==0u) pr[group_id.x]=partial[0];\n}\n") ||
+	    !accel_store_hlsl(map_kernel, ctx.text, ctx.size))
+		goto failed;
+	memset(ctx.text, 0, sizeof(ctx.text));
+	ctx.size = 0;
 	for (i = 0; i < map_kernel->param_count; i++)
 		if (map_kernel->param_transport[i] != ACCEL_TRANSPORT_SCALAR)
 			map_kernel->param_transport[i] = ACCEL_TRANSPORT_DEVICE_PTR;
@@ -1644,6 +1751,30 @@ accel_try_build_dosum_at(
 	if (!gpu_ir_finalize_kernel(fold_kernel, ctx.text, ctx.size,
 				    error, sizeof(error)))
 		goto failed;
+	memset(ctx.text, 0, sizeof(ctx.text));
+	ctx.size = 0;
+	ctx.hlsl = true;
+	if (!accel_put(&ctx,
+		"// Noct HLSL SM 5.1\n"
+		"RWStructuredBuffer<%s> a : register(u0);\n"
+		"RWStructuredBuffer<%s> b : register(u1);\n"
+		"cbuffer NoctPush : register(b0){uint element_count;uint dispatch_stride;int pc_p2;};\n"
+		"groupshared %s partial[64];\n[numthreads(64,1,1)]\n"
+		"void main(uint3 dispatch_id:SV_DispatchThreadID,uint3 group_id:SV_GroupID,uint3 local_id:SV_GroupThreadID){"
+		"uint lid=local_id.x;uint gid=dispatch_id.x;%s v=%s;if(gid<element_count)v=a[gid];"
+		"partial[lid]=v;GroupMemoryBarrierWithGroupSync();"
+		"if(lid<32u)partial[lid]+=partial[lid+32u];GroupMemoryBarrierWithGroupSync();"
+		"if(lid<16u)partial[lid]+=partial[lid+16u];GroupMemoryBarrierWithGroupSync();"
+		"if(lid<8u)partial[lid]+=partial[lid+8u];GroupMemoryBarrierWithGroupSync();"
+		"if(lid<4u)partial[lid]+=partial[lid+4u];GroupMemoryBarrierWithGroupSync();"
+		"if(lid<2u)partial[lid]+=partial[lid+2u];GroupMemoryBarrierWithGroupSync();"
+		"if(lid<1u)partial[lid]+=partial[lid+1u];GroupMemoryBarrierWithGroupSync();"
+		"if(lid==0u)b[group_id.x]=partial[0];}\n",
+		 type, type, type, type, zero) ||
+	    !accel_store_hlsl(fold_kernel, ctx.text, ctx.size))
+		goto failed;
+	memset(ctx.text, 0, sizeof(ctx.text));
+	ctx.size = 0;
 
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		expr_map[i] = -1;
@@ -2020,13 +2151,27 @@ hir_opt_accel_func(
 			ctx.reason = ACCEL_REJECT_LOOP_SHAPE;
 		} else {
 			ctx.loop = loop[k];
-			(void)accel_build_glsl(&ctx, kernel[k]);
+			(void)accel_build_shader(&ctx, kernel[k], false);
 		}
 		if (ctx.reason == ACCEL_REJECT_NONE) {
 			kernel[k]->eligible = true;
 			kernel[k]->source_line = ctx.loop->line;
 			if (!gpu_ir_finalize_kernel(kernel[k], ctx.text, ctx.size,
 						    ir_error, sizeof(ir_error)))
+				goto failed;
+			memset(&ctx, 0, sizeof(ctx));
+			ctx.func = func_block;
+			ctx.loop = loop[k];
+			ctx.kernel = kernel[k];
+			kernel[k]->param_count = func_block->val.func.param_count;
+			kernel[k]->output_param = -1;
+			kernel[k]->dispatch_param = -1;
+			memset(kernel[k]->param_effect, 0,
+			       sizeof(kernel[k]->param_effect));
+			memset(kernel[k]->param_range, 0,
+			       sizeof(kernel[k]->param_range));
+			if (!accel_build_shader(&ctx, kernel[k], true) ||
+			    !accel_store_hlsl(kernel[k], ctx.text, ctx.size))
 				goto failed;
 		} else {
 			kernel[k]->eligible = false;

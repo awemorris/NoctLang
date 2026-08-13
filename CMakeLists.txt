@@ -35,6 +35,7 @@ option(NOCT_ENABLE_REPL           "Enable reusable REPL and CLI mode"     OFF)
 option(NOCT_ENABLE_OPTIMIZER      "Enable the HIR optimizer"              OFF)
 option(NOCT_ENABLE_ACCEL_VULKAN   "Enable the Vulkan compute accelerator" OFF)
 option(NOCT_ENABLE_ACCEL_OPENGL   "Enable the OpenGL ES compute accelerator" OFF)
+option(NOCT_ENABLE_ACCEL_DX12     "Enable the DirectX 12 compute accelerator" OFF)
 option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
 
 #
@@ -219,6 +220,26 @@ if(NOCT_ENABLE_ACCEL_OPENGL)
   pkg_check_modules(GLESV2 REQUIRED IMPORTED_TARGET "glesv2>=3.1")
   list(APPEND NOCT_BASE_SOURCE src/api/accel_opengl.c)
   add_definitions(-DNOCT_USE_ACCEL_OPENGL=1)
+endif()
+
+if(NOCT_ENABLE_ACCEL_DX12)
+  if(NOT WIN32 OR CMAKE_SIZEOF_VOID_P LESS 8 OR
+     NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
+     NOCT_TARGET_UNITY)
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_DX12 requires a 64-bit desktop Windows target")
+  endif()
+  include(CheckIncludeFile)
+  set(CMAKE_REQUIRED_INCLUDES
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/directx-headers/include")
+  set(CMAKE_REQUIRED_DEFINITIONS "-D__REQUIRED_RPCNDR_H_VERSION__=475")
+  check_include_file("directx/d3d12.h" NOCT_HAVE_D3D12_H)
+  unset(CMAKE_REQUIRED_INCLUDES)
+  unset(CMAKE_REQUIRED_DEFINITIONS)
+  if(NOT NOCT_HAVE_D3D12_H)
+    message(FATAL_ERROR "The vendored DirectX 12 headers cannot be compiled by this toolchain")
+  endif()
+  list(APPEND NOCT_BASE_SOURCE src/api/accel_dx12.c)
+  add_definitions(-DNOCT_USE_ACCEL_DX12=1)
 endif()
 
 # Determine the object model source file.
@@ -574,6 +595,13 @@ endif()
 
 if(NOCT_ENABLE_ACCEL_OPENGL)
   target_link_libraries(noct PUBLIC PkgConfig::EGL PkgConfig::GLESV2)
+endif()
+
+if(NOCT_ENABLE_ACCEL_DX12)
+  target_include_directories(noct SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/directx-headers/include)
+  target_compile_definitions(noct PRIVATE __REQUIRED_RPCNDR_H_VERSION__=475)
+  target_link_libraries(noct PUBLIC d3d12 dxgi dxguid d3dcompiler ole32)
 endif()
 
 if(NOCT_ENABLE_I18N_INTL)

@@ -14,6 +14,9 @@
 #include <noct/beui.h>
 #endif
 #include "cli-main.h"
+#if defined(NOCT_USE_ACCEL_DX12)
+#include "../core/accel.h"
+#endif
 
 #include <errno.h>
 #include <limits.h>
@@ -326,6 +329,17 @@ parse_options(
 			continue;
 #endif
 		}
+		if (strcmp(argv[i], "--accel=dx12") == 0) {
+#if !defined(NOCT_USE_ACCEL_DX12)
+			wide_printf(N_TR("DirectX 12 accelerator support is not available in this build.\n"));
+			return false;
+#else
+			config.accel_enable = true;
+			config.accel_backend = NOCT_ACCEL_BACKEND_DX12;
+			file_arg++;
+			continue;
+#endif
+		}
 		if (strcmp(argv[i], "--disable-accel") == 0) {
 			config.accel_enable = false;
 			config.accel_backend = NOCT_ACCEL_BACKEND_NONE;
@@ -516,7 +530,13 @@ print_cpu_list(void)
 static void
 print_gpu_list(void)
 {
+#if defined(NOCT_USE_ACCEL_DX12)
+	if (accel_dx12_list_devices())
+		return;
+	wide_printf(N_TR("No compatible DirectX 12 adapters are available.\n"));
+#else
 	wide_printf(N_TR("GPU backend is not linked; no devices are available.\n"));
+#endif
 }
 
 static bool

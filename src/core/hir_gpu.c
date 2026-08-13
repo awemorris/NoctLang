@@ -34,6 +34,7 @@ struct gpu_local {
 
 struct gpu_emit {
 	struct hir_block *func;
+	bool hlsl;
 	char *text;
 	size_t size, capacity;
 	char *error;
@@ -255,7 +256,7 @@ gpu_is_int_literal(struct ast_expr *x)
 }
 
 static bool
-gpu_intrinsic_name(struct gpu_emit *e, struct ast_expr *x, const char **glsl)
+gpu_intrinsic_name(struct gpu_emit *e, struct ast_expr *x, const char **name)
 {
 	struct ast_expr *o;
 	const char *n;
@@ -266,11 +267,18 @@ gpu_intrinsic_name(struct gpu_emit *e, struct ast_expr *x, const char **glsl)
 		gpu_error(e, "Raw GPU intrinsics support only .x."); return false;
 	}
 	n = o->val.term.term->val.symbol;
-	if (strcmp(n, "threadIdx") == 0) *glsl = "gl_LocalInvocationID.x";
-	else if (strcmp(n, "blockIdx") == 0) *glsl = "gl_WorkGroupID.x";
-	else if (strcmp(n, "blockDim") == 0) *glsl = "gl_WorkGroupSize.x";
-	else if (strcmp(n, "gridDim") == 0) *glsl = "gl_NumWorkGroups.x";
-	else if (strcmp(n, "globalIdx") == 0) *glsl = "gl_GlobalInvocationID.x";
+	if (strcmp(n, "threadIdx") == 0)
+		*name = e->hlsl ? "noct_group_thread_id.x" :
+			"gl_LocalInvocationID.x";
+	else if (strcmp(n, "blockIdx") == 0)
+		*name = e->hlsl ? "noct_group_id.x" : "gl_WorkGroupID.x";
+	else if (strcmp(n, "blockDim") == 0)
+		*name = e->hlsl ? "pc_block_size" : "gl_WorkGroupSize.x";
+	else if (strcmp(n, "gridDim") == 0)
+		*name = e->hlsl ? "pc_grid_size" : "gl_NumWorkGroups.x";
+	else if (strcmp(n, "globalIdx") == 0)
+		*name = e->hlsl ? "noct_dispatch_thread_id.x" :
+			"gl_GlobalInvocationID.x";
 	else { gpu_error(e, "Unsupported property in raw GPU function."); return false; }
 	return true;
 }
@@ -616,7 +624,7 @@ gpu_symbol_expr(struct gpu_emit *e, const char *name)
 	int p;
 	int local;
 	p = gpu_param(e, name);
-	if (p >= 0) return gpu_put(e, "pc.p%d", p);
+	if (p >= 0) return gpu_put(e, e->hlsl ? "pc_p%d" : "pc.p%d", p);
 	local = gpu_local(e, name);
 	if (local < 0) {
 		gpu_error_name(e, "Unknown or out-of-scope raw GPU symbol '%s'.", name);
@@ -669,7 +677,7 @@ gpu_expr(struct gpu_emit *e, struct ast_expr *x, int expected)
 			return gpu_put(e, "s%d[", shared) &&
 				gpu_expr(e, x->val.binary.expr[1], NOCT_PACKED_INT32) && gpu_put(e, "]");
 		e->func->val.func.param_accel_effect[p] |= ACCEL_EFFECT_READ;
-		return gpu_put(e, "p%d.words[", p) &&
+		return gpu_put(e, e->hlsl ? "p%d[" : "p%d.words[", p) &&
 			gpu_expr(e, x->val.binary.expr[1], NOCT_PACKED_INT32) && gpu_put(e, "]");
 	}
 	if (x->type == AST_EXPR_CALL) {
@@ -677,7 +685,8 @@ gpu_expr(struct gpu_emit *e, struct ast_expr *x, int expected)
 			arg = x->val.call.arg_list != NULL ?
 			      x->val.call.arg_list->list : NULL;
 			if (!gpu_float32_bits_literal(e, arg, &float_bits)) return false;
-			return gpu_put(e, "uintBitsToFloat(0x%08xu)",
+			return gpu_put(e, e->hlsl ? "asfloat(0x%08xu)" :
+			       "uintBitsToFloat(0x%08xu)",
 			       (unsigned int)float_bits);
 		}
 		math_op = gpu_math_call(e, x, false);
@@ -766,7 +775,7 @@ gpu_store_lhs(struct gpu_emit *e, struct ast_expr *x, int *type)
 	if (!gpu_expr_type(e, x->val.binary.expr[1], NOCT_PACKED_INT32,
 			   &index_type)) return false;
 	e->func->val.func.param_accel_effect[p] |= ACCEL_EFFECT_WRITE;
-	return gpu_put(e, "p%d.words[", p) &&
+	return gpu_put(e, e->hlsl ? "p%d[" : "p%d.words[", p) &&
 		gpu_expr(e, x->val.binary.expr[1], NOCT_PACKED_INT32) && gpu_put(e, "]");
 }
 
@@ -951,7 +960,9 @@ gpu_stmts(struct gpu_emit *e, struct ast_stmt_list *list, int indent)
 				return false;
 			}
 			e->has_barrier = true;
-			if (!gpu_put(e, "%*smemoryBarrierShared(); barrier();\n", indent, ""))
+			if (!gpu_put(e, e->hlsl ?
+				"%*sGroupMemoryBarrierWithGroupSync();\n" :
+				"%*smemoryBarrierShared(); barrier();\n", indent, ""))
 				return false;
 			break;
 		default:
@@ -1034,13 +1045,16 @@ bool
 hir_gpu_build_kernel(struct hir_block *func, struct ast_func *afunc,
 		     char *error, size_t error_size)
 {
-	struct gpu_emit body, out;
+	struct gpu_emit body, hbody, out, hout;
 	struct accel_kernel *k;
 	const struct accel_op_desc *math_op;
 	const char *helper;
 	const char *type;
 	uint32_t i;
 	memset(&body, 0, sizeof(body));
+	memset(&hbody, 0, sizeof(hbody));
+	memset(&out, 0, sizeof(out));
+	memset(&hout, 0, sizeof(hout));
 	body.func = func; body.error = error; body.error_size = error_size;
 	if (error_size != 0) error[0] = '\0';
 	for (i = 0; i < func->val.func.param_count; i++) {
@@ -1068,7 +1082,19 @@ hir_gpu_build_kernel(struct hir_block *func, struct ast_func *afunc,
 		gpu_error(&body, "Raw GPU functions containing syncthreads() cannot return early.");
 		noct_free(body.text); return false;
 	}
-	memset(&out, 0, sizeof(out));
+	hbody.func = func; hbody.hlsl = true;
+	hbody.error = error; hbody.error_size = error_size;
+	hbody.shared_count = body.shared_count;
+	memcpy(hbody.shared_name, body.shared_name, sizeof(body.shared_name));
+	memcpy(hbody.shared_type, body.shared_type, sizeof(body.shared_type));
+	memcpy(hbody.shared_length, body.shared_length, sizeof(body.shared_length));
+	if (!gpu_stmts(&hbody, afunc->stmt_list, 4)) {
+		noct_free(body.text); noct_free(hbody.text); return false;
+	}
+	if (hbody.has_barrier && hbody.has_nonfinal_return) {
+		gpu_error(&hbody, "Raw GPU functions containing syncthreads() cannot return early.");
+		noct_free(body.text); noct_free(hbody.text); return false;
+	}
 	out.func = func; out.error = error; out.error_size = error_size;
 	out.shared_count = body.shared_count;
 	memcpy(out.shared_name, body.shared_name, sizeof(body.shared_name));
@@ -1106,12 +1132,59 @@ hir_gpu_build_kernel(struct hir_block *func, struct ast_func *afunc,
 	}
 	if (!gpu_put(&out, "} pc;\nvoid main() {\n%s}\n",
 		     body.text != NULL ? body.text : "")) goto fail;
+	hout.func = func; hout.hlsl = true;
+	hout.error = error; hout.error_size = error_size;
+	hout.shared_count = hbody.shared_count;
+	memcpy(hout.shared_name, hbody.shared_name, sizeof(hbody.shared_name));
+	memcpy(hout.shared_type, hbody.shared_type, sizeof(hbody.shared_type));
+	memcpy(hout.shared_length, hbody.shared_length, sizeof(hbody.shared_length));
+	memcpy(hout.used_math, hbody.used_math, sizeof(hbody.used_math));
+	if (!gpu_put(&hout, "// Noct HLSL SM 5.1\n")) goto fail_hlsl;
+	for (i = 1; i < ACCEL_MATH_ID_LIMIT; i++) {
+		if (!hout.used_math[i]) continue;
+		math_op = accel_math_lookup_id((int)i);
+		helper = accel_op_glsl_helper(math_op);
+		if (helper != NULL && !gpu_put(&hout, "%s", helper)) goto fail_hlsl;
+	}
+	for (i = 0; i < func->val.func.param_count; i++) {
+		if (func->val.func.param_accel_transport[i] !=
+		    ACCEL_TRANSPORT_DEVICE_PTR) continue;
+		type = gpu_packed_type(func->val.func.param_packed_type[i]);
+		if (!gpu_put(&hout,
+			"RWStructuredBuffer<%s> p%u : register(u%u);\n",
+			type, i, i)) goto fail_hlsl;
+	}
+	for (i = 0; i < hout.shared_count; i++) {
+		type = gpu_packed_type(hout.shared_type[i]);
+		if (!gpu_put(&hout, "groupshared %s s%u[%u];\n", type, i,
+			     hout.shared_length[i])) goto fail_hlsl;
+	}
+	if (!gpu_put(&hout, "cbuffer NoctPush : register(b0) {\n"
+		     "    uint pc_grid_size;\n    uint pc_block_size;\n"))
+		goto fail_hlsl;
+	for (i = 0; i < func->val.func.param_count; i++) {
+		if (func->val.func.param_accel_transport[i] !=
+		    ACCEL_TRANSPORT_SCALAR) continue;
+		type = func->val.func.param_type[i] == NOCT_VALUE_FLOAT ?
+			"float" : "int";
+		if (!gpu_put(&hout, "    %s pc_p%u;\n", type, i)) goto fail_hlsl;
+	}
+	if (!gpu_put(&hout,
+		"};\n[numthreads(NOCT_LOCAL_SIZE_X, 1, 1)]\n"
+		"void main(uint3 noct_group_thread_id : SV_GroupThreadID,\n"
+		"          uint3 noct_group_id : SV_GroupID,\n"
+		"          uint3 noct_dispatch_thread_id : SV_DispatchThreadID) {\n"
+		"%s}\n", hbody.text != NULL ? hbody.text : ""))
+		goto fail_hlsl;
 	noct_free(body.text);
+	noct_free(hbody.text);
+	body.text = NULL;
+	hbody.text = NULL;
 	k = noct_calloc(1, sizeof(*k));
 	if (k == NULL) {
 		gpu_error(&out, "Out of memory creating raw GPU descriptor."); goto fail_out;
 	}
-	k->descriptor_version = 2; k->func_kind = NOCT_FUNC_GPU; k->eligible = true;
+	k->descriptor_version = 3; k->func_kind = NOCT_FUNC_GPU; k->eligible = true;
 	k->name = noct_strdup(func->val.func.name);
 	k->source_name = noct_strdup(func->val.func.file_name);
 	k->param_count = func->val.func.param_count;
@@ -1125,17 +1198,25 @@ hir_gpu_build_kernel(struct hir_block *func, struct ast_func *afunc,
 	}
 	if (k->name == NULL || k->source_name == NULL) {
 		accel_kernel_free(k);
-		gpu_error(&out, "Out of memory creating raw GPU descriptor."); return false;
+		gpu_error(&out, "Out of memory creating raw GPU descriptor.");
+		goto fail_out;
 	}
 	if (!gpu_ir_finalize_kernel(k, out.text, out.size,
 				    error, error_size)) {
 		accel_kernel_free(k);
 		goto fail_out;
 	}
+	k->hlsl = hout.text;
+	k->hlsl_size = hout.size;
+	hout.text = NULL;
 	noct_free(out.text);
 	func->val.func.accel_kernel = k; return true;
 fail:
+fail_hlsl:
 	noct_free(body.text);
+	noct_free(hbody.text);
 fail_out:
-	noct_free(out.text); return false;
+	noct_free(out.text);
+	noct_free(hout.text);
+	return false;
 }

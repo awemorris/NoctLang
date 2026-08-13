@@ -115,6 +115,7 @@ struct rt_value {
 #define NOCT_ACCEL_BACKEND_NONE    0
 #define NOCT_ACCEL_BACKEND_VULKAN  1
 #define NOCT_ACCEL_BACKEND_OPENGL  2
+#define NOCT_ACCEL_BACKEND_DX12    3
 
 struct rt_config {
 	/* Enable JIT. */

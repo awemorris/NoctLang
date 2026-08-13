@@ -37,6 +37,7 @@ Main suites:
 Accelerator hardware suites:
   accel-opengl     OpenGL ES execution tests (NOCT selects the binary).
   accel-vulkan     Vulkan execution tests (NOCT selects the binary).
+  accel-dx12       DirectX 12 execution tests on Windows (NOCT is required).
   accel-serialization  Relocated OpenGL .nb/.nap hardening tests.
 
 Model and ONNX suites:
@@ -115,6 +116,7 @@ accel-analysis)  run_script run-accel-analysis.sh "$@" ;;
 accel-program)   run_script run-accel-program.sh "$@" ;;
 accel-opengl)    run_script run-accel-opengl.sh "$@" ;;
 accel-vulkan)    run_script run-accel-vulkan.sh "$@" ;;
+accel-dx12)      run_script run-accel-dx12.sh "$@" ;;
 accel-serialization) run_script run-accel-serialization.sh "$@" ;;
 model-weights)   run_script run-model-weights.sh "$@" ;;
 onnx2noct)       run_script run-onnx2noct.sh "$@" ;;

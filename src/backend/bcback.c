@@ -204,11 +204,16 @@ bcback_write_accel_program(FILE *out, const struct accel_program *program)
 				    (long long)kernel->param_range[j].min_offset,
 				    (long long)kernel->param_range[j].max_offset) < 0)
 				return false;
-		if (fprintf(out, "%u %lu\n", kernel->content_hash,
-			    (unsigned long)kernel->glsl_size) < 0) return false;
+		if (fprintf(out, "%u %lu %lu\n", kernel->content_hash,
+			    (unsigned long)kernel->glsl_size,
+			    (unsigned long)kernel->hlsl_size) < 0) return false;
 		if (kernel->glsl_size != 0 &&
 		    fwrite(kernel->glsl, 1, kernel->glsl_size, out) !=
 			kernel->glsl_size) return false;
+		if (fprintf(out, "\n") < 0) return false;
+		if (kernel->hlsl_size != 0 &&
+		    fwrite(kernel->hlsl, 1, kernel->hlsl_size, out) !=
+			kernel->hlsl_size) return false;
 		if (fprintf(out, "\n") < 0) return false;
 	}
 	for (i = 0; i < program->step_count; i++) {
@@ -343,10 +348,11 @@ bcback_write_function(FILE *out, const struct lir_func *f)
 		return false;
 	if (f->func_kind != NOCT_FUNC_NORMAL && f->accel_kernel != NULL) {
 		const struct accel_kernel *kernel;
-		size_t glsl_size;
+		size_t glsl_size, hlsl_size;
 
 		kernel = f->accel_kernel;
 		glsl_size = kernel != NULL ? kernel->glsl_size : 0;
+		hlsl_size = kernel != NULL ? kernel->hlsl_size : 0;
 		if (fprintf(out, "Accelerator\n%d\n%d\n%d\n%d\n%d\n%u\n"
 			    "GLSL Size\n%lu\n",
 			    kernel != NULL && kernel->eligible ? 1 : 0,
@@ -359,6 +365,12 @@ bcback_write_function(FILE *out, const struct lir_func *f)
 			return false;
 		if (glsl_size != 0 &&
 		    fwrite(kernel->glsl, 1, glsl_size, out) != glsl_size)
+			return false;
+		if (fprintf(out, "\n") < 0) return false;
+		if (fprintf(out, "HLSL Size\n%lu\n", (unsigned long)hlsl_size) < 0)
+			return false;
+		if (hlsl_size != 0 &&
+		    fwrite(kernel->hlsl, 1, hlsl_size, out) != hlsl_size)
 			return false;
 		if (fprintf(out, "\n") < 0) return false;
 	}

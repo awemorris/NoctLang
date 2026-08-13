@@ -1111,7 +1111,7 @@ rt_read_accel_program(
 	unsigned int i, j, u0, u1;
 	int source_line, b[16];
 	long long ll0, ll1;
-	unsigned long glsl_size;
+	unsigned long glsl_size, hlsl_size;
 	char validation_error[128];
 
 	UNUSED_PARAMETER(env);
@@ -1213,14 +1213,24 @@ rt_read_accel_program(
 			kernel->param_range[j].max_offset = (int64_t)ll1;
 		}
 		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || sscanf(line, "%u %lu", &kernel->content_hash,
-			&glsl_size) != 2 || glsl_size >= size - *pos) goto failed;
+		if (line == NULL || sscanf(line, "%u %lu %lu", &kernel->content_hash,
+			&glsl_size, &hlsl_size) != 3 || glsl_size >= size - *pos)
+			goto failed;
 		kernel->glsl_size = (size_t)glsl_size;
 		kernel->glsl = noct_malloc(kernel->glsl_size + 1);
 		if (kernel->glsl == NULL) goto failed;
 		memcpy(kernel->glsl, data + *pos, kernel->glsl_size);
 		kernel->glsl[kernel->glsl_size] = '\0';
 		*pos += (uint32_t)kernel->glsl_size;
+		if (*pos >= size || data[*pos] != '\n') goto failed;
+		(*pos)++;
+		if (hlsl_size >= size - *pos) goto failed;
+		kernel->hlsl_size = (size_t)hlsl_size;
+		kernel->hlsl = noct_malloc(kernel->hlsl_size + 1);
+		if (kernel->hlsl == NULL) goto failed;
+		memcpy(kernel->hlsl, data + *pos, kernel->hlsl_size);
+		kernel->hlsl[kernel->hlsl_size] = '\0';
+		*pos += (uint32_t)kernel->hlsl_size;
 		if (*pos >= size || data[*pos] != '\n') goto failed;
 		(*pos)++;
 	}
@@ -1565,7 +1575,7 @@ rt_register_bytecode_function(
 		}
 		if (line != NULL && strcmp(line, "Accelerator") == 0) {
 			struct accel_kernel *kernel;
-			size_t glsl_size;
+			size_t glsl_size, hlsl_size;
 
 			kernel = noct_calloc(1, sizeof(*kernel));
 			if (kernel == NULL)
@@ -1615,6 +1625,30 @@ rt_register_bytecode_function(
 				accel_kernel_free(kernel); break;
 			}
 			(*pos)++;
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL || strcmp(line, "HLSL Size") != 0) {
+				accel_kernel_free(kernel); break;
+			}
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL) { accel_kernel_free(kernel); break; }
+			hlsl_size = (size_t)strtoul(line, NULL, 10);
+			if (hlsl_size > size - *pos || hlsl_size == size - *pos) {
+				accel_kernel_free(kernel); break;
+			}
+			if (hlsl_size != 0) {
+				kernel->hlsl = noct_malloc(hlsl_size + 1);
+				if (kernel->hlsl == NULL) {
+					accel_kernel_free(kernel); break;
+				}
+				memcpy(kernel->hlsl, data + *pos, hlsl_size);
+				kernel->hlsl[hlsl_size] = '\0';
+			}
+			kernel->hlsl_size = hlsl_size;
+			*pos += (uint32_t)hlsl_size;
+			if (*pos >= size || data[*pos] != '\n') {
+				accel_kernel_free(kernel); break;
+			}
+			(*pos)++;
 			kernel->name = noct_strdup(lfunc.func_name);
 			kernel->source_name = noct_strdup(file_name);
 			if (kernel->name == NULL || kernel->source_name == NULL) {
@@ -1633,7 +1667,7 @@ rt_register_bytecode_function(
 			if (lfunc.func_kind == NOCT_FUNC_NORMAL)
 				lfunc.func_kind = NOCT_FUNC_ACCEL;
 			lfunc.is_accel = lfunc.func_kind == NOCT_FUNC_ACCEL;
-			kernel->descriptor_version = 2;
+			kernel->descriptor_version = 3;
 			kernel->func_kind = lfunc.func_kind;
 			kernel->parallel_mode = loaded_parallel_mode;
 			lfunc.accel_kernel = kernel;
