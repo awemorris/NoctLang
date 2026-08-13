@@ -99,7 +99,7 @@ accel_reason_name(
 	case ACCEL_REJECT_ACCESS:
 		return "invalid accelerator buffer access";
 	case ACCEL_REJECT_GLOBAL_RESOURCE:
-		return "direct accel var dependency; pass the resource through a _ptr parameter";
+		return "direct __accel resource dependency; pass it through a _ptr parameter";
 	case ACCEL_REJECT_EXPRESSION:
 		return "unsupported expression";
 	case ACCEL_REJECT_SIZE:

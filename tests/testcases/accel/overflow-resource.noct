@@ -1,4 +1,4 @@
-accel var data = Accel.float64(9223372036854775807L);
+__accel var data = Accel.float64(9223372036854775807L);
 
 func main() {
 }

@@ -645,10 +645,11 @@ ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let,
  * cannot be disguised as a persistent accelerator allocation.
  */
 bool
-ast_accept_toplevel_accel_var(
+ast_accept_toplevel_accel_decl(
 	int line,
 	char *name,
-	struct ast_expr *rhs)
+	struct ast_expr *rhs,
+	bool is_let)
 {
 	static const char *const type_name[] = {
 		"int8", "int16", "int32", "int64",
@@ -670,13 +671,15 @@ ast_accept_toplevel_accel_var(
 	    rhs->val.call.arg_list->list == NULL ||
 	    rhs->val.call.arg_list->list->next != NULL) {
 		ast_error_line = line;
-		ast_printf("accel var requires Accel.<type>(LENGTH).");
+		ast_printf("__accel %s requires Accel.<type>(LENGTH).",
+			   is_let ? "let" : "var");
 		return false;
 	}
 	func = rhs->val.call.func;
 	if (func == NULL || func->type != AST_EXPR_DOT) {
 		ast_error_line = line;
-		ast_printf("accel var requires Accel.<type>(LENGTH).");
+		ast_printf("__accel %s requires Accel.<type>(LENGTH).",
+			   is_let ? "let" : "var");
 		return false;
 	}
 	obj = func->val.dot.obj;
@@ -685,7 +688,8 @@ ast_accept_toplevel_accel_var(
 	    obj->val.term.term->type != AST_TERM_SYMBOL ||
 	    strcmp(obj->val.term.term->val.symbol, "Accel") != 0) {
 		ast_error_line = line;
-		ast_printf("accel var requires Accel.<type>(LENGTH).");
+		ast_printf("__accel %s requires Accel.<type>(LENGTH).",
+			   is_let ? "let" : "var");
 		return false;
 	}
 	found = false;
@@ -724,7 +728,7 @@ ast_accept_toplevel_accel_var(
 		return false;
 	rhs->val.call.func = internal_func;
 
-	if (!ast_accept_toplevel_var(line, name, rhs, false, false))
+	if (!ast_accept_toplevel_var(line, name, rhs, is_let, false))
 		return false;
 	resource = ast_malloc(sizeof(*resource));
 	if (resource == NULL) {

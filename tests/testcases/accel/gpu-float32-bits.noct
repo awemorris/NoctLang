@@ -1,4 +1,4 @@
-accel var bits_output = Accel.float32(5);
+__accel var bits_output = Accel.float32(5);
 
 __gpu func bits_micro(output: rpackedfloat_ptr): void {
     if (globalIdx.x == 0) {

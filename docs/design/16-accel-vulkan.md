@@ -46,7 +46,7 @@ and CIFAR-shaped CPU/GPU evaluations.  Preserve all of the following:
   triple-chevron launch, and the removal of managed `Accel.callAsync()`;
 - synchronous and asynchronous byte-range copies plus generation-safe events;
 - top-level typed resources declared as
-  `accel var data = Accel.uint32(LENGTH);`;
+  `__accel var data = Accel.uint32(LENGTH);`;
 - constructors for Packed element kinds `int8`, `int16`, `int32`, `int64`,
   `uint8`, `uint16`, `uint32`, `uint64`, `float32`, and `float64`;
 - a backend-neutral common runtime, a retained Vulkan prototype, and a
@@ -140,7 +140,7 @@ silently reinterpret them while coding.
     permitted; it is not source-level argument copying.
 16. All restricted Packed buffer arguments of one kernel call are pairwise
     non-aliasing and are also disjoint from any implicitly captured managed
-    `accel var`. Passing the same storage through two names is a program error,
+    `__accel var`. Passing the same storage through two names is a program error,
     not a reason to disable DOALL or fall back to the CPU.
 17. Check aliasing by storage class. For ordinary `_in`/`_out` Packed arguments,
     compare backing byte intervals because the C API can create distinct
@@ -161,10 +161,10 @@ silently reinterpret them while coding.
 20. GPU-lowerability and DOALL are separate results. A GPU-lowerable DOALL loop
     runs in parallel. A GPU-lowerable non-DOALL loop runs sequentially in
     `<<<1,1>>>`. A function outside the GPU-lowerable subset uses its CPU body.
-21. Direct access to a top-level `accel var` in a managed loop is legal but
+21. Direct access to a top-level `__accel var` in a managed loop is legal but
     prevents DOALL. Pass that resource through a typed `_ptr` parameter when
     parallelization is intended.
-22. Direct top-level `accel var` access is forbidden in `__gpu func`. Raw kernels
+22. Direct top-level `__accel var` access is forbidden in `__gpu func`. Raw kernels
     receive every resource explicitly through `_ptr`.
 23. Version 1 shared memory exists only in `__gpu func`, is per workgroup,
     uninitialized, statically sized, and synchronized with `syncthreads()`.
@@ -178,7 +178,7 @@ silently reinterpret them while coding.
 The existing declaration remains:
 
 ```noct
-accel var data = Accel.uint32(1048576);
+__accel var data = Accel.uint32(1048576);
 ```
 
 Rules already implemented and retained:
@@ -332,7 +332,7 @@ The prologue may contain:
 
 The prologue may not contain:
 
-- Packed, `_ptr`, or implicit `accel var` reads or writes;
+- Packed, `_ptr`, or implicit `__accel var` reads or writes;
 - global reads or writes;
 - allocation, I/O, ordinary calls, dispatch, copies, or join;
 - loop control or an early return.
@@ -380,7 +380,7 @@ Raw rules:
 - ordinary calls, `Accel.call`, and use as a first-class value are errors;
 - `_in` and `_out` are errors;
 - scalar and typed `_ptr` parameters are allowed;
-- direct global and direct top-level `accel var` access are errors;
+- direct global and direct top-level `__accel var` access are errors;
 - supported expressions, structured conditions, raw intrinsics, shared
   declarations, `syncthreads()`, and `return;` form the initial body subset;
 - if a kernel contains `syncthreads()`, no early return may occur before any
@@ -626,7 +626,7 @@ The initial conservative DOALL proof is:
 - reductions, scans, atomics, unknown calls, and recurrences are NON_DOALL or
   not lowerable according to whether their operations can be represented by
   the serial GPU IR;
-- an implicit direct top-level `accel var` reference is always NON_DOALL, even
+- an implicit direct top-level `__accel var` reference is always NON_DOALL, even
   when its current indices appear disjoint.
 
 Examples:
@@ -645,7 +645,7 @@ data[i] = data[i - 1] + 1;
 global_table[i] = src[i];
 ```
 
-The direct `accel var` rule deliberately avoids treating an implicit global as
+The direct `__accel var` rule deliberately avoids treating an implicit global as
 a restrict parameter. Rewrite the final example to take
 `global_table: rpacked..._ptr` and pass the resource explicitly when DOALL is
 desired.
@@ -828,7 +828,7 @@ whose summary was statically unrepresentable is the explicit exception: it
 skips only steps 7 through 9 and uses ordinary checked CPU accesses because no
 sound call-level range preflight can be constructed.
 
-Direct implicit `accel var` ranges use their resource descriptor and can be
+Direct implicit `__accel var` ranges use their resource descriptor and can be
 checked statically when the count is constant or through the same runtime
 expression machinery when necessary.
 
@@ -1327,13 +1327,13 @@ For direct implicit resource access:
 
 ```text
 ACCEL: kernel update: loop 8 DOALL no
-ACCEL: kernel update: reason implicit accel var 'table'; pass it as _ptr
+ACCEL: kernel update: reason implicit __accel var 'table'; pass it as _ptr
 ACCEL: kernel update: strategy serial <<<1,1>>>
 ```
 
 Raw diagnostics include the requested grid/block, selected pipeline variant,
 shared bytes, and backend errors. There is no old warning that permits races or
-waives CPU/GPU equality for implicit `accel var`. Direct resource dependence
+waives CPU/GPU equality for implicit `__accel var`. Direct resource dependence
 now blocks DOALL deterministically.
 
 Developer-only `NOCT_ACCEL_DEBUG` may include reason codes, IR, GLSL, cache
@@ -1479,7 +1479,7 @@ Work:
 - validate pure-local prologue, one loop, and empty/return-only epilogue;
 - collect effects and prove the initial RAW/WAR/WAW rules;
 - record stable GPU-lowering and DOALL reasons separately;
-- mark every direct implicit `accel var` reference NON_DOALL and suggest
+- mark every direct implicit `__accel var` reference NON_DOALL and suggest
   `_ptr`;
 - emit distinct parallel-one-iteration and serial-whole-loop IR;
 - dispatch managed DOALL as automatic `<<<ceil(n/64),64>>>`;
@@ -1647,7 +1647,7 @@ Required new cases:
 | bounds | exact, short by one, lower underflow, arithmetic overflow, empty loop |
 | summary | multiple buffers, offsets, guarded neighbor, serialized expressions |
 | DOALL | independent, same-index RMW, distinct neighbor, recurrence, WAW |
-| implicit resource | direct `accel var` serial plus `_ptr` rewrite parallel |
+| implicit resource | direct `__accel var` serial plus `_ptr` rewrite parallel |
 | sequential GPU | one invocation executes every original iteration |
 | raw IDs | local, group, block size, grid size, and global ID |
 | geometry | zero/negative/too-large grid/block and integer-domain overflow |

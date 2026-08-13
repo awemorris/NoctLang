@@ -1,4 +1,4 @@
-accel var device = Accel.uint32(4);
+__accel var device = Accel.uint32(4);
 
 __gpu func last_to_first(data: rpackeduint32_ptr): void {
     __shared let tile = Accel.uint32(4);

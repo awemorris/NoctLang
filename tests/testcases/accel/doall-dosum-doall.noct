@@ -16,7 +16,7 @@ __accel func add_square_sum(input: rpackeduint32_in,
     }
 }
 
-accel var total = Accel.uint32(1);
+__accel var total = Accel.uint32(1);
 
 func main() {
     let input = Packed.uint32(65);

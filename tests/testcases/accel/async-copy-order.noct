@@ -1,5 +1,5 @@
-accel var device_input = Accel.uint32(4);
-accel var device_output = Accel.uint32(4);
+__accel var device_input = Accel.uint32(4);
+__accel var device_output = Accel.uint32(4);
 
 __accel func add_one(
     input: rpackeduint32_in,

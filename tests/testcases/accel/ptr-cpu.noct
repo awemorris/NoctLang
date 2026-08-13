@@ -1,4 +1,4 @@
-accel var device = Accel.uint32(4);
+__accel var device = Accel.uint32(4);
 
 __accel func bump(data: rpackeduint32_ptr, count: int): void {
     for (i in 0..count) {

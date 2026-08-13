@@ -19,7 +19,7 @@ and unvalidated. D3D12 must not be introduced as an assumption.
 This document is the authoritative delta to
 `docs/design/16-accel-vulkan.md` for managed `__accel func`. It replaces design
 16's single-loop, CPU-fallback, serial-GPU managed-function contract. Public
-raw `__gpu func`, the design-18 ONNX converter, persistent top-level `accel var`,
+raw `__gpu func`, the design-18 ONNX converter, persistent top-level `__accel var`,
 raw launches, copy APIs, and events remain unless stated otherwise here.
 
 The implementing model must execute the stages in order without waiting for
@@ -100,7 +100,7 @@ These are implementation requirements, not suggestions.
 12. Restricted arguments are pairwise non-aliasing. Validate host backing byte
     intervals, not only wrapper identity. `_ptr` identity is sufficient while
     resource subviews do not exist.
-13. Reject direct top-level `accel var` access from `__accel func`; require an
+13. Reject direct top-level `__accel var` access from `__accel func`; require an
     explicit typed `_ptr` parameter.
 14. Call-local intermediate arrays use existing pure-prologue syntax:
 
@@ -110,8 +110,8 @@ These are implementation requirements, not suggestions.
 
     In a GPU-only `__accel func`, a supported local `Packed.<kind>(length)` is a
     logical device-buffer declaration, not a CPU allocation.
-15. Do not add function-local `accel var` syntax. Existing top-level
-    `accel var name = Accel.<kind>(constant);` remains persistent.
+15. Do not add function-local `__accel var` syntax. Existing top-level
+    `__accel var name = Accel.<kind>(constant);` remains persistent.
 16. Initial GPU computation types are int32, uint32, and float32, matching the
     working OpenGL/raw-GPU backend.
 17. Compile `__accel func` at `-O0` through `-O3` and with
@@ -1132,7 +1132,7 @@ Do not implement:
 - non-zero starts, strides, nested source loops, polyhedral analysis, scans,
   atomics, min/max/product, or multiple accumulators;
 - 8/16/64-bit or float64 GPU arithmetic;
-- local source `accel var`, subviews, or host `_inout`;
+- local source `__accel var`, subviews, or host `_inout`;
 - 3-D/subgroup/warp features;
 - ONNX changes or new model support;
 - Vulkan execution, D3D12, HLSL, Metal, or other backends.

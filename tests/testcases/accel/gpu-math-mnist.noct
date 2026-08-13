@@ -1,5 +1,5 @@
-accel var math_input = Accel.float32(9);
-accel var math_output = Accel.float32(27);
+__accel var math_input = Accel.float32(9);
+__accel var math_output = Accel.float32(27);
 
 __gpu func math_micro(
     input: rpackedfloat_ptr,

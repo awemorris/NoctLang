@@ -26,8 +26,8 @@ __accel func two_sums(input: rpackeduint32_in,
     }
 }
 
-accel var first_result = Accel.uint32(1);
-accel var second_result = Accel.uint32(1);
+__accel var first_result = Accel.uint32(1);
+__accel var second_result = Accel.uint32(1);
 
 func main() {
     let input = Packed.uint32(65);

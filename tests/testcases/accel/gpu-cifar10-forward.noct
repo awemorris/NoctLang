@@ -6,24 +6,24 @@
 // Fixed dot products are expanded because the current raw __gpu func subset
 // intentionally has no source-level loop statement.
 
-accel var cifar_input = Accel.float32(3072);
-accel var cifar_conv1_w = Accel.float32(450);
-accel var cifar_conv1_b = Accel.float32(6);
-accel var cifar_conv1 = Accel.float32(4704);
-accel var cifar_pool1 = Accel.float32(1176);
-accel var cifar_conv2_w = Accel.float32(2400);
-accel var cifar_conv2_b = Accel.float32(16);
-accel var cifar_conv2 = Accel.float32(1600);
-accel var cifar_pool2 = Accel.float32(400);
-accel var cifar_fc1_w = Accel.float32(48000);
-accel var cifar_fc1_b = Accel.float32(120);
-accel var cifar_fc1 = Accel.float32(120);
-accel var cifar_fc2_w = Accel.float32(10080);
-accel var cifar_fc2_b = Accel.float32(84);
-accel var cifar_fc2 = Accel.float32(84);
-accel var cifar_fc3_w = Accel.float32(840);
-accel var cifar_fc3_b = Accel.float32(10);
-accel var cifar_logits = Accel.float32(10);
+__accel var cifar_input = Accel.float32(3072);
+__accel var cifar_conv1_w = Accel.float32(450);
+__accel var cifar_conv1_b = Accel.float32(6);
+__accel var cifar_conv1 = Accel.float32(4704);
+__accel var cifar_pool1 = Accel.float32(1176);
+__accel var cifar_conv2_w = Accel.float32(2400);
+__accel var cifar_conv2_b = Accel.float32(16);
+__accel var cifar_conv2 = Accel.float32(1600);
+__accel var cifar_pool2 = Accel.float32(400);
+__accel var cifar_fc1_w = Accel.float32(48000);
+__accel var cifar_fc1_b = Accel.float32(120);
+__accel var cifar_fc1 = Accel.float32(120);
+__accel var cifar_fc2_w = Accel.float32(10080);
+__accel var cifar_fc2_b = Accel.float32(84);
+__accel var cifar_fc2 = Accel.float32(84);
+__accel var cifar_fc3_w = Accel.float32(840);
+__accel var cifar_fc3_b = Accel.float32(10);
+__accel var cifar_logits = Accel.float32(10);
 
 var cifar_host_input = Packed.float32(3072);
 var cifar_host_conv1_w = Packed.float32(450);

@@ -797,9 +797,11 @@ func main() {
 }
 ```
 
-Persistent device storage is declared at top level with `accel var`, for
-example `accel var state = Accel.float32(1024);`, and passed explicitly through
-an `_ptr` parameter.  Host code cannot subscript an accelerator resource.
+Persistent device storage is declared at top level with `__accel var` or
+`__accel let`, for example `__accel let state = Accel.float32(1024);`, and
+passed explicitly through an `_ptr` parameter. Host code cannot subscript an
+accelerator resource. `__accel let` prevents rebinding the resource name; it
+does not make the GPU buffer contents immutable.
 
 Managed programs, generated kernels, buffer expressions, bindings, and step
 order survive `.nb` and `.nap` serialization.  OpenGL ES is the complete

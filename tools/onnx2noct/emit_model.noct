@@ -47,7 +47,7 @@ func emitModelSource(graph, binding) {
     sourceAppend(lines, "");
     for (i in 0..Array.size(plan.storages)) {
         var storage = plan.storages[i];
-        sourceAppend(lines, "accel var " + storage.resourceName +
+        sourceAppend(lines, "__accel var " + storage.resourceName +
                      " = Accel.float32(" + storage.elements + ");");
     }
     sourceAppend(lines, "");

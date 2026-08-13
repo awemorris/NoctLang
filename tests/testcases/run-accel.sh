@@ -7,15 +7,31 @@ NOCT=${NOCT:-../../build-static/noct}
 echo 'GPU-only accelerator compiler tests:'
 
 if "$NOCT" --accel=vulkan accel/syntax-ok.noct > out 2>&1; then
-	echo 'FAIL static build accepted --accel=vulkan'
-	exit 1
+	diff accel/syntax-ok.noct.out out
+else
+	grep -F 'Vulkan accelerator support is not available in this build.' out
 fi
-grep -F 'Vulkan accelerator support is not available in this build.' out
 if "$NOCT" --accel=opengl accel/syntax-ok.noct > out 2>&1; then
-	echo 'FAIL static build accepted --accel=opengl'
+	diff accel/syntax-ok.noct.out out
+else
+	grep -F 'OpenGL accelerator support is not available in this build.' out
+fi
+
+if "$NOCT" -j0 accel/legacy-resource-var.noct > out 2>&1; then
+	echo 'FAIL legacy accel var spelling was accepted'
 	exit 1
 fi
-grep -F 'OpenGL accelerator support is not available in this build.' out
+grep -F 'accel var is no longer accepted; use __accel var.' out
+if "$NOCT" -j0 accel/legacy-resource-let.noct > out 2>&1; then
+	echo 'FAIL legacy accel let spelling was accepted'
+	exit 1
+fi
+grep -F 'accel let is no longer accepted; use __accel let.' out
+if "$NOCT" -j0 accel/resource-let-reassign.noct > out 2>&1; then
+	echo 'FAIL __accel let resource was rebound'
+	exit 1
+fi
+grep -F 'Cannot assign to constant "device".' out
 
 "$NOCT" -j0 accel/syntax-ok.noct > out
 diff accel/syntax-ok.noct.out out
@@ -81,12 +97,12 @@ if "$NOCT" -j0 accel/host-subscript.noct > out 2>&1; then
 fi
 grep -F 'Accelerator resources cannot be subscripted by host code.' out
 if "$NOCT" -j0 accel/direct-resource-error.noct > out 2>&1; then
-	echo 'FAIL direct accel var dependency was accepted in __accel func'
+	echo 'FAIL direct __accel var dependency was accepted in __accel func'
 	exit 1
 fi
 grep -F 'must be passed through a _ptr parameter' out
 if "$NOCT" -j0 accel/constructor-outside-marker.noct > out 2>&1; then
-	echo 'FAIL accelerator constructor was callable outside accel var'
+	echo 'FAIL accelerator constructor was callable outside __accel var'
 	exit 1
 fi
 grep -F 'uint32' out >/dev/null

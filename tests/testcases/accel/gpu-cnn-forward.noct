@@ -5,14 +5,14 @@
 // independent test keeps that topology, reduces the tensor sizes, and uses
 // ReLU plus average pooling so every layer fits the current raw gpu subset.
 
-accel var cnn_input = Accel.float32(64);
-accel var cnn_conv_weight = Accel.float32(18);
-accel var cnn_conv = Accel.float32(72);
-accel var cnn_relu = Accel.float32(72);
-accel var cnn_pool = Accel.float32(18);
-accel var cnn_dense_weight = Accel.float32(54);
-accel var cnn_dense_bias = Accel.float32(3);
-accel var cnn_logits = Accel.float32(3);
+__accel var cnn_input = Accel.float32(64);
+__accel var cnn_conv_weight = Accel.float32(18);
+__accel var cnn_conv = Accel.float32(72);
+__accel var cnn_relu = Accel.float32(72);
+__accel var cnn_pool = Accel.float32(18);
+__accel var cnn_dense_weight = Accel.float32(54);
+__accel var cnn_dense_bias = Accel.float32(3);
+__accel var cnn_logits = Accel.float32(3);
 
 // Host tensors are shared by the ordinary func reference implementation and
 // by the benchmark harness.  Both paths use identical weights and ordering.

@@ -114,7 +114,7 @@ not silently reset or discard owner changes.
 The baseline already provides:
 
 - raw `__gpu func`, one-dimensional grid/block geometry, `_ptr` arguments,
-  persistent typed `accel var` resources, synchronous triple-chevron launch,
+  persistent typed `__accel var` resources, synchronous triple-chevron launch,
   `Accel.dispatchAsync`, events, copies, shared memory, and `syncthreads()`;
 - int32, uint32, and float32 raw buffer access and scalar parameters;
 - a headless EGL/OpenGL 4.3+ backend whose current native-Linux test succeeds
@@ -767,19 +767,19 @@ Behavior:
 - `modelInfo` reports target `gpu`, hashes, opsets, exact I/O metadata, kernel
   family versions, and raw-output meaning.
 
-The existing `accel var` mechanism constructs resource objects during module
+The existing `__accel var` mechanism constructs resource objects during module
 initialization.  `modelInitialize` therefore does not promise that no resource
 object exists before weight validation; it promises that the model initialized
 flag is false, no weight/input bytes have been uploaded, and no kernel has been
 submitted until the complete NWT1 validation succeeds.
 
-Use one top-level typed `accel var` per initially planned storage:
+Use one top-level typed `__accel var` per initially planned storage:
 
 ```noct
-accel var model_input = Accel.float32(784);
-accel var weight_000 = Accel.float32(800);
-accel var temp_003 = Accel.float32(2304);
-accel var model_output = Accel.float32(10);
+__accel var model_input = Accel.float32(784);
+__accel var weight_000 = Accel.float32(800);
+__accel var temp_003 = Accel.float32(2304);
+__accel var model_output = Accel.float32(10);
 ```
 
 The converter emits checked decimal element-count literals in these

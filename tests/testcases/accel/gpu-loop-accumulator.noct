@@ -1,5 +1,5 @@
-accel var loop_input = Accel.float32(6);
-accel var loop_output = Accel.float32(2);
+__accel var loop_input = Accel.float32(6);
+__accel var loop_output = Accel.float32(2);
 
 __gpu func nested_sum(
     input: rpackedfloat_ptr,

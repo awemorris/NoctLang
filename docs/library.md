@@ -443,7 +443,7 @@ The `Accel` package owns persistent GPU buffers, managed calls, raw-kernel
 dispatch, transfers, and completion events.
 
 ```noct
-accel var state = Accel.float32(1024);
+__accel let state = Accel.float32(1024);
 
 Accel.call(managedFunction, arg0, ...);
 event = Accel.dispatchAsync(rawGpuFunction, gridSize, blockSize, arg0, ...);

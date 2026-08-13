@@ -68,7 +68,7 @@ static inline __fast func helper(...): float { ... }
 
 Legacy `gpu func` and `accel func` are no longer aliases.  They produce a
 migration diagnostic directing the user to `__gpu func` and `__accel func`.
-Top-level `accel var` is a different feature and retains its spelling.
+Top-level persistent resources use `__accel var` or `__accel let`.
 
 Function-kind numbers are persistence ABI and must not be renumbered:
 
@@ -113,7 +113,7 @@ The public runtime supports typed persistent resources such as
 entry points are documented in [`library.md`](library.md):
 
 ```noct
-accel var state = Accel.float32(1024);
+__accel var state = Accel.float32(1024);
 event = Accel.dispatchAsync(kernel, grid, block, ...);
 Accel.join(event);
 Accel.copyToAccel(...);

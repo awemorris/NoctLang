@@ -1,15 +1,15 @@
 let LENGTH = 2;
 
-accel var i8 = Accel.int8(LENGTH);
-accel var i16 = Accel.int16(LENGTH);
-accel var i32 = Accel.int32(LENGTH);
-accel var i64 = Accel.int64(LENGTH);
-accel var u8 = Accel.uint8(LENGTH);
-accel var u16 = Accel.uint16(LENGTH);
-accel var u32 = Accel.uint32(LENGTH);
-accel var u64 = Accel.uint64(LENGTH);
-accel var f32 = Accel.float32(LENGTH);
-accel var f64 = Accel.float64(LENGTH);
+__accel var i8 = Accel.int8(LENGTH);
+__accel var i16 = Accel.int16(LENGTH);
+__accel var i32 = Accel.int32(LENGTH);
+__accel var i64 = Accel.int64(LENGTH);
+__accel var u8 = Accel.uint8(LENGTH);
+__accel var u16 = Accel.uint16(LENGTH);
+__accel var u32 = Accel.uint32(LENGTH);
+__accel var u64 = Accel.uint64(LENGTH);
+__accel var f32 = Accel.float32(LENGTH);
+__accel let f64 = Accel.float64(LENGTH);
 
 func main() {
     let host = Packed.uint8(16);

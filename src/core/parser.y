@@ -33,7 +33,8 @@ void ast_free(void *p);
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);
 struct ast_func *ast_accept_func(int flags, char *name, struct ast_param_list *param_list, char *return_type_name, struct ast_stmt_list *stmt_list);
 bool ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let, bool is_static);
-bool ast_accept_toplevel_accel_var(int line, char *name, struct ast_expr *rhs);
+bool ast_accept_toplevel_accel_decl(int line, char *name,
+				    struct ast_expr *rhs, bool is_let);
 bool ast_accept_toplevel_class(int line, char *name, struct ast_kv_list *kv_list);
 bool ast_accept_require(char *name);
 struct ast_param_list *ast_accept_param_list(struct ast_param_list *param_list, char *name);
@@ -273,11 +274,31 @@ toplevel_decl	: TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 				YYABORT;
 			debug("toplevel_decl: var");
 		}
-		| TOKEN_ACCEL TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		| TOKEN_DUNDER_ACCEL TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
-			if (!ast_accept_toplevel_accel_var(@1.first_line + 1, $3, $5))
+			if (!ast_accept_toplevel_accel_decl(@1.first_line + 1, $3, $5,
+						 false))
 				YYABORT;
-			debug("toplevel_decl: accel var");
+			debug("toplevel_decl: __accel var");
+		}
+		| TOKEN_DUNDER_ACCEL TOKEN_LET TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
+		{
+			if (!ast_accept_toplevel_accel_decl(@1.first_line + 1, $3, $5,
+						 true))
+				YYABORT;
+			debug("toplevel_decl: __accel let");
+		}
+		| TOKEN_ACCEL TOKEN_VAR
+		{
+			ast_yyerror(scanner,
+				"accel var is no longer accepted; use __accel var.");
+			YYABORT;
+		}
+		| TOKEN_ACCEL TOKEN_LET
+		{
+			ast_yyerror(scanner,
+				"accel let is no longer accepted; use __accel let.");
+			YYABORT;
 		}
 		| TOKEN_LET TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{

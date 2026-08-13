@@ -2703,7 +2703,7 @@ hir_visit_expr(
 					  N_TR("Accelerator resources cannot be subscripted by host code."));
 			else
 				hir_fatal(hir_error_line,
-					  N_TR("An accel var must be passed through a _ptr parameter before kernel access."));
+					  N_TR("An __accel resource must be passed through a _ptr parameter before kernel access."));
 			result = false;
 			break;
 		}

@@ -1,4 +1,4 @@
-accel var device = Accel.uint32(4);
+__accel var device = Accel.uint32(4);
 
 __gpu func bump(data: rpackeduint32_ptr, count: int): void {
     let i: int = blockIdx.x * blockDim.x + threadIdx.x;
