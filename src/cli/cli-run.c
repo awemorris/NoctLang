@@ -50,6 +50,7 @@ static bool load_args(int argc, char *argv[]);
 static bool check_params(void);
 static bool parse_nonnegative_int(const char *text, int *value);
 static bool validate_cpu_affinity(const char *text);
+static void enable_gpu(void);
 static void print_cpu_list(void);
 static void print_gpu_list(void);
 
@@ -265,7 +266,7 @@ parse_options(
 			continue;
 		}
 		if (strcmp(argv[i], "--gpu") == 0) {
-			config.gpu_enable = true;
+			enable_gpu();
 			file_arg++;
 			continue;
 		}
@@ -295,7 +296,7 @@ parse_options(
 			config.lineinfo = lineinfo;
 			if (optimize_level == 9) {
 				config.auto_parallel = 1;
-				config.gpu_enable = true;
+				enable_gpu();
 			}
 			file_arg++;
 			continue;
@@ -559,6 +560,27 @@ print_gpu_list(void)
 	wide_printf(N_TR("No compatible OpenGL ES compute devices are available.\n"));
 #else
 	wide_printf(N_TR("GPU backend is not linked; no devices are available.\n"));
+#endif
+}
+
+/*
+ * Enable automatic GPU compilation and select the runtime linked into this
+ * executable.  Backend-less builds retain the policy flag so that the public
+ * configuration surface remains usable by cross-compilers.
+ */
+static void
+enable_gpu(void)
+{
+	config.gpu_enable = true;
+#if defined(NOCT_USE_ACCEL_DX12)
+	config.accel_enable = true;
+	config.accel_backend = NOCT_ACCEL_BACKEND_DX12;
+#elif defined(NOCT_USE_ACCEL_VULKAN)
+	config.accel_enable = true;
+	config.accel_backend = NOCT_ACCEL_BACKEND_VULKAN;
+#elif defined(NOCT_USE_ACCEL_OPENGL)
+	config.accel_enable = true;
+	config.accel_backend = NOCT_ACCEL_BACKEND_OPENGL;
 #endif
 }
 
