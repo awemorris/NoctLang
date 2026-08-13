@@ -25,6 +25,8 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
+                "NOCT_ENABLE_API_BEUI": "ON",
+                "NOCT_ENABLE_API_BEUI_SDL2": "ON",
                 "NOCT_ENABLE_MODEL_WEIGHTS": "ON",
                 "NOCT_ENABLE_INSTALL": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
@@ -32,6 +34,16 @@
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON",
                 "NOCT_ENABLE_REPL": "ON"
+            }
+        },
+        {
+            "name": "sdl2",
+            "displayName": "desktop build with SDL2 BeUI",
+            "inherits": "static",
+            "binaryDir": "${sourceDir}/build-sdl2",
+            "cacheVariables": {
+                "NOCT_ENABLE_API_BEUI": "ON",
+                "NOCT_ENABLE_API_BEUI_SDL2": "ON"
             }
         },
         {
@@ -54,6 +66,8 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
+                "NOCT_ENABLE_API_BEUI": "ON",
+                "NOCT_ENABLE_API_BEUI_SDL2": "ON",
                 "NOCT_ENABLE_INSTALL": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
                 "NOCT_ENABLE_CBACKEND": "ON",
@@ -166,6 +180,8 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
+                "NOCT_ENABLE_API_BEUI": "ON",
+                "NOCT_ENABLE_API_BEUI_SDL2": "ON",
                 "NOCT_ENABLE_MODEL_WEIGHTS": "ON",
                 "NOCT_ENABLE_INSTALL": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
@@ -196,6 +212,8 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
+                "NOCT_ENABLE_API_BEUI": "ON",
+                "NOCT_ENABLE_API_BEUI_SDL2": "ON",
                 "NOCT_ENABLE_INSTALL": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
                 "NOCT_ENABLE_CBACKEND": "ON",
@@ -936,6 +954,10 @@
         {
             "name": "static",
             "configurePreset": "static"
+        },
+        {
+            "name": "sdl2",
+            "configurePreset": "sdl2"
         },
         {
             "name": "shared",

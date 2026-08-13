@@ -190,6 +190,8 @@ static bool register_repl_libraries(NoctEnv *env)
 #if defined(NOCT_USE_BEUI)
 #if defined(NOCT_TARGET_PC98DOS)
 	if (!noct_register_api_beui_pc98dos(env)) {
+#elif defined(NOCT_USE_BEUI_SDL2)
+	if (!noct_register_api_beui_sdl2(env)) {
 #else
 	/* A host with no BeUI backend still gets the module, bound to no
 	 * hardware: BeUI.init() reports failure and the rest of the API

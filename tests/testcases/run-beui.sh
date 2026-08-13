@@ -26,6 +26,16 @@ test -f "$build_dir/libnoctapi.a" || {
 	-o "$build_dir/noct-beui-test"
 "$build_dir/noct-beui-test"
 
+if test -x "$build_dir/noct" &&
+	grep -q '^NOCT_ENABLE_API_BEUI_SDL2:BOOL=ON$' "$build_dir/CMakeCache.txt"
+then
+	SDL_VIDEODRIVER=${SDL_VIDEODRIVER:-dummy}
+	SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-dummy}
+	export SDL_VIDEODRIVER SDL_AUDIODRIVER
+	"$build_dir/noct" -O0 "$root/tests/testcases/beui-sdl2.noct"
+	echo 'BeUI SDL2 tests: OK'
+fi
+
 "$cc" -I"$root/include" -I"$api" "$root/tests/testcases/beui-pc98-gdc-test.c" \
 	"$api/beui-pc98-gdc.c" "$api/beui-core.c" "$api/beui-image.c" \
 	-o "$build_dir/noct-beui-pc98-gdc-test"

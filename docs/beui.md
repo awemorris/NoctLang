@@ -235,7 +235,12 @@ while (BeUI.poll()) {
 | Target | Registration | Display |
 |--------|--------------|---------|
 | PC-98 MS-DOS (DOS/4GW) | `noct_register_api_beui_pc98dos(env)` | Core-Graph / Cirrus 640x480x8, falling back to GDC 640x400x4 |
+| SDL2 desktop | `noct_register_api_beui_sdl2(env)` | 640x400, 32-bit RGB window with keyboard, mouse, clock, and queued audio HALs |
 | Any | `noct_register_api_beui(env, hal)` | Whatever the embedder binds |
+
+Configure a desktop build with both `NOCT_ENABLE_API_BEUI=ON` and
+`NOCT_ENABLE_API_BEUI_SDL2=ON`. The `sdl2` CMake preset supplies these
+options and makes the CLI and REPL register the SDL2 HAL automatically.
 
 The PC-98 display drivers (`beui-pc98-gdc.c`, `beui-pc98-cirrus.c`, the
 CGROM glyph source, and the selector that prefers Cirrus over the GDC)

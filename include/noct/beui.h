@@ -281,4 +281,10 @@ bool
 noct_register_api_beui_pc98dos(
 	NoctEnv *env);
 
+/* Register BeUI backed by an SDL2 desktop window. */
+NOCT_DLL
+bool
+noct_register_api_beui_sdl2(
+	NoctEnv *env);
+
 #endif

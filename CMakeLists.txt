@@ -25,6 +25,7 @@ option(NOCT_ENABLE_API_THREAD     "Enable the Thread standard API"        OFF)
 option(NOCT_ENABLE_API_HTTPSERVER "Enable the HttpServer standard API"    OFF)
 option(NOCT_ENABLE_API_TERM       "Enable the Term non-standard API"      OFF)
 option(NOCT_ENABLE_API_BEUI       "Enable the BeUI non-standard API"      OFF)
+option(NOCT_ENABLE_API_BEUI_SDL2  "Enable the SDL2 BeUI desktop backend"  OFF)
 option(NOCT_ENABLE_API_PROCESS "Enable the Process non-standard API" ON)
 option(NOCT_ENABLE_INSTALL        "Enable installation"                   OFF)
 option(NOCT_ENABLE_BCBACKEND      "Enable bytecode backend"               OFF)
@@ -386,6 +387,23 @@ if(NOCT_ENABLE_API_BEUI)
     list(APPEND NOCT_API_SOURCE src/api/beui-pc98-auto.c)
     list(APPEND NOCT_API_SOURCE src/api/api-beui-pc98dos.c)
   endif()
+  if(NOCT_ENABLE_API_BEUI_SDL2)
+    if(NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
+       NOCT_TARGET_UNITY)
+      message(FATAL_ERROR "The SDL2 BeUI backend requires a hosted desktop target")
+    endif()
+    find_package(SDL2 CONFIG QUIET)
+    if(TARGET SDL2::SDL2)
+      set(NOCT_SDL2_TARGET SDL2::SDL2)
+    else()
+      find_package(PkgConfig REQUIRED)
+      pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+      set(NOCT_SDL2_TARGET PkgConfig::SDL2)
+    endif()
+    list(APPEND NOCT_API_SOURCE src/api/api-beui-sdl2.c)
+  endif()
+elseif(NOCT_ENABLE_API_BEUI_SDL2)
+  message(FATAL_ERROR "NOCT_ENABLE_API_BEUI_SDL2 requires NOCT_ENABLE_API_BEUI")
 endif()
 
 # Add the target "libnoctapi", the standard library.
@@ -539,6 +557,10 @@ if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI)
   target_compile_definitions(noctapi PRIVATE NOCT_USE_BEUI)
 endif()
 
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI_SDL2)
+  target_compile_definitions(noctapi PRIVATE NOCT_USE_BEUI_SDL2)
+endif()
+
 if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
   target_compile_definitions(noct PRIVATE NOCT_USE_PROCESS)
   target_compile_definitions(noctapi PRIVATE NOCT_USE_PROCESS)
@@ -623,6 +645,10 @@ if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
   endif()
 endif()
 
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI_SDL2)
+  target_link_libraries(noctapi PUBLIC ${NOCT_SDL2_TARGET})
+endif()
+
 # ---
 
 #
@@ -688,6 +714,9 @@ if(NOCT_ENABLE_CLI)
   endif()
   if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_BEUI)
+  endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI_SDL2)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_BEUI_SDL2)
   endif()
   if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_PROCESS)
@@ -779,6 +808,12 @@ if(NOCT_ENABLE_INSTALL)
     DESTINATION
       "${CMAKE_INSTALL_INCLUDEDIR}/noct"
   )
+  if(NOCT_ENABLE_API_BEUI)
+    install(
+      FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/beui.h"
+      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/noct"
+    )
+  endif()
 
   # libnoct
   install(
