@@ -230,7 +230,8 @@
                 "NOCT_ENABLE_CBACKEND": "ON",
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON",
-                "NOCT_ENABLE_REPL": "ON"
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_ACCEL_DX12": "ON"
             },
             "condition": {
                 "type": "equals",
@@ -262,7 +263,8 @@
                 "NOCT_ENABLE_CBACKEND": "ON",
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON",
-                "NOCT_ENABLE_REPL": "ON"
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_ACCEL_DX12": "ON"
             },
             "condition": {
                 "type": "equals",
@@ -294,7 +296,8 @@
                 "NOCT_ENABLE_CBACKEND": "ON",
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON",
-                "NOCT_ENABLE_REPL": "ON"
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_ACCEL_DX12": "ON"
             },
             "condition": {
                 "type": "equals",
@@ -327,7 +330,8 @@
                 "NOCT_ENABLE_CBACKEND": "ON",
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON",
-                "NOCT_ENABLE_REPL": "ON"
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_ACCEL_DX12": "ON"
             }
         },
         {
@@ -335,34 +339,6 @@
             "displayName": "MinGW x86_64",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build-mingw-x86_64",
-            "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-x86_64.cmake",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "NOCT_ENABLE_STATIC": "ON",
-                "NOCT_ENABLE_CLI": "ON",
-                "NOCT_ENABLE_JIT": "ON",
-                "NOCT_ENABLE_I18N": "ON",
-                "NOCT_ENABLE_OPTIMIZER": "ON",
-                "NOCT_ENABLE_API": "ON",
-                "NOCT_ENABLE_API_SYSTEM": "ON",
-                "NOCT_ENABLE_API_CONSOLE": "ON",
-                "NOCT_ENABLE_API_FILE": "ON",
-                "NOCT_ENABLE_API_THREAD": "ON",
-                "NOCT_ENABLE_API_HTTPSERVER": "OFF",
-                "NOCT_ENABLE_API_TERM": "ON",
-                "NOCT_ENABLE_INSTALL": "ON",
-                "NOCT_ENABLE_BCBACKEND": "ON",
-                "NOCT_ENABLE_CBACKEND": "ON",
-                "NOCT_ENABLE_ELBACKEND": "ON",
-                "NOCT_ENABLE_SCMBACKEND": "ON",
-                "NOCT_ENABLE_REPL": "ON"
-            }
-        },
-        {
-            "name": "windows-mingw-x86_64-dx12",
-            "displayName": "MinGW x86_64 DirectX 12 accelerator",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build-mingw-x86_64-dx12",
             "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-x86_64.cmake",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
@@ -412,7 +388,8 @@
                 "NOCT_ENABLE_CBACKEND": "ON",
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON",
-                "NOCT_ENABLE_REPL": "ON"
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_ACCEL_DX12": "ON"
             }
         },
         {
@@ -999,10 +976,6 @@
         {
             "name": "windows-mingw-x86_64",
             "configurePreset": "windows-mingw-x86_64"
-        },
-        {
-            "name": "windows-mingw-x86_64-dx12",
-            "configurePreset": "windows-mingw-x86_64-dx12"
         },
         {
             "name": "windows-mingw-arm64",
