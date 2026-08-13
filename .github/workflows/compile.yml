@@ -156,7 +156,14 @@ jobs:
       - name: Set up dependencies
         run: |
           dnf -y install epel-release
-          dnf -y install gcc make cmake python3 SDL2-devel
+          dnf -y install \
+            gcc \
+            make \
+            cmake \
+            python3 \
+            pkgconf-pkg-config \
+            SDL2-devel \
+            libglvnd-devel
 
       - name: Build static
         run: |

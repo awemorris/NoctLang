@@ -15,6 +15,17 @@ check_dx12()
 
 echo 'Accelerator DirectX 12 tests:'
 
+# The portable --gpu policy option must select the linked DX12 runtime.  Keep
+# this separate from the explicit --accel=dx12 cases so CLI/backend wiring
+# regressions cannot be hidden by the backend-specific option.
+NOCT_DX12_DEBUG=${NOCT_DX12_DEBUG:-1} \
+	"$NOCT" --gpu --accel-info -j0 -O2 accel/multi-dosum.noct \
+	> out 2> accel.log
+diff accel/multi-dosum.noct.out out
+grep -F 'accelerator kernel generated' accel.log >/dev/null
+check_dx12 'multi-dosum (--gpu)'
+echo 'PASS multi-dosum (--gpu)'
+
 for tc in accel/cpu-call.noct accel/vulkan-wide.noct \
 	  accel/vulkan-float.noct accel/vulkan-int.noct \
 	  accel/vulkan-resource.noct accel/branch.noct \
