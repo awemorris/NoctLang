@@ -898,6 +898,12 @@ hir_visit_func(
 		return false;
 	}
 	memset(func_block, 0, sizeof(struct hir_block));
+	func_block->val.func.fast_signature =
+		hir_malloc(sizeof(*func_block->val.func.fast_signature));
+	if (func_block->val.func.fast_signature == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
 	func_block->id = block_id_top++;
 	func_block->type = HIR_BLOCK_FUNC;
 	func_block->val.func.file_name = hir_strdup(hir_file_name);
@@ -992,7 +998,7 @@ hir_visit_func(
 				i++;
 			}
 			if (!fast_signature_build(
-				    &func_block->val.func.fast_signature,
+				    func_block->val.func.fast_signature,
 				    afunc->func_kind,
 				    func_block->val.func.param_count,
 				    name, annotation,
@@ -2468,8 +2474,8 @@ hir_fast_subscript_contract(const struct ast_expr *base)
 	for (i = 0; i < hir_current_func_block->val.func.param_count; i++) {
 		if (strcmp(symbol,
 		    hir_current_func_block->val.func.param_name[i]) == 0 &&
-		    hir_current_func_block->val.func.fast_signature.param[i].rank > 0)
-			return &hir_current_func_block->val.func.fast_signature.param[i];
+		    hir_current_func_block->val.func.fast_signature->param[i].rank > 0)
+			return &hir_current_func_block->val.func.fast_signature->param[i];
 	}
 	return NULL;
 }
@@ -3076,7 +3082,7 @@ hir_visit_fast_multi_subscr(struct hir_expr **hexpr, struct ast_expr *aexpr)
 			  N_TR("A multi-dimensional subscript base must be a shaped __fast parameter."));
 		return false;
 	}
-	contract = &hir_current_func_block->val.func.fast_signature.param[param];
+	contract = &hir_current_func_block->val.func.fast_signature->param[param];
 	count = 0;
 	index = array->val.array.elem_list != NULL ?
 		array->val.array.elem_list->list : NULL;
@@ -3769,7 +3775,7 @@ hir_visit_call_expr(
 						break;
 				if (actual_param < hir_current_func_block->val.func.param_count) {
 					const struct fast_param_contract *actual_contract;
-					actual_contract = &hir_current_func_block->val.func.fast_signature.param[actual_param];
+					actual_contract = &hir_current_func_block->val.func.fast_signature->param[actual_param];
 					if (actual_contract->rank != formal_contract->rank) {
 						hir_fatal(hir_error_line,
 							  N_TR("A direct __fast call packed shape rank does not match."));

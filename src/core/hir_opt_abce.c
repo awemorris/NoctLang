@@ -1578,7 +1578,7 @@ abce_fast_contract(struct abce_ctx *ctx, int packed_index)
 
 	if (ctx->func_block->val.func.func_kind != NOCT_FUNC_FAST)
 		return NULL;
-	signature = &ctx->func_block->val.func.fast_signature;
+	signature = ctx->func_block->val.func.fast_signature;
 	if (!signature->valid)
 		return NULL;
 	for (i = 0; i < ctx->func_block->val.func.param_count; i++) {

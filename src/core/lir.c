@@ -399,7 +399,7 @@ lir_build(
 	(*lir_func)->has_vector_ops = has_vector_ops;
 	(*lir_func)->is_accel = hir_func->val.func.is_accel;
 	(*lir_func)->func_kind = hir_func->val.func.func_kind;
-	(*lir_func)->fast_signature = hir_func->val.func.fast_signature;
+	(*lir_func)->fast_signature = *hir_func->val.func.fast_signature;
 	(*lir_func)->accel_kernel =
 		accel_kernel_clone(hir_func->val.func.accel_kernel);
 	if (hir_func->val.func.accel_kernel != NULL &&

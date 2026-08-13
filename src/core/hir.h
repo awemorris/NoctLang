@@ -217,7 +217,10 @@ struct hir_block {
 			bool is_inline;
 			bool is_accel;
 			int func_kind;
-			struct fast_signature fast_signature;
+			/* Only function blocks need this large contract.  Keeping it
+			 * inline in the block union made every basic/if/loop block more
+			 * than 5 KiB. */
+			struct fast_signature *fast_signature;
 			struct accel_kernel *accel_kernel;
 			struct accel_program *accel_program;
 
