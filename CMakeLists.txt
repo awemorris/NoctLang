@@ -223,10 +223,10 @@ if(NOCT_ENABLE_ACCEL_OPENGL)
 endif()
 
 if(NOCT_ENABLE_ACCEL_DX12)
-  if(NOT WIN32 OR CMAKE_SIZEOF_VOID_P LESS 8 OR
+  if(NOT WIN32 OR
      NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
      NOCT_TARGET_UNITY)
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_DX12 requires a 64-bit desktop Windows target")
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_DX12 requires a desktop Windows target")
   endif()
   include(CheckIncludeFile)
   set(CMAKE_REQUIRED_INCLUDES

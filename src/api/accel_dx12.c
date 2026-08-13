@@ -142,7 +142,7 @@ accel_dx12_utf8_name(
 
 	if (destination_size == 0)
 		return;
-	result = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, source, -1,
+	result = WideCharToMultiByte(CP_UTF8, 0, source, -1,
 				     destination, (int)destination_size,
 				     NULL, NULL);
 	if (result == 0) {

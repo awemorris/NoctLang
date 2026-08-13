@@ -496,7 +496,19 @@ print_cpu_list(void)
 	int i;
 
 #if defined(NOCT_TARGET_WINDOWS)
-	count = (int)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+	SYSTEM_INFO info;
+	typedef DWORD (WINAPI *get_active_processor_count_fn)(WORD);
+	get_active_processor_count_fn get_active_processor_count;
+
+	get_active_processor_count = (get_active_processor_count_fn)
+		GetProcAddress(GetModuleHandleA("kernel32.dll"),
+			       "GetActiveProcessorCount");
+	if (get_active_processor_count != NULL)
+		count = (int)get_active_processor_count((WORD)0xffff);
+	else {
+		GetSystemInfo(&info);
+		count = (int)info.dwNumberOfProcessors;
+	}
 #elif defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
 	count = 1;
 #else
