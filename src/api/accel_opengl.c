@@ -130,6 +130,91 @@ accel_gl_is_software_renderer(
 		strstr(renderer, "Software Rasterizer") != NULL;
 }
 
+bool
+accel_opengl_list_devices(void)
+{
+	EGLDisplay display;
+	EGLContext context;
+	EGLSurface surface;
+	EGLConfig config;
+	EGLint config_count;
+	EGLint major;
+	EGLint minor;
+	EGLint gl_major;
+	EGLint gl_minor;
+	EGLint ssbo_bindings;
+	EGLint ubo_bindings;
+	const GLubyte *renderer;
+	bool found;
+	static const EGLint config_attributes[] = {
+		EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+		EGL_RED_SIZE, 8,
+		EGL_GREEN_SIZE, 8,
+		EGL_BLUE_SIZE, 8,
+		EGL_NONE,
+	};
+	static const EGLint context_attributes[] = {
+		EGL_CONTEXT_CLIENT_VERSION, 3,
+		EGL_NONE,
+	};
+	static const EGLint surface_attributes[] = {
+		EGL_WIDTH, 1,
+		EGL_HEIGHT, 1,
+		EGL_NONE,
+	};
+
+	display = EGL_NO_DISPLAY;
+	context = EGL_NO_CONTEXT;
+	surface = EGL_NO_SURFACE;
+	found = false;
+#if defined(EGL_PLATFORM_SURFACELESS_MESA)
+	display = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA,
+					EGL_DEFAULT_DISPLAY, NULL);
+#endif
+	if (display == EGL_NO_DISPLAY)
+		display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+	if (display == EGL_NO_DISPLAY ||
+	    !eglInitialize(display, &major, &minor) ||
+	    !eglBindAPI(EGL_OPENGL_ES_API) ||
+	    !eglChooseConfig(display, config_attributes, &config, 1,
+			     &config_count) || config_count != 1)
+		goto done;
+	context = eglCreateContext(display, config, EGL_NO_CONTEXT,
+				   context_attributes);
+	if (context == EGL_NO_CONTEXT)
+		goto done;
+	surface = eglCreatePbufferSurface(display, config, surface_attributes);
+	if (surface == EGL_NO_SURFACE ||
+	    !eglMakeCurrent(display, surface, surface, context))
+		goto done;
+	glGetIntegerv(GL_MAJOR_VERSION, &gl_major);
+	glGetIntegerv(GL_MINOR_VERSION, &gl_minor);
+	glGetIntegerv(GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS, &ssbo_bindings);
+	glGetIntegerv(GL_MAX_UNIFORM_BUFFER_BINDINGS, &ubo_bindings);
+	renderer = glGetString(GL_RENDERER);
+	found = gl_major > 3 || (gl_major == 3 && gl_minor >= 1);
+	found = found && ssbo_bindings >= NOCT_ARG_MAX;
+	found = found && ubo_bindings > ACCEL_GL_PUSH_BINDING;
+	found = found && !accel_gl_is_software_renderer((const char *)renderer);
+	if (found) {
+		printf("0  %s  OpenGL ES %d.%d  EGL %d.%d\n",
+		       renderer != NULL ? (const char *)renderer : "unknown",
+		       gl_major, gl_minor, major, minor);
+	}
+done:
+	if (display != EGL_NO_DISPLAY) {
+		eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+			       EGL_NO_CONTEXT);
+		if (surface != EGL_NO_SURFACE)
+			eglDestroySurface(display, surface);
+		if (context != EGL_NO_CONTEXT)
+			eglDestroyContext(display, context);
+		eglTerminate(display);
+	}
+	return found;
+}
+
 static struct accel_gl_runtime *
 accel_gl_get_runtime(
 	struct rt_env *env)

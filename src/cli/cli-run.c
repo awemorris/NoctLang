@@ -14,7 +14,8 @@
 #include <noct/beui.h>
 #endif
 #include "cli-main.h"
-#if defined(NOCT_USE_ACCEL_DX12)
+#if defined(NOCT_USE_ACCEL_DX12) || defined(NOCT_USE_ACCEL_VULKAN) || \
+	defined(NOCT_USE_ACCEL_OPENGL)
 #include "../core/accel.h"
 #endif
 
@@ -548,6 +549,14 @@ print_gpu_list(void)
 	if (accel_dx12_list_devices())
 		return;
 	wide_printf(N_TR("No compatible DirectX 12 adapters are available.\n"));
+#elif defined(NOCT_USE_ACCEL_VULKAN)
+	if (accel_vulkan_list_devices())
+		return;
+	wide_printf(N_TR("No compatible Vulkan compute devices are available.\n"));
+#elif defined(NOCT_USE_ACCEL_OPENGL)
+	if (accel_opengl_list_devices())
+		return;
+	wide_printf(N_TR("No compatible OpenGL ES compute devices are available.\n"));
 #else
 	wide_printf(N_TR("GPU backend is not linked; no devices are available.\n"));
 #endif

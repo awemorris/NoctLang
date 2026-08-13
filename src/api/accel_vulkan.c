@@ -123,6 +123,109 @@ accel_vk_has_validation_layer(void)
 	return found;
 }
 
+bool
+accel_vulkan_list_devices(void)
+{
+	VkApplicationInfo app;
+	VkInstanceCreateInfo instance_info;
+	VkInstance instance;
+	VkPhysicalDevice *devices;
+	VkPhysicalDeviceProperties properties;
+	VkPhysicalDeviceMemoryProperties memory;
+	VkQueueFamilyProperties *families;
+	uint32_t device_count;
+	uint32_t family_count;
+	uint32_t i;
+	uint32_t j;
+	uint32_t heap;
+	uint64_t device_memory;
+	const char *type;
+	bool compute;
+	bool found;
+
+	memset(&app, 0, sizeof(app));
+	app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+	app.pApplicationName = "Noct";
+	app.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+	app.pEngineName = "Noct Accel";
+	app.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+	app.apiVersion = VK_API_VERSION_1_1;
+	memset(&instance_info, 0, sizeof(instance_info));
+	instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	instance_info.pApplicationInfo = &app;
+	instance = VK_NULL_HANDLE;
+	if (vkCreateInstance(&instance_info, NULL, &instance) != VK_SUCCESS)
+		return false;
+	device_count = 0;
+	if (vkEnumeratePhysicalDevices(instance, &device_count, NULL) != VK_SUCCESS ||
+	    device_count == 0) {
+		vkDestroyInstance(instance, NULL);
+		return false;
+	}
+	devices = noct_malloc(sizeof(*devices) * device_count);
+	if (devices == NULL) {
+		vkDestroyInstance(instance, NULL);
+		return false;
+	}
+	if (vkEnumeratePhysicalDevices(instance, &device_count, devices) != VK_SUCCESS) {
+		noct_free(devices);
+		vkDestroyInstance(instance, NULL);
+		return false;
+	}
+	found = false;
+	for (i = 0; i < device_count; i++) {
+		family_count = 0;
+		vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &family_count, NULL);
+		if (family_count == 0)
+			continue;
+		families = noct_malloc(sizeof(*families) * family_count);
+		if (families == NULL)
+			continue;
+		vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &family_count, families);
+		compute = false;
+		for (j = 0; j < family_count; j++) {
+			if ((families[j].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0) {
+				compute = true;
+				break;
+			}
+		}
+		noct_free(families);
+		if (!compute)
+			continue;
+		vkGetPhysicalDeviceProperties(devices[i], &properties);
+		vkGetPhysicalDeviceMemoryProperties(devices[i], &memory);
+		device_memory = 0;
+		for (heap = 0; heap < memory.memoryHeapCount; heap++) {
+			if ((memory.memoryHeaps[heap].flags &
+			     VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0)
+				device_memory += memory.memoryHeaps[heap].size;
+		}
+		switch (properties.deviceType) {
+		case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+			type = "discrete";
+			break;
+		case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+			type = "integrated";
+			break;
+		case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+			type = "virtual";
+			break;
+		case VK_PHYSICAL_DEVICE_TYPE_CPU:
+			type = "software";
+			break;
+		default:
+			type = "other";
+			break;
+		}
+		printf("%u  %s  %llu MiB  %s\n", i, properties.deviceName,
+		       (unsigned long long)(device_memory / (1024 * 1024)), type);
+		found = true;
+	}
+	noct_free(devices);
+	vkDestroyInstance(instance, NULL);
+	return found;
+}
+
 static struct accel_vk_runtime *
 accel_vk_get_runtime(
 	struct rt_env *env)

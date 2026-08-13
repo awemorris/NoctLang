@@ -239,6 +239,7 @@ struct accel_event {
 
 int accel_vulkan_dispatch(struct rt_env *env, struct rt_func *func,
 			  uint32_t arg_count, struct rt_value *arg);
+bool accel_vulkan_list_devices(void);
 int accel_vulkan_copy_to(struct rt_env *env, struct rt_packed *resource,
 			 size_t offset, size_t size);
 int accel_vulkan_copy_from(struct rt_env *env, struct rt_packed *resource,
@@ -264,6 +265,7 @@ int accel_dx12_copy_from(struct rt_env *env, struct rt_packed *resource,
 void accel_dx12_cleanup(struct rt_vm *vm);
 int accel_opengl_dispatch(struct rt_env *env, struct rt_func *func,
 			  uint32_t arg_count, struct rt_value *arg);
+bool accel_opengl_list_devices(void);
 int accel_opengl_dispatch_async(struct rt_env *env, struct rt_func *func,
 				uint32_t arg_count, struct rt_value *arg,
 				struct accel_event *event);
