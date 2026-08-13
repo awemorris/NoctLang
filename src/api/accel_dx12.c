@@ -994,7 +994,7 @@ accel_dx12_dispatch_program(
 		if (desc->origin == ACCEL_BUFFER_DEVICE_PTR) {
 			struct rt_packed *packed;
 			packed = arg[desc->outer_param].val.packed;
-			resources[i] = packed->accel_backend_data;
+			resources[i] = accel_dx12_get_resource(env, packed);
 			if (resources[i] == NULL ||
 			    resources[i]->storage.size != (UINT64)(byte_size != 0 ?
 				byte_size : 4))
