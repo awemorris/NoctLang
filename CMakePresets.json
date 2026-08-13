@@ -25,8 +25,6 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
-                "NOCT_ENABLE_API_BEUI": "ON",
-                "NOCT_ENABLE_API_BEUI_SDL2": "ON",
                 "NOCT_ENABLE_MODEL_WEIGHTS": "ON",
                 "NOCT_ENABLE_INSTALL": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
@@ -34,16 +32,6 @@
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON",
                 "NOCT_ENABLE_REPL": "ON"
-            }
-        },
-        {
-            "name": "sdl2",
-            "displayName": "desktop build with SDL2 BeUI",
-            "inherits": "static",
-            "binaryDir": "${sourceDir}/build-sdl2",
-            "cacheVariables": {
-                "NOCT_ENABLE_API_BEUI": "ON",
-                "NOCT_ENABLE_API_BEUI_SDL2": "ON"
             }
         },
         {
@@ -66,8 +54,6 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
-                "NOCT_ENABLE_API_BEUI": "ON",
-                "NOCT_ENABLE_API_BEUI_SDL2": "ON",
                 "NOCT_ENABLE_INSTALL": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
                 "NOCT_ENABLE_CBACKEND": "ON",
@@ -159,6 +145,38 @@
                 "NOCT_ENABLE_SCMBACKEND": "ON",
                 "NOCT_ENABLE_REPL": "ON",
                 "NOCT_ENABLE_MULTITHREAD": "ON"
+            }
+        },
+        {
+            "name": "linux",
+            "displayName": "static build",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build-linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NOCT_ENABLE_STATIC": "ON",
+                "NOCT_ENABLE_CLI": "ON",
+                "NOCT_ENABLE_OPTIMIZER": "ON",
+                "NOCT_ENABLE_JIT": "ON",
+                "NOCT_ENABLE_I18N": "ON",
+                "NOCT_ENABLE_API": "ON",
+                "NOCT_ENABLE_API_SYSTEM": "ON",
+                "NOCT_ENABLE_API_CONSOLE": "ON",
+                "NOCT_ENABLE_API_FILE": "ON",
+                "NOCT_ENABLE_API_THREAD": "ON",
+                "NOCT_ENABLE_API_HTTPSERVER": "ON",
+                "NOCT_ENABLE_API_TERM": "ON",
+                "NOCT_ENABLE_API_BEUI": "ON",
+                "NOCT_ENABLE_API_BEUI_SDL2": "ON",
+                "NOCT_ENABLE_MODEL_WEIGHTS": "ON",
+                "NOCT_ENABLE_INSTALL": "ON",
+                "NOCT_ENABLE_BCBACKEND": "ON",
+                "NOCT_ENABLE_CBACKEND": "ON",
+                "NOCT_ENABLE_ELBACKEND": "ON",
+                "NOCT_ENABLE_SCMBACKEND": "ON",
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_ACCEL_VULKAN": "OFF",
+                "NOCT_ENABLE_ACCEL_OPENGL": "ON"
             }
         },
         {
@@ -956,10 +974,6 @@
             "configurePreset": "static"
         },
         {
-            "name": "sdl2",
-            "configurePreset": "sdl2"
-        },
-        {
             "name": "shared",
             "configurePreset": "shared"
         },
@@ -970,6 +984,10 @@
         {
             "name": "mt-debug",
             "configurePreset": "mt-debug"
+        },
+        {
+            "name": "linux",
+            "configurePreset": "linux"
         },
         {
             "name": "windows-vs2026-x86",
