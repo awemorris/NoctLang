@@ -29,12 +29,6 @@
 #define JIT_OP_NOT_IMPLEMENTED  0
 #define NEVER_COME_HERE         0
 
-/* PC entry size. */
-#define PC_ENTRY_MAX            2048
-
-/* Branch pathch size. */
-#define BRANCH_PATCH_MAX        2048
-
 /* Branch patch type */
 #define PATCH_BAL               0
 #define PATCH_BEQ               1
@@ -3364,6 +3358,7 @@ jit_visit_bytecode(
                                 return false;
                         break;
 		case OP_VINDEX_HINT: if (!jit_visit_vindex_hint_op(ctx)) return false; break;
+		case OP_PLOOP_HINT: if (!jit_visit_ploop_hint_op(ctx)) return false; break;
 		case OP_SUBJNZ: if (!jit_visit_subjnz_op(ctx)) return false; break;
 		case OP_VORI32X4I: if (!jit_visit_vori32x4i_op(ctx)) return false; break;
 		case OP_VFMAF32X4: if (!jit_visit_vfmaf32x4_op(ctx)) return false; break;

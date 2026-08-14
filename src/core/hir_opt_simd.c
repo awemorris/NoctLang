@@ -2133,6 +2133,7 @@ simd_vectorize(struct simd_ctx *ctx)
 	if (RFOR->val.for_.start == NULL || RFOR->val.for_.stop == NULL)
 		return false;
 	RFOR->val.for_.typed_int_region = F->val.for_.typed_int_region;
+	RFOR->val.for_.packed_lanes = 1;
 	RFOR->val.for_.inner = body1;
 
 	/* SFOR (unvectorized fallback): $lo..$hi, scalar clone 2. */
@@ -2143,6 +2144,7 @@ simd_vectorize(struct simd_ctx *ctx)
 	if (SFOR->val.for_.start == NULL || SFOR->val.for_.stop == NULL)
 		return false;
 	SFOR->val.for_.typed_int_region = F->val.for_.typed_int_region;
+	SFOR->val.for_.packed_lanes = 1;
 	SFOR->val.for_.inner = body2;
 
 	/* F becomes the strip loop: $lo..$mid, vector body. */
@@ -2151,6 +2153,7 @@ simd_vectorize(struct simd_ctx *ctx)
 		return false;
 	F->val.for_.is_vector = true;
 	F->val.for_.abce_fast = false;
+	F->val.for_.packed_lanes = 4;
 	F->parent = GV;
 
 	/* Wire the region: B1 -> GV{F -> RFOR -> EV} -> XV ->

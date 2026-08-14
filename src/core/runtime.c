@@ -47,20 +47,26 @@ static bool rt_read_accel_program(struct rt_env *env, uint8_t *data,
 				  struct lir_func *lfunc,
 				  const char **next_line);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
-static void rt_report_jit_result(struct rt_func *func, bool success);
+static void rt_report_jit_result(struct rt_func *func, bool success,
+				 const char *reason);
 static void rt_commit_jit(struct rt_env *env);
 
 /* Test/debug observability for JIT compilation and silent interpreter fallback. */
 static void
 rt_report_jit_result(
 	struct rt_func *func,
-	bool success)
+	bool success,
+	const char *reason)
 {
-	if (getenv("NOCT_JIT_DEBUG") != NULL)
+	if (getenv("NOCT_JIT_DEBUG") != NULL) {
 		fprintf(stderr,
-			"noct-jit: %s: %s\n",
+			"noct-jit: %s: %s",
 			func->name,
 			success ? "compiled" : "fallback");
+		if (!success && reason != NULL && reason[0] != '\0')
+			fprintf(stderr, " reason=%s", reason);
+		fputc('\n', stderr);
+	}
 }
 
 static void
@@ -965,7 +971,7 @@ rt_register_lir(
 	 * fallback, not a source-registration failure. */
 	if (env->vm->config.jit_enable) {
 		if (!jit_build(env, func)) {
-			rt_report_jit_result(func, false);
+			rt_report_jit_result(func, false, env->error_message);
 			/* A backend may reserve/publish its entry pointer before the
 			   final opcode is accepted.  Never execute a partial function. */
 			func->jit_code = NULL;
@@ -974,7 +980,7 @@ rt_register_lir(
 			env->error_message[0] = '\0';
 			env->line = 0;
 		} else {
-			rt_report_jit_result(func, true);
+			rt_report_jit_result(func, true, NULL);
 			env->vm->is_jit_dirty = true;
 		}
 	}

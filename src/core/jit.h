@@ -195,11 +195,9 @@ void jit_slab_clear_overflow(struct rt_env *env);
 void jit_slab_commit_all(struct rt_env *env);
 void jit_slab_free_all(struct rt_env *env);
 
-/* PC entry size. */
-#define PC_ENTRY_MAX		2048
-
-/* Branch pathch size. */
-#define BRANCH_PATCH_MAX	2048
+/* Per-function dynamic JIT table bounds used by architecture backends. */
+#define PC_ENTRY_MAX		(ctx->pc_entry_capacity)
+#define BRANCH_PATCH_MAX	(ctx->branch_patch_capacity)
 
 /* Runtime SIMD capabilities, detected independently by each JIT backend. */
 #define JIT_SIMD_CAP_SSE2	(1u << 0)
@@ -261,6 +259,34 @@ struct jit_context {
 	int vector_imm_value;
 	int vector_imm_shift;
 	int vector_imm_reg;
+	bool packed_loop_hint_active;
+	int packed_loop_index_tmp;
+	int packed_loop_stop_tmp;
+	int packed_loop_remaining_tmp;
+	int packed_loop_lanes;
+	int packed_loop_flags;
+	int packed_loop_base_tmp[3];
+	int packed_loop_base_scale[3];
+	uint16_t packed_loop_index_alias[32];
+	int packed_loop_index_alias_count;
+	uint16_t packed_loop_base_alias_tmp[64];
+	uint16_t packed_loop_base_alias_root[64];
+	int packed_loop_base_alias_count;
+	int *gpr_tmp_reg;
+	uint8_t *gpr_tmp_dirty;
+	int32_t *gpr_range_min;
+	int32_t *gpr_range_max;
+	uint8_t *gpr_range_valid;
+	int gpr_reg_tmp[4];
+	int gpr_next_victim;
+	int gpr_reg_limit;
+	bool gpr_cache_active;
+	int gpr_load_tmp[3];
+	int gpr_load_opcode[3];
+	unsigned gpr_hits;
+	unsigned gpr_misses;
+	unsigned gpr_spills;
+	unsigned gpr_proven_divisions;
 
 	/* Top of the mapped code area. */
 	void *code_top;
@@ -287,8 +313,9 @@ struct jit_context {
 
 		/* Native-PC */
 		uint32_t *code;
-	} pc_entry[PC_ENTRY_MAX];
+	} *pc_entry;
 	uint32_t pc_entry_count;
+	uint32_t pc_entry_capacity;
 
 	/* Delayed branch patching table. */
 	struct branch_patch {
@@ -300,9 +327,121 @@ struct jit_context {
 
 		/* Branch type. */
 		int type;
-	} branch_patch[BRANCH_PATCH_MAX];
+	} *branch_patch;
 	int branch_patch_count;
+	uint32_t branch_patch_capacity;
 };
+
+/*
+ * One bytecode byte is the smallest possible instruction, so bytecode_size
+ * entries cover every instruction and delayed branch.  The extra PC entry
+ * maps the end of the bytecode.  Tables are per function and impose no fixed
+ * 2048-instruction ceiling.
+ */
+static INLINE bool
+jit_context_init_tables(struct jit_context *ctx)
+{
+	size_t pc_capacity;
+	size_t branch_capacity;
+
+	if (ctx->func->bytecode_size == UINT32_MAX) {
+		rt_error(ctx->env, "JIT bytecode is too large.");
+		return false;
+	}
+	pc_capacity = (size_t)ctx->func->bytecode_size + 1;
+	branch_capacity = (size_t)ctx->func->bytecode_size;
+	if (pc_capacity > SIZE_MAX / sizeof(*ctx->pc_entry) ||
+	    branch_capacity > SIZE_MAX / sizeof(*ctx->branch_patch)) {
+		rt_error(ctx->env, "JIT bytecode is too large.");
+		return false;
+	}
+	ctx->pc_entry = noct_malloc(pc_capacity * sizeof(*ctx->pc_entry));
+	if (ctx->pc_entry == NULL) {
+		rt_out_of_memory(ctx->env);
+		return false;
+	}
+	ctx->pc_entry_capacity = (uint32_t)pc_capacity;
+	if (branch_capacity == 0)
+		branch_capacity = 1;
+	ctx->branch_patch =
+		noct_malloc(branch_capacity * sizeof(*ctx->branch_patch));
+	if (ctx->branch_patch == NULL) {
+		noct_free(ctx->pc_entry);
+		ctx->pc_entry = NULL;
+		ctx->pc_entry_capacity = 0;
+		rt_out_of_memory(ctx->env);
+		return false;
+	}
+	ctx->branch_patch_capacity = (uint32_t)branch_capacity;
+	return true;
+}
+
+/* Allocate scalar register-cache analysis storage only for a function that
+ * actually contains an eligible PLOOP region. */
+static INLINE bool
+jit_context_init_regcache(struct jit_context *ctx)
+{
+	size_t tmp_capacity;
+
+	if (ctx->gpr_tmp_reg != NULL)
+		return true;
+	tmp_capacity = ctx->func->tmpvar_size != 0 ?
+		(size_t)ctx->func->tmpvar_size : 1;
+	if (tmp_capacity > SIZE_MAX / sizeof(*ctx->gpr_tmp_reg) ||
+	    tmp_capacity > SIZE_MAX / sizeof(*ctx->gpr_range_min) ||
+	    tmp_capacity > SIZE_MAX / sizeof(*ctx->gpr_range_max)) {
+		rt_error(ctx->env, "JIT temporary-variable table is too large.");
+		return false;
+	}
+	ctx->gpr_tmp_reg = noct_malloc(tmp_capacity *
+				       sizeof(*ctx->gpr_tmp_reg));
+	ctx->gpr_tmp_dirty = noct_malloc(tmp_capacity *
+					 sizeof(*ctx->gpr_tmp_dirty));
+	ctx->gpr_range_min = noct_malloc(tmp_capacity *
+					 sizeof(*ctx->gpr_range_min));
+	ctx->gpr_range_max = noct_malloc(tmp_capacity *
+					 sizeof(*ctx->gpr_range_max));
+	ctx->gpr_range_valid = noct_malloc(tmp_capacity *
+					   sizeof(*ctx->gpr_range_valid));
+	if (ctx->gpr_tmp_reg == NULL || ctx->gpr_tmp_dirty == NULL ||
+	    ctx->gpr_range_min == NULL || ctx->gpr_range_max == NULL ||
+	    ctx->gpr_range_valid == NULL) {
+		noct_free(ctx->gpr_range_valid);
+		noct_free(ctx->gpr_range_max);
+		noct_free(ctx->gpr_range_min);
+		noct_free(ctx->gpr_tmp_dirty);
+		noct_free(ctx->gpr_tmp_reg);
+		ctx->gpr_tmp_dirty = NULL;
+		ctx->gpr_tmp_reg = NULL;
+		ctx->gpr_range_valid = NULL;
+		ctx->gpr_range_max = NULL;
+		ctx->gpr_range_min = NULL;
+		rt_out_of_memory(ctx->env);
+		return false;
+	}
+	return true;
+}
+
+static INLINE void
+jit_context_dispose_tables(struct jit_context *ctx)
+{
+	noct_free(ctx->branch_patch);
+	noct_free(ctx->pc_entry);
+	noct_free(ctx->gpr_tmp_dirty);
+	noct_free(ctx->gpr_tmp_reg);
+	noct_free(ctx->gpr_range_valid);
+	noct_free(ctx->gpr_range_max);
+	noct_free(ctx->gpr_range_min);
+	ctx->branch_patch = NULL;
+	ctx->pc_entry = NULL;
+	ctx->gpr_tmp_dirty = NULL;
+	ctx->gpr_tmp_reg = NULL;
+	ctx->gpr_range_valid = NULL;
+	ctx->gpr_range_max = NULL;
+	ctx->gpr_range_min = NULL;
+	ctx->branch_patch_capacity = 0;
+	ctx->pc_entry_capacity = 0;
+}
 
 static INLINE void
 jit_configure_simd(struct jit_context *ctx, uint32_t detected,
@@ -354,6 +493,8 @@ void jit_map_executable(void * region, size_t size);
 		jit_ctx_.code = jit_top_;					\
 		jit_ctx_.env = (env_);					\
 		jit_ctx_.func = (func_);					\
+		if (!jit_context_init_tables(&jit_ctx_))			\
+			return false;					\
 		jit_configure_simd(&jit_ctx_, (caps_), (backend_));		\
 		if (!jit_visit_bytecode(&jit_ctx_)) {			\
 			if (jit_ctx_.code_overflow && jit_attempt_ == 0 &&	\
@@ -361,19 +502,24 @@ void jit_map_executable(void * region, size_t size);
 			     jit_slab_->size < jit_get_code_size((env_)))) {	\
 				jit_slab_abandon((env_), jit_slab_);		\
 				jit_slab_clear_overflow((env_));		\
+				jit_context_dispose_tables(&jit_ctx_);		\
 				continue;					\
 			}							\
+			jit_context_dispose_tables(&jit_ctx_);			\
 			return false;					\
 		}							\
 		jit_generated_end_ = jit_ctx_.code;			\
 		for (jit_i_ = 0; jit_i_ < jit_ctx_.branch_patch_count;	\
 		     jit_i_++) {						\
-			if (!jit_patch_branch(&jit_ctx_, jit_i_))		\
+			if (!jit_patch_branch(&jit_ctx_, jit_i_)) {		\
+				jit_context_dispose_tables(&jit_ctx_);		\
 				return false;				\
+			}						\
 		}							\
 		jit_slab_finish((env_), jit_slab_, jit_generated_end_);	\
 		(func_)->jit_code =						\
 			(bool (CDECL *)(struct rt_env *))jit_ctx_.code_top;	\
+		jit_context_dispose_tables(&jit_ctx_);				\
 		return true;						\
 	}								\
 	return false;							\
@@ -501,6 +647,37 @@ jit_get_imm8(
 
 	ctx->lpc++;
 
+	return true;
+}
+
+/* Consume the architecture-neutral scalar Packed-loop hint. */
+static INLINE bool
+jit_visit_ploop_hint_op(struct jit_context *ctx)
+{
+	int index_tmp;
+	int stop_tmp;
+	int remaining_tmp;
+	int lanes;
+	int flags;
+
+	if (!jit_get_opr_tmpvar(ctx, &index_tmp) ||
+	    !jit_get_opr_tmpvar(ctx, &stop_tmp) ||
+	    !jit_get_opr_tmpvar(ctx, &remaining_tmp) ||
+	    !jit_get_imm8(ctx, &lanes) ||
+	    !jit_get_imm8(ctx, &flags))
+		return false;
+	if (lanes != 1 ||
+	    ((flags & PLOOP_TYPED_INT) != 0 &&
+	     (flags & PLOOP_TYPED_FLOAT) != 0)) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	ctx->packed_loop_hint_active = true;
+	ctx->packed_loop_index_tmp = index_tmp;
+	ctx->packed_loop_stop_tmp = stop_tmp;
+	ctx->packed_loop_remaining_tmp = remaining_tmp;
+	ctx->packed_loop_lanes = lanes;
+	ctx->packed_loop_flags = flags;
 	return true;
 }
 

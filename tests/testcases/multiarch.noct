@@ -129,6 +129,12 @@ func arch_test(name, toolchain, qemu, cc) {
         return 0;
     }
 
+    // Width-1 Packed-loop metadata is also persisted.  Backends without a
+    // native register-cache tier must consume the hint as a semantic no-op.
+    if (!run_testcase(qemu, "-j", "packed-loop/regcache.nb")) {
+        return 0;
+    }
+
     return 1;
 }
 

@@ -1917,6 +1917,7 @@ abce_version_loop(struct abce_ctx *ctx)
 	}
 	/* Mark for the SIMD pass (design 06; it runs right after us). */
 	FAST->val.for_.abce_fast = true;
+	FAST->val.for_.packed_lanes = 1;
 	FAST->val.for_.key_symbol = NULL;
 	FAST->val.for_.value_symbol = NULL;
 	FAST->val.for_.collection = NULL;

@@ -1651,6 +1651,27 @@ cback_visit_vindex_hint_op(
 }
 
 static INLINE bool
+cback_visit_ploop_hint_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int index_tmp, stop_tmp, remaining_tmp;
+	int lanes, flags;
+
+	GET_TMPVAR(&index_tmp);
+	GET_TMPVAR(&stop_tmp);
+	GET_TMPVAR(&remaining_tmp);
+	GET_U8(&lanes);
+	GET_U8(&flags);
+	UNUSED_PARAMETER(index_tmp);
+	UNUSED_PARAMETER(stop_tmp);
+	UNUSED_PARAMETER(remaining_tmp);
+	UNUSED_PARAMETER(lanes);
+	UNUSED_PARAMETER(flags);
+	return true;
+}
+
+static INLINE bool
 cback_visit_subjnz_op(
 	struct lir_func *func,
 	uint32_t *pc)
@@ -2091,6 +2112,10 @@ cback_visit_op(
 		break;
 	case OP_VINDEX_HINT:
 		if (!cback_visit_vindex_hint_op(func, pc))
+			return false;
+		break;
+	case OP_PLOOP_HINT:
+		if (!cback_visit_ploop_hint_op(func, pc))
 			return false;
 		break;
 	case OP_SUBJNZ:

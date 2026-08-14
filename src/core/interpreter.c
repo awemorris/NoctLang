@@ -1434,6 +1434,30 @@ rt_visit_vindex_hint_op(
 	return true;
 }
 
+/* Consume the scalar Packed-loop allocation declaration.  It is a hint. */
+static INLINE bool
+rt_visit_ploop_hint_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int index_tmp, stop_tmp, remaining_tmp;
+	int lanes, flags;
+
+	UNUSED_PARAMETER(env);
+	GET_TMPVAR(&index_tmp);
+	GET_TMPVAR(&stop_tmp);
+	GET_TMPVAR(&remaining_tmp);
+	GET_U8(&lanes);
+	GET_U8(&flags);
+	UNUSED_PARAMETER(index_tmp);
+	UNUSED_PARAMETER(stop_tmp);
+	UNUSED_PARAMETER(remaining_tmp);
+	UNUSED_PARAMETER(lanes);
+	UNUSED_PARAMETER(flags);
+	return true;
+}
+
 /* Semantic fallback for the fused vector-loop latch. */
 static INLINE bool
 rt_visit_subjnz_op(
@@ -1903,6 +1927,10 @@ rt_visit_op(
                 break;
 	case OP_VINDEX_HINT:
 		if (!rt_visit_vindex_hint_op(env, func, pc))
+			return false;
+		break;
+	case OP_PLOOP_HINT:
+		if (!rt_visit_ploop_hint_op(env, func, pc))
 			return false;
 		break;
 	case OP_SUBJNZ:

@@ -301,6 +301,8 @@ struct hir_block {
 			 */
 			bool abce_fast;
 			bool is_vector;
+			/* 0: ordinary loop, 1: scalar Packed loop, 4: SIMD strip. */
+			uint8_t packed_lanes;
 		} for_;
 
 		/* While Block */

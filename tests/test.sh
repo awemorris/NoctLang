@@ -17,6 +17,7 @@ Main suites:
   typing           Type annotations and bytecode metadata.
   typedop          Typed LIR operation generation.
   abce             Array-bounds-check elimination.
+  packed-loop      Width-1 Packed loop and JIT register-cache tests.
   cse              Common-subexpression elimination.
   simd             SIMD vectorization, fallback and bytecode tests.
   fast             __fast functions, exact shapes and row-major indexing.
@@ -98,6 +99,7 @@ cli)             run_script run-cli-options.sh "$@" ;;
 typing)          run_script run-typing.sh "$@" ;;
 typedop)         run_script run-typedop.sh "$@" ;;
 abce)            run_script run-abce.sh "$@" ;;
+packed-loop)     run_script run-packed-loop.sh "$@" ;;
 cse)             run_script run-cse.sh "$@" ;;
 simd)            run_script run-simd.sh "$@" ;;
 fast)            run_script run-fast.sh "$@" ;;

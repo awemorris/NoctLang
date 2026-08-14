@@ -1042,6 +1042,34 @@ jit_arm64_scan_vector_bases(struct jit_context *ctx)
 	return false;
 }
 
+/* Scalar Packed-loop declaration.  x21 holds the semantic remaining count. */
+static INLINE bool
+jit_visit_arm64_ploop_hint_op(struct jit_context *ctx)
+{
+	int remaining_ofs;
+
+	if (!jit_visit_ploop_hint_op(ctx))
+		return false;
+	ctx->packed_loop_hint_active =
+		(ctx->packed_loop_flags & (PLOOP_ALLOW_REGCACHE |
+		 PLOOP_HAS_CONTROL)) == PLOOP_ALLOW_REGCACHE;
+	if (getenv("NOCT_JIT_REGCACHE_DEBUG") != NULL)
+		fprintf(stderr,
+			"noct-jit-regcache: func=%s arm64 hint index=%d stop=%d remaining=%d flags=0x%x accepted=%d\n",
+			ctx->func->name != NULL ? ctx->func->name : "?",
+			ctx->packed_loop_index_tmp, ctx->packed_loop_stop_tmp,
+			ctx->packed_loop_remaining_tmp, ctx->packed_loop_flags,
+			ctx->packed_loop_hint_active ? 1 : 0);
+	if (!ctx->packed_loop_hint_active)
+		return true;
+	remaining_ofs = ctx->packed_loop_remaining_tmp *
+		(int)sizeof(struct rt_value);
+	ASM {
+		LDR_W_IMM(REG_X21, REG_X1, (uint32_t)(remaining_ofs + 8));
+	}
+	return true;
+}
+
 /* Vector-loop register declaration.  x21 holds the remaining count. */
 static INLINE bool
 jit_visit_vindex_hint_op(
@@ -1107,9 +1135,11 @@ jit_visit_subjnz_op(
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
-	hinted = ctx->vector_hint_active &&
-		 value == ctx->vector_hint_remaining_tmp &&
-		 decrement == ctx->vector_hint_lanes;
+	hinted = (ctx->vector_hint_active &&
+		  value == ctx->vector_hint_remaining_tmp &&
+		  decrement == ctx->vector_hint_lanes) ||
+		 (ctx->packed_loop_hint_active &&
+		  value == ctx->packed_loop_remaining_tmp && decrement == 1);
 	value_ofs = value * (int)sizeof(struct rt_value);
 	if (!hinted) {
 		ASM {
@@ -1151,7 +1181,8 @@ jit_visit_subjnz_op(
 		}
 	}
 
-	if (hinted && (ctx->vector_hint_flags & VINDEX_WRITEBACK_STOP) != 0) {
+	if (ctx->vector_hint_active && hinted &&
+	    (ctx->vector_hint_flags & VINDEX_WRITEBACK_STOP) != 0) {
 		int index_ofs = ctx->vector_hint_index_tmp *
 			(int)sizeof(struct rt_value);
 		int stop_ofs = ctx->vector_hint_stop_tmp *
@@ -1161,7 +1192,21 @@ jit_visit_subjnz_op(
 			STR_W_IMM(REG_X2, REG_X1, (uint32_t)(index_ofs + 8));
 		}
 	}
+	if (ctx->packed_loop_hint_active &&
+	    value == ctx->packed_loop_remaining_tmp && decrement == 1) {
+		int index_ofs = ctx->packed_loop_index_tmp *
+			(int)sizeof(struct rt_value);
+		int stop_ofs = ctx->packed_loop_stop_tmp *
+			(int)sizeof(struct rt_value);
+		ASM {
+			MOVZ(REG_X2, IMM16(0), LSL_0);
+			STR_W_IMM(REG_X2, REG_X1, (uint32_t)(value_ofs + 8));
+			LDR_W_IMM(REG_X2, REG_X1, (uint32_t)(stop_ofs + 8));
+			STR_W_IMM(REG_X2, REG_X1, (uint32_t)(index_ofs + 8));
+		}
+	}
 	ctx->vector_hint_active = false;
+	ctx->packed_loop_hint_active = false;
 	return true;
 }
 
@@ -4143,6 +4188,10 @@ jit_visit_bytecode(
                         break;
 		case OP_VINDEX_HINT:
 			if (!jit_visit_vindex_hint_op(ctx))
+				return false;
+			break;
+		case OP_PLOOP_HINT:
+			if (!jit_visit_arm64_ploop_hint_op(ctx))
 				return false;
 			break;
 		case OP_SUBJNZ:

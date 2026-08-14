@@ -34,12 +34,6 @@
 #define JIT_OP_NOT_IMPLEMENTED  0
 #define NEVER_COME_HERE         0
 
-/* PC entry size. */
-#define PC_ENTRY_MAX            2048
-
-/* Branch pathch size. */
-#define BRANCH_PATCH_MAX        2048
-
 /* Branch patch type */
 #define PATCH_JMP               0
 #define PATCH_JE                1
@@ -49,6 +43,23 @@
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
 static uint32_t jit_detect_simd_caps(void);
+static bool jit_x86_64_is_packed_index_alias(struct jit_context *ctx,
+					      int tmp);
+static void jit_x86_64_remove_packed_index_alias(struct jit_context *ctx,
+						 int tmp);
+static bool jit_x86_64_add_packed_index_alias(struct jit_context *ctx,
+					      int tmp);
+static int jit_x86_64_resolve_packed_base(struct jit_context *ctx, int tmp);
+static void jit_x86_64_remove_packed_base_alias(struct jit_context *ctx,
+						int tmp);
+static bool jit_x86_64_set_packed_base_alias(struct jit_context *ctx,
+					     int dst, int src);
+static bool jit_x86_64_gpr_get(struct jit_context *ctx, int tmp,
+			      unsigned pin_mask, int *reg);
+static bool jit_x86_64_gpr_dest(struct jit_context *ctx, int tmp,
+			       unsigned pin_mask, int *reg);
+static bool jit_x86_64_gpr_flush(struct jit_context *ctx);
+static bool jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src);
 
 static void
 jit_x86_64_dump_code(struct jit_context *ctx, void *generated_end)
@@ -109,6 +120,8 @@ jit_build(
 		ctx.code = ctx.code_top;
 		ctx.env = env;
 		ctx.func = func;
+		if (!jit_context_init_tables(&ctx))
+			return false;
 		jit_configure_simd(&ctx, jit_detect_simd_caps(), "x86_64");
 
 		if (!jit_visit_bytecode(&ctx)) {
@@ -117,27 +130,33 @@ jit_build(
 			     slab->size < jit_get_code_size(env))) {
 				jit_slab_abandon(env, slab);
 				jit_slab_clear_overflow(env);
+				jit_context_dispose_tables(&ctx);
 				continue;
 			}
+			jit_context_dispose_tables(&ctx);
 			return false;
 		}
 
 		generated_end = ctx.code;
 		for (i = 0; i < ctx.branch_patch_count; i++) {
-			if (!jit_patch_branch(&ctx, i))
+			if (!jit_patch_branch(&ctx, i)) {
+				jit_context_dispose_tables(&ctx);
 				return false;
+			}
 		}
 		jit_x86_64_dump_code(&ctx, generated_end);
 		jit_slab_finish(env, slab, generated_end);
 		if (getenv("NOCT_JIT_CODEGEN_DEBUG") != NULL) {
 			fprintf(stderr,
-				"noct-jit-codegen: x86_64: func=%s bytes=%lu\n",
+				"noct-jit-codegen: x86_64: func=%s bytes=%lu pc_entries=%u branches=%d\n",
 				func->name != NULL ? func->name : "?",
 				(unsigned long)((uint8_t *)generated_end -
-						(uint8_t *)ctx.code_top));
+						(uint8_t *)ctx.code_top),
+				ctx.pc_entry_count, ctx.branch_patch_count);
 		}
 
 		func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
+		jit_context_dispose_tables(&ctx);
 		return true;
 	}
 	return false;
@@ -340,6 +359,26 @@ jit_put_qword(
  * Bytecode visitors
  */
 
+static INLINE void
+jit_x86_64_invalidate_packed_load(struct jit_context *ctx, int tmp)
+{
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		if (ctx->gpr_load_tmp[i] == tmp)
+			ctx->gpr_load_tmp[i] = -1;
+	}
+}
+
+static INLINE void
+jit_x86_64_invalidate_all_packed_loads(struct jit_context *ctx)
+{
+	int i;
+
+	for (i = 0; i < 3; i++)
+		ctx->gpr_load_tmp[i] = -1;
+}
+
 /* Visit a OP_LINEINFO instruction. */
 static INLINE bool
 jit_visit_lineinfo_op(
@@ -372,6 +411,66 @@ jit_visit_assign_op(
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
+	if (ctx->packed_loop_hint_active) {
+		int dst_ofs = dst * (int)sizeof(struct rt_value);
+		int src_ofs = src * (int)sizeof(struct rt_value);
+		int base_root;
+		if (!jit_x86_64_set_packed_base_alias(ctx, dst, src))
+			return false;
+		base_root = jit_x86_64_resolve_packed_base(ctx, dst);
+		{
+			int i;
+			for (i = 0; i < 3; i++) {
+				if (base_root == ctx->packed_loop_base_tmp[i])
+					return true;
+			}
+		}
+		if (jit_x86_64_is_packed_index_alias(ctx, src)) {
+			if (!jit_x86_64_add_packed_index_alias(ctx, dst)) {
+				ctx->packed_loop_hint_active = false;
+			} else {
+				return true;
+			}
+		} else {
+			jit_x86_64_remove_packed_index_alias(ctx, dst);
+		}
+		if (ctx->gpr_cache_active) {
+			int src_reg;
+			int dst_reg;
+			unsigned pin;
+
+			if (ctx->gpr_reg_limit == 1) {
+				if (!jit_x86_64_gpr_flush(ctx))
+					return false;
+			} else {
+				if (!jit_x86_64_gpr_get(ctx, src, 0, &src_reg))
+					return false;
+				pin = 1u << (src_reg - 8);
+				if (!jit_x86_64_gpr_dest(ctx, dst, pin, &dst_reg) ||
+				    !jit_x86_64_gpr_mov(ctx, dst_reg, src_reg))
+					return false;
+				ctx->gpr_tmp_dirty[dst] = 1;
+				ctx->gpr_range_valid[dst] =
+					ctx->gpr_range_valid[src];
+				if (ctx->gpr_range_valid[src]) {
+					ctx->gpr_range_min[dst] =
+						ctx->gpr_range_min[src];
+					ctx->gpr_range_max[dst] =
+						ctx->gpr_range_max[src];
+				}
+				jit_x86_64_invalidate_packed_load(ctx, dst);
+				return true;
+			}
+		}
+		/* Preserve rbx/rsi/rdi, which hold Packed cursor state. */
+		ASM {
+			IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)src_ofs);
+			IB(0x49); IB(0x8b); IB(0x8f); ID((uint32_t)(src_ofs + 8));
+			IB(0x49); IB(0x89); IB(0x87); ID((uint32_t)dst_ofs);
+			IB(0x49); IB(0x89); IB(0x8f); ID((uint32_t)(dst_ofs + 8));
+		}
+		return true;
+	}
 
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
@@ -405,6 +504,24 @@ jit_visit_iconst_op(
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
+	if (ctx->packed_loop_hint_active)
+		jit_x86_64_remove_packed_index_alias(ctx, dst);
+	if (ctx->packed_loop_hint_active)
+		jit_x86_64_remove_packed_base_alias(ctx, dst);
+	if (ctx->gpr_cache_active) {
+		int reg;
+
+		if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
+			return false;
+		/* mov imm32, r8d..r11d */
+		ASM { IB(0x41); IB((uint8_t)(0xb8 + (reg & 7))); ID(val); }
+		ctx->gpr_tmp_dirty[dst] = 1;
+		ctx->gpr_range_valid[dst] = 1;
+		ctx->gpr_range_min[dst] = (int32_t)val;
+		ctx->gpr_range_max[dst] = (int32_t)val;
+		jit_x86_64_invalidate_packed_load(ctx, dst);
+		return true;
+	}
 
         dst *= (int)sizeof(struct rt_value);
 
@@ -713,6 +830,9 @@ jit_visit_inc_op(
 	    dst == ctx->vector_hint_index_tmp &&
 	    step == ctx->vector_hint_lanes)
 		return true;
+	if (ctx->packed_loop_hint_active &&
+	    dst == ctx->packed_loop_index_tmp && step == 1)
+		return true;
 
         dst *= (int)sizeof(struct rt_value);
 
@@ -976,6 +1096,556 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 	return false;
 }
 
+static bool
+jit_x86_64_add_packed_base(struct jit_context *ctx, uint16_t base, int scale)
+{
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		if (ctx->packed_loop_base_tmp[i] == (int)base)
+			return ctx->packed_loop_base_scale[i] == scale;
+		if (ctx->packed_loop_base_tmp[i] < 0) {
+			ctx->packed_loop_base_tmp[i] = (int)base;
+			ctx->packed_loop_base_scale[i] = scale;
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool
+jit_x86_64_is_packed_index_alias(struct jit_context *ctx, int tmp)
+{
+	int i;
+
+	for (i = 0; i < ctx->packed_loop_index_alias_count; i++) {
+		if (ctx->packed_loop_index_alias[i] == (uint16_t)tmp)
+			return true;
+	}
+	return false;
+}
+
+static void
+jit_x86_64_remove_packed_index_alias(struct jit_context *ctx, int tmp)
+{
+	int i;
+
+	for (i = 1; i < ctx->packed_loop_index_alias_count; i++) {
+		if (ctx->packed_loop_index_alias[i] == (uint16_t)tmp) {
+			ctx->packed_loop_index_alias[i] =
+				ctx->packed_loop_index_alias[--ctx->packed_loop_index_alias_count];
+			return;
+		}
+	}
+}
+
+static bool
+jit_x86_64_add_packed_index_alias(struct jit_context *ctx, int tmp)
+{
+	if (jit_x86_64_is_packed_index_alias(ctx, tmp))
+		return true;
+	if (ctx->packed_loop_index_alias_count >=
+	    (int)(sizeof(ctx->packed_loop_index_alias) /
+		  sizeof(ctx->packed_loop_index_alias[0])))
+		return false;
+	ctx->packed_loop_index_alias[ctx->packed_loop_index_alias_count++] =
+		(uint16_t)tmp;
+	return true;
+}
+
+static int
+jit_x86_64_resolve_packed_base(struct jit_context *ctx, int tmp)
+{
+	int i;
+
+	for (i = ctx->packed_loop_base_alias_count - 1; i >= 0; i--) {
+		if (ctx->packed_loop_base_alias_tmp[i] == (uint16_t)tmp)
+			return ctx->packed_loop_base_alias_root[i];
+	}
+	return tmp;
+}
+
+static void
+jit_x86_64_remove_packed_base_alias(struct jit_context *ctx, int tmp)
+{
+	int i;
+
+	for (i = 0; i < ctx->packed_loop_base_alias_count; i++) {
+		if (ctx->packed_loop_base_alias_tmp[i] == (uint16_t)tmp) {
+			ctx->packed_loop_base_alias_tmp[i] =
+				ctx->packed_loop_base_alias_tmp[
+					--ctx->packed_loop_base_alias_count];
+			ctx->packed_loop_base_alias_root[i] =
+				ctx->packed_loop_base_alias_root[
+					ctx->packed_loop_base_alias_count];
+			return;
+		}
+	}
+}
+
+static bool
+jit_x86_64_set_packed_base_alias(struct jit_context *ctx, int dst, int src)
+{
+	int root;
+
+	root = jit_x86_64_resolve_packed_base(ctx, src);
+	jit_x86_64_remove_packed_base_alias(ctx, dst);
+	if (ctx->packed_loop_base_alias_count >=
+	    (int)(sizeof(ctx->packed_loop_base_alias_tmp) /
+		  sizeof(ctx->packed_loop_base_alias_tmp[0])))
+		return false;
+	ctx->packed_loop_base_alias_tmp[ctx->packed_loop_base_alias_count] =
+		(uint16_t)dst;
+	ctx->packed_loop_base_alias_root[ctx->packed_loop_base_alias_count] =
+		(uint16_t)root;
+	ctx->packed_loop_base_alias_count++;
+	return true;
+}
+
+static void
+jit_x86_64_gpr_reset(struct jit_context *ctx)
+{
+	uint32_t i;
+
+	for (i = 0; i < ctx->func->tmpvar_size; i++) {
+		ctx->gpr_tmp_reg[i] = -1;
+		ctx->gpr_tmp_dirty[i] = 0;
+		ctx->gpr_range_valid[i] = 0;
+	}
+	for (i = 0; i < 4; i++)
+		ctx->gpr_reg_tmp[i] = -1;
+	ctx->gpr_next_victim = 0;
+	for (i = 0; i < 3; i++) {
+		ctx->gpr_load_tmp[i] = -1;
+		ctx->gpr_load_opcode[i] = -1;
+	}
+}
+
+static int
+jit_x86_64_gpr_limit(void)
+{
+	const char *value;
+	char *end;
+	long limit;
+
+	value = getenv("NOCT_JIT_GPR_LIMIT");
+	if (value == NULL || *value == '\0')
+		return 4;
+	limit = strtol(value, &end, 10);
+	if (*end != '\0' || limit < 0)
+		return 4;
+	if (limit > 4)
+		limit = 4;
+	return (int)limit;
+}
+
+static bool
+jit_x86_64_gpr_spill(struct jit_context *ctx, int slot)
+{
+	int tmp;
+	int ofs;
+	int reg;
+
+	tmp = ctx->gpr_reg_tmp[slot];
+	if (tmp < 0)
+		return true;
+	if (ctx->gpr_tmp_dirty[tmp]) {
+		ofs = tmp * (int)sizeof(struct rt_value);
+		reg = 8 + slot;
+		ASM {
+			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)ofs);
+			ID((uint32_t)NOCT_VALUE_INT);
+			IB(0x45); IB(0x89);
+			IB((uint8_t)(0x87 | ((reg & 7) << 3)));
+			ID((uint32_t)(ofs + 8));
+		}
+		ctx->gpr_spills++;
+	}
+	ctx->gpr_tmp_reg[tmp] = -1;
+	ctx->gpr_tmp_dirty[tmp] = 0;
+	ctx->gpr_reg_tmp[slot] = -1;
+	jit_x86_64_invalidate_packed_load(ctx, tmp);
+	return true;
+}
+
+static bool
+jit_x86_64_gpr_alloc(struct jit_context *ctx, int tmp,
+			     unsigned pin_mask, bool load, int *reg)
+{
+	int slot;
+	int i;
+	int ofs;
+
+	if (tmp < 0 || (uint32_t)tmp >= ctx->func->tmpvar_size)
+		return false;
+	slot = ctx->gpr_tmp_reg[tmp];
+	if (slot >= 0) {
+		ctx->gpr_hits++;
+		*reg = 8 + slot;
+		return true;
+	}
+	ctx->gpr_misses++;
+	for (slot = 0; slot < ctx->gpr_reg_limit; slot++) {
+		if (ctx->gpr_reg_tmp[slot] < 0)
+			break;
+	}
+	if (slot == ctx->gpr_reg_limit) {
+		for (i = 0; i < ctx->gpr_reg_limit; i++) {
+			slot = (ctx->gpr_next_victim + i) % ctx->gpr_reg_limit;
+			if ((pin_mask & (1u << slot)) == 0)
+				break;
+		}
+		if (i == ctx->gpr_reg_limit)
+			return false;
+		ctx->gpr_next_victim = (slot + 1) % ctx->gpr_reg_limit;
+		if (!jit_x86_64_gpr_spill(ctx, slot))
+			return false;
+	}
+	ctx->gpr_reg_tmp[slot] = tmp;
+	ctx->gpr_tmp_reg[tmp] = slot;
+	ctx->gpr_tmp_dirty[tmp] = 0;
+	*reg = 8 + slot;
+	if (load) {
+		ofs = tmp * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x45); IB(0x8b);
+			IB((uint8_t)(0x87 | (((*reg) & 7) << 3)));
+			ID((uint32_t)(ofs + 8));
+		}
+	}
+	return true;
+}
+
+static bool
+jit_x86_64_gpr_get(struct jit_context *ctx, int tmp,
+			  unsigned pin_mask, int *reg)
+{
+	return jit_x86_64_gpr_alloc(ctx, tmp, pin_mask, true, reg);
+}
+
+static bool
+jit_x86_64_gpr_dest(struct jit_context *ctx, int tmp,
+			   unsigned pin_mask, int *reg)
+{
+	return jit_x86_64_gpr_alloc(ctx, tmp, pin_mask, false, reg);
+}
+
+static bool
+jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src)
+{
+	UNUSED_PARAMETER(ctx);
+	if (dst == src)
+		return true;
+	ASM {
+		IB(0x45); IB(0x89);
+		IB((uint8_t)(0xc0 | ((src & 7) << 3) | (dst & 7)));
+	}
+	return true;
+}
+
+static bool
+jit_x86_64_gpr_flush(struct jit_context *ctx)
+{
+	int slot;
+
+	for (slot = 0; slot < 4; slot++) {
+		if (!jit_x86_64_gpr_spill(ctx, slot))
+			return false;
+	}
+	jit_x86_64_invalidate_all_packed_loads(ctx);
+	return true;
+}
+
+/*
+ * Prove the initial scalar Packed-loop grammar before reserving rbx/rsi/rdi.
+ * The accepted operations are all inline and use only rax/rcx/rdx/xmm0 as
+ * scratch.  Any control flow, helper call, unusual index expression or fourth
+ * base disables the hint for this region only.
+ */
+static bool
+jit_x86_64_scan_packed_loop(struct jit_context *ctx)
+{
+	uint32_t p;
+	uint32_t body_lpc;
+	uint32_t size;
+	uint16_t base;
+	uint16_t ofs;
+	uint16_t dst;
+	uint16_t src1;
+	uint16_t src2;
+	uint16_t value;
+	uint8_t op;
+	int scale;
+	int inc_count;
+
+	ctx->packed_loop_base_tmp[0] = -1;
+	ctx->packed_loop_base_tmp[1] = -1;
+	ctx->packed_loop_base_tmp[2] = -1;
+	ctx->packed_loop_base_scale[0] = 0;
+	ctx->packed_loop_base_scale[1] = 0;
+	ctx->packed_loop_base_scale[2] = 0;
+	ctx->packed_loop_index_alias_count = 1;
+	ctx->packed_loop_index_alias[0] =
+		(uint16_t)ctx->packed_loop_index_tmp;
+	ctx->packed_loop_base_alias_count = 0;
+	body_lpc = ctx->lpc;
+	p = body_lpc;
+	inc_count = 0;
+	while (p < ctx->func->bytecode_size) {
+		op = ctx->func->bytecode[p];
+		if (getenv("NOCT_JIT_REGCACHE_SCAN_DEBUG") != NULL)
+			fprintf(stderr, "noct-jit-regcache-scan: lpc=%u op=%u\n",
+				(unsigned)p, (unsigned)op);
+		size = 0;
+		base = 0xffffu;
+		scale = 0;
+		switch (op) {
+		case OP_LINEINFO:
+			if (p + 5 > ctx->func->bytecode_size)
+				return false;
+			size = 5;
+			break;
+		case OP_ASSIGN:
+			if (p + 5 > ctx->func->bytecode_size)
+				return false;
+			size = 5;
+			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
+			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
+			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
+				return false;
+			if (jit_x86_64_is_packed_index_alias(ctx, src1)) {
+				if (!jit_x86_64_add_packed_index_alias(ctx, dst))
+					return false;
+			} else {
+				jit_x86_64_remove_packed_index_alias(ctx, dst);
+			}
+			if (!jit_x86_64_set_packed_base_alias(ctx, dst, src1))
+				return false;
+			break;
+		case OP_ICONST:
+			if (p + 7 > ctx->func->bytecode_size)
+				return false;
+			size = 7;
+			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
+			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
+				return false;
+			jit_x86_64_remove_packed_index_alias(ctx, dst);
+			jit_x86_64_remove_packed_base_alias(ctx, dst);
+			break;
+		case OP_PLOAD8U:
+		case OP_PLOAD8S:
+		case OP_PLOAD16U:
+		case OP_PLOAD16S:
+		case OP_PLOAD32:
+			if (p + 7 > ctx->func->bytecode_size)
+				return false;
+			size = 7;
+			base = (uint16_t)jit_x86_64_resolve_packed_base(ctx,
+				jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]));
+			ofs = jit_x86_64_read_u16(&ctx->func->bytecode[p + 5]);
+			if (!jit_x86_64_is_packed_index_alias(ctx, ofs)) {
+				if (getenv("NOCT_JIT_REGCACHE_SCAN_DEBUG") != NULL)
+					fprintf(stderr,
+						"noct-jit-regcache-scan: indexed access base=%u ofs=%u loop-index=%d\n",
+						(unsigned)base, (unsigned)ofs,
+						ctx->packed_loop_index_tmp);
+				return false;
+			}
+			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			jit_x86_64_remove_packed_index_alias(ctx, dst);
+			jit_x86_64_remove_packed_base_alias(ctx, dst);
+			scale = op == OP_PLOAD32 ? 4 :
+				op == OP_PLOAD16U || op == OP_PLOAD16S ? 2 : 1;
+			break;
+		case OP_PSTORE8:
+		case OP_PSTORE16:
+		case OP_PSTORE32:
+			if (p + 7 > ctx->func->bytecode_size)
+				return false;
+			size = 7;
+			base = (uint16_t)jit_x86_64_resolve_packed_base(ctx,
+				jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]));
+			ofs = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
+			if (!jit_x86_64_is_packed_index_alias(ctx, ofs)) {
+				if (getenv("NOCT_JIT_REGCACHE_SCAN_DEBUG") != NULL)
+					fprintf(stderr,
+						"noct-jit-regcache-scan: indexed store base=%u ofs=%u loop-index=%d\n",
+						(unsigned)base, (unsigned)ofs,
+						ctx->packed_loop_index_tmp);
+				return false;
+			}
+			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 5]);
+			if (jit_x86_64_is_packed_index_alias(ctx, src1))
+				return false;
+			scale = op == OP_PSTORE32 ? 4 :
+				op == OP_PSTORE16 ? 2 : 1;
+			break;
+		case OP_IADD:
+		case OP_ISUB:
+		case OP_IMUL:
+		case OP_IDIV:
+		case OP_IMOD:
+		case OP_IAND:
+		case OP_IOR:
+		case OP_IXOR:
+		case OP_ILT:
+		case OP_ILTE:
+		case OP_IGT:
+		case OP_IGTE:
+		case OP_IDIV_CHECKED:
+		case OP_IMOD_CHECKED:
+			if (p + 7 > ctx->func->bytecode_size)
+				return false;
+			size = 7;
+			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
+			src2 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 5]);
+			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
+			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
+				return false;
+			if (jit_x86_64_is_packed_index_alias(ctx, src1) ||
+			    jit_x86_64_is_packed_index_alias(ctx, src2))
+				return false;
+			jit_x86_64_remove_packed_index_alias(ctx, dst);
+			jit_x86_64_remove_packed_base_alias(ctx, dst);
+			break;
+		case OP_ISHL:
+		case OP_ISHR:
+			if (p + 6 > ctx->func->bytecode_size)
+				return false;
+			size = 6;
+			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
+			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
+			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
+				return false;
+			if (jit_x86_64_is_packed_index_alias(ctx, src1))
+				return false;
+			jit_x86_64_remove_packed_index_alias(ctx, dst);
+			jit_x86_64_remove_packed_base_alias(ctx, dst);
+			break;
+		case OP_INC:
+			if (p + 4 > ctx->func->bytecode_size ||
+			    jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]) !=
+				(uint16_t)ctx->packed_loop_index_tmp ||
+			    ctx->func->bytecode[p + 3] != 1)
+				return false;
+			inc_count++;
+			size = 4;
+			break;
+		case OP_SUBJNZ:
+			if (p + 8 > ctx->func->bytecode_size)
+				return false;
+			value = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
+			return value ==
+				(uint16_t)ctx->packed_loop_remaining_tmp &&
+				ctx->func->bytecode[p + 3] == 1 &&
+				jit_x86_64_read_u32(&ctx->func->bytecode[p + 4]) ==
+				body_lpc && inc_count == 1 &&
+				ctx->packed_loop_base_tmp[0] >= 0;
+		default:
+			return false;
+		}
+		if (p + size > ctx->func->bytecode_size)
+			return false;
+		if (base != 0xffffu &&
+		    !jit_x86_64_add_packed_base(ctx, base, scale))
+			return false;
+		p += size;
+	}
+	return false;
+}
+
+static INLINE bool
+jit_visit_x86_64_ploop_hint_op(struct jit_context *ctx)
+{
+	int stop_ofs;
+	int remaining_ofs;
+	int base_ofs;
+	int scale_bits;
+	int i;
+
+	if (!jit_visit_ploop_hint_op(ctx))
+		return false;
+	ctx->packed_loop_hint_active =
+		getenv("NOCT_JIT_REGCACHE_DISABLE") == NULL &&
+		(ctx->packed_loop_flags & (PLOOP_TYPED_INT |
+		 PLOOP_ALLOW_REGCACHE | PLOOP_HAS_CONTROL)) ==
+		(PLOOP_TYPED_INT | PLOOP_ALLOW_REGCACHE) &&
+		jit_x86_64_scan_packed_loop(ctx);
+	if (ctx->packed_loop_hint_active) {
+		/* Rebuild aliases in bytecode order while visitors emit the region. */
+		ctx->packed_loop_index_alias_count = 1;
+		ctx->packed_loop_index_alias[0] =
+			(uint16_t)ctx->packed_loop_index_tmp;
+		ctx->packed_loop_base_alias_count = 0;
+	}
+	if (getenv("NOCT_JIT_REGCACHE_DEBUG") != NULL)
+		fprintf(stderr,
+			"noct-jit-regcache: func=%s hint lanes=%d flags=0x%x accepted=%d\n",
+			ctx->func->name != NULL ? ctx->func->name : "?",
+			ctx->packed_loop_lanes, ctx->packed_loop_flags,
+			ctx->packed_loop_hint_active ? 1 : 0);
+	if (!ctx->packed_loop_hint_active)
+		return true;
+	if (!jit_context_init_regcache(ctx))
+		return false;
+	jit_x86_64_gpr_reset(ctx);
+	ctx->gpr_reg_limit = jit_x86_64_gpr_limit();
+	ctx->gpr_cache_active = ctx->gpr_reg_limit > 0;
+
+	/* rax=stop; each base register becomes raw_base + stop*scale. */
+	stop_ofs = ctx->packed_loop_stop_tmp * (int)sizeof(struct rt_value);
+	ASM { IB(0x49); IB(0x63); IB(0x87); ID((uint32_t)(stop_ofs + 8)); }
+	for (i = 0; i < 3 && ctx->packed_loop_base_tmp[i] >= 0; i++) {
+		base_ofs = ctx->packed_loop_base_tmp[i] *
+			(int)sizeof(struct rt_value);
+		scale_bits = ctx->packed_loop_base_scale[i] == 4 ? 2 :
+			ctx->packed_loop_base_scale[i] == 2 ? 1 : 0;
+		if (i == 0) {
+			ASM {
+				IB(0x49); IB(0x8b); IB(0x9f);
+				ID((uint32_t)(base_ofs + 8));
+				IB(0x48); IB(0x8d); IB(0x1c);
+				IB((uint8_t)((scale_bits << 6) | 0x03));
+			}
+		} else if (i == 1) {
+			ASM {
+				IB(0x49); IB(0x8b); IB(0xb7);
+				ID((uint32_t)(base_ofs + 8));
+				IB(0x48); IB(0x8d); IB(0x34);
+				IB((uint8_t)((scale_bits << 6) | 0x06));
+			}
+		} else {
+			ASM {
+				/* r12 = raw_base + stop * scale */
+				IB(0x4d); IB(0x8b); IB(0xa7);
+				ID((uint32_t)(base_ofs + 8));
+				IB(0x4d); IB(0x8d); IB(0x24);
+				IB((uint8_t)((scale_bits << 6) | 0x04));
+			}
+		}
+	}
+	/* rdi=-(stop-start), matching the adjusted-base cursor. */
+	remaining_ofs = ctx->packed_loop_remaining_tmp *
+		(int)sizeof(struct rt_value);
+	ASM {
+		IB(0x49); IB(0x63); IB(0xbf);
+		ID((uint32_t)(remaining_ofs + 8));
+		IB(0x48); IB(0xf7); IB(0xdf);
+	}
+	if (getenv("NOCT_JIT_REGCACHE_DEBUG") != NULL)
+		fprintf(stderr,
+			"noct-jit-regcache: func=%s mode=cursor bases=%d gprs=%d\n",
+			ctx->func->name != NULL ? ctx->func->name : "?",
+			ctx->packed_loop_base_tmp[2] >= 0 ? 3 :
+			ctx->packed_loop_base_tmp[1] >= 0 ? 2 : 1,
+			ctx->gpr_reg_limit);
+	return true;
+}
+
 static INLINE bool
 jit_visit_vindex_hint_op(struct jit_context *ctx)
 {
@@ -1084,6 +1754,7 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 	int value, decrement;
 	uint32_t target_lpc;
 	bool hinted;
+	bool packed_hinted;
 	int ofs;
 
 	CONSUME_TMPVAR(value);
@@ -1092,6 +1763,43 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 	if (target_lpc >= (uint32_t)(ctx->func->bytecode_size + 1)) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
+	}
+	packed_hinted = ctx->packed_loop_hint_active &&
+		value == ctx->packed_loop_remaining_tmp && decrement == 1;
+	if (packed_hinted) {
+		int index_ofs;
+		int stop_ofs;
+		if (ctx->gpr_cache_active && !jit_x86_64_gpr_flush(ctx))
+			return false;
+		ctx->gpr_cache_active = false;
+		/* rdi is negative remaining: add one and loop while nonzero. */
+		ASM { IB(0x48); IB(0x83); IB(0xc7); IB(0x01); }
+		ctx->branch_patch[ctx->branch_patch_count].code = ctx->code;
+		ctx->branch_patch[ctx->branch_patch_count].lpc = target_lpc;
+		ctx->branch_patch[ctx->branch_patch_count].type = PATCH_JNE;
+		ctx->branch_patch_count++;
+		ASM { IB(0x0f); IB(0x85); ID(0); }
+		ofs = value * (int)sizeof(struct rt_value);
+		index_ofs = ctx->packed_loop_index_tmp *
+			(int)sizeof(struct rt_value);
+		stop_ofs = ctx->packed_loop_stop_tmp *
+			(int)sizeof(struct rt_value);
+		ASM {
+			IB(0x41); IB(0xc7); IB(0x87);
+			ID((uint32_t)(ofs + 8)); ID(0);
+			IB(0x41); IB(0x8b); IB(0x87);
+			ID((uint32_t)(stop_ofs + 8));
+			IB(0x41); IB(0x89); IB(0x87);
+			ID((uint32_t)(index_ofs + 8));
+		}
+		ctx->packed_loop_hint_active = false;
+		if (getenv("NOCT_JIT_REGCACHE_DEBUG") != NULL)
+			fprintf(stderr,
+				"noct-jit-regcache: func=%s hits=%u misses=%u spills=%u proven-div=%u\n",
+				ctx->func->name != NULL ? ctx->func->name : "?",
+				ctx->gpr_hits, ctx->gpr_misses, ctx->gpr_spills,
+				ctx->gpr_proven_divisions);
+		return true;
 	}
 	hinted = ctx->vector_hint_active &&
 		 value == ctx->vector_hint_remaining_tmp &&
@@ -2772,7 +3480,181 @@ jit_visit_typeis_op(
         /* if (!ex_typeis_helper(env, dst, src, type)) return false; */
         ASM_BINARY_OP(ex_typeis_helper);
 
-        return true;
+	return true;
+}
+
+static bool
+jit_x86_64_packed_cursor(struct jit_context *ctx, int base, int ofs,
+			 int scale, uint8_t *sib, int *cursor)
+{
+	int i;
+	int scale_bits;
+	int base_root;
+
+	if (!ctx->packed_loop_hint_active ||
+	    !jit_x86_64_is_packed_index_alias(ctx, ofs))
+		return false;
+	base_root = jit_x86_64_resolve_packed_base(ctx, base);
+	for (i = 0; i < 3; i++) {
+		if (ctx->packed_loop_base_tmp[i] == base_root &&
+		    ctx->packed_loop_base_scale[i] == scale) {
+			scale_bits = scale == 4 ? 2 : scale == 2 ? 1 : 0;
+			*sib = (uint8_t)((scale_bits << 6) | 0x38 |
+				(i == 0 ? 0x03 : i == 1 ? 0x06 : 0x04));
+			*cursor = i;
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool
+jit_x86_64_try_packed_load(struct jit_context *ctx, int dst, int base,
+			   int ofs, int scale, bool is_signed,
+			   bool *handled)
+{
+	uint8_t sib;
+	int dst_ofs;
+	int cursor;
+	int reg;
+	int cached_tmp;
+	int cached_reg;
+	int opcode_key;
+
+	*handled = jit_x86_64_packed_cursor(ctx, base, ofs, scale, &sib,
+					    &cursor);
+	if (!*handled)
+		return true;
+	jit_x86_64_remove_packed_index_alias(ctx, dst);
+	jit_x86_64_remove_packed_base_alias(ctx, dst);
+	if (ctx->gpr_cache_active) {
+		opcode_key = scale * 2 + (is_signed ? 1 : 0);
+		cached_tmp = ctx->gpr_load_tmp[cursor];
+		if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+			cached_tmp = -1;
+		if (cached_tmp >= 0 &&
+		    ctx->gpr_load_opcode[cursor] == opcode_key &&
+		    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+			if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0, &cached_reg) ||
+			    !jit_x86_64_gpr_dest(ctx, dst,
+				1u << (cached_reg - 8), &reg) ||
+			    !jit_x86_64_gpr_mov(ctx, reg, cached_reg))
+				return false;
+		} else {
+			if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
+				return false;
+			if (scale == 4) {
+				ASM {
+					IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+					IB(0x8b);
+					IB((uint8_t)(((reg & 7) << 3) | 0x04));
+					IB(sib);
+				}
+			} else {
+				ASM {
+					IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+					IB(0x0f);
+				}
+				if (scale == 2)
+					ASM { IB((uint8_t)(is_signed ? 0xbf : 0xb7)); }
+				else
+					ASM { IB((uint8_t)(is_signed ? 0xbe : 0xb6)); }
+				ASM {
+					IB((uint8_t)(((reg & 7) << 3) | 0x04));
+					IB(sib);
+				}
+			}
+		}
+		ctx->gpr_tmp_dirty[dst] = 1;
+		ctx->gpr_range_valid[dst] = 0;
+		ctx->gpr_load_tmp[cursor] = dst;
+		ctx->gpr_load_opcode[cursor] = opcode_key;
+		return true;
+	}
+	if (scale == 4) {
+		if (cursor == 2)
+			ASM { IB(0x41); }
+		ASM { IB(0x8b); IB(0x14); IB(sib); }
+	} else {
+		if (cursor == 2)
+			ASM { IB(0x41); }
+		ASM { IB(0x0f); }
+		if (scale == 2)
+			ASM { IB((uint8_t)(is_signed ? 0xbf : 0xb7)); }
+		else
+			ASM { IB((uint8_t)(is_signed ? 0xbe : 0xb6)); }
+		ASM { IB(0x14); IB(sib); }
+	}
+	dst_ofs = dst * (int)sizeof(struct rt_value);
+	ASM {
+		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst_ofs);
+		ID((uint32_t)NOCT_VALUE_INT);
+		IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst_ofs + 8));
+	}
+	return true;
+}
+
+static bool
+jit_x86_64_try_packed_store(struct jit_context *ctx, int base, int ofs,
+			    int src, int scale, bool *handled)
+{
+	uint8_t sib;
+	int src_ofs;
+	int cursor;
+	int reg;
+
+	*handled = jit_x86_64_packed_cursor(ctx, base, ofs, scale, &sib,
+					    &cursor);
+	if (!*handled)
+		return true;
+	if (ctx->gpr_cache_active) {
+		if (!jit_x86_64_gpr_get(ctx, src, 0, &reg))
+			return false;
+		if (scale == 1) {
+			ASM {
+				IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				IB(0x88);
+				IB((uint8_t)(((reg & 7) << 3) | 0x04));
+				IB(sib);
+			}
+		} else if (scale == 2) {
+			ASM {
+				IB(0x66);
+				IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				IB(0x89);
+				IB((uint8_t)(((reg & 7) << 3) | 0x04));
+				IB(sib);
+			}
+		} else {
+			ASM {
+				IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				IB(0x89);
+				IB((uint8_t)(((reg & 7) << 3) | 0x04));
+				IB(sib);
+			}
+		}
+		jit_x86_64_invalidate_all_packed_loads(ctx);
+		return true;
+	}
+	src_ofs = src * (int)sizeof(struct rt_value);
+	ASM {
+		IB(0x41); IB(0x8b); IB(0x97); ID((uint32_t)(src_ofs + 8));
+	}
+	if (scale == 1) {
+		if (cursor == 2)
+			ASM { IB(0x41); }
+		ASM { IB(0x88); IB(0x14); IB(sib); }
+	} else if (scale == 2) {
+		ASM { IB(0x66); }
+		if (cursor == 2)
+			ASM { IB(0x41); }
+		ASM { IB(0x89); IB(0x14); IB(sib); }
+	} else {
+		if (cursor == 2)
+			ASM { IB(0x41); }
+		ASM { IB(0x89); IB(0x14); IB(sib); }
+	}
+	return true;
 }
 
 /* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code.) */
@@ -2783,10 +3665,16 @@ jit_visit_pload8u_op(
         int dst;
         int base;
         int ofs;
+	bool handled;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 1, false,
+				       &handled))
+		return false;
+	if (handled)
+		return true;
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -2815,10 +3703,15 @@ jit_visit_pstore8_op(
         int base;
         int ofs;
         int src;
+	bool handled;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
+	if (!jit_x86_64_try_packed_store(ctx, base, ofs, src, 1, &handled))
+		return false;
+	if (handled)
+		return true;
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -2862,10 +3755,16 @@ jit_visit_pload8s_op(
         int dst;
         int base;
         int ofs;
+	bool handled;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 1, true,
+				       &handled))
+		return false;
+	if (handled)
+		return true;
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -2892,10 +3791,16 @@ jit_visit_pload16u_op(
         int dst;
         int base;
         int ofs;
+	bool handled;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 2, false,
+				       &handled))
+		return false;
+	if (handled)
+		return true;
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -2922,10 +3827,16 @@ jit_visit_pload16s_op(
         int dst;
         int base;
         int ofs;
+	bool handled;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 2, true,
+				       &handled))
+		return false;
+	if (handled)
+		return true;
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -2952,10 +3863,16 @@ jit_visit_pload32_op(
         int dst;
         int base;
         int ofs;
+	bool handled;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 4, false,
+				       &handled))
+		return false;
+	if (handled)
+		return true;
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3012,10 +3929,15 @@ jit_visit_pstore16_op(
         int base;
         int ofs;
         int src;
+	bool handled;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
+	if (!jit_x86_64_try_packed_store(ctx, base, ofs, src, 2, &handled))
+		return false;
+	if (handled)
+		return true;
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -3041,10 +3963,15 @@ jit_visit_pstore32_op(
         int base;
         int ofs;
         int src;
+	bool handled;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
+	if (!jit_x86_64_try_packed_store(ctx, base, ofs, src, 4, &handled))
+		return false;
+	if (handled)
+		return true;
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -3233,6 +4160,166 @@ jit_visit_checked_idiv_op(
 	return true;
 }
 
+static bool
+jit_x86_64_try_gpr_typed(struct jit_context *ctx, int op, int dst,
+			 int src1, int src2, bool *handled)
+{
+	int r1;
+	int r2;
+	int rd;
+	int opcode;
+	unsigned pins;
+	bool commutative;
+	bool v1;
+	bool v2;
+	int32_t min1;
+	int32_t max1;
+	int32_t min2;
+	int32_t max2;
+	int64_t lo;
+	int64_t hi;
+
+	*handled = false;
+	if (!ctx->gpr_cache_active)
+		return true;
+	if (ctx->gpr_reg_limit == 1)
+		return true;
+	v1 = ctx->gpr_range_valid[src1] != 0;
+	min1 = v1 ? ctx->gpr_range_min[src1] : 0;
+	max1 = v1 ? ctx->gpr_range_max[src1] : 0;
+	v2 = op == OP_ISHL || op == OP_ISHR ? false :
+		ctx->gpr_range_valid[src2] != 0;
+	min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+	max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+	if (op == OP_IDIV || op == OP_IMOD ||
+	    op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
+		bool proven = op == OP_IDIV || op == OP_IMOD ||
+			(v2 && (min2 > 0 || max2 < -1));
+		if (!proven)
+			return true;
+		if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+			return false;
+		pins = 1u << (r1 - 8);
+		if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+			return false;
+		pins |= 1u << (r2 - 8);
+		if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd))
+			return false;
+		ASM {
+			/* eax=dividend; edx:eax sign extension; idiv r2d. */
+			IB(0x44); IB(0x89);
+			IB((uint8_t)(0xc0 | ((r1 & 7) << 3)));
+			IB(0x99);
+			IB(0x41); IB(0xf7);
+			IB((uint8_t)(0xf8 | (r2 & 7)));
+		}
+		if (op == OP_IMOD || op == OP_IMOD_CHECKED)
+			ASM { IB(0x89); IB(0xd0); }
+		ASM {
+			IB(0x41); IB(0x89);
+			IB((uint8_t)(0xc0 | (rd & 7)));
+		}
+		ctx->gpr_tmp_dirty[dst] = 1;
+		ctx->gpr_range_valid[dst] = 0;
+		if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED)
+			ctx->gpr_proven_divisions++;
+		jit_x86_64_invalidate_all_packed_loads(ctx);
+		*handled = true;
+		return true;
+	}
+	if (op != OP_IADD && op != OP_ISUB && op != OP_IMUL &&
+	    op != OP_IAND && op != OP_IOR && op != OP_IXOR &&
+	    op != OP_ISHL && op != OP_ISHR)
+		return true;
+	if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+		return false;
+	pins = 1u << (r1 - 8);
+	if (op == OP_ISHL || op == OP_ISHR) {
+		if (dst == src1) {
+			rd = r1;
+		} else {
+			if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd) ||
+			    !jit_x86_64_gpr_mov(ctx, rd, r1))
+				return false;
+		}
+		if ((src2 & 31) != 0) {
+			ASM {
+				IB(0x41); IB(0xc1);
+				IB((uint8_t)(0xc0 |
+					(op == OP_ISHL ? 0x20 : 0x28) |
+					(rd & 7)));
+				IB((uint8_t)(src2 & 31));
+			}
+		}
+	} else {
+		if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+			return false;
+		pins |= 1u << (r2 - 8);
+		commutative = op == OP_IADD || op == OP_IMUL ||
+			op == OP_IAND || op == OP_IOR || op == OP_IXOR;
+		if (dst == src1) {
+			rd = r1;
+		} else if (dst == src2 && commutative) {
+			rd = r2;
+			r2 = r1;
+		} else if (dst == src2) {
+			/* Keep the uncommon destructive non-commutative form simple. */
+			return true;
+		} else {
+			if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd) ||
+			    !jit_x86_64_gpr_mov(ctx, rd, r1))
+				return false;
+		}
+		if (op == OP_IMUL) {
+			ASM {
+				IB(0x45); IB(0x0f); IB(0xaf);
+				IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+					(r2 & 7)));
+			}
+		} else {
+			opcode = op == OP_IADD ? 0x03 :
+				op == OP_ISUB ? 0x2b :
+				op == OP_IAND ? 0x23 :
+				op == OP_IOR ? 0x0b : 0x33;
+			ASM {
+				IB(0x45); IB((uint8_t)opcode);
+				IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+					(r2 & 7)));
+			}
+		}
+	}
+	ctx->gpr_tmp_dirty[dst] = 1;
+	ctx->gpr_range_valid[dst] = 0;
+	if (op == OP_IAND && v1 && min1 == max1 && min1 >= 0) {
+		ctx->gpr_range_valid[dst] = 1;
+		ctx->gpr_range_min[dst] = 0;
+		ctx->gpr_range_max[dst] = min1;
+	} else if (op == OP_IAND && v2 && min2 == max2 && min2 >= 0) {
+		ctx->gpr_range_valid[dst] = 1;
+		ctx->gpr_range_min[dst] = 0;
+		ctx->gpr_range_max[dst] = min2;
+	} else if (op == OP_IADD && v1 && v2) {
+		lo = (int64_t)min1 + min2;
+		hi = (int64_t)max1 + max2;
+		if (lo >= INT32_MIN && hi <= INT32_MAX) {
+			ctx->gpr_range_valid[dst] = 1;
+			ctx->gpr_range_min[dst] = (int32_t)lo;
+			ctx->gpr_range_max[dst] = (int32_t)hi;
+		}
+	} else if (op == OP_ISUB && v1 && v2) {
+		lo = (int64_t)min1 - max2;
+		hi = (int64_t)max1 - min2;
+		if (lo >= INT32_MIN && hi <= INT32_MAX) {
+			ctx->gpr_range_valid[dst] = 1;
+			ctx->gpr_range_min[dst] = (int32_t)lo;
+			ctx->gpr_range_max[dst] = (int32_t)hi;
+		}
+	}
+	jit_x86_64_invalidate_packed_load(ctx, dst);
+	*handled = true;
+	return true;
+}
+
 /* Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic; inline.) */
 static INLINE bool
 jit_visit_typed_op(
@@ -3242,6 +4329,7 @@ jit_visit_typed_op(
         int dst;
         int src1;
         int src2;
+	bool handled;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src1);
@@ -3251,6 +4339,16 @@ jit_visit_typed_op(
         } else {
                 CONSUME_TMPVAR(src2);
         }
+	if (ctx->packed_loop_hint_active)
+		jit_x86_64_remove_packed_index_alias(ctx, dst);
+	if (ctx->packed_loop_hint_active)
+		jit_x86_64_remove_packed_base_alias(ctx, dst);
+	if (!jit_x86_64_try_gpr_typed(ctx, op, dst, src1, src2, &handled))
+		return false;
+	if (handled)
+		return true;
+	if (ctx->gpr_cache_active && !jit_x86_64_gpr_flush(ctx))
+		return false;
 	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
 		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
 	}
@@ -4119,9 +5217,13 @@ jit_visit_bytecode(
                         /* pushq %rdx */                        IB(0x52);
                         /* pushq %rdi */                        IB(0x57);
                         /* pushq %rsi */                        IB(0x56);
+			/* pushq %r12 */                        IB(0x41); IB(0x54);
                         /* pushq %r13 */                        IB(0x41); IB(0x55);
                         /* pushq %r14 */                        IB(0x41); IB(0x56);
                         /* pushq %r15 */                        IB(0x41); IB(0x57);
+
+			/* align stack to 16 bytes */
+			/* sub rsp, 8 */                        IB(0x48); IB(0x83); IB(0xec); IB(0x08);
 
                         /* r14 = env */
                         /* movq %rdi, %r14 */                   IB(0x49); IB(0x89); IB(0xfe);
@@ -4134,16 +5236,18 @@ jit_visit_bytecode(
                         /* movabs (ctx->code + 10), %r13 */     IB(0x49); IB(0xbd); IQ((uint64_t)(intptr_t)((uint8_t*)ctx->code + 10));
 
                         /* Skip an exception handler. */
-                        /* jmp exception_handler_end */         IB(0xeb); IB(0x14);
+			/* jmp exception_handler_end */         IB(0xeb); IB(0x1a);
                 }
 
                 /* Put an exception handler. */
                 ctx->exception_code = ctx->code;
                 ASM {
                 /* exception_handler: */
+			/* addq $8, %rsp (align back) */        IB(0x48); IB(0x83); IB(0xc4); IB(0x08);
                         /* popq %r15 */                         IB(0x41); IB(0x5f);
                         /* popq %r14 */                         IB(0x41); IB(0x5e);
                         /* popq %r13 */                         IB(0x41); IB(0x5d);
+			/* popq %r12 */                         IB(0x41); IB(0x5c);
                         /* popq %rsi */                         IB(0x5e);
                         /* popq %rdi */                         IB(0x5f);
                         /* popq %rdx */                         IB(0x5a);
@@ -4423,6 +5527,9 @@ jit_visit_bytecode(
 		case OP_VINDEX_HINT:
 			if (!jit_visit_vindex_hint_op(ctx)) return false;
 			break;
+		case OP_PLOOP_HINT:
+			if (!jit_visit_x86_64_ploop_hint_op(ctx)) return false;
+			break;
 		case OP_SUBJNZ:
 			if (!jit_visit_subjnz_op(ctx)) return false;
 			break;
@@ -4537,9 +5644,11 @@ jit_visit_bytecode(
                 /* Put an epilogue. */
                 ASM {
                 /* epilogue: */
+			/* addq $8, %rsp (align back) */ IB(0x48); IB(0x83); IB(0xc4); IB(0x08);
                         /* popq %r15 */                  IB(0x41); IB(0x5f);
                         /* popq %r14 */                  IB(0x41); IB(0x5e);
                         /* popq %r13 */                  IB(0x41); IB(0x5d);
+			/* popq %r12 */                  IB(0x41); IB(0x5c);
                         /* popq %rsi */                  IB(0x5e);
                         /* popq %rdi */                  IB(0x5f);
                         /* popq %rdx */                  IB(0x5a);

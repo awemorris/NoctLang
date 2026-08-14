@@ -228,7 +228,14 @@ enum bytecode {
 	 */
 	OP_IDIV_CHECKED,	/* dst(u16) = src1(u16) / src2(u16), checked int32 */
 	OP_IMOD_CHECKED,	/* dst(u16) = src1(u16) % src2(u16), checked int32 */
+	OP_PLOOP_HINT,		/* no-op: index/stop/remaining(u16), lanes/flags(imm8) */
 };
+
+/* OP_PLOOP_HINT flags. */
+#define PLOOP_TYPED_INT		0x01
+#define PLOOP_TYPED_FLOAT	0x02
+#define PLOOP_ALLOW_REGCACHE	0x04
+#define PLOOP_HAS_CONTROL	0x08
 
 /* Predicates for OP_VCMPI32X4 and OP_VCMPF32X4. */
 enum vector_compare_predicate {

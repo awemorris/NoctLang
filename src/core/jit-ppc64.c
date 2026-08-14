@@ -29,12 +29,6 @@
 #define JIT_OP_NOT_IMPLEMENTED  0
 #define NEVER_COME_HERE         0
 
-/* PC entry size. */
-#define PC_ENTRY_MAX            2048
-
-/* Branch pathch size. */
-#define BRANCH_PATCH_MAX        2048
-
 /* Branch patch type */
 #define PATCH_BAL               0
 #define PATCH_BEQ               1
@@ -103,6 +97,8 @@ jit_build(
 		ctx.code = code_top;
 		ctx.env = env;
 		ctx.func = func;
+		if (!jit_context_init_tables(&ctx))
+			return false;
 		jit_configure_simd(&ctx, jit_detect_simd_caps(), "ppc64");
 
 #if defined(NOCT_ARCH_BE)
@@ -139,16 +135,20 @@ jit_build(
 				if (ctx.code_overflow) {
 					jit_slab_abandon(env, slab);
 					jit_slab_clear_overflow(env);
+					jit_context_dispose_tables(&ctx);
 					continue;
 				}
 			}
+			jit_context_dispose_tables(&ctx);
 			return false;
 		}
 
 		generated_end = ctx.code;
 		for (i = 0; i < ctx.branch_patch_count; i++) {
-			if (!jit_patch_branch(&ctx, i))
+			if (!jit_patch_branch(&ctx, i)) {
+				jit_context_dispose_tables(&ctx);
 				return false;
+			}
 		}
 		aligned_end = (void *)(((uintptr_t)generated_end + 15) &
 				       (uintptr_t)~0xf);
@@ -160,13 +160,16 @@ jit_build(
 			     slab->size < jit_get_code_size(env))) {
 				jit_slab_abandon(env, slab);
 				jit_slab_clear_overflow(env);
+				jit_context_dispose_tables(&ctx);
 				continue;
 			}
+			jit_context_dispose_tables(&ctx);
 			return false;
 		}
 		jit_slab_finish(env, slab, aligned_end);
 
 		func->jit_code = (bool (CDECL *)(struct rt_env *))ctx.code_top;
+		jit_context_dispose_tables(&ctx);
 		return true;
 	}
 	return false;
@@ -3574,6 +3577,7 @@ jit_visit_bytecode(
                                 return false;
                         break;
 		case OP_VINDEX_HINT: if (!jit_visit_vindex_hint_op(ctx)) return false; break;
+		case OP_PLOOP_HINT: if (!jit_visit_ploop_hint_op(ctx)) return false; break;
 		case OP_SUBJNZ: if (!jit_visit_subjnz_op(ctx)) return false; break;
 		case OP_VORI32X4I: if (!jit_visit_vori32x4i_op(ctx)) return false; break;
 		case OP_VFMAF32X4: if (!jit_visit_vfmaf32x4_op(ctx)) return false; break;

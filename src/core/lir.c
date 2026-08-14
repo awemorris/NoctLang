@@ -2360,11 +2360,29 @@ lir_visit_vfor_block(
 }
 
 static bool
+lir_ploop_has_control(struct hir_block *loop)
+{
+	struct hir_block *b;
+
+	b = loop->val.for_.inner;
+	while (b != NULL) {
+		if (b->type != HIR_BLOCK_BASIC)
+			return true;
+		if (b->stop)
+			break;
+		b = b->succ;
+	}
+	return false;
+}
+
+static bool
 lir_visit_for_range_block(
 	struct hir_block *block)
 {
 	uint32_t loop_addr;
 	int start_tmpvar, stop_tmpvar, loop_tmpvar, cmp_tmpvar, guard_tmpvar;
+	int remaining_tmpvar;
+	int packed_flags;
 	struct hir_block *b;
 
 	assert(block != NULL);
@@ -2437,6 +2455,61 @@ lir_visit_for_range_block(
 		return false;
 	if (!lir_put_tmpvar((uint16_t)start_tmpvar))
 		return false;
+
+	/*
+	 * ABCE-proven scalar Packed loops use the same countdown latch as a
+	 * vector remainder.  OP_PLOOP_HINT is semantic no-op metadata; an older
+	 * or resource-constrained backend may ignore it and emit the ordinary
+	 * scalar operations below.
+	 */
+	if (block->val.for_.packed_lanes == 1) {
+		if (!lir_increment_tmpvar(&remaining_tmpvar))
+			return false;
+		if (!lir_put_opcode(OP_ISUB) ||
+		    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
+		    !lir_put_tmpvar((uint16_t)stop_tmpvar) ||
+		    !lir_put_tmpvar((uint16_t)start_tmpvar))
+			return false;
+		packed_flags = PLOOP_ALLOW_REGCACHE;
+		if (block->val.for_.typed_int_region)
+			packed_flags |= PLOOP_TYPED_INT;
+		if (lir_ploop_has_control(block))
+			packed_flags |= PLOOP_HAS_CONTROL;
+		if (!lir_put_opcode(OP_PLOOP_HINT) ||
+		    !lir_put_tmpvar((uint16_t)loop_tmpvar) ||
+		    !lir_put_tmpvar((uint16_t)stop_tmpvar) ||
+		    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
+		    !lir_put_imm8(1) ||
+		    !lir_put_imm8((uint8_t)packed_flags))
+			return false;
+
+		loop_addr = (uint32_t)bytecode_top;
+		b = block->val.for_.inner;
+		while (b != NULL) {
+			if (!lir_visit_block(b))
+				return false;
+			if (b->stop)
+				break;
+			b = b->succ;
+		}
+
+		block->val.for_.inc_addr = (uint32_t)bytecode_top;
+		block->cont_addr = (uint32_t)bytecode_top;
+		if (!lir_put_opcode(OP_INC) ||
+		    !lir_put_tmpvar((uint16_t)loop_tmpvar) ||
+		    !lir_put_imm8(1))
+			return false;
+		if (!lir_put_opcode(OP_SUBJNZ) ||
+		    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
+		    !lir_put_imm8(1) ||
+		    !lir_put_imm32(loop_addr))
+			return false;
+
+		lir_decrement_tmpvar(remaining_tmpvar);
+		lir_decrement_tmpvar(stop_tmpvar);
+		lir_decrement_tmpvar(start_tmpvar);
+		return true;
+	}
 
 	/* Put a loop header. */
 	loop_addr = (uint32_t)bytecode_top;
@@ -5426,6 +5499,17 @@ lir_dump(
 			       ofs, index_tmp, stop_tmp, remaining_tmp,
 			       (unsigned)required_vregs, (unsigned)lanes,
 			       (unsigned)flags);
+			break;
+		}
+		case OP_PLOOP_HINT:
+		{
+			uint16_t index_tmp, stop_tmp, remaining_tmp;
+			uint8_t lanes, flags;
+			IMM2(index_tmp); IMM2(stop_tmp); IMM2(remaining_tmp);
+			IMM1(lanes); IMM1(flags);
+			printf("%04d: PLOOP_HINT(index:%d, stop:%d, remaining:%d, lanes:%u, flags:0x%02x)\n",
+			       ofs, index_tmp, stop_tmp, remaining_tmp,
+			       (unsigned)lanes, (unsigned)flags);
 			break;
 		}
 		case OP_SUBJNZ:
