@@ -652,6 +652,33 @@ jit_visit_assign_op(
 			}
 		}
 	}
+	if (ctx->tmp_fixed_type != NULL &&
+	    ctx->tmp_fixed_type[dst] >= 0 &&
+	    jit_tmp_has_fixed_primitive_type(ctx, src,
+					 ctx->tmp_fixed_type[dst])) {
+		int dst_ofs = dst * (int)sizeof(struct rt_value);
+		int src_ofs = src * (int)sizeof(struct rt_value);
+
+		ASM {
+			MOVZ(REG_X3, IMM16(src_ofs), LSL_0);
+			ADD(REG_X3, REG_X3, REG_X1);
+			LDR_IMM(REG_X2, REG_X3, IMM9(8));
+			MOVZ(REG_X3, IMM16(dst_ofs), LSL_0);
+			ADD(REG_X3, REG_X3, REG_X1);
+			STR_IMM(REG_X2, REG_X3, IMM9(8));
+		}
+		return true;
+	}
+	if (ctx->tmp_fixed_type != NULL && ctx->tmp_fixed_type[src] >= 0 &&
+	    !ctx->tmp_frame_tag_known[src]) {
+		int src_ofs = src * (int)sizeof(struct rt_value);
+		ASM {
+			MOVZ(REG_X2, IMM16(ctx->tmp_fixed_type[src]), LSL_0);
+			MOVZ(REG_X3, IMM16(src_ofs), LSL_0);
+			ADD(REG_X3, REG_X3, REG_X1);
+			STR(REG_X2, REG_X3);
+		}
+	}
 
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
@@ -685,7 +712,9 @@ jit_visit_iconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint32_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
@@ -711,6 +740,9 @@ jit_visit_iconst_op(
 		return true;
 	}
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_INT);
         dst *= (int)sizeof(struct rt_value);
 
         /* Set an integer constant. */
@@ -723,14 +755,16 @@ jit_visit_iconst_op(
                 ADD             (REG_X2, REG_X2, REG_X1);
 
                 /* env->frame->tmpvar[dst].type = RT_VALUE_INT */
+                if (write_tag) {
                 MOVZ            (REG_X3, IMM16(0), LSL_0);
-                STR             (REG_X3, REG_X2);
+                STR             (REG_X3, REG_X2); }
 
                 /* env->frame->tmpvar[dst].val.i = val */
                 MOVZ            (REG_X3, IMM16(val & 0xffff), LSL_0);
                 MOVK            (REG_X3, IMM16((val >> 16) & 0xffff), LSL_16);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -741,11 +775,16 @@ jit_visit_liconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint64_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_LONG);
         dst *= (int)sizeof(struct rt_value);
 
         /* Set an integer constant. */
@@ -758,8 +797,9 @@ jit_visit_liconst_op(
                 ADD             (REG_X2, REG_X2, REG_X1);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
+                if (write_tag) {
                 MOVZ            (REG_X3, IMM16(5), LSL_0);
-                STR             (REG_X3, REG_X2);
+                STR             (REG_X3, REG_X2); }
 
                 /* env->frame->tmpvar[dst].val.i = val */
                 MOVZ            (REG_X3, IMM16(val & 0xffff), LSL_0);
@@ -768,6 +808,7 @@ jit_visit_liconst_op(
                 MOVK            (REG_X3, IMM16((val >> 48) & 0xffff), LSL_48);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -778,11 +819,16 @@ jit_visit_fconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint32_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_FLOAT);
         dst *= (int)sizeof(struct rt_value);
 
         /* Set a floating-point constant. */
@@ -795,14 +841,16 @@ jit_visit_fconst_op(
                 ADD             (REG_X2, REG_X2, REG_X1);
 
                 /* Assign env->frame->tmpvar[dst].type = RT_VALUE_FLOAT. */
+                if (write_tag) {
                 MOVZ            (REG_X3, IMM16(NOCT_VALUE_FLOAT), LSL_0);
-                STR             (REG_X3, REG_X2);
+                STR             (REG_X3, REG_X2); }
 
                 /* Assign env->frame->tmpvar[dst].val.f = val. */
                 MOVZ            (REG_X3, IMM16(val & 0xffff), LSL_0);
                 MOVK            (REG_X3, IMM16((val >> 16) & 0xffff), LSL_16);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -813,11 +861,16 @@ jit_visit_lfconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint64_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_DOUBLE);
         dst *= (int)sizeof(struct rt_value);
 
         /* Set an integer constant. */
@@ -830,8 +883,9 @@ jit_visit_lfconst_op(
                 ADD             (REG_X2, REG_X2, REG_X1);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
+                if (write_tag) {
                 MOVZ            (REG_X3, IMM16(6), LSL_0);
-                STR             (REG_X3, REG_X2);
+                STR             (REG_X3, REG_X2); }
 
                 /* env->frame->tmpvar[dst].val.i = val */
                 MOVZ            (REG_X3, IMM16(val & 0xffff), LSL_0);
@@ -840,6 +894,7 @@ jit_visit_lfconst_op(
                 MOVK            (REG_X3, IMM16((val >> 48) & 0xffff), LSL_48);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -3364,10 +3419,42 @@ jit_visit_checktype_op(
 
 	/* if (!ex_checktype_helper(env, slot, type)) return false; */
 	ASM_UNARY_OP(ex_checktype_helper);
+	{
+		int flags = src & (TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
+		src &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
 	if (ctx->tmp_fixed_type != NULL &&
-	    ctx->tmp_fixed_type[dst] == src)
+	    flags == 0 && ctx->tmp_fixed_type[dst] == src)
 		ctx->tmp_frame_tag_known[dst] = 1;
+	}
 
+	return true;
+}
+
+/* Publish a fixed primitive tag at a dynamic observation boundary. */
+static INLINE bool
+jit_visit_arm64_materialize_type_op(struct jit_context *ctx)
+{
+	int tmp;
+	int type;
+	int ofs;
+
+	CONSUME_TMPVAR(tmp);
+	CONSUME_IMM8(type);
+	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
+	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (ctx->tmp_frame_tag_known != NULL &&
+	    ctx->tmp_frame_tag_known[tmp])
+		return true;
+	ofs = tmp * (int)sizeof(struct rt_value);
+	ASM {
+		MOVZ(REG_X2, IMM16(type), LSL_0);
+		MOVZ(REG_X3, IMM16(ofs), LSL_0);
+		ADD(REG_X3, REG_X3, REG_X1);
+		STR(REG_X2, REG_X3);
+	}
 	return true;
 }
 
@@ -3739,9 +3826,10 @@ jit_visit_pstoref32_op(
    value register was produced by a 32-bit op (zero-extended), so the
    64-bit store writes value bits + zero padding, the same full-union
    write the PLOAD32 emitter does. */
-#define TYPED_STORE(vreg, dstofs, tag)                                  \
+#define TYPED_STORE(vreg, dstofs, tag, write_tag)                       \
+        if (write_tag) {                                                \
         MOVZ(REG_X4, IMM16(tag), LSL_0);                                \
-        STR_IMM(REG_X4, REG_X1, IMM9(dstofs));                          \
+        STR_IMM(REG_X4, REG_X1, IMM9(dstofs)); }                        \
         STR_IMM(vreg, REG_X1, IMM9((dstofs) + 8))
 
 static INLINE void
@@ -3794,7 +3882,7 @@ jit_visit_checked_idiv_op(
 				  (2u << 10) | (4u << 5) | 2u))
 			return false;
 	}
-	ASM { TYPED_STORE(REG_X2, dst_ofs, NOCT_VALUE_INT); }
+	ASM { TYPED_STORE(REG_X2, dst_ofs, NOCT_VALUE_INT, true); }
 	done_branch = (uint8_t *)ctx->code;
 	if (!jit_put_word(ctx, 0x14000000u))
 		return false;
@@ -4002,6 +4090,9 @@ jit_visit_typed_op(
         int dst;
         int src1;
         int src2;
+	int dst_tmp;
+	int result_type;
+	bool write_tag;
 	bool handled;
 
         CONSUME_TMPVAR(dst);
@@ -4027,6 +4118,12 @@ jit_visit_typed_op(
 	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
 		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
 	}
+	dst_tmp = dst;
+	result_type = (op == OP_FADD || op == OP_FSUB ||
+		       op == OP_FMUL || op == OP_FDIV) ?
+		      NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+						     result_type);
 
         dst *= (int)sizeof(struct rt_value);
         src1 *= (int)sizeof(struct rt_value);
@@ -4108,7 +4205,7 @@ jit_visit_typed_op(
                         break;
                 }
                 ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT);
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         case OP_ISHL:
@@ -4136,7 +4233,7 @@ jit_visit_typed_op(
                         }
                 }
                 ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT);
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         case OP_FADD:
@@ -4179,7 +4276,7 @@ jit_visit_typed_op(
                 if (!jit_put_word(ctx, 0x1e260000 | (0u << 5) | 2u))
                         return false;
                 ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT);
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT, write_tag);
                 }
                 break;
         case OP_FLT:
@@ -4205,14 +4302,13 @@ jit_visit_typed_op(
                 default:      TYPED_CSET_W(2, TYPED_COND_GE); break;
                 }
                 ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT);
+                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         default:
                 assert(NEVER_COME_HERE);
                 return false;
         }
-
         return true;
 }
 
@@ -5097,6 +5193,9 @@ jit_visit_bytecode(
 			break;
 		case OP_TMPVAR_TYPE:
 			if (!jit_visit_tmpvar_type_op(ctx)) return false;
+			break;
+		case OP_MATERIALIZE_TYPE:
+			if (!jit_visit_arm64_materialize_type_op(ctx)) return false;
 			break;
 		case OP_SUBJNZ:
 			if (!jit_visit_subjnz_op(ctx))

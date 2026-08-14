@@ -3,8 +3,8 @@
 #
 # Typed-ops test suite (docs/design/07-typed-ops.md).
 #
-# Runs every case at optimize level 0 and 2, with the interpreter and
-# the JIT.  All four runs must match the golden output byte-for-byte:
+# Runs every case at optimize level 0, 1, and 2, with the interpreter and
+# the JIT.  All six runs must match the golden output byte-for-byte:
 # typed opcodes must never change observable behavior.
 #
 # A case may provide NAME.noct.out2 as the level-2 golden when its
@@ -24,9 +24,9 @@ echo 'Typed-ops tests:'
 
 FAILED=0
 for tc in typedop/*.noct; do
-    for lvl in "-O0" "-O2"; do
+    for lvl in "-O0" "-O1" "-O2"; do
         golden="$tc.out"
-        if [ "$lvl" = "-O2" ] && [ -f "$tc.out2" ]; then
+        if [ "$lvl" != "-O0" ] && [ -f "$tc.out2" ]; then
             golden="$tc.out2"
         fi
         for jit in "-j0" "-j"; do
@@ -94,6 +94,32 @@ for jit in -j0 -j; do
 done
 rm -rf "$work"
 echo "PASS typedop/checked_div.noct (persisted opcode)"
+
+# Persist and reload OP_MATERIALIZE_TYPE as well.  The optimized golden
+# observes long/double widening and every dynamic escape boundary.
+work=".tmp-tag-materialize-$$"
+mkdir "$work"
+cp typedop/tag-materialize.noct "$work/tag-materialize.noct"
+$NOCT --compile -O1 "$work/tag-materialize.noct" >/dev/null
+for jit in -j0 -j; do
+    $NOCT "$jit" "$work/tag-materialize.nb" > "$work/out" 2>&1
+    if ! diff -q typedop/tag-materialize.noct.out2 "$work/out" >/dev/null 2>&1; then
+        echo "FAIL typedop/tag-materialize.noct (persisted materialize, $jit)"
+        diff typedop/tag-materialize.noct.out2 "$work/out" | head -5
+        FAILED=1
+    fi
+done
+rm -rf "$work"
+echo "PASS typedop/tag-materialize.noct (persisted materialize opcode)"
+
+n=$(NOCT_TAGSTORE_DEBUG=1 $NOCT -j0 -O1 typedop/tag-materialize.noct 2>&1 \
+    | grep '^TAGSTORE: main:' | grep -c 'materialize_ops=[1-9]')
+if [ "$n" -eq 0 ]; then
+    echo "FAIL typedop/tag-materialize.noct (materialize emission not reported)"
+    FAILED=1
+else
+    echo "PASS typedop/tag-materialize.noct (materialize emission reported)"
+fi
 
 # Note on abce_w64.noct: there is deliberately NO "zero emission"
 # assertion for it.  Stage B legitimately types the ABCE guard

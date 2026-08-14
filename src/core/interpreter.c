@@ -1482,6 +1482,29 @@ rt_visit_tmpvar_type_op(
 	return true;
 }
 
+/* Commit a deferred primitive tag before a dynamic observation boundary.
+ * The interpreter always stores canonical values, so consuming and validating
+ * the operands is sufficient. */
+static INLINE bool
+rt_visit_materialize_type_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int tmp;
+	int type;
+
+	GET_TMPVAR(&tmp);
+	GET_U8(&type);
+	UNUSED_PARAMETER(tmp);
+	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
+	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+	return true;
+}
+
 /* Semantic fallback for the fused vector-loop latch. */
 static INLINE bool
 rt_visit_subjnz_op(
@@ -1959,6 +1982,10 @@ rt_visit_op(
 		break;
 	case OP_TMPVAR_TYPE:
 		if (!rt_visit_tmpvar_type_op(env, func, pc))
+			return false;
+		break;
+	case OP_MATERIALIZE_TYPE:
+		if (!rt_visit_materialize_type_op(env, func, pc))
 			return false;
 		break;
 	case OP_SUBJNZ:

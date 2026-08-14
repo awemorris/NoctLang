@@ -88,12 +88,12 @@ func killBuffer(name) {
 // --- byte-level helpers ------------------------------------------------
 
 // Bytes of text currently stored.
-func bufUsedBytes() {
+func bufUsedBytes(): int {
     return Buf.cap - (Buf.gapEnd - Buf.gapStart);
 }
 
 // Read the byte at a logical offset.
-func bufByteAt(i) {
+func bufByteAt(i: int): int {
     if (i < Buf.gapStart) {
         return Buf.data[i];
     }
@@ -101,7 +101,7 @@ func bufByteAt(i) {
 }
 
 // Length in bytes of the UTF-8 sequence with this lead byte.
-func utf8Len(b) {
+func utf8Len(b: int): int {
     if (b < 0x80) { return 1; }
     if (b < 0xC0) { return 1; }   // Stray continuation: step one byte.
     if (b < 0xE0) { return 2; }
@@ -110,20 +110,20 @@ func utf8Len(b) {
 }
 
 // Move the gap so that it starts at the given logical byte offset.
-func bufMoveGap(pos) {
-    var gapLen = Buf.gapEnd - Buf.gapStart;
+func bufMoveGap(pos: int): int {
+    var gapLen: int = Buf.gapEnd - Buf.gapStart;
     if (pos == Buf.gapStart) {
         return 0;
     }
     if (pos < Buf.gapStart) {
         // Shift [pos, gapStart) right, behind the gap.
-        var n = Buf.gapStart - pos;
+        var n: int = Buf.gapStart - pos;
         Packed.copy(Buf.data, Buf.gapEnd - n, Buf.data, pos, n);
         Buf.gapStart = pos;
         Buf.gapEnd = pos + gapLen;
     } else {
         // Shift [gapEnd, gapEnd + (pos - gapStart)) left, before the gap.
-        var n = pos - Buf.gapStart;
+        var n: int = pos - Buf.gapStart;
         Packed.copy(Buf.data, Buf.gapStart, Buf.data, Buf.gapEnd, n);
         Buf.gapStart = pos;
         Buf.gapEnd = Buf.gapEnd + n;
@@ -132,19 +132,19 @@ func bufMoveGap(pos) {
 }
 
 // Grow the buffer so the gap can hold at least "need" bytes.
-func bufEnsureGap(need) {
-    var gapLen = Buf.gapEnd - Buf.gapStart;
+func bufEnsureGap(need: int): int {
+    var gapLen: int = Buf.gapEnd - Buf.gapStart;
     if (gapLen >= need) {
         return 0;
     }
-    var newCap = Buf.cap * 2;
+    var newCap: int = Buf.cap * 2;
     while (newCap - bufUsedBytes() < need) {
         newCap = newCap * 2;
     }
     var newData = Packed.uint8(newCap);
     // Text before the gap, then text after the gap at the tail.
     Packed.copy(newData, 0, Buf.data, 0, Buf.gapStart);
-    var tail = Buf.cap - Buf.gapEnd;
+    var tail: int = Buf.cap - Buf.gapEnd;
     Packed.copy(newData, newCap - tail, Buf.data, Buf.gapEnd, tail);
     Buf.gapEnd = newCap - tail;
     Buf.data = newData;
@@ -158,15 +158,15 @@ func bufEnsureGap(need) {
 // This is the hottest loop in the buffer, so the dictionary fields are
 // hoisted into locals and the byte fetch is inlined: under the JIT,
 // locals live in temporaries while every Buf.x is a hash lookup.
-func bufCharToByte(ci) {
+func bufCharToByte(ci: int): int {
     // In an all-ASCII buffer, characters and bytes coincide. Emacs
     // makes the same shortcut; it is what keeps large plain-text
     // buffers O(1) to address.
     if (Buf.allAscii == 1) {
         return ci;
     }
-    var c = 0;
-    var b = 0;
+    var c: int = 0;
+    var b: int = 0;
     if (Buf.cacheChar <= ci) {
         c = Buf.cacheChar;
         b = Buf.cacheByte;
@@ -186,16 +186,16 @@ func bufCharToByte(ci) {
         return b;
     }
     var data = Buf.data;
-    var gs = Buf.gapStart;
-    var delta = Buf.gapEnd - gs;
+    var gs: int = Buf.gapStart;
+    var delta: int = Buf.gapEnd - gs;
     // Byte-wise ranged-for over the remaining logical bytes, counting
     // UTF-8 lead bytes.  This shape is ABCE-eligible (see
     // docs/design/01-abce.md): at optimize level 2 the loop body runs
     // without per-access bounds checks.
-    var used = bufUsedBytes();
-    var found = 0;
+    var used: int = bufUsedBytes();
+    var found: int = 0;
     for (bb in b..used) {
-        var v = 0;
+        var v: int = 0;
         if (bb < gs) {
             v = data[bb];
         } else {
@@ -222,16 +222,16 @@ func bufCharToByte(ci) {
 
 // Step one character backward from logical byte offset b.
 // Returns the byte offset of the previous character's lead byte.
-func bufPrevCharByte(b) {
+func bufPrevCharByte(b: int): int {
     if (Buf.allAscii == 1) {
         return b - 1;
     }
     var data = Buf.data;
-    var gs = Buf.gapStart;
-    var delta = Buf.gapEnd - gs;
+    var gs: int = Buf.gapStart;
+    var delta: int = Buf.gapEnd - gs;
     b = b - 1;
     while (b > 0) {
-        var v = 0;
+        var v: int = 0;
         if (b < gs) {
             v = data[b];
         } else {
@@ -250,7 +250,7 @@ func bufPrevCharByte(b) {
 // point (whose pair the caller just computed). Hammered edits at a
 // stable point then address the buffer in O(edit) instead of
 // rescanning the whole prefix.
-func bufCacheAnchor(charIndex, byteOffset) {
+func bufCacheAnchor(charIndex: int, byteOffset: int): int {
     if (Buf.cacheByte >= byteOffset) {
         Buf.cacheChar = charIndex;
         Buf.cacheByte = byteOffset;
@@ -260,23 +260,23 @@ func bufCacheAnchor(charIndex, byteOffset) {
 
 // --- Emacs primitives --------------------------------------------------
 
-func point() {
+func point(): int {
     return Buf.point;
 }
 
-func pointMin() {
+func pointMin(): int {
     return 1;
 }
 
-func pointMax() {
+func pointMax(): int {
     return Buf.chars + 1;
 }
 
-func bufferSize() {
+func bufferSize(): int {
     return Buf.chars;
 }
 
-func gotoChar(pos) {
+func gotoChar(pos: int): int {
     if (pos < 1) {
         pos = 1;
     }
@@ -287,50 +287,50 @@ func gotoChar(pos) {
     return pos;
 }
 
-func bobp() {
+func bobp(): int {
     if (Buf.point == 1) { return 1; }
     return 0;
 }
 
-func eobp() {
+func eobp(): int {
     if (Buf.point == Buf.chars + 1) { return 1; }
     return 0;
 }
 
 // Lead byte of the character at a 1-based position, or -1.
-func bufLeadByteAt(pos) {
+func bufLeadByteAt(pos: int): int {
     if (pos < 1 || pos > Buf.chars) {
         return -1;
     }
     return bufByteAt(bufCharToByte(pos - 1));
 }
 
-func bolp() {
+func bolp(): int {
     if (Buf.point == 1) { return 1; }
     if (bufLeadByteAt(Buf.point - 1) == 0x0A) { return 1; }
     return 0;
 }
 
-func eolp() {
-    var b = bufLeadByteAt(Buf.point);
+func eolp(): int {
+    var b: int = bufLeadByteAt(Buf.point);
     if (b == -1 || b == 0x0A) { return 1; }
     return 0;
 }
 
-func forwardChar(n) {
+func forwardChar(n: int): int {
     gotoChar(Buf.point + n);
     return 0;
 }
 
-func backwardChar(n) {
+func backwardChar(n: int): int {
     gotoChar(Buf.point - n);
     return 0;
 }
 
 // Move to the beginning of the line n lines forward.
 // Returns the count of lines that could not be moved.
-func forwardLine(n) {
-    var shortfall = 0;
+func forwardLine(n: int): int {
+    var shortfall: int = 0;
     if (n == 0) {
         // Precisely: move to the beginning of the current line.
         Buf.point = lineBeginningPosition();
@@ -367,11 +367,11 @@ func forwardLine(n) {
     return shortfall;
 }
 
-func lineBeginningPosition() {
-    var pos = Buf.point;
-    var b = bufCharToByte(pos - 1);
+func lineBeginningPosition(): int {
+    var pos: int = Buf.point;
+    var b: int = bufCharToByte(pos - 1);
     while (pos > 1) {
-        var pb = bufPrevCharByte(b);
+        var pb: int = bufPrevCharByte(b);
         if (bufByteAt(pb) == 0x0A) {
             break;
         }
@@ -383,20 +383,20 @@ func lineBeginningPosition() {
     return pos;
 }
 
-func lineEndPosition() {
-    var pos = Buf.point;
-    var b = bufCharToByte(pos - 1);
+func lineEndPosition(): int {
+    var pos: int = Buf.point;
+    var b: int = bufCharToByte(pos - 1);
     var data = Buf.data;
-    var gs = Buf.gapStart;
-    var delta = Buf.gapEnd - gs;
-    var chars = Buf.chars;
+    var gs: int = Buf.gapStart;
+    var delta: int = Buf.gapEnd - gs;
+    var chars: int = Buf.chars;
     // Byte-wise ranged-for to the end of the buffer, stopping at the
     // first newline lead byte.  ABCE-eligible (docs/design/01-abce.md):
     // no per-access bounds checks at optimize level 2.
-    var used = bufUsedBytes();
-    var found = 0;
+    var used: int = bufUsedBytes();
+    var found: int = 0;
     for (bb in b..used) {
-        var v = 0;
+        var v: int = 0;
         if (bb < gs) {
             v = data[bb];
         } else {
@@ -426,12 +426,12 @@ func lineEndPosition() {
 
 // Text of a logical byte range as a string. The range must not span
 // the gap, so callers go through bufTextRange().
-func bufTextRange(byteStart, byteEnd) {
+func bufTextRange(byteStart: int, byteEnd: int) {
     // Move the gap out of the range, then read one contiguous span.
     if (Buf.gapStart > byteStart && Buf.gapStart < byteEnd) {
         bufMoveGap(byteStart);
     }
-    var phys = byteStart;
+    var phys: int = byteStart;
     if (byteStart >= Buf.gapStart) {
         phys = byteStart + (Buf.gapEnd - Buf.gapStart);
     }
@@ -442,7 +442,7 @@ func bufferString() {
     return bufTextRange(0, bufUsedBytes());
 }
 
-func bufferSubstring(start, end) {
+func bufferSubstring(start: int, end: int) {
     if (start > end) {
         var t = start;
         start = end;
@@ -451,24 +451,24 @@ func bufferSubstring(start, end) {
     if (start < 1 || end > Buf.chars + 1) {
         error("Position " + start + " out of range");
     }
-    var bs = bufCharToByte(start - 1);
-    var be = bufCharToByte(end - 1);
+    var bs: int = bufCharToByte(start - 1);
+    var be: int = bufCharToByte(end - 1);
     return bufTextRange(bs, be);
 }
 
 // The character at/before a position as a Unicode codepoint, or 0.
 // Emacs characters are integers, so these are too.
-func charAfter(pos) {
+func charAfter(pos: int): int {
     if (pos < 1 || pos > Buf.chars) {
         return 0;
     }
-    var b = bufCharToByte(pos - 1);
-    var lead = bufByteAt(b);
+    var b: int = bufCharToByte(pos - 1);
+    var lead: int = bufByteAt(b);
     if (lead < 0x80) {
         return lead;
     }
-    var cp = 0;
-    var n = 0;
+    var cp: int = 0;
+    var n: int = 0;
     if (lead < 0xE0) {
         cp = lead & 0x1F;
         n = 1;
@@ -485,31 +485,31 @@ func charAfter(pos) {
     return cp;
 }
 
-func charBefore(pos) {
+func charBefore(pos: int): int {
     if (pos <= 1 || pos > Buf.chars + 1) {
         return 0;
     }
     return charAfter(pos - 1);
 }
 
-func charToString(ch) {
+func charToString(ch: int) {
     return String.chr(ch);
 }
 
 func insert(text) {
-    var nbytes = String.byteLength(text);
+    var nbytes: int = String.byteLength(text);
     if (nbytes == 0) {
         return 0;
     }
-    var nchars = String.charCount(text);
+    var nchars: int = String.charCount(text);
     if (nbytes != nchars) {
         Buf.allAscii = 0;
     }
     Buf.modified = 1;
 
     bufEnsureGap(nbytes);
-    var at = Buf.point;
-    var bi = bufCharToByte(Buf.point - 1);
+    var at: int = Buf.point;
+    var bi: int = bufCharToByte(Buf.point - 1);
     bufMoveGap(bi);
     Packed.fromString(Buf.data, Buf.gapStart, text);
     Buf.gapStart = Buf.gapStart + nbytes;
@@ -522,7 +522,7 @@ func insert(text) {
     return 0;
 }
 
-func deleteRegion(start, end) {
+func deleteRegion(start: int, end: int) {
     if (start > end) {
         var t = start;
         start = end;
@@ -532,8 +532,8 @@ func deleteRegion(start, end) {
         error("Position " + start + " out of range");
     }
     var deletedText = bufferSubstring(start, end);
-    var bs = bufCharToByte(start - 1);
-    var be = bufCharToByte(end - 1);
+    var bs: int = bufCharToByte(start - 1);
+    var be: int = bufCharToByte(end - 1);
 
     Buf.modified = 1;
 
@@ -560,7 +560,7 @@ func bufferModifiedP() {
     return Buf.modified;
 }
 
-func setBufferModifiedP(flag) {
+func setBufferModifiedP(flag: int): int {
     Buf.modified = flag;
     return flag;
 }
@@ -572,13 +572,13 @@ func bufferFileName() {
 // Insert a file's contents at point. Returns the character count.
 func insertFileContents(file) {
     var text = FileUtil.readText(file);
-    var before = Buf.chars;
+    var before: int = Buf.chars;
     insert(text);
     return Buf.chars - before;
 }
 
 // Write a region to a file. v1 always replaces the whole file.
-func writeRegion(start, end, file) {
+func writeRegion(start: int, end: int, file) {
     FileUtil.writeText(file, bufferSubstring(start, end));
     return 0;
 }
@@ -593,7 +593,7 @@ func makeMarker() {
     return { pos: 0 };
 }
 
-func setMarker(marker, pos) {
+func setMarker(marker, pos: int) {
     if (pos < 1) {
         pos = 1;
     }
@@ -608,7 +608,7 @@ func setMarker(marker, pos) {
     return marker;
 }
 
-func markerPosition(m) {
+func markerPosition(m): int {
     return m.pos;
 }
 
@@ -629,8 +629,8 @@ func pointMarker() {
 // Insertion of n chars at position "at": markers after the insertion
 // point advance; a marker exactly at it stays (Emacs insertion-type
 // nil, the default).
-func bufAdjustMarkersInsert(at, n) {
-    var count = Array.size(Buf.markers);
+func bufAdjustMarkersInsert(at: int, n: int): int {
+    var count: int = Array.size(Buf.markers);
     for (i in 0..count) {
         var m = Buf.markers[i];
         if (m.pos > at) {
@@ -642,9 +642,9 @@ func bufAdjustMarkersInsert(at, n) {
 
 // Deletion of [start, end): markers inside the region collapse to
 // start; markers after it shift left.
-func bufAdjustMarkersDelete(start, end) {
-    var n = end - start;
-    var count = Array.size(Buf.markers);
+func bufAdjustMarkersDelete(start: int, end: int): int {
+    var n: int = end - start;
+    var count: int = Array.size(Buf.markers);
     for (i in 0..count) {
         var m = Buf.markers[i];
         if (m.pos >= end) {
@@ -661,7 +661,7 @@ func bufAdjustMarkersDelete(start, end) {
 // The mark is a marker, so it follows edits. pos 0 = not set yet,
 // matching a nil mark in Emacs.
 
-func setMark(pos) {
+func setMark(pos: int): int {
     if (Type.of(Buf.mark) != "dict") {
         Buf.mark = makeMarker();
     }
@@ -669,23 +669,23 @@ func setMark(pos) {
     return pos;
 }
 
-func mark() {
+func mark(): int {
     if (Type.of(Buf.mark) != "dict") {
         return 0;
     }
     return markerPosition(Buf.mark);
 }
 
-func regionBeginning() {
-    var m = mark();
+func regionBeginning(): int {
+    var m: int = mark();
     if (m == 0 || m > Buf.point) {
         return Buf.point;
     }
     return m;
 }
 
-func regionEnd() {
-    var m = mark();
+func regionEnd(): int {
+    var m: int = mark();
     if (m == 0 || m < Buf.point) {
         return Buf.point;
     }
@@ -693,11 +693,11 @@ func regionEnd() {
 }
 
 func exchangePointAndMark() {
-    var m = mark();
+    var m: int = mark();
     if (m == 0) {
         return 0;
     }
-    var p = Buf.point;
+    var p: int = Buf.point;
     gotoChar(m);
     setMark(p);
     return 0;
@@ -709,11 +709,11 @@ func exchangePointAndMark() {
 // per-change reference (the insertion position for inserts, point
 // after the deletion for deletes), and never while an undo is itself
 // running.
-func bufUndoRecordPoint(cmp) {
+func bufUndoRecordPoint(cmp: int): int {
     if (UndoInProgress == 1) {
         return 0;
     }
-    var n = Array.size(Buf.undoList);
+    var n: int = Array.size(Buf.undoList);
     if (n > 0 && Buf.undoList[n - 1].t != "bnd") {
         return 0;
     }
@@ -726,11 +726,11 @@ func bufUndoRecordPoint(cmp) {
 // --- the mark ring -----------------------------------------------------
 
 // Set the mark at pos, pushing the previous mark onto the ring.
-func pushMark(pos) {
+func pushMark(pos: int): int {
     if (Type.of(Buf.mark) == "dict" && markerPosition(Buf.mark) != 0) {
         if (Array.size(Buf.markRing) >= 16) {
             // Drop the oldest (front) entry.
-            var n = Array.size(Buf.markRing);
+            var n: int = Array.size(Buf.markRing);
             for (i in 0..(n - 1)) {
                 Buf.markRing[i] = Buf.markRing[i + 1];
             }
@@ -744,13 +744,13 @@ func pushMark(pos) {
 
 // C-u C-SPC: jump to the mark and rotate the ring. Returns 0 when
 // there is no mark to jump to.
-func popMark() {
-    var cur = mark();
+func popMark(): int {
+    var cur: int = mark();
     if (cur == 0) {
         return 0;
     }
     gotoChar(cur);
-    var n = Array.size(Buf.markRing);
+    var n: int = Array.size(Buf.markRing);
     if (n == 0) {
         return 1;
     }
@@ -758,7 +758,7 @@ func popMark() {
     Array.pop(Buf.markRing);
     // The old mark cycles to the front of the ring.
     Array.push(Buf.markRing, 0);
-    var i = Array.size(Buf.markRing) - 1;
+    var i: int = Array.size(Buf.markRing) - 1;
     while (i > 0) {
         Buf.markRing[i] = Buf.markRing[i - 1];
         i = i - 1;

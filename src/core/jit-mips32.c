@@ -2818,6 +2818,7 @@ jit_visit_bytecode(
 		case OP_VINDEX_HINT: if (!jit_visit_vindex_hint_op(ctx)) return false; break;
 		case OP_PLOOP_HINT: if (!jit_visit_ploop_hint_op(ctx)) return false; break;
 		case OP_TMPVAR_TYPE: if (!jit_visit_tmpvar_type_op(ctx)) return false; break;
+		case OP_MATERIALIZE_TYPE: if (!jit_visit_materialize_type_metadata_op(ctx)) return false; break;
 		case OP_SUBJNZ: if (!jit_visit_subjnz_op(ctx)) return false; break;
 		case OP_VORI32X4I: if (!jit_visit_vori32x4i_op(ctx)) return false; break;
 		case OP_VFMAF32X4: if (!jit_visit_vfmaf32x4_op(ctx)) return false; break;

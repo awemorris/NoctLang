@@ -1531,9 +1531,38 @@ jit_visit_tmpvar_type_op(struct jit_context *ctx)
 		(int8_t)type;
 	ctx->tmp_compiler_temp[tmp] = compiler_temp ? 1 : 0;
 	/* A fresh non-parameter slot has zero tag, which is INT. */
-	if ((uint32_t)tmp >= ctx->func->param_count && type == NOCT_VALUE_INT)
+	if (!compiler_temp && (uint32_t)tmp >= ctx->func->param_count &&
+	    type == NOCT_VALUE_INT)
 		ctx->tmp_frame_tag_known[tmp] = 1;
 	return true;
+}
+
+/* Non-optimizing backends keep frame tags canonical and only need to consume
+ * the explicit materialization boundary. */
+static INLINE bool
+jit_visit_materialize_type_metadata_op(struct jit_context *ctx)
+{
+	int tmp;
+	int type;
+
+	if (!jit_get_opr_tmpvar(ctx, &tmp) || !jit_get_imm8(ctx, &type))
+		return false;
+	UNUSED_PARAMETER(tmp);
+	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
+	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	return true;
+}
+
+static INLINE bool
+jit_tmp_has_fixed_primitive_type(struct jit_context *ctx, int tmp, int type)
+{
+	return ctx->tmp_fixed_type != NULL &&
+	       (type == NOCT_VALUE_INT || type == NOCT_VALUE_LONG ||
+		type == NOCT_VALUE_FLOAT || type == NOCT_VALUE_DOUBLE) &&
+	       ctx->tmp_fixed_type[tmp] == type;
 }
 
 /*

@@ -56,6 +56,11 @@ enum lir_tmp_type_state {
 };
 static uint8_t tmpvar_type_state[LIR_TMPVAR_MAX];
 static int8_t tmpvar_fixed_type[LIR_TMPVAR_MAX];
+/* A compiler-temp lifetime must record every direct/manual definition before
+ * it can contribute a fixed-type fact to a reused frame slot. */
+static bool tmpvar_lifetime_noted[LIR_TMPVAR_MAX];
+/* Primitive ordinary-local annotations checked at every definition. */
+static int8_t tmpvar_contract_type[LIR_TMPVAR_MAX];
 
 /* ABI/prologue metadata for the function currently being built. */
 static bool has_vector_ops;
@@ -73,6 +78,7 @@ static int typed_emit_float_count;
 static int typed_generic_count;
 static int typed_emit_checked_div_count;
 static int typed_disabled;
+static int materialize_emit_count;
 
 /*
  * Relocation table.
@@ -145,6 +151,7 @@ static bool lir_visit_for_range_block(struct hir_block *block);
 static bool lir_visit_for_kv_block(struct hir_block *block);
 static bool lir_visit_for_v_block(struct hir_block *block);
 static int lir_get_local_index(struct hir_block *block, const char *symbol);
+static struct hir_local *lir_get_local_by_index(struct hir_block *block, int index);
 static bool lir_visit_while_block(struct hir_block *block);
 static bool lir_visit_stmt(struct hir_block *block, struct hir_stmt *stmt);
 static bool lir_check_lhs_local(struct hir_block *block, struct hir_expr *lhs, int *rhs_tmpvar);
@@ -189,6 +196,7 @@ static bool lir_put_u64(uint64_t b);
 static void patch_block_address(uint32_t prefix);
 static void lir_note_tmpvar_type(int tmpvar, int type);
 static bool lir_prepend_tmpvar_types(uint32_t *prefix);
+static bool lir_put_materialize_type(int tmpvar, int type);
 static void lir_fatal(const char *msg, ...);
 static void lir_out_of_memory(void);
 
@@ -198,7 +206,8 @@ lir_typecheck_code(
 	int type,
 	int packed_type,
 	bool restricted,
-	bool is_return)
+	bool is_return,
+	bool is_local)
 {
 	int code;
 
@@ -209,6 +218,8 @@ lir_typecheck_code(
 			TYPECHECK_PACKED_BASE) + packed_type;
 	if (is_return)
 		code |= TYPECHECK_RETURN_FLAG;
+	if (is_local)
+		code |= TYPECHECK_LOCAL_FLAG;
 	return code;
 }
 
@@ -232,7 +243,7 @@ lir_emit_return_check(struct hir_block *block)
 		return true;
 	code = lir_typecheck_code(func->val.func.return_type,
 				  func->val.func.return_packed_type,
-				  false, true);
+				  false, true, false);
 	if (!lir_put_opcode(OP_CHECKTYPE))
 		return false;
 	if (!lir_put_tmpvar(0))
@@ -287,6 +298,7 @@ lir_build(
 	typed_emit_float_count = 0;
 	typed_generic_count = 0;
 	typed_emit_checked_div_count = 0;
+	materialize_emit_count = 0;
 	typed_disabled = (getenv("NOCT_TYPED_DISABLE") != NULL);
 
 	/* Initialize the tmpvars. */
@@ -300,9 +312,18 @@ lir_build(
 	memset(tmpvar_type_state, LIR_TMP_TYPE_UNSEEN,
 	       sizeof(tmpvar_type_state));
 	memset(tmpvar_fixed_type, -1, sizeof(tmpvar_fixed_type));
+	memset(tmpvar_contract_type, -1, sizeof(tmpvar_contract_type));
+	memset(tmpvar_lifetime_noted, 0, sizeof(tmpvar_lifetime_noted));
 	{
 		struct hir_local *local = hir_func->val.func.local;
 		while (local != NULL) {
+			if (lir_optimize_level >= 1 && !local->is_parameter &&
+			    (local->declared_type == NOCT_VALUE_INT ||
+			     local->declared_type == NOCT_VALUE_LONG ||
+			     local->declared_type == NOCT_VALUE_FLOAT ||
+			     local->declared_type == NOCT_VALUE_DOUBLE))
+				tmpvar_contract_type[local->index] =
+					(int8_t)local->declared_type;
 			lir_note_tmpvar_type(local->index, local->proven_type);
 			local = local->next;
 		}
@@ -323,7 +344,7 @@ lir_build(
 			check_type = lir_typecheck_code(
 				hir_func->val.func.param_type[k],
 				hir_func->val.func.param_packed_type[k],
-				hir_func->val.func.param_restricted[k], false);
+				hir_func->val.func.param_restricted[k], false, false);
 			if (!lir_put_opcode(OP_CHECKTYPE))
 				return false;
 			if (!lir_put_tmpvar((uint16_t)k))
@@ -461,6 +482,23 @@ lir_build(
 			typed_emit_int_count + typed_emit_float_count,
 			typed_emit_int_count, typed_emit_float_count,
 			typed_generic_count, typed_emit_checked_div_count);
+	}
+	if (getenv("NOCT_TAGSTORE_DEBUG") != NULL) {
+		uint32_t fixed = 0;
+		uint32_t dynamic = 0;
+		uint32_t ti;
+
+		for (ti = 0; ti < tmpvar_count; ti++) {
+			if (tmpvar_type_state[ti] == LIR_TMP_TYPE_FIXED)
+				fixed++;
+			else
+				dynamic++;
+		}
+		fprintf(stderr,
+			"TAGSTORE: %s: fixed_slots=%u dynamic_slots=%u materialize_ops=%d\n",
+			hir_func->val.func.name != NULL ?
+			hir_func->val.func.name : "?",
+			fixed, dynamic, materialize_emit_count);
 	}
 
 	return true;
@@ -683,6 +721,10 @@ lir_visit_if_block(
 		if (!lir_increment_tmpvar(&cond_tmpvar))
 			return false;
 		if (!lir_visit_expr(cond_tmpvar, block->val.if_.cond, block))
+			return false;
+		if (!lir_put_materialize_type(
+			    cond_tmpvar,
+			    lir_expr_proven_type(block->val.if_.cond, block)))
 			return false;
 		if (!lir_put_opcode(OP_JMPIFFALSE))
 			return false;
@@ -2872,6 +2914,26 @@ lir_get_local_index(
 	return local->index;
 }
 
+static struct hir_local *
+lir_get_local_by_index(
+	struct hir_block *block,
+	int index)
+{
+	struct hir_block *func;
+	struct hir_local *local;
+
+	func = lir_root_func(block);
+	if (func == NULL)
+		return NULL;
+	local = func->val.func.local;
+	while (local != NULL) {
+		if (local->index == index)
+			return local;
+		local = local->next;
+	}
+	return NULL;
+}
+
 static bool
 lir_visit_while_block(
 	struct hir_block *block)
@@ -2899,6 +2961,10 @@ lir_visit_while_block(
 	if (!lir_increment_tmpvar(&cmp_tmpvar))
 		return false;
 	if (!lir_visit_expr(cmp_tmpvar, block->val.while_.cond, block))
+		return false;
+	if (!lir_put_materialize_type(
+		    cmp_tmpvar,
+		    lir_expr_proven_type(block->val.while_.cond, block)))
 		return false;
 	if (!lir_put_opcode(OP_JMPIFFALSE))
 		return false;
@@ -2967,6 +3033,42 @@ lir_visit_stmt(
 	if (!lir_visit_expr(rhs_tmpvar, stmt->rhs, parent))
 		return false;
 
+	/* Primitive annotations on ordinary locals are checked contracts at
+	 * -O1 and above.  A proven narrow-to-wide assignment still needs the
+	 * check because it canonicalizes the frame tag and payload. */
+	if (is_lhs_local && !is_return && lir_optimize_level >= 1) {
+		struct hir_local *local;
+		int declared;
+		int proven;
+		bool widening;
+
+		local = lir_get_local_by_index(parent, rhs_tmpvar);
+		declared = local != NULL ? local->declared_type : -1;
+		if (local != NULL && !local->is_parameter &&
+		    (declared == NOCT_VALUE_INT || declared == NOCT_VALUE_LONG ||
+		     declared == NOCT_VALUE_FLOAT || declared == NOCT_VALUE_DOUBLE)) {
+			proven = lir_expr_proven_type(stmt->rhs, parent);
+			widening = (declared == NOCT_VALUE_LONG &&
+				    proven == NOCT_VALUE_INT) ||
+				   (declared == NOCT_VALUE_DOUBLE &&
+				    proven == NOCT_VALUE_FLOAT);
+			if (proven >= 0 && proven != declared && !widening) {
+				lir_error_line = stmt->line;
+				lir_fatal(N_TR("Local initializer or assignment does not match its declared type."));
+				return false;
+			}
+			if (proven < 0 || widening) {
+				int code;
+				code = lir_typecheck_code(declared, -1, false,
+							  false, true);
+				if (!lir_put_opcode(OP_CHECKTYPE) ||
+				    !lir_put_tmpvar((uint16_t)rhs_tmpvar) ||
+				    !lir_put_imm8((uint8_t)code))
+					return false;
+			}
+		}
+	}
+
 	/* Level-2 return contracts are checked per edge.  A proven mismatch
 	   is a compile error; an unknown value gets an exact runtime check. */
 	if (is_return && lir_optimize_level >= 2) {
@@ -2997,6 +3099,10 @@ lir_visit_stmt(
 				return false;
 		}
 	}
+	if (is_return &&
+	    !lir_put_materialize_type(rhs_tmpvar,
+				       lir_expr_proven_type(stmt->rhs, parent)))
+		return false;
 
 	/* Visit LHS if LHS is not an explicit local variable. */
 	if (stmt->lhs != NULL && !is_lhs_local) {
@@ -3004,6 +3110,9 @@ lir_visit_stmt(
 			assert(stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL);
 
 			/* Put a storesymbol. */
+			if (!lir_put_materialize_type(
+				    rhs_tmpvar, lir_expr_proven_type(stmt->rhs, parent)))
+				return false;
 			if (!lir_put_opcode(OP_STORESYMBOL))
 				return false;
 			if (!lir_put_string(stmt->lhs->val.term.term->val.symbol))
@@ -3024,6 +3133,12 @@ lir_visit_stmt(
 			if (!lir_increment_tmpvar(&access_tmpvar))
 				return false;
 			if (!lir_visit_expr(access_tmpvar, stmt->lhs->val.binary.expr[1], parent))
+				return false;
+			if (!lir_put_materialize_type(
+				    access_tmpvar,
+				    lir_expr_proven_type(stmt->lhs->val.binary.expr[1], parent)) ||
+			    !lir_put_materialize_type(
+				    rhs_tmpvar, lir_expr_proven_type(stmt->rhs, parent)))
 				return false;
 
 			/* Put a store. */
@@ -3088,6 +3203,9 @@ lir_visit_stmt(
 			if (!lir_increment_tmpvar(&obj_tmpvar))
 				return false;
 			if (!lir_visit_expr(obj_tmpvar, stmt->lhs->val.dot.obj, parent))
+				return false;
+			if (!lir_put_materialize_type(
+				    rhs_tmpvar, lir_expr_proven_type(stmt->rhs, parent)))
 				return false;
 
 			/* Put a store. */
@@ -3300,6 +3418,22 @@ lir_note_tmpvar_type(int tmpvar, int type)
 {
 	if (tmpvar < 0 || tmpvar >= LIR_TMPVAR_MAX)
 		return;
+	if (tmpvar >= (int)tmpvar_local_count)
+		tmpvar_lifetime_noted[tmpvar] = true;
+	/* -O0 preserves the canonical tag+payload producer behavior. */
+	if (lir_optimize_level < 1) {
+		tmpvar_type_state[tmpvar] = LIR_TMP_TYPE_DYNAMIC;
+		return;
+	}
+	/* Every definition of a checked ordinary local is either proven to
+	 * match or followed by OP_CHECKTYPE.  Its canonical post-definition
+	 * tag is therefore the declared primitive type even when the producer
+	 * itself was dynamic. */
+	if (tmpvar_contract_type[tmpvar] >= 0) {
+		tmpvar_type_state[tmpvar] = LIR_TMP_TYPE_FIXED;
+		tmpvar_fixed_type[tmpvar] = tmpvar_contract_type[tmpvar];
+		return;
+	}
 	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
 	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
 		tmpvar_type_state[tmpvar] = LIR_TMP_TYPE_DYNAMIC;
@@ -3312,6 +3446,22 @@ lir_note_tmpvar_type(int tmpvar, int type)
 		   tmpvar_fixed_type[tmpvar] != type) {
 		tmpvar_type_state[tmpvar] = LIR_TMP_TYPE_DYNAMIC;
 	}
+}
+
+static bool
+lir_put_materialize_type(int tmpvar, int type)
+{
+	if (lir_optimize_level < 1)
+		return true;
+	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
+	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE)
+		return true;
+	if (!lir_put_opcode(OP_MATERIALIZE_TYPE) ||
+	    !lir_put_tmpvar((uint16_t)tmpvar) ||
+	    !lir_put_imm8((uint8_t)type))
+		return false;
+	materialize_emit_count++;
+	return true;
 }
 
 /* OP_TMPVAR_TYPE is metadata and therefore may be prepended after the body
@@ -3371,6 +3521,10 @@ lir_visit_unary_expr(
 	if (!lir_increment_tmpvar(&opr_tmpvar))
 		return false;
 	if (!lir_visit_expr(opr_tmpvar, expr->val.unary.expr, block))
+		return false;
+	if (!lir_put_materialize_type(
+		    opr_tmpvar,
+		    lir_expr_proven_type(expr->val.unary.expr, block)))
 		return false;
 
 	/* Put an opcode. */
@@ -3461,6 +3615,10 @@ lir_visit_logical_expr(
 	/* Operand 0. */
 	if (!lir_visit_expr(cond_tmpvar, expr->val.binary.expr[0], block))
 		return false;
+	if (!lir_put_materialize_type(
+		    cond_tmpvar,
+		    lir_expr_proven_type(expr->val.binary.expr[0], block)))
+		return false;
 	if (!lir_put_opcode(short_op))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)cond_tmpvar))
@@ -3471,6 +3629,10 @@ lir_visit_logical_expr(
 
 	/* Operand 1. */
 	if (!lir_visit_expr(cond_tmpvar, expr->val.binary.expr[1], block))
+		return false;
+	if (!lir_put_materialize_type(
+		    cond_tmpvar,
+		    lir_expr_proven_type(expr->val.binary.expr[1], block)))
 		return false;
 	if (!lir_put_opcode(short_op))
 		return false;
@@ -3571,6 +3733,10 @@ lir_visit_abce_typetest_expr(
 		return false;
 	if (!lir_visit_expr(opr_tmpvar, expr->val.binary.expr[0], block))
 		return false;
+	if (!lir_put_materialize_type(
+		    opr_tmpvar,
+		    lir_expr_proven_type(expr->val.binary.expr[0], block)))
+		return false;
 
 	/* The type constant. */
 	imm = expr->val.binary.expr[1]->val.term.term->val.i;
@@ -3596,13 +3762,34 @@ lir_visit_abce_typetest_expr(
  * lir_expr_proven_type() answers "what tag does this expression
  * provably carry at runtime?" using only local, already-computed
  * facts: literals, annotated parameters (sound because OP_CHECKTYPE
- * runs at level >= 2), ABCE typed-int regions (Stage A), and the
+ * runs at level >= 1), ABCE typed-int regions (Stage A), and the
  * closure over arithmetic.  TYPED_UNKNOWN is always sound.
  */
 
 #define TYPED_UNKNOWN	(-1)
 #define TYPED_INT	NOCT_VALUE_INT
+#define TYPED_LONG	NOCT_VALUE_LONG
 #define TYPED_FLOAT	NOCT_VALUE_FLOAT
+#define TYPED_DOUBLE	NOCT_VALUE_DOUBLE
+
+static int
+lir_promote_numeric_type(int a, int b)
+{
+	if ((a != TYPED_INT && a != TYPED_LONG &&
+	     a != TYPED_FLOAT && a != TYPED_DOUBLE) ||
+	    (b != TYPED_INT && b != TYPED_LONG &&
+	     b != TYPED_FLOAT && b != TYPED_DOUBLE))
+		return TYPED_UNKNOWN;
+	if (a == TYPED_DOUBLE || b == TYPED_DOUBLE)
+		return TYPED_DOUBLE;
+	if (a == TYPED_FLOAT || b == TYPED_FLOAT)
+		return TYPED_FLOAT;
+	if (a == TYPED_LONG || b == TYPED_LONG)
+		return TYPED_LONG;
+	if (a == TYPED_INT && b == TYPED_INT)
+		return TYPED_INT;
+	return TYPED_UNKNOWN;
+}
 
 static int
 lir_symbol_proven_type(
@@ -3655,8 +3842,12 @@ lir_symbol_proven_type(
 	 */
 	if (local->proven_type == NOCT_VALUE_INT)
 		return TYPED_INT;
+	if (local->proven_type == NOCT_VALUE_LONG)
+		return TYPED_LONG;
 	if (local->proven_type == NOCT_VALUE_FLOAT)
 		return TYPED_FLOAT;
+	if (local->proven_type == NOCT_VALUE_DOUBLE)
+		return TYPED_DOUBLE;
 
 	return TYPED_UNKNOWN;
 }
@@ -3693,6 +3884,11 @@ lir_expr_proven_type(
 		}
 	case HIR_EXPR_PAR:
 		return lir_expr_proven_type(expr->val.unary.expr, block);
+	case HIR_EXPR_NEG:
+		return lir_expr_proven_type(expr->val.unary.expr, block);
+	case HIR_EXPR_NOT:
+		a = lir_expr_proven_type(expr->val.unary.expr, block);
+		return a == TYPED_UNKNOWN ? TYPED_UNKNOWN : TYPED_INT;
 	case HIR_EXPR_CAPTURE:
 		/* Yields the inner expression's value. */
 		return lir_expr_proven_type(expr->val.capture.expr, block);
@@ -3702,11 +3898,7 @@ lir_expr_proven_type(
 	case HIR_EXPR_DIV:
 		a = lir_expr_proven_type(expr->val.binary.expr[0], block);
 		b = lir_expr_proven_type(expr->val.binary.expr[1], block);
-		if (a == TYPED_INT && b == TYPED_INT)
-			return TYPED_INT;
-		if (a == TYPED_FLOAT && b == TYPED_FLOAT)
-			return TYPED_FLOAT;
-		return TYPED_UNKNOWN;
+		return lir_promote_numeric_type(a, b);
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
 	case HIR_EXPR_OR:
@@ -3715,8 +3907,10 @@ lir_expr_proven_type(
 	case HIR_EXPR_SHR:
 		a = lir_expr_proven_type(expr->val.binary.expr[0], block);
 		b = lir_expr_proven_type(expr->val.binary.expr[1], block);
-		if (a == TYPED_INT && b == TYPED_INT)
-			return TYPED_INT;
+		if ((a == TYPED_INT || a == TYPED_LONG) &&
+		    (b == TYPED_INT || b == TYPED_LONG))
+			return (a == TYPED_LONG || b == TYPED_LONG) ?
+			       TYPED_LONG : TYPED_INT;
 		return TYPED_UNKNOWN;
 	case HIR_EXPR_LT:
 	case HIR_EXPR_LTE:
@@ -3742,6 +3936,9 @@ lir_expr_proven_type(
 		return TYPED_INT;
 	case HIR_EXPR_PLOADF32:
 		return TYPED_FLOAT;
+	case HIR_EXPR_PLOAD64:
+	case HIR_EXPR_PBASE:
+		return TYPED_LONG;
 	case HIR_EXPR_CALL:
 		switch (hir_get_intrinsic_call(expr)) {
 		case HIR_INTRINSIC_INT_FROM:
@@ -3756,8 +3953,7 @@ lir_expr_proven_type(
 	case HIR_EXPR_DICT:
 		return NOCT_VALUE_DICT;
 	default:
-		/* PLOAD64/PBASE (long), NEG, NOT, LAND, LOR, DOT,
-		   SUBSCR, CALL, ... */
+		/* LAND, LOR, DOT, SUBSCR, ordinary CALL, ... */
 		return TYPED_UNKNOWN;
 	}
 }
@@ -3854,8 +4050,10 @@ lir_visit_binary_expr(
 {
 	int opr1_tmpvar, opr2_tmpvar;
 	int opcode;
+	bool typed_op;
 
 	assert(expr != NULL);
+	typed_op = false;
 
 	/*
 	 * Typed shifts (design 07): different operand shape -- the
@@ -3910,6 +4108,7 @@ lir_visit_binary_expr(
 	   generic ops, so only the opcode differs. */
 	opcode = lir_typed_binary_opcode(expr, block);
 	if (opcode >= 0) {
+		typed_op = true;
 		if (opcode == OP_IDIV_CHECKED || opcode == OP_IMOD_CHECKED) {
 			typed_emit_int_count++;
 			typed_emit_checked_div_count++;
@@ -4025,6 +4224,15 @@ lir_visit_binary_expr(
 	}
 
 put:
+	if (!typed_op) {
+		if (!lir_put_materialize_type(
+			    opr1_tmpvar,
+			    lir_expr_proven_type(expr->val.binary.expr[0], block)) ||
+		    !lir_put_materialize_type(
+			    opr2_tmpvar,
+			    lir_expr_proven_type(expr->val.binary.expr[1], block)))
+			return false;
+	}
 	if (!lir_put_opcode((uint8_t)opcode))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)dst_tmpvar))
@@ -4140,6 +4348,12 @@ lir_visit_call_expr(
 		if (!lir_visit_expr(arg_tmpvar[i], expr->val.call.arg[i], block))
 			return false;
 	}
+	for (i = 0; i < (int)arg_count; i++) {
+		if (!lir_put_materialize_type(
+			    arg_tmpvar[i],
+			    lir_expr_proven_type(expr->val.call.arg[i], block)))
+			return false;
+	}
 
 	/* Put a bytecode sequence. */
 	if (!lir_put_opcode(OP_CALL))
@@ -4206,6 +4420,12 @@ lir_visit_thiscall_expr(
 		if (!lir_visit_expr(arg_tmpvar[i], expr->val.thiscall.arg[i], block))
 			return false;
 	}
+	for (i = 0; i < arg_count; i++) {
+		if (!lir_put_materialize_type(
+			    arg_tmpvar[i],
+			    lir_expr_proven_type(expr->val.thiscall.arg[i], block)))
+			return false;
+	}
 
 	/* Put a bytecode sequence. */
 	if (!lir_put_opcode(OP_THISCALL))
@@ -4251,6 +4471,9 @@ lir_visit_array_expr(
 	/* Build in a scratch tmpvar; see lir_visit_dict_expr. */
 	if (!lir_increment_tmpvar(&build_tmpvar))
 		return false;
+	/* build_tmpvar is written by EMPTYARRAY directly rather than through
+	 * lir_visit_expr(); record the reference definition in the slot meet. */
+	lir_note_tmpvar_type(build_tmpvar, NOCT_VALUE_ARRAY);
 
 	/* Create an array. */
 	if (!lir_put_opcode(OP_ACONST))
@@ -4274,6 +4497,12 @@ lir_visit_array_expr(
 		if (!lir_put_tmpvar((uint16_t)index_tmpvar))
 			return false;
 		if (!lir_put_imm32((uint32_t)i))
+			return false;
+		if (!lir_put_materialize_type(
+			    index_tmpvar, NOCT_VALUE_INT) ||
+		    !lir_put_materialize_type(
+			    elem_tmpvar,
+			    lir_expr_proven_type(expr->val.array.elem[i], block)))
 			return false;
 		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
@@ -4325,6 +4554,9 @@ lir_visit_dict_expr(
 	 */
 	if (!lir_increment_tmpvar(&build_tmpvar))
 		return false;
+	/* build_tmpvar is written by EMPTYDICT directly rather than through
+	 * lir_visit_expr(); record the reference definition in the slot meet. */
+	lir_note_tmpvar_type(build_tmpvar, NOCT_VALUE_DICT);
 	if (!lir_put_opcode(OP_DCONST))
 		return false;
 	if (!lir_put_tmpvar((uint16_t)build_tmpvar))
@@ -4333,6 +4565,8 @@ lir_visit_dict_expr(
 	/* Push the elements. */
 	if (!lir_increment_tmpvar(&key_tmpvar))
 		return false;
+	/* key_tmpvar is written by SCONST directly in the loop. */
+	lir_note_tmpvar_type(key_tmpvar, NOCT_VALUE_STRING);
 	if (!lir_increment_tmpvar(&value_tmpvar))
 		return false;
 	if (!lir_increment_tmpvar(&index_tmpvar))
@@ -4348,6 +4582,10 @@ lir_visit_dict_expr(
 		if (!lir_put_tmpvar((uint16_t)key_tmpvar))
 			return false;
 		if (!lir_put_string(expr->val.dict.key[i]))
+			return false;
+		if (!lir_put_materialize_type(
+			    value_tmpvar,
+			    lir_expr_proven_type(expr->val.dict.value[i], block)))
 			return false;
 		if (!lir_put_opcode(OP_STOREARRAY))
 			return false;
@@ -4681,6 +4919,7 @@ lir_increment_tmpvar(
 	}
 
 	*tmpvar_index = (int)tmpvar_top;
+	tmpvar_lifetime_noted[*tmpvar_index] = false;
 
 	tmpvar_top++;
 	if (tmpvar_top > tmpvar_count)
@@ -4693,10 +4932,15 @@ static bool
 lir_decrement_tmpvar(
 	int tmpvar_index)
 {
-	UNUSED_PARAMETER(tmpvar_index);
-
 	assert(tmpvar_index == (int)tmpvar_top - 1);
 	assert(tmpvar_top > 0);
+	/* Visitors that write a scratch slot without going through
+	 * lir_visit_expr() must explicitly call lir_note_tmpvar_type().
+	 * Otherwise that lifetime is dynamic, preventing an earlier fixed
+	 * lifetime of the same physical slot from being trusted by the JIT. */
+	if (tmpvar_index >= (int)tmpvar_local_count &&
+	    !tmpvar_lifetime_noted[tmpvar_index])
+		tmpvar_type_state[tmpvar_index] = LIR_TMP_TYPE_DYNAMIC;
 
 	tmpvar_top--;
 
@@ -5657,6 +5901,15 @@ lir_dump(
 			printf("%04d: TMPVAR_TYPE(tmp:%d, type:%u, compiler:%u)\n",
 			       ofs, tmp, (unsigned)(type & 0x7f),
 			       (unsigned)((type & TMPVAR_TYPE_COMPILER_TEMP) != 0));
+			break;
+		}
+		case OP_MATERIALIZE_TYPE:
+		{
+			uint16_t tmp;
+			uint8_t type;
+			IMM2(tmp); IMM1(type);
+			printf("%04d: MATERIALIZE_TYPE(tmp:%d, type:%u)\n",
+			       ofs, tmp, (unsigned)type);
 			break;
 		}
 		case OP_SUBJNZ:

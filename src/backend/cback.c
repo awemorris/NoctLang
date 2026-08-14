@@ -1689,6 +1689,21 @@ cback_visit_tmpvar_type_op(
 }
 
 static INLINE bool
+cback_visit_materialize_type_op(
+	struct lir_func *func,
+	uint32_t *pc)
+{
+	int tmp;
+	int type;
+
+	GET_TMPVAR(&tmp);
+	GET_U8(&type);
+	UNUSED_PARAMETER(tmp);
+	return type == NOCT_VALUE_INT || type == NOCT_VALUE_LONG ||
+	       type == NOCT_VALUE_FLOAT || type == NOCT_VALUE_DOUBLE;
+}
+
+static INLINE bool
 cback_visit_subjnz_op(
 	struct lir_func *func,
 	uint32_t *pc)
@@ -2137,6 +2152,10 @@ cback_visit_op(
 		break;
 	case OP_TMPVAR_TYPE:
 		if (!cback_visit_tmpvar_type_op(func, pc))
+			return false;
+		break;
+	case OP_MATERIALIZE_TYPE:
+		if (!cback_visit_materialize_type_op(func, pc))
 			return false;
 		break;
 	case OP_SUBJNZ:

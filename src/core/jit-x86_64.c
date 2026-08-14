@@ -485,6 +485,27 @@ jit_visit_assign_op(
 		}
 		return true;
 	}
+	if (ctx->tmp_fixed_type != NULL &&
+	    ctx->tmp_fixed_type[dst] >= 0 &&
+	    jit_tmp_has_fixed_primitive_type(ctx, src,
+					 ctx->tmp_fixed_type[dst])) {
+		int dst_ofs = dst * (int)sizeof(struct rt_value);
+		int src_ofs = src * (int)sizeof(struct rt_value);
+
+		ASM {
+			IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(src_ofs + 8));
+			IB(0x49); IB(0x89); IB(0x87); ID((uint32_t)(dst_ofs + 8));
+		}
+		return true;
+	}
+	if (ctx->tmp_fixed_type != NULL && ctx->tmp_fixed_type[src] >= 0 &&
+	    !ctx->tmp_frame_tag_known[src]) {
+		int src_ofs = src * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)src_ofs);
+			ID((uint32_t)ctx->tmp_fixed_type[src]);
+		}
+	}
 
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
@@ -514,7 +535,9 @@ jit_visit_iconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint32_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
@@ -553,6 +576,9 @@ jit_visit_iconst_op(
 		return true;
 	}
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_INT);
         dst *= (int)sizeof(struct rt_value);
 
         /* env->frame->tmpvar[dst].type = NOCT_VALUE_INT; */
@@ -567,11 +593,13 @@ jit_visit_iconst_op(
                 /* addq %r15 -> %rax */            IB(0x4c); IB(0x01); IB(0xf8);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_INT */
-                /* movl $0 -> (%rax) */            IB(0xc7); IB(0x00); ID(0);
+                /* movl $0 -> (%rax), unless fixed and known */
+		if (write_tag) { IB(0xc7); IB(0x00); ID(0); }
 
                 /* env->frame->tmpvar[dst].val.i = val */
                 /* movl $val ->8 (%rax) */         IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -582,11 +610,16 @@ jit_visit_liconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint64_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_LONG);
         dst *= (int)sizeof(struct rt_value);
 
         /* env->frame->tmpvar[dst].type = RT_VALUE_LONG; */
@@ -601,12 +634,14 @@ jit_visit_liconst_op(
                 /* addq %r15 -> %rax */            IB(0x4c); IB(0x01); IB(0xf8);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_LONG */
-                /* movl $5 -> 0(%rax) */           IB(0xc7); IB(0x00); ID(5);
+                /* movl $5 -> 0(%rax), unless fixed and known */
+		if (write_tag) { IB(0xc7); IB(0x00); ID(5); }
 
                 /* env->frame->tmpvar[dst].val.l = val */
                 /* movabs $val -> %rcx */          IB(0x48); IB(0xb9); IQ(val);
                 /* movl %rcx -> 8(%rax) */         IB(0x48); IB(0x89); IB(0x48); IB(0x08);
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -617,11 +652,16 @@ jit_visit_fconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint32_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_FLOAT);
         dst *= (int)sizeof(struct rt_value);
 
         /* &env->frame->tmpvar[dst].type = RT_VALUE_INT; */
@@ -633,9 +673,11 @@ jit_visit_fconst_op(
 
                 /* movq $dst -> %rax */             IB(0x48); IB(0xc7); IB(0xc0); ID((uint32_t)dst);
                 /* addq %r15 -> %rax */             IB(0x4c); IB(0x01); IB(0xf8);
-                /* movl $1 -> (%rax) */             IB(0xc7); IB(0x00); ID(1);
+                /* movl $1 -> (%rax), unless fixed and known */
+		if (write_tag) { IB(0xc7); IB(0x00); ID(1); }
                 /* movl $val -> 8(%rax) */          IB(0xc7); IB(0x40); IB(0x08); ID(val);
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -646,11 +688,16 @@ jit_visit_lfconst_op(
         struct jit_context *ctx)
 {
         int dst;
+	int dst_tmp;
         uint64_t val;
+	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
+	dst_tmp = dst;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+						     NOCT_VALUE_DOUBLE);
         dst *= (int)sizeof(struct rt_value);
 
         /* env->frame->tmpvar[dst].type = RT_VALUE_DOUBLE; */
@@ -665,12 +712,14 @@ jit_visit_lfconst_op(
                 /* addq %r15 -> %rax */            IB(0x4c); IB(0x01); IB(0xf8);
 
                 /* env->frame->tmpvar[dst].type = NOCT_VALUE_DOUBLE */
-                /* movl $5 -> 0(%rax) */           IB(0xc7); IB(0x00); ID(6);
+                /* movl $6 -> 0(%rax), unless fixed and known */
+		if (write_tag) { IB(0xc7); IB(0x00); ID(6); }
 
                 /* env->frame->tmpvar[dst].val.l = val */
                 /* movabs $val -> %rcx */          IB(0x48); IB(0xb9); IQ(val);
                 /* movl %rcx -> 8(%rax) */         IB(0x48); IB(0x89); IB(0x48); IB(0x08);
         }
+	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -3328,6 +3377,15 @@ jit_visit_safepoint_op(
         return true;
 }
 
+/* Fixed primitive slots expose their tag only at explicit materialization
+ * boundaries.  Dynamic slots retain the canonical producer store. */
+#define STORE_TAG_IF_DYNAMIC(dstofs, tag)                                      \
+	if (!jit_tmp_has_fixed_primitive_type(                                   \
+		ctx, (int)((dstofs) / (int)sizeof(struct rt_value)), (tag))) {      \
+		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)(dstofs));              \
+		ID((uint32_t)(tag));                                               \
+	}
+
 /* Visit a OP_PBASE instruction. (ABCE; inline machine code.)
  *
  * The ABCE guard has already proven the operand is a packed, so this
@@ -3358,7 +3416,8 @@ jit_visit_pbase_op(
 
                 /* movq src+8(%r15) -> %rax */   IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(src + 8));
                 /* movq buf_ofs(%rax) -> %rax */ IB(0x48); IB(0x8b); IB(0x80); ID(buf_ofs);
-                /* movl $LONG -> dst(%r15) */    IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_LONG);
+                /* movl $LONG -> dst(%r15), for dynamic destinations */
+		STORE_TAG_IF_DYNAMIC(dst, NOCT_VALUE_LONG);
                 /* movq %rax -> dst+8(%r15) */   IB(0x49); IB(0x89); IB(0x87); ID((uint32_t)(dst + 8));
         }
 
@@ -3553,8 +3612,7 @@ jit_x86_64_try_packed_load(struct jit_context *ctx, int dst, int base,
 	}
 	dst_ofs = dst * (int)sizeof(struct rt_value);
 	ASM {
-		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst_ofs);
-		ID((uint32_t)NOCT_VALUE_INT);
+		STORE_TAG_IF_DYNAMIC(dst_ofs, NOCT_VALUE_INT);
 		IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst_ofs + 8));
 	}
 	return true;
@@ -3672,7 +3730,8 @@ jit_visit_pload8u_op(
                 /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                 /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
                 /* movzbl (%rax,%rcx) -> %edx */   IB(0x0f); IB(0xb6); IB(0x14); IB(0x08);
-                /* movl $INT -> dst(%r15) */       IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl $INT -> dst(%r15), for dynamic destinations */
+		STORE_TAG_IF_DYNAMIC(dst, NOCT_VALUE_INT);
                 /* movl %edx -> dst+8(%r15) */     IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst + 8));
         }
 
@@ -3728,10 +3787,40 @@ jit_visit_checktype_op(
 
 	/* if (!ex_checktype_helper(env, slot, type)) return false; */
 	ASM_UNARY_OP(ex_checktype_helper);
+	{
+		int flags = src & (TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
+		src &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
 	if (ctx->tmp_fixed_type != NULL &&
-	    ctx->tmp_fixed_type[dst] == src)
+	    flags == 0 && ctx->tmp_fixed_type[dst] == src)
 		ctx->tmp_frame_tag_known[dst] = 1;
+	}
 
+	return true;
+}
+
+/* Publish a fixed primitive tag at a dynamic observation boundary. */
+static INLINE bool
+jit_visit_x86_64_materialize_type_op(struct jit_context *ctx)
+{
+	int tmp;
+	int type;
+	int ofs;
+
+	CONSUME_TMPVAR(tmp);
+	CONSUME_IMM8(type);
+	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
+	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (ctx->tmp_frame_tag_known != NULL &&
+	    ctx->tmp_frame_tag_known[tmp])
+		return true;
+	ofs = tmp * (int)sizeof(struct rt_value);
+	ASM {
+		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)ofs);
+		ID((uint32_t)type);
+	}
 	return true;
 }
 
@@ -3764,7 +3853,8 @@ jit_visit_pload8s_op(
                 /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                 /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
                 /* load scaled -> %(e|r)dx */      IB(0x0f); IB(0xbe); IB(0x14); IB(0x08);
-                /* movl $tag -> dst(%r15) */       IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl $tag -> dst(%r15), for dynamic destinations */
+		STORE_TAG_IF_DYNAMIC(dst, NOCT_VALUE_INT);
                 /* movl %edx -> dst+8(%r15) */   IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst + 8));
         }
 
@@ -3800,7 +3890,8 @@ jit_visit_pload16u_op(
                 /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                 /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
                 /* load scaled -> %(e|r)dx */      IB(0x0f); IB(0xb7); IB(0x14); IB(0x48);
-                /* movl $tag -> dst(%r15) */       IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl $tag -> dst(%r15), for dynamic destinations */
+		STORE_TAG_IF_DYNAMIC(dst, NOCT_VALUE_INT);
                 /* movl %edx -> dst+8(%r15) */   IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst + 8));
         }
 
@@ -3836,7 +3927,8 @@ jit_visit_pload16s_op(
                 /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                 /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
                 /* load scaled -> %(e|r)dx */      IB(0x0f); IB(0xbf); IB(0x14); IB(0x48);
-                /* movl $tag -> dst(%r15) */       IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl $tag -> dst(%r15), for dynamic destinations */
+		STORE_TAG_IF_DYNAMIC(dst, NOCT_VALUE_INT);
                 /* movl %edx -> dst+8(%r15) */   IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst + 8));
         }
 
@@ -3872,7 +3964,8 @@ jit_visit_pload32_op(
                 /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                 /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
                 /* load scaled -> %(e|r)dx */      IB(0x8b); IB(0x14); IB(0x88);
-                /* movl $tag -> dst(%r15) */       IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_INT);
+                /* movl $tag -> dst(%r15), for dynamic destinations */
+		STORE_TAG_IF_DYNAMIC(dst, NOCT_VALUE_INT);
                 /* movl %edx -> dst+8(%r15) */   IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst + 8));
         }
 
@@ -3902,7 +3995,8 @@ jit_visit_pload64_op(
                 /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                 /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
                 /* load scaled -> %(e|r)dx */      IB(0x48); IB(0x8b); IB(0x14); IB(0xc8);
-                /* movl $tag -> dst(%r15) */       IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_LONG);
+                /* movl $tag -> dst(%r15), for dynamic destinations */
+		STORE_TAG_IF_DYNAMIC(dst, NOCT_VALUE_LONG);
                 /* movq %rdx -> dst+8(%r15) */   IB(0x49); IB(0x89); IB(0x97); ID((uint32_t)(dst + 8));
         }
 
@@ -4049,8 +4143,9 @@ jit_visit_pstoref32_op(
 /* Emit "movss ofs+8(%r15), %xmm0". */
 #define TYPED_LOAD_XMM0(ofs)    IB(0xf3); IB(0x41); IB(0x0f); IB(0x10); IB(0x87); ID((uint32_t)((ofs) + 8))
 /* Emit "movl $tag, dst(%r15); movl %eax, dst+8(%r15)". */
-#define TYPED_STORE_EAX(dst, tag)                                                               \
-        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)(dst)); ID((uint32_t)(tag));                 \
+#define TYPED_STORE_EAX(dst, tag, write_tag)                                                    \
+        if (write_tag) {                                                                        \
+        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)(dst)); ID((uint32_t)(tag)); }               \
         IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)((dst) + 8))
 /* Emit "setcc %al; movzbl %al, %eax" (cc = setcc second opcode byte). */
 #define TYPED_SETCC_EAX(cc)                                                                     \
@@ -4367,6 +4462,9 @@ jit_visit_typed_op(
         int dst;
         int src1;
         int src2;
+	int dst_tmp;
+	int result_type;
+	bool write_tag;
 	bool handled;
 
         CONSUME_TMPVAR(dst);
@@ -4395,6 +4493,12 @@ jit_visit_typed_op(
 	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
 		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
 	}
+	dst_tmp = dst;
+	result_type = (op == OP_FADD || op == OP_FSUB ||
+		       op == OP_FMUL || op == OP_FDIV) ?
+		      NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
+	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+						     result_type);
 
         dst *= (int)sizeof(struct rt_value);
         if (op != OP_ISHL && op != OP_ISHR)
@@ -4422,7 +4526,7 @@ jit_visit_typed_op(
                 default:      ASM { IB(0x41); IB(0x0f); IB(0xaf); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
                 }
                 ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         case OP_ISHL:
@@ -4441,7 +4545,7 @@ jit_visit_typed_op(
                         }
                 }
                 ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         case OP_IDIV:
@@ -4460,7 +4564,7 @@ jit_visit_typed_op(
                         ASM { IB(0x89); IB(0xd0); }
                 }
                 ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         case OP_ILT:
@@ -4479,7 +4583,7 @@ jit_visit_typed_op(
                 default:      ASM { TYPED_SETCC_EAX(0x9d); } break;     /* setge */
                 }
                 ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         case OP_FADD:
@@ -4497,8 +4601,9 @@ jit_visit_typed_op(
                 default:      ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x5e); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
                 }
                 ASM {
-                        /* movl $tag, dst(%r15) */
-                        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT);
+                        /* movl $tag, dst(%r15), unless fixed and known */
+                        if (write_tag) {
+                        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT); }
                         /* movss %xmm0, dst+8(%r15) */
                         IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x87); ID((uint32_t)(dst + 8));
                 }
@@ -4517,7 +4622,7 @@ jit_visit_typed_op(
                         ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
                 }
                 ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         case OP_FGT:
@@ -4533,14 +4638,13 @@ jit_visit_typed_op(
                         ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
                 }
                 ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT);
+                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
                 }
                 break;
         default:
                 assert(NEVER_COME_HERE);
                 return false;
         }
-
         return true;
 }
 
@@ -5575,6 +5679,9 @@ jit_visit_bytecode(
 			break;
 		case OP_TMPVAR_TYPE:
 			if (!jit_visit_tmpvar_type_op(ctx)) return false;
+			break;
+		case OP_MATERIALIZE_TYPE:
+			if (!jit_visit_x86_64_materialize_type_op(ctx)) return false;
 			break;
 		case OP_SUBJNZ:
 			if (!jit_visit_subjnz_op(ctx)) return false;

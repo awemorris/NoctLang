@@ -2971,11 +2971,13 @@ noct_ex_checktype_helper(
 	const char *type_name;
 	int packed_type;
 	bool is_return;
+	bool is_local;
 	bool restricted;
 
 	val = &env->frame->tmpvar[slot];
 	is_return = (value_type & TYPECHECK_RETURN_FLAG) != 0;
-	value_type &= ~TYPECHECK_RETURN_FLAG;
+	is_local = (value_type & TYPECHECK_LOCAL_FLAG) != 0;
+	value_type &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
 	packed_type = -1;
 	restricted = false;
 	if (value_type >= TYPECHECK_PACKED_BASE &&
@@ -3009,6 +3011,8 @@ noct_ex_checktype_helper(
 			packed_name[packed_type];
 		rt_error(env, is_return ?
 			 N_TR("%s(): return type mismatch (expected %s).") :
+			 is_local ?
+			 N_TR("%s(): local type mismatch (expected %s).") :
 			 N_TR("%s(): argument type mismatch (expected %s)."),
 			 env->frame->func != NULL ? env->frame->func->name : "?",
 			 type_name);
@@ -3021,11 +3025,19 @@ noct_ex_checktype_helper(
 	   floating literals are float-tagged, so a long/double annotation
 	   must accept them. */
 	if (!is_return && value_type == NOCT_VALUE_LONG &&
-	    val->type == NOCT_VALUE_INT)
+	    val->type == NOCT_VALUE_INT) {
+		int i = val->val.i;
+		val->val.l = (int64_t)i;
+		val->type = NOCT_VALUE_LONG;
 		return true;
+	}
 	if (!is_return && value_type == NOCT_VALUE_DOUBLE &&
-	    val->type == NOCT_VALUE_FLOAT)
+	    val->type == NOCT_VALUE_FLOAT) {
+		float f = val->val.f;
+		val->val.lf = (double)f;
+		val->type = NOCT_VALUE_DOUBLE;
 		return true;
+	}
 
 	switch (value_type) {
 	case NOCT_VALUE_INT:	type_name = "int";	break;
@@ -3042,6 +3054,8 @@ noct_ex_checktype_helper(
 
 	rt_error(env, is_return ?
 		 N_TR("%s(): return type mismatch (expected %s).") :
+		 is_local ?
+		 N_TR("%s(): local type mismatch (expected %s).") :
 		 N_TR("%s(): argument type mismatch (expected %s)."),
 		 env->frame->func != NULL ? env->frame->func->name : "?",
 		 type_name);

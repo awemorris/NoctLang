@@ -17,6 +17,7 @@
 #define TYPECHECK_RPACKED_BASE	32
 /* OP_CHECKTYPE performs an exact return check and uses return diagnostics. */
 #define TYPECHECK_RETURN_FLAG	128
+#define TYPECHECK_LOCAL_FLAG	64
 
 enum bytecode {
 	/* no operation */
@@ -230,6 +231,7 @@ enum bytecode {
 	OP_IMOD_CHECKED,	/* dst(u16) = src1(u16) % src2(u16), checked int32 */
 	OP_PLOOP_HINT,		/* no-op: index/stop/remaining(u16), lanes/flags(imm8) */
 	OP_TMPVAR_TYPE,		/* declaration: tmp(u16) has fixed primitive tag(imm8) */
+	OP_MATERIALIZE_TYPE,	/* tmp(u16) must expose fixed primitive tag(imm8) */
 };
 
 /* OP_TMPVAR_TYPE tag operand metadata. */

@@ -52,8 +52,17 @@ func main() {
 ## Type Annotations
 
 Parameters and local declarations may carry optimization-oriented type
-annotations.  At optimization level 2, annotated parameters are checked at
-function entry.
+annotations.  At optimization level 1 and above, annotated parameters are
+checked at function entry.  An ordinary local annotated as `int`, `long`,
+`float`, or `double` is also checked at its initializer and every reassignment:
+a proven mismatch is a compile error and a value whose type is not known until
+runtime is checked at that assignment.  Optimization level 0 retains the
+language's dynamic behavior and treats these annotations as hints only.
+
+The checked primitive contract permits `int` where `long` is requested and
+`float` where `double` is requested; the value is canonicalized to the wider
+runtime type.  Function return annotations remain exact and are checked at
+optimization level 2.
 
 ```
 func copy_words(dst: rpackeduint32, src: rpackeduint32) {

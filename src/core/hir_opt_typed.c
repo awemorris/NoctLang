@@ -9,7 +9,7 @@
  * HIR Optimizer: Stage B type lattice (docs/design/07-typed-ops.md).
  *
  * A flow-insensitive, optimistic fixpoint over the function's locals
- * on the lattice TOP > {INT, FLOAT} > UNKNOWN:
+ * on the lattice TOP > {INT, LONG, FLOAT, DOUBLE} > UNKNOWN:
  *
  *   - Every local starts at TOP ("no assignment seen yet").  A local
  *     still TOP at the end was never assigned and therefore always
@@ -37,11 +37,13 @@
 #include <string.h>
 #include <assert.h>
 
-/* Lattice values.  TP_INT/TP_FLOAT are the NOCT_VALUE_* tags. */
+/* Lattice values.  Primitive values are the NOCT_VALUE_* tags. */
 #define TP_TOP		(-2)
 #define TP_UNKNOWN	(-1)
 #define TP_INT		NOCT_VALUE_INT
+#define TP_LONG		NOCT_VALUE_LONG
 #define TP_FLOAT	NOCT_VALUE_FLOAT
+#define TP_DOUBLE	NOCT_VALUE_DOUBLE
 
 struct tp_ctx {
 	struct hir_block *func;
@@ -62,6 +64,28 @@ tp_combine(int cur, int t)
 	if (cur == t)
 		return cur;
 	return TP_UNKNOWN;
+}
+
+static bool
+tp_is_primitive(int t)
+{
+	return t == TP_INT || t == TP_LONG ||
+		t == TP_FLOAT || t == TP_DOUBLE;
+}
+
+/* Match the generic numeric dispatch in execution.c. */
+static int
+tp_promote_numeric(int a, int b)
+{
+	if (!tp_is_primitive(a) || !tp_is_primitive(b))
+		return TP_UNKNOWN;
+	if (a == TP_DOUBLE || b == TP_DOUBLE)
+		return TP_DOUBLE;
+	if (a == TP_FLOAT || b == TP_FLOAT)
+		return TP_FLOAT;
+	if (a == TP_LONG || b == TP_LONG)
+		return TP_LONG;
+	return TP_INT;
 }
 
 static struct hir_local *
@@ -89,8 +113,12 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		switch (e->val.term.term->type) {
 		case HIR_TERM_INT:
 			return TP_INT;
+		case HIR_TERM_LONG:
+			return TP_LONG;
 		case HIR_TERM_FLOAT:
 			return TP_FLOAT;
+		case HIR_TERM_DOUBLE:
+			return TP_DOUBLE;
 		case HIR_TERM_SYMBOL:
 		{
 			struct hir_local *local;
@@ -111,7 +139,7 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		return tp_eval_expr(ctx, e->val.unary.expr, in_region);
 	case HIR_EXPR_NEG:
 		a = tp_eval_expr(ctx, e->val.unary.expr, in_region);
-		return a == TP_INT || a == TP_FLOAT ? a : TP_UNKNOWN;
+		return tp_is_primitive(a) ? a : TP_UNKNOWN;
 	case HIR_EXPR_NOT:
 		a = tp_eval_expr(ctx, e->val.unary.expr, in_region);
 		return a == TP_INT ? TP_INT : TP_UNKNOWN;
@@ -129,15 +157,7 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
 		if (a == TP_TOP || b == TP_TOP)
 			return TP_TOP;
-		if (a == TP_INT && b == TP_INT)
-			return TP_INT;
-		if (a == TP_FLOAT && b == TP_FLOAT)
-			return TP_FLOAT;
-		/* Noct's mixed numeric arithmetic promotes int to float. */
-		if ((a == TP_INT && b == TP_FLOAT) ||
-		    (a == TP_FLOAT && b == TP_INT))
-			return TP_FLOAT;
-		return TP_UNKNOWN;
+		return tp_promote_numeric(a, b);
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
 	case HIR_EXPR_OR:
@@ -148,8 +168,9 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
 		if (a == TP_TOP || b == TP_TOP)
 			return TP_TOP;
-		if (a == TP_INT && b == TP_INT)
-			return TP_INT;
+		if ((a == TP_INT || a == TP_LONG) &&
+		    (b == TP_INT || b == TP_LONG))
+			return a == TP_LONG || b == TP_LONG ? TP_LONG : TP_INT;
 		return TP_UNKNOWN;
 	case HIR_EXPR_LT:
 	case HIR_EXPR_LTE:
@@ -174,6 +195,8 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 	case HIR_EXPR_PCHECK:
 	case HIR_EXPR_TYPEIS:
 		return TP_INT;
+	case HIR_EXPR_PLOAD64:
+		return TP_LONG;
 	case HIR_EXPR_PLOADF32:
 	case HIR_EXPR_VINDUCTF32:
 		return TP_FLOAT;
@@ -203,6 +226,19 @@ tp_meet_symbol(struct tp_ctx *ctx, const char *symbol, int t)
 	local = tp_find_local(ctx, symbol);
 	if (local == NULL)
 		return;		/* Global or $return: no proof kept. */
+
+	/* At -O1 and above, primitive annotations on ordinary locals are
+	 * checked at every definition by LIR.  They are therefore contracts,
+	 * not optimistic guesses.  Parameters are excluded: their annotation
+	 * checks only the incoming value, and a later reassignment must still
+	 * participate in the meet. */
+	if (!local->is_parameter && tp_is_primitive(local->declared_type)) {
+		if (local->proven_type != local->declared_type) {
+			local->proven_type = local->declared_type;
+			ctx->changed = true;
+		}
+		return;
+	}
 
 	merged = tp_combine(local->proven_type, t);
 	if (merged != local->proven_type) {
@@ -381,14 +417,18 @@ hir_opt_typed_func(struct hir_block *func_block)
 	ctx.func = func_block;
 
 	/*
-	 * Seed: TOP everywhere, except parameters -- annotated ones
+	 * Seed: TOP everywhere, except checked primitive locals and parameters.
+	 * Ordinary local annotations are enforced for every definition by LIR.
+	 * Parameters -- annotated ones
 	 * start at their annotation tag (CHECKTYPE-backed), the rest
 	 * at UNKNOWN.  Parameters occupy local slots 0..param_count-1.
 	 */
 	local = func_block->val.func.local;
 	while (local != NULL) {
 		local->proven_type = TP_TOP;
-		if (local->index < (int)func_block->val.func.param_count) {
+		if (!local->is_parameter && tp_is_primitive(local->declared_type)) {
+			local->proven_type = local->declared_type;
+		} else if (local->index < (int)func_block->val.func.param_count) {
 			int seed = TP_UNKNOWN;
 			for (k = 0; k < func_block->val.func.param_count; k++) {
 				if (strcmp(func_block->val.func.param_name[k],
@@ -396,8 +436,12 @@ hir_opt_typed_func(struct hir_block *func_block)
 					continue;
 				if (func_block->val.func.param_type[k] == NOCT_VALUE_INT)
 					seed = TP_INT;
+				else if (func_block->val.func.param_type[k] == NOCT_VALUE_LONG)
+					seed = TP_LONG;
 				else if (func_block->val.func.param_type[k] == NOCT_VALUE_FLOAT)
 					seed = TP_FLOAT;
+				else if (func_block->val.func.param_type[k] == NOCT_VALUE_DOUBLE)
+					seed = TP_DOUBLE;
 				break;
 			}
 			local->proven_type = seed;

@@ -3081,6 +3081,9 @@ jit_visit_bytecode(
 		case OP_TMPVAR_TYPE:
 			if (!jit_visit_tmpvar_type_op(ctx)) return false;
 			break;
+		case OP_MATERIALIZE_TYPE:
+			if (!jit_visit_materialize_type_metadata_op(ctx)) return false;
+			break;
 		case OP_SUBJNZ:
 			if (!jit_visit_subjnz_op(ctx)) return false;
 			break;
