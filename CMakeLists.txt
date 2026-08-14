@@ -244,17 +244,16 @@ if(NOCT_ENABLE_ACCEL_DX12)
   add_definitions(-DNOCT_USE_ACCEL_DX12=1)
 endif()
 
-# Determine the object model source file.
+# Object model backends.  A multithread-capable binary carries both models so
+# each VM can select one at creation time.  Legacy/single-thread targets keep
+# only the compact single-thread implementation.
+set(
+  NOCT_OBJMODEL_SOURCE
+  src/core/objectmodel-st.c
+  src/core/objectmodel-dispatch.c
+)
 if(NOCT_ENABLE_MULTITHREAD)
-  set(
-    NOCT_OBJMODEL_SOURCE
-    src/core/objectmodel-mt.c  # Multi-threaded Object Model
-  )
-else()
-  set(
-    NOCT_OBJMODEL_SOURCE
-    src/core/objectmodel-st.c  # Single-threaded Object Model
-  )
+  list(APPEND NOCT_OBJMODEL_SOURCE src/core/objectmodel-mt.c)
 endif()
 
 

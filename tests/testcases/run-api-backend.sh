@@ -10,6 +10,15 @@ case "$build_dir" in
 esac
 cc=${CC:-cc}
 test_bin="$build_dir/noct-api-backend-test"
+system_libs="-lm"
+case "$(uname -s)" in
+Linux) system_libs="$system_libs -lutil -pthread" ;;
+Darwin) system_libs="$system_libs -pthread" ;;
+esac
+if command -v pkg-config >/dev/null 2>&1 &&
+   pkg-config --exists egl glesv2; then
+	system_libs="$system_libs $(pkg-config --libs egl glesv2)"
+fi
 
 test -f "$build_dir/libnoct.a" || {
 	echo "Noct static library not found: $build_dir/libnoct.a" >&2
@@ -20,6 +29,17 @@ test -f "$build_dir/libnoctapi.a" || {
 	exit 1
 }
 
+# shellcheck disable=SC2086
 "$cc" -I"$root/include" "$root/tests/testcases/api-backend-test.c" \
-	"$build_dir/libnoctapi.a" "$build_dir/libnoct.a" -lm -o "$test_bin"
+	"$build_dir/libnoctapi.a" "$build_dir/libnoct.a" \
+	$system_libs -o "$test_bin"
 "$test_bin"
+
+if grep -q '^NOCT_ENABLE_MULTITHREAD:BOOL=ON$' "$build_dir/CMakeCache.txt"; then
+	model_test="$build_dir/noct-objectmodel-runtime-test"
+	# shellcheck disable=SC2086
+	"$cc" -I"$root/include" \
+		"$root/tests/testcases/objectmodel-runtime-test.c" \
+		"$build_dir/libnoct.a" $system_libs -o "$model_test"
+	"$model_test"
+fi

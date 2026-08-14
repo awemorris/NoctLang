@@ -98,8 +98,117 @@ func overlayReverseCell(row, col) {
 // changed since the last frame are rewritten, and the whole frame is
 // bracketed with synchronized-output marks, which removes flicker.
 func redisplayInit() {
-    PrevFrame = { rows: [], cols: 0, count: 0 };
+    PrevFrame = {
+        rows: [], cols: 0, count: 0,
+        cursorValid: 0, cursorBuf: "", textTick: 0,
+        point: 0, cursorRow: 1, cursorCol: 1,
+        echoMessage: "", modeLine: ""
+    };
     return 0;
+}
+
+// Return target's display column within one cached display row. The logical
+// column anchor preserves tab stops, while the substring is at most one row.
+func layoutPointColumn(rowStart, target, logicalColumn) {
+    var text = Editor.bufferSubstring(rowStart, target);
+    var n = String.charCount(text);
+    var rowWidth = 0;
+    var col = logicalColumn;
+    var i = 0;
+    while (i < n) {
+        var cp = String.charCodeAt(text, i);
+        var pieceW = charWidth(cp);
+        if (cp == 0x09) {
+            pieceW = 8 - (col % 8);
+        }
+        rowWidth = rowWidth + pieceW;
+        col = col + pieceW;
+        i = i + 1;
+    }
+    return rowWidth;
+}
+
+func makeModeLine(w, lineNo) {
+    var name = Editor.bufferName();
+    var flags = "--";
+    if (Editor.bufferModifiedP() == 1) {
+        flags = "**";
+    }
+    var modeLine = "-" + flags + "- remacs: " + name + "   (" +
+        Buf.mode + ")" + skkIndicator() + " L" + lineNo + " ";
+    modeLine = truncateToWidth(modeLine, w.cols);
+    var mlLen = stringWidth(modeLine);
+    while (mlLen < w.cols) {
+        modeLine = modeLine + "-";
+        mlLen = mlLen + 1;
+    }
+    var esc = String.chr(27);
+    return esc + "[7m" + modeLine + esc + "[0m";
+}
+
+// If only point changed and it remains in the previously rendered sole
+// window, reuse the cached visible-line geometry. This turns ordinary
+// cursor motion into one terminal cursor move instead of a full buffer scan.
+func redisplayCursorOnly(ed, rows, cols) {
+    if (PrevFrame.cursorValid == 0 || PrevFrame.cols != cols ||
+        PrevFrame.count != rows || ed.echoCursor >= 0 ||
+        ed.echoMessage != PrevFrame.echoMessage ||
+        !Dict.hasKey(WinRoot, "win") || WinRoot.win != SelWin ||
+        PrevFrame.cursorBuf != Editor.bufferName() ||
+        PrevFrame.textTick != Buf.textTick) {
+        return 0;
+    }
+
+    var point = Editor.point();
+    var found = 0 - 1;
+    var n = Array.size(SelWin.renderRowStarts);
+    for (i in 0..n) {
+        // Wrapped-row boundaries are shared positions. Do not break: the
+        // later row owns the boundary, matching layoutLogicalLine().
+        if (point >= SelWin.renderRowStarts[i] &&
+            point <= SelWin.renderRowEnds[i]) {
+            found = i;
+        }
+    }
+    if (found < 0) {
+        return 0;
+    }
+
+    var relRow = SelWin.renderRowScreenRows[found];
+    if (relRow < 0 || relRow >= SelWin.rows - 1) {
+        return 0;
+    }
+    var cursorRow = SelWin.top + relRow;
+    var cursorCol = SelWin.left +
+        layoutPointColumn(SelWin.renderRowStarts[found], point,
+                          SelWin.renderRowLogicalCols[found]);
+    var lineNo = SelWin.renderRowLineNos[found] + 1;
+    var modeLine = makeModeLine(SelWin, lineNo);
+    var modeRow = SelWin.top + SelWin.rows - 1;
+
+    if (modeLine != PrevFrame.modeLine) {
+        Term.syncBegin();
+        Term.showCursor(0);
+        Term.moveTo(modeRow, SelWin.left);
+        Term.write(modeLine);
+        PrevFrame.rows[modeRow - 1] = modeLine;
+        PrevFrame.modeLine = modeLine;
+        Term.moveTo(cursorRow, cursorCol);
+        Term.showCursor(1);
+        Term.syncEnd();
+        Term.flush();
+    } else {
+        // The common cursor-only update needs no frame synchronization or
+        // visibility toggle; emit only the terminal cursor position.
+        Term.moveTo(cursorRow, cursorCol);
+        Term.flush();
+    }
+
+    SelWin.point = point;
+    PrevFrame.point = point;
+    PrevFrame.cursorRow = cursorRow;
+    PrevFrame.cursorCol = cursorCol;
+    return 1;
 }
 
 func redisplay(_) {
@@ -107,10 +216,15 @@ func redisplay(_) {
     var rows = size.rows;
     var cols = size.cols;
 
-    layoutWindows(WinRoot, 1, 1, rows - 1, cols);
     // The selected window always shows the current buffer.
     SelWin.buf = Editor.bufferName();
     SelWin.point = Editor.point();
+
+    if (redisplayCursorOnly(_, rows, cols) == 1) {
+        return 0;
+    }
+
+    layoutWindows(WinRoot, 1, 1, rows - 1, cols);
 
     // Compose the frame into row strings.
     Frame = [];
@@ -179,6 +293,19 @@ func redisplay(_) {
     Term.showCursor(1);
     Term.syncEnd();
     Term.flush();
+
+    PrevFrame.cursorValid = 0;
+    if (_.echoCursor < 0 && Dict.hasKey(WinRoot, "win") &&
+        WinRoot.win == SelWin) {
+        PrevFrame.cursorValid = 1;
+        PrevFrame.cursorBuf = Editor.bufferName();
+        PrevFrame.textTick = Buf.textTick;
+        PrevFrame.point = Editor.point();
+        PrevFrame.cursorRow = cursorRow;
+        PrevFrame.cursorCol = cursorCol;
+        PrevFrame.echoMessage = _.echoMessage;
+        PrevFrame.modeLine = SelWin.renderModeLine;
+    }
     return 0;
 }
 
@@ -187,7 +314,7 @@ func redisplay(_) {
 // strings and sets st.pointRow / st.pointCol (relative, 0-based) when
 // the position "target" falls in this line (target < 0 to skip).
 // Leaves point at the start of the next line, or at eob.
-func layoutLogicalLine(st, textWidth, target) {
+func layoutLogicalLine(st, textWidth, target, logicalLine) {
     var lineStart = Editor.point();
     var lineEnd = Editor.lineEndPosition();
     var text = Editor.bufferSubstring(lineStart, lineEnd);
@@ -197,6 +324,8 @@ func layoutLogicalLine(st, textWidth, target) {
     var rowWidth = 0;
     var col = 0;
     var capacity = textWidth;
+    var rowStart = lineStart;
+    var rowLogicalCol = 0;
 
     var i = 0;
     while (i < n) {
@@ -221,9 +350,16 @@ func layoutLogicalLine(st, textWidth, target) {
             limit = capacity;
         }
         if (rowWidth + pieceW > limit && rowWidth > 0) {
+            Array.push(st.rowStarts, rowStart);
+            Array.push(st.rowEnds, lineStart + i);
+            Array.push(st.rowLogicalCols, rowLogicalCol);
+            Array.push(st.rowLineNos, logicalLine);
+            Array.push(st.rowScreenRows, Array.size(st.rows));
             Array.push(st.rows, padToWidth(rowText, capacity - 1) + "\\");
             rowText = "";
             rowWidth = 0;
+            rowStart = lineStart + i;
+            rowLogicalCol = col;
         }
 
         if (target >= 0 && lineStart + i == target) {
@@ -240,6 +376,11 @@ func layoutLogicalLine(st, textWidth, target) {
         st.pointRow = Array.size(st.rows);
         st.pointCol = rowWidth;
     }
+    Array.push(st.rowStarts, rowStart);
+    Array.push(st.rowEnds, lineEnd);
+    Array.push(st.rowLogicalCols, rowLogicalCol);
+    Array.push(st.rowLineNos, logicalLine);
+    Array.push(st.rowScreenRows, Array.size(st.rows));
     Array.push(st.rows, padToWidth(rowText, textWidth));
 
     // Advance past this line.
@@ -271,8 +412,25 @@ func renderWindow(w, isSel) {
     var textWidth = w.cols - hasDivider;
     var textRows = w.rows - 1;
 
-    // Clamp the window start to the point's logical line first.
-    var pointLine = countLinesBefore(wpoint);
+    // Reuse the previous visible/overscan line map when possible. A
+    // cursor crossing the viewport boundary then avoids a scan from
+    // point-min; large jumps still use the complete count once.
+    var pointLine = 0 - 1;
+    if (Dict.hasKey(w, "renderBufferName") &&
+        w.renderBufferName == Editor.bufferName() &&
+        w.renderTextTick == Buf.textTick) {
+        var cachedCount = Array.size(w.renderLineStarts);
+        for (ci in 0..cachedCount) {
+            if (wpoint >= w.renderLineStarts[ci] &&
+                wpoint <= w.renderLineEnds[ci]) {
+                pointLine = w.renderLineNos[ci];
+                break;
+            }
+        }
+    }
+    if (pointLine < 0) {
+        pointLine = countLinesBefore(wpoint);
+    }
     if (pointLine < w.startLine) {
         w.startLine = pointLine;
     }
@@ -280,16 +438,54 @@ func renderWindow(w, isSel) {
     // Lay out rows from the window start; scroll down until the
     // point's display row fits. (Wrapping means a logical line can
     // span several display rows, so this may take a few passes.)
-    var st = { rows: [], pointRow: 0 - 1, pointCol: 0 };
+    var st = {
+        rows: [], pointRow: 0 - 1, pointCol: 0,
+        lineStarts: [], lineEnds: [], lineRows: [], lineNos: [],
+        rowStarts: [], rowEnds: [], rowLogicalCols: [],
+        rowLineNos: [], rowScreenRows: []
+    };
     var guard = 0;
     while (guard < 50) {
         guard = guard + 1;
+        var anchor = 0 - 1;
+        var oldCount = Array.size(st.lineNos);
+        for (oi in 0..oldCount) {
+            if (st.lineNos[oi] == w.startLine) {
+                anchor = st.lineStarts[oi];
+                break;
+            }
+        }
+        if (anchor < 0 && Dict.hasKey(w, "renderBufferName") &&
+            w.renderBufferName == Editor.bufferName() &&
+            w.renderTextTick == Buf.textTick) {
+            var renderCount = Array.size(w.renderLineNos);
+            for (ri in 0..renderCount) {
+                if (w.renderLineNos[ri] == w.startLine) {
+                    anchor = w.renderLineStarts[ri];
+                    break;
+                }
+            }
+        }
         st.rows = [];
         st.pointRow = 0 - 1;
         st.pointCol = 0;
-        Editor.gotoChar(Editor.pointMin());
-        Editor.forwardLine(w.startLine);
+        st.lineStarts = [];
+        st.lineEnds = [];
+        st.lineRows = [];
+        st.lineNos = [];
+        st.rowStarts = [];
+        st.rowEnds = [];
+        st.rowLogicalCols = [];
+        st.rowLineNos = [];
+        st.rowScreenRows = [];
+        if (anchor >= Editor.pointMin()) {
+            Editor.gotoChar(anchor);
+        } else {
+            Editor.gotoChar(Editor.pointMin());
+            Editor.forwardLine(w.startLine);
+        }
         var more = 1;
+        var logicalLine = w.startLine;
         while (more == 1 && Array.size(st.rows) < textRows + 8) {
             var target = 0 - 1;
             var ls = Editor.point();
@@ -297,7 +493,12 @@ func renderWindow(w, isSel) {
             if (wpoint >= ls && wpoint <= le) {
                 target = wpoint;
             }
-            more = layoutLogicalLine(st, textWidth, target);
+            Array.push(st.lineStarts, ls);
+            Array.push(st.lineEnds, le);
+            Array.push(st.lineRows, Array.size(st.rows));
+            Array.push(st.lineNos, logicalLine);
+            more = layoutLogicalLine(st, textWidth, target, logicalLine);
+            logicalLine = logicalLine + 1;
         }
         if (st.pointRow >= 0 && st.pointRow < textRows) {
             break;
@@ -350,23 +551,27 @@ func renderWindow(w, isSel) {
     }
 
     // The window's mode line.
-    var name = Editor.bufferName();
-    var flags = "--";
-    if (Editor.bufferModifiedP() == 1) {
-        flags = "**";
-    }
-    var lineNo = countLinesBefore(wpoint) + 1;
-    var modeLine = "-" + flags + "- remacs: " + name + "   (" + Buf.mode + ")" + skkIndicator() + " L" + lineNo + " ";
-    modeLine = truncateToWidth(modeLine, w.cols);
-    var mlLen = stringWidth(modeLine);
-    while (mlLen < w.cols) {
-        modeLine = modeLine + "-";
-        mlLen = mlLen + 1;
-    }
-    // Reverse video in-band so the row diffs as one string.
-    var esc = String.chr(27);
+    // pointLine was already computed to clamp/scroll the window.
+    var lineNo = pointLine + 1;
+    var modeLine = makeModeLine(w, lineNo);
     Frame[w.top + w.rows - 2] = Frame[w.top + w.rows - 2] +
-        esc + "[7m" + modeLine + esc + "[0m";
+        modeLine;
+
+    if (isSel == 1) {
+        w.renderLineStarts = st.lineStarts;
+        w.renderLineEnds = st.lineEnds;
+        w.renderLineRows = st.lineRows;
+        w.renderLineNos = st.lineNos;
+        w.renderRowStarts = st.rowStarts;
+        w.renderRowEnds = st.rowEnds;
+        w.renderRowLogicalCols = st.rowLogicalCols;
+        w.renderRowLineNos = st.rowLineNos;
+        w.renderRowScreenRows = st.rowScreenRows;
+        w.renderTextWidth = textWidth;
+        w.renderModeLine = modeLine;
+        w.renderBufferName = Editor.bufferName();
+        w.renderTextTick = Buf.textTick;
+    }
 
     var cr = w.top;
     var cc = w.left;

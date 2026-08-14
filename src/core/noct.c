@@ -48,6 +48,11 @@ noct_set_default_config(
 	config->gc_tenure_size         = RT_GC_DEFAULT_TENURE_SIZE;
 	config->gc_lop_threshold       = RT_GC_DEFAULT_LOP_THRESHOLD;
 	config->gc_promotion_threshold = RT_GC_DEFAULT_PROMOTION_THRESHOLD;
+#if defined(NOCT_USE_MULTITHREAD)
+	config->object_model           = NOCT_OBJECT_MODEL_MULTI;
+#else
+	config->object_model           = NOCT_OBJECT_MODEL_SINGLE;
+#endif
 }
 
 NOCT_DLL

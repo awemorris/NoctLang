@@ -319,6 +319,21 @@ main(int argc, char *argv[])
 	}
 
 	noct_set_default_config(&config);
+	{
+		const char *model = getenv("NOCT_BENCH_OBJECT_MODEL");
+		if (model != NULL) {
+			if (strcmp(model, "0") == 0)
+				config.object_model = NOCT_OBJECT_MODEL_SINGLE;
+			else if (strcmp(model, "1") == 0)
+				config.object_model = NOCT_OBJECT_MODEL_MULTI;
+			else {
+				fprintf(stderr,
+					"NOCT_BENCH_OBJECT_MODEL must be 0 or 1\n");
+				free(source);
+				return 2;
+			}
+		}
+	}
 	config.jit_enable = true;
 	config.optimize_level = 2;
 	config.accel_enable = true;

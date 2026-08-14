@@ -38,6 +38,7 @@ func bufMake(name) {
         cacheByte: 0,     // logical byte offset of that char
         allAscii: 1,      // 1 while no multibyte text has been inserted
         modified: 0,      // 1 after an unsaved change
+        textTick: 0,      // incremented for every text mutation
         fileName: "",     // visited file, or ""
         markers: [],      // live markers, adjusted on every edit
         mark: 0,          // the mark marker, created on first set
@@ -506,6 +507,7 @@ func insert(text) {
         Buf.allAscii = 0;
     }
     Buf.modified = 1;
+    Buf.textTick = Buf.textTick + 1;
 
     bufEnsureGap(nbytes);
     var at: int = Buf.point;
@@ -536,6 +538,7 @@ func deleteRegion(start: int, end: int) {
     var be: int = bufCharToByte(end - 1);
 
     Buf.modified = 1;
+    Buf.textTick = Buf.textTick + 1;
 
     // Deleting is just widening the gap over the range.
     bufMoveGap(bs);

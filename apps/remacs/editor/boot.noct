@@ -133,13 +133,17 @@ func main(arg) {
                 // precedes.
                 ed.hasPrefix = 0;
                 ed.prefixArg = 0;
+
+                // Commands such as cursor motion must redisplay immediately.
+                // The 20 ms grace below exists only to bridge chunks of a
+                // batchable paste; applying it to every command is visible as
+                // keyboard latency on slow machines.
+                break;
             }
 
             // Drain everything already queued (the rest of this chunk),
-            // then wait briefly to bridge the gap to the next chunk of
-            // a paste. A paste keeps arriving within this window; a
-            // human keystroke does not, so typing still redraws
-            // promptly (within the grace).
+            // then wait briefly to bridge the gap to the next chunk of a
+            // paste. This path is reached only after a batchable run.
             var nk = Term.readKey(0);
             if (nk < 0) {
                 nk = Term.readKey(20);

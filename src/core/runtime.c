@@ -19,11 +19,8 @@
 #include "jit.h"
 #include "gc.h"
 #include "objectmodel.h"
+#include "objectmodel-backend.h"
 #include "atomic.h"
-
-#if defined(NOCT_USE_MULTITHREAD)
-#include "atomic.h"
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +33,26 @@
 #define NOT_IMPLEMENTED		0
 #define NEVER_COME_HERE		0
 #define PINNED_VAR_NOT_FOUND	0
+
+static INLINE bool
+rt_use_mt_object_model(
+	struct rt_env *env)
+{
+#if defined(NOCT_USE_MULTITHREAD)
+	return env->vm->config.object_model == NOCT_OBJECT_MODEL_MULTI;
+#else
+	UNUSED_PARAMETER(env);
+	return false;
+#endif
+}
+
+#if defined(NOCT_USE_MULTITHREAD)
+#define OM_DISPATCH(env, name, ...) \
+	(rt_use_mt_object_model(env) ? \
+	 om_mt_##name(env, __VA_ARGS__) : om_st_##name(env, __VA_ARGS__))
+#else
+#define OM_DISPATCH(env, name, ...) om_st_##name(env, __VA_ARGS__)
+#endif
 
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
@@ -128,6 +145,9 @@ rt_create_vm(
 	struct rt_env **default_env,
 	struct rt_config *config)
 {
+	*vm = NULL;
+	*default_env = NULL;
+
 	/* Allocate a struct rt_vm. */
 	*vm = noct_malloc(sizeof(struct rt_vm));
 	if (*vm == NULL) {
@@ -141,6 +161,20 @@ rt_create_vm(
 		memcpy(&(*vm)->config, config, sizeof(struct rt_config));
 	else
 		noct_set_default_config(&(*vm)->config);
+
+	if ((*vm)->config.object_model != NOCT_OBJECT_MODEL_SINGLE &&
+	    (*vm)->config.object_model != NOCT_OBJECT_MODEL_MULTI) {
+		noct_free(*vm);
+		*vm = NULL;
+		return false;
+	}
+#if !defined(NOCT_USE_MULTITHREAD)
+	if ((*vm)->config.object_model == NOCT_OBJECT_MODEL_MULTI) {
+		noct_free(*vm);
+		*vm = NULL;
+		return false;
+	}
+#endif
 
 	/* Allocate a struct rt_env. */
 	*default_env = noct_malloc(sizeof(struct rt_env));
@@ -368,6 +402,12 @@ rt_create_thread_env(
 	struct rt_env *env;
 
 	vm = prev_env->vm;
+	if (vm->config.object_model != NOCT_OBJECT_MODEL_MULTI) {
+		*new_env = NULL;
+		rt_error(prev_env,
+			 "Thread.createThread() is unavailable with the single-thread object model.");
+		return false;
+	}
 
 	/* Try to reuse a detached env. */
 	atomic_spin_lock(&vm->env_free_lock);
@@ -2237,7 +2277,7 @@ rt_make_empty_array(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_make_array(env, val))
+	if (!OM_DISPATCH(env, make_array, val))
 		return false;
 
 	return true;
@@ -2253,7 +2293,7 @@ rt_get_array_size(
 	size_t *size)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_get_array_size(env, arr, size))
+	if (!OM_DISPATCH(env, get_array_size, arr, size))
 		return false;
 
 	return true;
@@ -2270,7 +2310,7 @@ rt_get_array_elem(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_read_array(env, arr, index, val))
+	if (!OM_DISPATCH(env, read_array, arr, index, val))
 		return false;
 
 	return true;
@@ -2287,7 +2327,7 @@ rt_set_array_elem(
 	NoctValue *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_write_array(env, arr, index, val))
+	if (!OM_DISPATCH(env, write_array, arr, index, val))
 		return false;
 
 	return true;
@@ -2303,7 +2343,7 @@ rt_resize_array(
 	size_t size)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_resize_array(env, arr, size))
+	if (!OM_DISPATCH(env, resize_array, arr, size))
 		return false;
 
 	return true;
@@ -2319,7 +2359,7 @@ rt_make_array_copy(
 	struct rt_value *src)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_copy_array(env, dst, src))
+	if (!OM_DISPATCH(env, copy_array, dst, src))
 		return false;
 
 	return true;
@@ -2334,7 +2374,7 @@ rt_make_empty_dict(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_make_dict(env, val))
+	if (!OM_DISPATCH(env, make_dict, val))
 		return false;
 
 	return true;
@@ -2350,7 +2390,7 @@ rt_get_dict_size(
 	size_t *size)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_get_dict_size(env, dict, size))
+	if (!OM_DISPATCH(env, get_dict_size, dict, size))
 		return false;
 
 	return true;
@@ -2366,7 +2406,7 @@ rt_get_dict_alloc_size(
 	size_t *size)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_get_dict_alloc_size(env, dict, size))
+	if (!OM_DISPATCH(env, get_dict_alloc_size, dict, size))
 		return false;
 
 	return true;
@@ -2383,7 +2423,7 @@ rt_check_dict_key(
 	bool *ret)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_check_dict_key(env, dict, key, ret))
+	if (!OM_DISPATCH(env, check_dict_key, dict, key, ret))
 		return false;
 
 	return true;
@@ -2412,7 +2452,7 @@ rt_check_dict_key_cstr(
 		return false;
 
 	/* Delegate to the object model implementation. */
-	if (!om_check_dict_key(env, dict, &key_val, ret))
+	if (!OM_DISPATCH(env, check_dict_key, dict, &key_val, ret))
 		return false;
 		
 	if (env->frame != NULL)
@@ -2435,7 +2475,7 @@ rt_get_dict_by_index(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_read_dict_index(env, dict, index, key, val))
+	if (!OM_DISPATCH(env, read_dict_index, dict, index, key, val))
 		return false;
 
 	return true;
@@ -2452,7 +2492,7 @@ rt_get_dict_elem(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_read_dict(env, dict, key, val))
+	if (!OM_DISPATCH(env, read_dict, dict, key, val))
 		return false;
 
 	return true;	
@@ -2474,7 +2514,7 @@ rt_get_dict_elem_cstr(
 	len = strlen(key) + 1;
 
 	/* Delegate to the object model implementation. */
-	if (!om_read_dict_with_hash(env,
+	if (!OM_DISPATCH(env, read_dict_with_hash,
 				    dict,
 				    key,
 				    len,
@@ -2498,7 +2538,7 @@ rt_get_dict_elem_with_hash(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_read_dict_with_hash(env, dict, key, len, hash, val))
+	if (!OM_DISPATCH(env, read_dict_with_hash, dict, key, len, hash, val))
 		return false;
 
 	return true;
@@ -2515,7 +2555,7 @@ rt_set_dict_elem(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_write_dict(env, dict, key, val))
+	if (!OM_DISPATCH(env, write_dict, dict, key, val))
 		return false;
 		
 	return true;
@@ -2537,7 +2577,7 @@ rt_set_dict_elem_cstr(
 	len = strlen(key) + 1;
 
 	/* Delegate to the object model implementation. */
-	if (!om_write_dict_with_hash(env,
+	if (!OM_DISPATCH(env, write_dict_with_hash,
 				     dict,
 				     key,
 				     len,
@@ -2561,7 +2601,7 @@ rt_set_dict_elem_with_hash(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_write_dict_with_hash(env,
+	if (!OM_DISPATCH(env, write_dict_with_hash,
 				     dict,
 				     key,
 				     len,
@@ -2582,7 +2622,7 @@ rt_remove_dict_elem(
 	struct rt_value *key)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_erase_dict_entry(env, dict, key))
+	if (!OM_DISPATCH(env, erase_dict_entry, dict, key))
 		return false;
 
 	return true;
@@ -2610,7 +2650,7 @@ rt_remove_dict_elem_cstr(
 		return false;
 	
 	/* Delegate to the object model implementation. */
-	if (!om_erase_dict_entry(env, dict, &key_val)) {
+	if (!OM_DISPATCH(env, erase_dict_entry, dict, &key_val)) {
 		rt_unpin_global(env, &key_val);
 		return false;
 	}
@@ -2633,7 +2673,7 @@ rt_make_dict_copy(
 	struct rt_value *src)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_copy_dict(env, dst, src))
+	if (!OM_DISPATCH(env, copy_dict, dst, src))
 		return false;
 
 	return true;
@@ -2650,10 +2690,36 @@ rt_merge_dict(
 	struct rt_value *src2)
 {
 	/* Delegate to the object model implementation. */
-	if (!om_merge_dict(env, dst, src1, src2))
+	if (!OM_DISPATCH(env, merge_dict, dst, src1, src2))
 		return false;
 
 	return true;
+}
+
+static struct rt_dict *
+rt_get_latest_dict(
+	struct rt_env *env,
+	struct rt_value *dict)
+{
+	struct rt_dict *real_dict;
+	struct rt_dict *next;
+
+#if defined(NOCT_USE_MULTITHREAD)
+	if (rt_use_mt_object_model(env)) {
+		real_dict = atomic_load_acquire_ptr((void **)&dict->val.dict);
+		while ((next = atomic_load_acquire_ptr(
+				(void **)&real_dict->newer)) != NULL)
+			real_dict = next;
+		return real_dict;
+	}
+#else
+	UNUSED_PARAMETER(env);
+#endif
+
+	real_dict = dict->val.dict;
+	while ((next = real_dict->newer) != NULL)
+		real_dict = next;
+	return real_dict;
 }
 
 /*
@@ -2668,11 +2734,7 @@ rt_set_dict_native_pointer(
 {
 	struct rt_dict *real_dict;
 
-	UNUSED_PARAMETER(env);
-
-	real_dict = dict->val.dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
+	real_dict = rt_get_latest_dict(env, dict);
 
 	real_dict->native_pointer = native_pointer;
 	real_dict->native_finalizer = native_finalizer;
@@ -2692,11 +2754,7 @@ rt_get_dict_native_pointer(
 {
 	struct rt_dict *real_dict;
 
-	UNUSED_PARAMETER(env);
-
-	real_dict = dict->val.dict;
-	while (real_dict->newer != NULL)
-		real_dict = real_dict->newer;
+	real_dict = rt_get_latest_dict(env, dict);
 
 	*native_pointer = real_dict->native_pointer;
 	*native_finalizer = real_dict->native_finalizer;
@@ -3241,15 +3299,25 @@ rt_make_packed_copy(
 #else
 
 #define ACQUIRE_GLOBAL()									\
-	while (1) {										\
-		int old = atomic_fetch_add_acquire_int(&env->vm->global_var_counter, 1);	\
-		if (old == 0)									\
-			break;									\
-		atomic_fetch_sub_release_int(&env->vm->global_var_counter, 1);			\
-	}
+	do {										\
+		if (rt_use_mt_object_model(env)) {					\
+			while (1) {							\
+				int old = atomic_fetch_add_acquire_int(			\
+					&env->vm->global_var_counter, 1);		\
+				if (old == 0)						\
+					break;						\
+				atomic_fetch_sub_release_int(				\
+					&env->vm->global_var_counter, 1);		\
+			}								\
+		}								\
+	} while (0)
 
 #define RELEASE_GLOBAL()									\
-	atomic_fetch_sub_release_int(&env->vm->global_var_counter, 1);
+	do {										\
+		if (rt_use_mt_object_model(env))					\
+			atomic_fetch_sub_release_int(					\
+				&env->vm->global_var_counter, 1);			\
+	} while (0)
 
 #endif
 

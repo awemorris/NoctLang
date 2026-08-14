@@ -117,6 +117,9 @@ struct rt_value {
 #define NOCT_ACCEL_BACKEND_OPENGL  2
 #define NOCT_ACCEL_BACKEND_DX12    3
 
+#define NOCT_OBJECT_MODEL_SINGLE   0
+#define NOCT_OBJECT_MODEL_MULTI    1
+
 struct rt_config {
 	/* Enable JIT. */
 	bool jit_enable;
@@ -168,7 +171,11 @@ struct rt_config {
 	/* GC tenure-promotion threshold. */
 	size_t gc_promotion_threshold;
 
-	uint64_t reserved[51];
+	/* Object model selected when the VM is created. */
+	uint32_t object_model;
+	uint32_t object_model_reserved;
+
+	uint64_t reserved[50];
 };
 typedef struct rt_config NoctConfig;
 

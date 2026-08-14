@@ -12,6 +12,15 @@ esac
 noct=${NOCT:-"$build_dir/noct"}
 cc=${CC:-cc}
 tmp=${TMPDIR:-/tmp}/noct-mmap-test.$$
+system_libs="-lm"
+case "$(uname -s)" in
+Linux) system_libs="$system_libs -lutil -pthread" ;;
+Darwin) system_libs="$system_libs -pthread" ;;
+esac
+if command -v pkg-config >/dev/null 2>&1 &&
+   pkg-config --exists egl glesv2; then
+    system_libs="$system_libs $(pkg-config --libs egl glesv2)"
+fi
 
 cleanup()
 {
@@ -68,8 +77,9 @@ expect_error 'negative offset' '-j0' mmap-negative.noct 'must not be negative'
 expect_error 'range past EOF' '-j0' mmap-past-eof.noct 'exceeds the file size'
 expect_error 'ordinary Packed munmap' '-j0' mmap-ordinary.noct 'Packed is not a file mapping.'
 
+# shellcheck disable=SC2086
 "$cc" -I"$root/include" "$case_dir/packed-finalizer-test.c" \
-    "$build_dir/libnoct.a" -lm -o "$tmp/packed-finalizer-test"
+    "$build_dir/libnoct.a" $system_libs -o "$tmp/packed-finalizer-test"
 "$tmp/packed-finalizer-test"
 
 echo 'All FileUtil mmap tests passed.'

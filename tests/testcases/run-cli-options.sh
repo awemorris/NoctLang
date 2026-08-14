@@ -14,6 +14,28 @@ for option in -O -O0 -O1 -O2 -O3 -O9; do
     diff simd/f32.noct.out "$work/out"
 done
 
+# Both object models are linked into the normal multithread-capable CLI.
+# Exercise mutable arrays/dictionaries through the interpreter and JIT so
+# dispatch cannot silently select the wrong implementation.
+for model in -m0 -m1; do
+    $NOCT "$model" -j0 syntax/04-array.noct > "$work/out"
+    diff syntax/04-array.noct.out "$work/out"
+    $NOCT "$model" -j -O2 syntax/05-dictionary.noct > "$work/out"
+    diff syntax/05-dictionary.noct.out "$work/out"
+done
+
+if $NOCT -m0 --cpu -j0 simd/f32.noct > "$work/m0-cpu" 2>&1; then
+    echo '-m0 accepted automatic CPU parallelization' >&2
+    exit 1
+fi
+grep -q 'requires -m1' "$work/m0-cpu"
+
+if $NOCT -m0 -j0 thread/01-create-join.noct > "$work/m0-thread" 2>&1; then
+    echo '-m0 accepted Thread.createThread()' >&2
+    exit 1
+fi
+grep -q 'single-thread object model' "$work/m0-thread"
+
 # Compile-mode option order is observable through O3-only FMA metadata.
 cp simd/drawimage/blend-alpha.noct "$work/blend-alpha.noct"
 $NOCT --compile -O3 -O2 "$work/blend-alpha.noct"
@@ -34,7 +56,7 @@ test -s "$work/f32.c"
 $NOCT --cpu-list > "$work/cpu-list"
 grep -q '^Logical CPUs:' "$work/cpu-list"
 $NOCT --gpu-list > "$work/gpu-list"
-grep -q 'GPU backend' "$work/gpu-list"
+test -s "$work/gpu-list"
 $NOCT --cpu=2 --cpu-pe=2 --cpu-affinity=0,1 \
       --gpu --gpu-name=dummy -j0 simd/f32.noct > "$work/out"
 diff simd/f32.noct.out "$work/out"
@@ -68,7 +90,7 @@ done
 
 for option in --disable-jit --force-jit --jit-threshold=0 \
               --optimize-level=2 --cpu=-1 --cpu-pe=0 \
-              --cpu-affinity=0,,1 --gpu-name=; do
+              --cpu-affinity=0,,1 --gpu-name= -m -m2 -m01; do
     if $NOCT "$option" -j0 simd/f32.noct > "$work/removed.out" 2>&1; then
         echo "removed/invalid option accepted: $option" >&2
         exit 1

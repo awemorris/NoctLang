@@ -604,7 +604,6 @@ cfunc_Thread_createThread(
 	 */
 	if (!noct_create_thread_env(env, &start->env)) {
 		noct_free(start);
-		noct_error(env, N_TR("Cannot create a thread env."));
 		return false;
 	}
 

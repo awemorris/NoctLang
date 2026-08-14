@@ -123,7 +123,8 @@ register_apis(
 	if (!noct_register_api_file(env))
 		return false;
 #if defined(NOCT_USE_MULTITHREAD)
-	if (!noct_register_api_thread(env))
+	if (vm_config.object_model == NOCT_OBJECT_MODEL_MULTI &&
+	    !noct_register_api_thread(env))
 		return false;
 #endif
 	if (!noct_register_api_term(env))
@@ -190,6 +191,19 @@ main(
 	{
 		const char *opt_env;
 		noct_set_default_config(&vm_config);
+		vm_config.object_model = NOCT_OBJECT_MODEL_SINGLE;
+		opt_env = getenv("REMACS_OBJECT_MODEL");
+		if (opt_env != NULL) {
+			if (strcmp(opt_env, "0") == 0)
+				vm_config.object_model = NOCT_OBJECT_MODEL_SINGLE;
+			else if (strcmp(opt_env, "1") == 0)
+				vm_config.object_model = NOCT_OBJECT_MODEL_MULTI;
+			else {
+				fprintf(stderr,
+					"remacs: REMACS_OBJECT_MODEL must be 0 or 1\n");
+				return 1;
+			}
+		}
 		opt_env = getenv("REMACS_OPT_LEVEL");
 		if (opt_env != NULL)
 			vm_config.optimize_level = atoi(opt_env);

@@ -21,6 +21,7 @@ Commands:
                 OpenGL ES and Vulkan __accel calls. SAMPLES is configurable.
   packed-unroll Compare scalar Packed factor-4 unrolling with the same binary
                 running the pass disabled. BUILD_DIR and SAMPLES are configurable.
+  objectmodel   Compare mutable array/dict operations under -m0 and -m1.
   help          Show this command list.
 
 The benchmark scripts honor NOCT.  The SIMD runner also honors RUNS,
@@ -42,6 +43,7 @@ simd-report)    exec sh ./report-simd-bench.sh "$@" ;;
 drawimage-alpha) exec sh ./drawimage/run-alpha.sh "$@" ;;
 multi-doall)     exec sh ./run-multi-doall-bench.sh "$@" ;;
 packed-unroll)   exec sh ./run-packed-unroll-bench.sh "$@" ;;
+objectmodel)     exec sh ./run-objectmodel-bench.sh "$@" ;;
 *)
     echo "Unknown benchmark command: $command" >&2
     echo "Run '$0 help' for the command list." >&2

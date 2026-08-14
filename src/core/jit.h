@@ -637,6 +637,20 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 				return jit_ploop_reject(ctx, "malformed-region");
 			size = 5;
 			break;
+		case OP_MATERIALIZE_TYPE:
+			/* A fixed-type tag materialization does not read or change
+			 * the cached payload. Keep it in the packed-loop region. */
+			if (p + 4 > ctx->func->bytecode_size)
+				return jit_ploop_reject(ctx, "malformed-region");
+			dst = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+			if (dst >= ctx->func->tmpvar_size ||
+			    (ctx->func->bytecode[p + 3] != NOCT_VALUE_INT &&
+			     ctx->func->bytecode[p + 3] != NOCT_VALUE_LONG &&
+			     ctx->func->bytecode[p + 3] != NOCT_VALUE_FLOAT &&
+			     ctx->func->bytecode[p + 3] != NOCT_VALUE_DOUBLE))
+				return jit_ploop_reject(ctx, "malformed-region");
+			size = 4;
+			break;
 		case OP_ASSIGN:
 			if (p + 5 > ctx->func->bytecode_size)
 				return jit_ploop_reject(ctx, "malformed-region");

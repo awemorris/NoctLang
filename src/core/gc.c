@@ -75,8 +75,16 @@
  *    stop-the-world machinery.
  */
 #if defined(NOCT_USE_MULTITHREAD)
-#define HEAP_LOCK(env)		atomic_spin_lock(&(env)->vm->heap_lock)
-#define HEAP_UNLOCK(env)	atomic_spin_unlock(&(env)->vm->heap_lock)
+#define HEAP_LOCK(env)							\
+	do {								\
+		if ((env)->vm->config.object_model == NOCT_OBJECT_MODEL_MULTI) \
+			atomic_spin_lock(&(env)->vm->heap_lock);		\
+	} while (0)
+#define HEAP_UNLOCK(env)							\
+	do {								\
+		if ((env)->vm->config.object_model == NOCT_OBJECT_MODEL_MULTI) \
+			atomic_spin_unlock(&(env)->vm->heap_lock);		\
+	} while (0)
 #else
 #define HEAP_LOCK(env)		do {} while (0)
 #define HEAP_UNLOCK(env)	do {} while (0)
@@ -560,6 +568,7 @@ rt_gc_alloc_array(
 #if defined(NOCT_USE_MULTITHREAD)
 		arr->shared = 0;
 		arr->write_lock = 0;
+		arr->seqlock = 0;
 		arr->creator = env;
 #endif
 
@@ -625,6 +634,7 @@ rt_gc_alloc_array_graduate(
 #if defined(NOCT_USE_MULTITHREAD)
 		arr->shared = 0;
 		arr->write_lock = 0;
+		arr->seqlock = 0;
 		arr->creator = env;
 #endif
 
@@ -717,6 +727,7 @@ rt_gc_alloc_array_tenure(
 #if defined(NOCT_USE_MULTITHREAD)
 		arr->shared = 0;
 		arr->write_lock = 0;
+		arr->seqlock = 0;
 		arr->creator = env;
 #endif
 
@@ -816,6 +827,7 @@ rt_gc_alloc_dict(
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
+		dict->seqlock = 0;
 		dict->creator = env;
 #endif
 
@@ -889,6 +901,7 @@ rt_gc_alloc_dict_graduate(
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
+		dict->seqlock = 0;
 		dict->creator = env;
 #endif
 
@@ -989,6 +1002,7 @@ rt_gc_alloc_dict_tenure(
 #if defined(NOCT_USE_MULTITHREAD)
 		dict->shared = 0;
 		dict->write_lock = 0;
+		dict->seqlock = 0;
 		dict->creator = env;
 #endif
 

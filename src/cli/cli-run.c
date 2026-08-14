@@ -228,6 +228,26 @@ parse_options(
 			file_arg++;
 			continue;
 		}
+		if (strcmp(argv[i], "-m0") == 0) {
+			config.object_model = NOCT_OBJECT_MODEL_SINGLE;
+			file_arg++;
+			continue;
+		}
+		if (strcmp(argv[i], "-m1") == 0) {
+#if !defined(NOCT_USE_MULTITHREAD)
+			wide_printf(N_TR("The multi-thread object model is not available in this build.\n"));
+			return false;
+#else
+			config.object_model = NOCT_OBJECT_MODEL_MULTI;
+			file_arg++;
+			continue;
+#endif
+		}
+		if (strncmp(argv[i], "-m", 2) == 0) {
+			wide_printf(N_TR("Invalid object-model option %s; use -m0 or -m1.\n"),
+				    argv[i]);
+			return false;
+		}
 		if (strcmp(argv[i], "--cpu") == 0) {
 			config.auto_parallel = 1;
 			file_arg++;
@@ -405,6 +425,12 @@ parse_options(
 		}
 
 		wide_printf(N_TR("Unknown option %s.\n"), argv[i]);
+		return false;
+	}
+
+	if (config.object_model == NOCT_OBJECT_MODEL_SINGLE &&
+	    config.auto_parallel > 0) {
+		wide_printf(N_TR("CPU automatic parallelization requires -m1.\n"));
 		return false;
 	}
 
