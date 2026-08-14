@@ -1097,23 +1097,6 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 }
 
 static bool
-jit_x86_64_add_packed_base(struct jit_context *ctx, uint16_t base, int scale)
-{
-	int i;
-
-	for (i = 0; i < 3; i++) {
-		if (ctx->packed_loop_base_tmp[i] == (int)base)
-			return ctx->packed_loop_base_scale[i] == scale;
-		if (ctx->packed_loop_base_tmp[i] < 0) {
-			ctx->packed_loop_base_tmp[i] = (int)base;
-			ctx->packed_loop_base_scale[i] = scale;
-			return true;
-		}
-	}
-	return false;
-}
-
-static bool
 jit_x86_64_is_packed_index_alias(struct jit_context *ctx, int tmp)
 {
 	int i;
@@ -1356,208 +1339,6 @@ jit_x86_64_gpr_flush(struct jit_context *ctx)
 	return true;
 }
 
-/*
- * Prove the initial scalar Packed-loop grammar before reserving rbx/rsi/rdi.
- * The accepted operations are all inline and use only rax/rcx/rdx/xmm0 as
- * scratch.  Any control flow, helper call, unusual index expression or fourth
- * base disables the hint for this region only.
- */
-static bool
-jit_x86_64_scan_packed_loop(struct jit_context *ctx)
-{
-	uint32_t p;
-	uint32_t body_lpc;
-	uint32_t size;
-	uint16_t base;
-	uint16_t ofs;
-	uint16_t dst;
-	uint16_t src1;
-	uint16_t src2;
-	uint16_t value;
-	uint8_t op;
-	int scale;
-	int inc_count;
-
-	ctx->packed_loop_base_tmp[0] = -1;
-	ctx->packed_loop_base_tmp[1] = -1;
-	ctx->packed_loop_base_tmp[2] = -1;
-	ctx->packed_loop_base_scale[0] = 0;
-	ctx->packed_loop_base_scale[1] = 0;
-	ctx->packed_loop_base_scale[2] = 0;
-	ctx->packed_loop_index_alias_count = 1;
-	ctx->packed_loop_index_alias[0] =
-		(uint16_t)ctx->packed_loop_index_tmp;
-	ctx->packed_loop_base_alias_count = 0;
-	body_lpc = ctx->lpc;
-	p = body_lpc;
-	inc_count = 0;
-	while (p < ctx->func->bytecode_size) {
-		op = ctx->func->bytecode[p];
-		if (getenv("NOCT_JIT_REGCACHE_SCAN_DEBUG") != NULL)
-			fprintf(stderr, "noct-jit-regcache-scan: lpc=%u op=%u\n",
-				(unsigned)p, (unsigned)op);
-		size = 0;
-		base = 0xffffu;
-		scale = 0;
-		switch (op) {
-		case OP_LINEINFO:
-			if (p + 5 > ctx->func->bytecode_size)
-				return false;
-			size = 5;
-			break;
-		case OP_ASSIGN:
-			if (p + 5 > ctx->func->bytecode_size)
-				return false;
-			size = 5;
-			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
-			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
-			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
-			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
-				return false;
-			if (jit_x86_64_is_packed_index_alias(ctx, src1)) {
-				if (!jit_x86_64_add_packed_index_alias(ctx, dst))
-					return false;
-			} else {
-				jit_x86_64_remove_packed_index_alias(ctx, dst);
-			}
-			if (!jit_x86_64_set_packed_base_alias(ctx, dst, src1))
-				return false;
-			break;
-		case OP_ICONST:
-			if (p + 7 > ctx->func->bytecode_size)
-				return false;
-			size = 7;
-			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
-			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
-			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
-				return false;
-			jit_x86_64_remove_packed_index_alias(ctx, dst);
-			jit_x86_64_remove_packed_base_alias(ctx, dst);
-			break;
-		case OP_PLOAD8U:
-		case OP_PLOAD8S:
-		case OP_PLOAD16U:
-		case OP_PLOAD16S:
-		case OP_PLOAD32:
-			if (p + 7 > ctx->func->bytecode_size)
-				return false;
-			size = 7;
-			base = (uint16_t)jit_x86_64_resolve_packed_base(ctx,
-				jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]));
-			ofs = jit_x86_64_read_u16(&ctx->func->bytecode[p + 5]);
-			if (!jit_x86_64_is_packed_index_alias(ctx, ofs)) {
-				if (getenv("NOCT_JIT_REGCACHE_SCAN_DEBUG") != NULL)
-					fprintf(stderr,
-						"noct-jit-regcache-scan: indexed access base=%u ofs=%u loop-index=%d\n",
-						(unsigned)base, (unsigned)ofs,
-						ctx->packed_loop_index_tmp);
-				return false;
-			}
-			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
-			jit_x86_64_remove_packed_index_alias(ctx, dst);
-			jit_x86_64_remove_packed_base_alias(ctx, dst);
-			scale = op == OP_PLOAD32 ? 4 :
-				op == OP_PLOAD16U || op == OP_PLOAD16S ? 2 : 1;
-			break;
-		case OP_PSTORE8:
-		case OP_PSTORE16:
-		case OP_PSTORE32:
-			if (p + 7 > ctx->func->bytecode_size)
-				return false;
-			size = 7;
-			base = (uint16_t)jit_x86_64_resolve_packed_base(ctx,
-				jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]));
-			ofs = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
-			if (!jit_x86_64_is_packed_index_alias(ctx, ofs)) {
-				if (getenv("NOCT_JIT_REGCACHE_SCAN_DEBUG") != NULL)
-					fprintf(stderr,
-						"noct-jit-regcache-scan: indexed store base=%u ofs=%u loop-index=%d\n",
-						(unsigned)base, (unsigned)ofs,
-						ctx->packed_loop_index_tmp);
-				return false;
-			}
-			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 5]);
-			if (jit_x86_64_is_packed_index_alias(ctx, src1))
-				return false;
-			scale = op == OP_PSTORE32 ? 4 :
-				op == OP_PSTORE16 ? 2 : 1;
-			break;
-		case OP_IADD:
-		case OP_ISUB:
-		case OP_IMUL:
-		case OP_IDIV:
-		case OP_IMOD:
-		case OP_IAND:
-		case OP_IOR:
-		case OP_IXOR:
-		case OP_ILT:
-		case OP_ILTE:
-		case OP_IGT:
-		case OP_IGTE:
-		case OP_IDIV_CHECKED:
-		case OP_IMOD_CHECKED:
-			if (p + 7 > ctx->func->bytecode_size)
-				return false;
-			size = 7;
-			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
-			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
-			src2 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 5]);
-			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
-			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
-				return false;
-			if (jit_x86_64_is_packed_index_alias(ctx, src1) ||
-			    jit_x86_64_is_packed_index_alias(ctx, src2))
-				return false;
-			jit_x86_64_remove_packed_index_alias(ctx, dst);
-			jit_x86_64_remove_packed_base_alias(ctx, dst);
-			break;
-		case OP_ISHL:
-		case OP_ISHR:
-			if (p + 6 > ctx->func->bytecode_size)
-				return false;
-			size = 6;
-			dst = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
-			src1 = jit_x86_64_read_u16(&ctx->func->bytecode[p + 3]);
-			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
-			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
-				return false;
-			if (jit_x86_64_is_packed_index_alias(ctx, src1))
-				return false;
-			jit_x86_64_remove_packed_index_alias(ctx, dst);
-			jit_x86_64_remove_packed_base_alias(ctx, dst);
-			break;
-		case OP_INC:
-			if (p + 4 > ctx->func->bytecode_size ||
-			    jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]) !=
-				(uint16_t)ctx->packed_loop_index_tmp ||
-			    ctx->func->bytecode[p + 3] != 1)
-				return false;
-			inc_count++;
-			size = 4;
-			break;
-		case OP_SUBJNZ:
-			if (p + 8 > ctx->func->bytecode_size)
-				return false;
-			value = jit_x86_64_read_u16(&ctx->func->bytecode[p + 1]);
-			return value ==
-				(uint16_t)ctx->packed_loop_remaining_tmp &&
-				ctx->func->bytecode[p + 3] == 1 &&
-				jit_x86_64_read_u32(&ctx->func->bytecode[p + 4]) ==
-				body_lpc && inc_count == 1 &&
-				ctx->packed_loop_base_tmp[0] >= 0;
-		default:
-			return false;
-		}
-		if (p + size > ctx->func->bytecode_size)
-			return false;
-		if (base != 0xffffu &&
-		    !jit_x86_64_add_packed_base(ctx, base, scale))
-			return false;
-		p += size;
-	}
-	return false;
-}
-
 static INLINE bool
 jit_visit_x86_64_ploop_hint_op(struct jit_context *ctx)
 {
@@ -1569,12 +1350,14 @@ jit_visit_x86_64_ploop_hint_op(struct jit_context *ctx)
 
 	if (!jit_visit_ploop_hint_op(ctx))
 		return false;
+	if (!jit_context_init_regcache(ctx))
+		return false;
 	ctx->packed_loop_hint_active =
 		getenv("NOCT_JIT_REGCACHE_DISABLE") == NULL &&
 		(ctx->packed_loop_flags & (PLOOP_TYPED_INT |
 		 PLOOP_ALLOW_REGCACHE | PLOOP_HAS_CONTROL)) ==
 		(PLOOP_TYPED_INT | PLOOP_ALLOW_REGCACHE) &&
-		jit_x86_64_scan_packed_loop(ctx);
+		jit_scan_packed_loop(ctx, false);
 	if (ctx->packed_loop_hint_active) {
 		/* Rebuild aliases in bytecode order while visitors emit the region. */
 		ctx->packed_loop_index_alias_count = 1;
@@ -1584,14 +1367,14 @@ jit_visit_x86_64_ploop_hint_op(struct jit_context *ctx)
 	}
 	if (getenv("NOCT_JIT_REGCACHE_DEBUG") != NULL)
 		fprintf(stderr,
-			"noct-jit-regcache: func=%s hint lanes=%d flags=0x%x accepted=%d\n",
+			"noct-jit-regcache: func=%s hint lanes=%d flags=0x%x accepted=%d reason=%s\n",
 			ctx->func->name != NULL ? ctx->func->name : "?",
 			ctx->packed_loop_lanes, ctx->packed_loop_flags,
-			ctx->packed_loop_hint_active ? 1 : 0);
+			ctx->packed_loop_hint_active ? 1 : 0,
+			ctx->packed_loop_reject_reason != NULL ?
+			ctx->packed_loop_reject_reason : "disabled");
 	if (!ctx->packed_loop_hint_active)
 		return true;
-	if (!jit_context_init_regcache(ctx))
-		return false;
 	jit_x86_64_gpr_reset(ctx);
 	ctx->gpr_reg_limit = jit_x86_64_gpr_limit();
 	ctx->gpr_cache_active = ctx->gpr_reg_limit > 0;

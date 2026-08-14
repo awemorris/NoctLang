@@ -11,6 +11,7 @@
 
 #include <noct/c89compat.h>
 
+#define NOCT_JIT_IMPLEMENTATION
 #include "jit-x86.c"
 #include "jit-x86_64.c"
 #include "jit-arm32.c"
