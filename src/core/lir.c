@@ -62,6 +62,7 @@ static uint8_t pbase_hint_next;
 static int typed_emit_int_count;
 static int typed_emit_float_count;
 static int typed_generic_count;
+static int typed_emit_checked_div_count;
 static int typed_disabled;
 
 /*
@@ -271,6 +272,7 @@ lir_build(
 	typed_emit_int_count = 0;
 	typed_emit_float_count = 0;
 	typed_generic_count = 0;
+	typed_emit_checked_div_count = 0;
 	typed_disabled = (getenv("NOCT_TYPED_DISABLE") != NULL);
 
 	/* Initialize the tmpvars. */
@@ -423,12 +425,12 @@ lir_build(
 	/* Typed-op observability (design 07 D-TOP11). */
 	if (getenv("NOCT_TYPED_DEBUG") != NULL) {
 		fprintf(stderr,
-			"TYPED: %s: emitted=%d (int=%d float=%d) sites_generic=%d\n",
+			"TYPED: %s: emitted=%d (int=%d float=%d) sites_generic=%d checked_div=%d\n",
 			hir_func->val.func.name != NULL ?
 			hir_func->val.func.name : "?",
 			typed_emit_int_count + typed_emit_float_count,
 			typed_emit_int_count, typed_emit_float_count,
-			typed_generic_count);
+			typed_generic_count, typed_emit_checked_div_count);
 	}
 
 	return true;
@@ -3617,16 +3619,17 @@ lir_typed_binary_opcode(
 		case HIR_EXPR_MUL:	return OP_IMUL;
 		case HIR_EXPR_DIV:
 		case HIR_EXPR_MOD:
-			/* Only statically error-free divisions: a
-			   literal divisor outside {0, -1} (D-TOP5). */
+			/* Keep statically error-free literal divisions on the
+			   unchecked fast path.  All other proven-int divisions
+			   use the checked typed op rather than generic dispatch. */
 			rhs = expr->val.binary.expr[1];
-			if (rhs->type != HIR_EXPR_TERM ||
-			    rhs->val.term.term->type != HIR_TERM_INT)
-				return -1;
-			if (rhs->val.term.term->val.i == 0 ||
-			    rhs->val.term.term->val.i == -1)
-				return -1;
-			return expr->type == HIR_EXPR_DIV ? OP_IDIV : OP_IMOD;
+			if (rhs->type == HIR_EXPR_TERM &&
+			    rhs->val.term.term->type == HIR_TERM_INT &&
+			    rhs->val.term.term->val.i != 0 &&
+			    rhs->val.term.term->val.i != -1)
+				return expr->type == HIR_EXPR_DIV ? OP_IDIV : OP_IMOD;
+			return expr->type == HIR_EXPR_DIV ?
+				OP_IDIV_CHECKED : OP_IMOD_CHECKED;
 		case HIR_EXPR_AND:	return OP_IAND;
 		case HIR_EXPR_OR:	return OP_IOR;
 		case HIR_EXPR_XOR:	return OP_IXOR;
@@ -3720,7 +3723,10 @@ lir_visit_binary_expr(
 	   generic ops, so only the opcode differs. */
 	opcode = lir_typed_binary_opcode(expr, block);
 	if (opcode >= 0) {
-		if (opcode >= OP_FADD)
+		if (opcode == OP_IDIV_CHECKED || opcode == OP_IMOD_CHECKED) {
+			typed_emit_int_count++;
+			typed_emit_checked_div_count++;
+		} else if (opcode >= OP_FADD)
 			typed_emit_float_count++;
 		else
 			typed_emit_int_count++;
@@ -5521,6 +5527,21 @@ lir_dump(
 			printf("%04d: %s(dst:%d, src1:%d, imm:%d)\n", ofs,
 			       opcode == OP_ISHL ? "ISHL" : "ISHR",
 			       dst, s1, imm);
+			break;
+		}
+		case OP_IDIV_CHECKED:
+		case OP_IMOD_CHECKED:
+		{
+			uint16_t dst;
+			uint16_t s1;
+			uint16_t s2;
+			IMM2(dst);
+			IMM2(s1);
+			IMM2(s2);
+			printf("%04d: %s(dst:%d, src1:%d, src2:%d)\n", ofs,
+			       opcode == OP_IDIV_CHECKED ?
+			       "IDIV_CHECKED" : "IMOD_CHECKED",
+			       dst, s1, s2);
 			break;
 		}
 		case OP_IADD:

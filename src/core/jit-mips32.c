@@ -2285,7 +2285,12 @@ jit_visit_typed_op(
                 CONSUME_TMPVAR(src2);
         }
 
-        f = jit_typed_op_helper[op - OP_IADD];
+	if (op == OP_IDIV_CHECKED)
+		f = ex_idiv_helper;
+	else if (op == OP_IMOD_CHECKED)
+		f = ex_imod_helper;
+	else
+		f = jit_typed_op_helper[op - OP_IADD];
 
         /* if (!f(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(f);
@@ -2842,6 +2847,8 @@ jit_visit_bytecode(
                 case OP_FLTE:
                 case OP_FGT:
                 case OP_FGTE:
+                case OP_IDIV_CHECKED:
+                case OP_IMOD_CHECKED:
                         if (!jit_visit_typed_op(ctx, opcode))
                                 return false;
                         break;

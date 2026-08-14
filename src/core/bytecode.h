@@ -219,6 +219,15 @@ enum bytecode {
 	OP_VGATHERI32X4_CHECKED, /* vd(u8), base(u16), plen(u16), vi(u8) */
 	OP_VMINS32X4,		/* vd(u8) = signed-min(va(u8), vb(u8)) */
 	OP_VMAXS32X4,		/* vd(u8) = signed-max(va(u8), vb(u8)) */
+
+	/*
+	 * Checked typed integer division.  Keep these outside the contiguous
+	 * OP_IADD..OP_FGTE helper-table range and append-only so existing
+	 * bytecode opcode values remain stable.  Operand tags are trusted int,
+	 * while divisor zero and INT_MIN / -1 are handled with Noct semantics.
+	 */
+	OP_IDIV_CHECKED,	/* dst(u16) = src1(u16) / src2(u16), checked int32 */
+	OP_IMOD_CHECKED,	/* dst(u16) = src1(u16) % src2(u16), checked int32 */
 };
 
 /* Predicates for OP_VCMPI32X4 and OP_VCMPF32X4. */

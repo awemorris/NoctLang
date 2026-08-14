@@ -1293,6 +1293,24 @@ rt_visit_typed_op(
         }
 }
 
+/* Checked typed integer division lives outside OP_IADD..OP_FGTE so it
+ * cannot use that range's table index. */
+static INLINE bool
+rt_visit_checked_idiv_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc,
+        int op)
+{
+        rt_typed_helper_t helper;
+
+        DEBUG_TRACE(*pc, "TYPED_DIV_CHECKED");
+        helper = op == OP_IDIV_CHECKED ? ex_idiv_helper : ex_imod_helper;
+        {
+                BINARY_OP(helper);
+        }
+}
+
 /*
  * 128-bit SIMD ops (docs/design/06-simd.md): lane-wise C emulation
  * helpers.  Table indexed by (opcode - OP_VLOADI32X4).  Operand
@@ -1850,6 +1868,11 @@ rt_visit_op(
         case OP_FGT:
         case OP_FGTE:
                 if (!rt_visit_typed_op(env, func, pc, op))
+                        return false;
+                break;
+        case OP_IDIV_CHECKED:
+        case OP_IMOD_CHECKED:
+                if (!rt_visit_checked_idiv_op(env, func, pc, op))
                         return false;
                 break;
         case OP_VLOADI32X4:

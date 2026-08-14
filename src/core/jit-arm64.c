@@ -2993,6 +2993,73 @@ jit_visit_pstoref32_op(
         STR_IMM(REG_X4, REG_X1, IMM9(dstofs));                          \
         STR_IMM(vreg, REG_X1, IMM9((dstofs) + 8))
 
+static INLINE void
+jit_arm64_patch_local_branch(uint8_t *code, uint8_t *target, bool cbz_w3)
+{
+	intptr_t words = (target - code) / 4;
+	uint32_t insn;
+
+	if (cbz_w3)
+		insn = 0x34000003u | (((uint32_t)words & 0x7ffffu) << 5);
+	else
+		insn = 0x14000000u | ((uint32_t)words & 0x03ffffffu);
+	memcpy(code, &insn, sizeof(insn));
+}
+
+/* AArch64 SDIV has the desired INT_MIN/-1 wrap result but silently returns
+ * zero for a zero divisor.  Route only zero to the checked helper. */
+static INLINE bool
+jit_visit_checked_idiv_op(
+	struct jit_context *ctx,
+	int op,
+	int dst,
+	int src1,
+	int src2)
+{
+	int dst_ofs = dst * (int)sizeof(struct rt_value);
+	int src1_ofs = src1 * (int)sizeof(struct rt_value);
+	int src2_ofs = src2 * (int)sizeof(struct rt_value);
+	uint8_t *zero_branch;
+	uint8_t *done_branch;
+	uint8_t *target;
+
+	ASM {
+		LDR_W_IMM(REG_X2, REG_X1, (uint32_t)(src1_ofs + 8));
+		LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(src2_ofs + 8));
+	}
+	/* cbz w3,cold -- patched after the inline path is emitted. */
+	zero_branch = (uint8_t *)ctx->code;
+	if (!jit_put_word(ctx, 0x34000003u))
+		return false;
+	if (op == OP_IDIV_CHECKED) {
+		if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) |
+				  (2u << 5) | 2u))
+			return false;
+	} else {
+		/* sdiv w4,w2,w3; msub w2,w4,w3,w2 */
+		if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) |
+				  (2u << 5) | 4u) ||
+		    !jit_put_word(ctx, 0x1b008000 | (3u << 16) |
+				  (2u << 10) | (4u << 5) | 2u))
+			return false;
+	}
+	ASM { TYPED_STORE(REG_X2, dst_ofs, NOCT_VALUE_INT); }
+	done_branch = (uint8_t *)ctx->code;
+	if (!jit_put_word(ctx, 0x14000000u))
+		return false;
+
+	target = (uint8_t *)ctx->code;
+	jit_arm64_patch_local_branch(zero_branch, target, true);
+	if (op == OP_IDIV_CHECKED) {
+		ASM_BINARY_OP(ex_idiv_helper);
+	} else {
+		ASM_BINARY_OP(ex_imod_helper);
+	}
+	target = (uint8_t *)ctx->code;
+	jit_arm64_patch_local_branch(done_branch, target, false);
+	return true;
+}
+
 /* Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic; inline.) */
 static INLINE bool
 jit_visit_typed_op(
@@ -3011,6 +3078,9 @@ jit_visit_typed_op(
         } else {
                 CONSUME_TMPVAR(src2);
         }
+	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
+		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
+	}
 
         dst *= (int)sizeof(struct rt_value);
         src1 *= (int)sizeof(struct rt_value);
@@ -4131,6 +4201,8 @@ jit_visit_bytecode(
                 case OP_FLTE:
                 case OP_FGT:
                 case OP_FGTE:
+                case OP_IDIV_CHECKED:
+                case OP_IMOD_CHECKED:
                         if (!jit_visit_typed_op(ctx, opcode))
                                 return false;
                         break;

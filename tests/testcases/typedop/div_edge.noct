@@ -1,8 +1,7 @@
 // Integer division edges.  x / 0 is still a runtime error (Part 0
-// changed only float/double-performed divisions), and a variable or
-// {0,-1}-literal divisor stays on the generic helper.
-// (INT_MIN / -1 is a known pre-existing process abort in the generic
-// helper and is deliberately not exercised here.)
+// changed only float/double-performed divisions).  At -O1 and above a
+// proven-int variable or {0,-1}-literal divisor uses a checked typed op;
+// -O0 remains the generic reference path.
 
 func f(a: int, b: int) {
     print(a / b);        // variable divisor: generic

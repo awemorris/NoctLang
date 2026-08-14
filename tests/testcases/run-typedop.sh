@@ -58,6 +58,43 @@ for name in $MUST_EMIT; do
     fi
 done
 
+# Variable proven-int division must select the checked typed opcode, while a
+# statically safe literal divisor stays on the existing unchecked fast path.
+n=$(NOCT_TYPED_DEBUG=1 $NOCT -j0 -O1 typedop/checked_div.noct 2>&1 \
+    | grep '^TYPED: checked_div:' | grep -c 'checked_div=[1-9]')
+if [ "$n" -eq 0 ]; then
+    echo "FAIL typedop/checked_div.noct (checked division not emitted)"
+    FAILED=1
+else
+    echo "PASS typedop/checked_div.noct (checked division emitted)"
+fi
+
+n=$(NOCT_TYPED_DEBUG=1 $NOCT -j0 -O1 typedop/arith.noct 2>&1 \
+    | grep '^TYPED: f:' | grep -c 'checked_div=0')
+if [ "$n" -eq 0 ]; then
+    echo "FAIL typedop/arith.noct (safe literal used checked division)"
+    FAILED=1
+else
+    echo "PASS typedop/arith.noct (safe literal stayed unchecked)"
+fi
+
+# Persist and reload the new append-only opcodes.  Cross builds use the same
+# bytecode path, so source-only execution is not sufficient coverage.
+work=".tmp-typedop-$$"
+mkdir "$work"
+cp typedop/checked_div.noct "$work/checked_div.noct"
+$NOCT --compile -O1 "$work/checked_div.noct" >/dev/null
+for jit in -j0 -j; do
+    $NOCT "$jit" "$work/checked_div.nb" > "$work/out" 2>&1
+    if ! diff -q typedop/checked_div.noct.out "$work/out" >/dev/null 2>&1; then
+        echo "FAIL typedop/checked_div.noct (persisted opcode, $jit)"
+        diff typedop/checked_div.noct.out "$work/out" | head -5
+        FAILED=1
+    fi
+done
+rm -rf "$work"
+echo "PASS typedop/checked_div.noct (persisted opcode)"
+
 # Note on abce_w64.noct: there is deliberately NO "zero emission"
 # assertion for it.  Stage B legitimately types the ABCE guard
 # arithmetic ($lo >= 0 etc.) even for a 64-bit-bet loop, so the

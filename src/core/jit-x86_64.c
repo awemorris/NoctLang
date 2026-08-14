@@ -3142,6 +3142,97 @@ jit_visit_pstoref32_op(
         IB(0x0f); IB(cc); IB(0xc0);                                                             \
         IB(0x0f); IB(0xb6); IB(0xc0)
 
+/* Checked int32 division: keep the normal path entirely inline.  Only a
+ * zero divisor enters the existing helper so diagnostics and exception
+ * unwinding remain identical to the interpreter. */
+static INLINE bool
+jit_visit_checked_idiv_op(
+	struct jit_context *ctx,
+	int op,
+	int dst,
+	int src1,
+	int src2)
+{
+	int dst_ofs = dst * (int)sizeof(struct rt_value);
+	int src1_ofs = src1 * (int)sizeof(struct rt_value);
+	int src2_ofs = src2 * (int)sizeof(struct rt_value);
+	uint8_t *zero_patch;
+	uint8_t *divide_patch[2];
+	uint8_t *store_patch;
+	uint8_t *done_patch;
+	uint8_t *divide_target;
+	uint8_t *store_target;
+	uint8_t *cold_target;
+	uint8_t *done_target;
+
+	ASM {
+		/* eax = dividend, ecx = divisor. */
+		IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(src1_ofs + 8));
+		IB(0x41); IB(0x8b); IB(0x8f); ID((uint32_t)(src2_ofs + 8));
+		IB(0x85); IB(0xc9);             /* test ecx,ecx */
+		IB(0x0f); IB(0x84);             /* je cold */
+	}
+	zero_patch = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0))
+		return false;
+	ASM {
+		IB(0x83); IB(0xf9); IB(0xff);   /* cmp ecx,-1 */
+		IB(0x0f); IB(0x85);             /* jne divide */
+	}
+	divide_patch[0] = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0))
+		return false;
+	ASM {
+		IB(0x3d); ID(0x80000000u);      /* cmp eax,INT_MIN */
+		IB(0x0f); IB(0x85);             /* jne divide */
+	}
+	divide_patch[1] = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0))
+		return false;
+	if (op == OP_IMOD_CHECKED) {
+		/* INT_MIN % -1 = 0; quotient leaves eax as INT_MIN. */
+		ASM { IB(0x31); IB(0xc0); }
+	}
+	ASM { IB(0xe9); }
+	store_patch = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0))
+		return false;
+
+	divide_target = (uint8_t *)ctx->code;
+	jit_x86_64_patch_local_rel32(divide_patch[0], divide_target);
+	jit_x86_64_patch_local_rel32(divide_patch[1], divide_target);
+	ASM {
+		IB(0x99);                       /* cdq */
+		IB(0xf7); IB(0xf9);             /* idiv ecx */
+	}
+	if (op == OP_IMOD_CHECKED) {
+		ASM { IB(0x89); IB(0xd0); }     /* mov edx,eax */
+	}
+
+	store_target = (uint8_t *)ctx->code;
+	jit_x86_64_patch_local_rel32(store_patch, store_target);
+	ASM {
+		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst_ofs);
+		ID((uint32_t)NOCT_VALUE_INT);
+		IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst_ofs + 8));
+		IB(0xe9);
+	}
+	done_patch = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0))
+		return false;
+
+	cold_target = (uint8_t *)ctx->code;
+	jit_x86_64_patch_local_rel32(zero_patch, cold_target);
+	if (op == OP_IDIV_CHECKED) {
+		ASM_BINARY_OP(ex_idiv_helper);
+	} else {
+		ASM_BINARY_OP(ex_imod_helper);
+	}
+	done_target = (uint8_t *)ctx->code;
+	jit_x86_64_patch_local_rel32(done_patch, done_target);
+	return true;
+}
+
 /* Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic; inline.) */
 static INLINE bool
 jit_visit_typed_op(
@@ -3160,6 +3251,9 @@ jit_visit_typed_op(
         } else {
                 CONSUME_TMPVAR(src2);
         }
+	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
+		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
+	}
 
         dst *= (int)sizeof(struct rt_value);
         if (op != OP_ISHL && op != OP_ISHR)
@@ -4378,6 +4472,8 @@ jit_visit_bytecode(
                 case OP_FLTE:
                 case OP_FGT:
                 case OP_FGTE:
+                case OP_IDIV_CHECKED:
+                case OP_IMOD_CHECKED:
                         if (!jit_visit_typed_op(ctx, opcode))
                                 return false;
                         break;

@@ -2196,6 +2196,79 @@ static const jit_typed_helper_t jit_typed_op_helper[] = {
         ex_fgte_helper
 };
 
+static INLINE void
+jit_x86_patch_local_rel32(uint8_t *disp, uint8_t *target)
+{
+	int32_t rel = (int32_t)(target - (disp + 4));
+	memcpy(disp, &rel, sizeof(rel));
+}
+
+/* Direct checked int32 division for i386.  ebx is the established tmpvar
+ * base scratch used throughout this backend; the zero case alone calls the
+ * checked helper. */
+static INLINE bool
+jit_visit_checked_idiv_op(
+	struct jit_context *ctx,
+	int op,
+	int dst,
+	int src1,
+	int src2)
+{
+	int dst_ofs = dst * (int)sizeof(struct rt_value);
+	int src1_ofs = src1 * (int)sizeof(struct rt_value);
+	int src2_ofs = src2 * (int)sizeof(struct rt_value);
+	uint8_t *zero_patch, *divide_patch[2], *store_patch, *done_patch;
+	uint8_t *target;
+
+	ASM {
+		IB(0x8b); IB(0x5d); IB(0xfc);  /* mov -4(ebp),ebx */
+		IB(0x8b); IB(0x83); ID((uint32_t)(src1_ofs + 8));
+		IB(0x8b); IB(0x8b); ID((uint32_t)(src2_ofs + 8));
+		IB(0x85); IB(0xc9);
+		IB(0x0f); IB(0x84);
+	}
+	zero_patch = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0)) return false;
+	ASM { IB(0x83); IB(0xf9); IB(0xff); IB(0x0f); IB(0x85); }
+	divide_patch[0] = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0)) return false;
+	ASM { IB(0x3d); ID(0x80000000u); IB(0x0f); IB(0x85); }
+	divide_patch[1] = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0)) return false;
+	if (op == OP_IMOD_CHECKED) { ASM { IB(0x31); IB(0xc0); } }
+	ASM { IB(0xe9); }
+	store_patch = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0)) return false;
+
+	target = (uint8_t *)ctx->code;
+	jit_x86_patch_local_rel32(divide_patch[0], target);
+	jit_x86_patch_local_rel32(divide_patch[1], target);
+	ASM { IB(0x99); IB(0xf7); IB(0xf9); }
+	if (op == OP_IMOD_CHECKED) { ASM { IB(0x89); IB(0xd0); } }
+
+	target = (uint8_t *)ctx->code;
+	jit_x86_patch_local_rel32(store_patch, target);
+	ASM {
+		IB(0xc7); IB(0x83); ID((uint32_t)dst_ofs);
+		ID((uint32_t)NOCT_VALUE_INT);
+		IB(0x89); IB(0x83); ID((uint32_t)(dst_ofs + 8));
+		IB(0xe9);
+	}
+	done_patch = (uint8_t *)ctx->code;
+	if (!jit_put_dword(ctx, 0)) return false;
+
+	target = (uint8_t *)ctx->code;
+	jit_x86_patch_local_rel32(zero_patch, target);
+	if (op == OP_IDIV_CHECKED) {
+		ASM_BINARY_OP(ex_idiv_helper);
+	} else {
+		ASM_BINARY_OP(ex_imod_helper);
+	}
+	target = (uint8_t *)ctx->code;
+	jit_x86_patch_local_rel32(done_patch, target);
+	return true;
+}
+
 /* Visit an OP_IADD..OP_FGTE instruction. */
 static INLINE bool
 jit_visit_typed_op(
@@ -2216,7 +2289,10 @@ jit_visit_typed_op(
                 CONSUME_TMPVAR(src2);
         }
 
-        f = jit_typed_op_helper[op - OP_IADD];
+	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED)
+		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
+	else
+		f = jit_typed_op_helper[op - OP_IADD];
 
         /* if (!f(env, dst, src1, src2)) return false; */
         ASM_BINARY_OP(f);
@@ -3036,6 +3112,8 @@ jit_visit_bytecode(
                 case OP_FLTE:
                 case OP_FGT:
                 case OP_FGTE:
+                case OP_IDIV_CHECKED:
+                case OP_IMOD_CHECKED:
                         if (!jit_visit_typed_op(ctx, opcode))
                                 return false;
                         break;

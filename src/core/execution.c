@@ -3149,10 +3149,10 @@ noct_ex_ishr_helper(
 }
 
 /*
- * IDIV/IMOD: the emission rule (literal divisor not in {0, -1})
- * makes the checks below unreachable from our compiler, but bytecode
- * files are an external input and a division trap would take down
- * the process, so they stay (defensive; D-TOP5).
+ * Checked int32 semantics shared by the interpreter, checked typed JIT
+ * fallback, and defensive execution of IDIV/IMOD bytecode.  Unchecked
+ * IDIV/IMOD emission makes these branches unreachable; IDIV_CHECKED and
+ * IMOD_CHECKED deliberately rely on them.
  */
 NOCT_DLL
 bool
