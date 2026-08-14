@@ -5156,6 +5156,9 @@ hir_optimize_func(
 		/* SIMD right after ABCE (it consumes the fast-loop marks). */
 		if (!hir_opt_simd_func(func_block, simd_info))
 			return false;
+		/* SIMD leaves rejected ABCE fast loops marked for scalar unroll. */
+		if (!hir_opt_unroll_func(func_block))
+			return false;
 	}
 	if (!hir_opt_cse_func(func_block))
 		return false;

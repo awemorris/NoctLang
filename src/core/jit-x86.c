@@ -3078,6 +3078,9 @@ jit_visit_bytecode(
 		case OP_PLOOP_HINT:
 			if (!jit_visit_ploop_hint_op(ctx)) return false;
 			break;
+		case OP_TMPVAR_TYPE:
+			if (!jit_visit_tmpvar_type_op(ctx)) return false;
+			break;
 		case OP_SUBJNZ:
 			if (!jit_visit_subjnz_op(ctx)) return false;
 			break;

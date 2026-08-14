@@ -303,6 +303,8 @@ struct hir_block {
 			bool is_vector;
 			/* 0: ordinary loop, 1: scalar Packed loop, 4: SIMD strip. */
 			uint8_t packed_lanes;
+			/* 0/1: ordinary scalar body, 4: four sequential scalar lanes. */
+			uint8_t scalar_unroll;
 		} for_;
 
 		/* While Block */

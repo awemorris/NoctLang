@@ -20,7 +20,8 @@ log=$(mktemp)
 blend_copy_nb=simd/drawimage/blend-copy.nb
 blend_add_nb=simd/drawimage/blend-add.nb
 packed_loop_nb=packed-loop/regcache.nb
-trap 'rm -f -- noct-arch out "$log" "$blend_copy_nb" "$blend_copy_nb.out" "$blend_add_nb" "$blend_add_nb.out" "$packed_loop_nb" "$packed_loop_nb.out"' EXIT HUP INT TERM
+unroll_nb=packed-loop/unroll-width16.nb
+trap 'rm -f -- noct-arch out "$log" "$blend_copy_nb" "$blend_copy_nb.out" "$blend_add_nb" "$blend_add_nb.out" "$packed_loop_nb" "$packed_loop_nb.out" "$unroll_nb" "$unroll_nb.out"' EXIT HUP INT TERM
 
 # Cross builds intentionally do not link the optimizer.  Produce optimized,
 # portable bytecode once with the host compiler so every target exercises the
@@ -28,9 +29,12 @@ trap 'rm -f -- noct-arch out "$log" "$blend_copy_nb" "$blend_copy_nb.out" "$blen
 "$NOCT" --compile -O2 simd/drawimage/blend-copy.noct >/dev/null 2>&1
 "$NOCT" --compile -O2 simd/drawimage/blend-add.noct >/dev/null 2>&1
 "$NOCT" --compile -O2 packed-loop/regcache.noct >/dev/null 2>&1
+NOCT_UNROLL_ENABLE=1 "$NOCT" --compile -O2 \
+    packed-loop/unroll-width16.noct >/dev/null 2>&1
 cp simd/drawimage/blend-copy.noct.out "$blend_copy_nb.out"
 cp simd/drawimage/blend-add.noct.out "$blend_add_nb.out"
 cp packed-loop/regcache.noct.out "$packed_loop_nb.out"
+cp packed-loop/unroll-width16.noct.out "$unroll_nb.out"
 
 "$NOCT" -j0 multiarch.noct | tee "$log"
 if ! grep -Fx 'All available multi-architecture tests passed.' "$log" >/dev/null; then

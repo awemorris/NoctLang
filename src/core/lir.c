@@ -47,6 +47,15 @@ static uint32_t bytecode_top;
 
 static uint32_t tmpvar_top;
 static uint32_t tmpvar_count;
+static uint32_t tmpvar_local_count;
+
+enum lir_tmp_type_state {
+	LIR_TMP_TYPE_UNSEEN,
+	LIR_TMP_TYPE_FIXED,
+	LIR_TMP_TYPE_DYNAMIC
+};
+static uint8_t tmpvar_type_state[LIR_TMPVAR_MAX];
+static int8_t tmpvar_fixed_type[LIR_TMPVAR_MAX];
 
 /* ABI/prologue metadata for the function currently being built. */
 static bool has_vector_ops;
@@ -75,6 +84,7 @@ static int typed_disabled;
 /* Relocation type */
 #define LOC_BLOCK_TOP		0
 #define LOC_BLOCK_CONTINUE	1
+#define LOC_ABSOLUTE		2
 
 struct loc_entry {
 	/* Type. */
@@ -85,6 +95,7 @@ struct loc_entry {
 
 	/* Branch target. */
 	struct hir_block *block;
+	uint32_t addr;
 };
 
 static struct loc_entry loc_tbl[LOC_MAX];
@@ -170,11 +181,14 @@ static bool lir_put_imm64(uint64_t imm);
 static bool lir_put_string(const char *data);
 static bool lir_put_branch_addr(struct hir_block *block);
 static bool lir_put_continue_addr(struct hir_block *block);
+static bool lir_put_absolute_addr(uint32_t addr);
 static bool lir_put_u8(uint8_t b);
 static bool lir_put_u16(uint16_t b);
 static bool lir_put_u32(uint32_t b);
 static bool lir_put_u64(uint64_t b);
-static void patch_block_address(void);
+static void patch_block_address(uint32_t prefix);
+static void lir_note_tmpvar_type(int tmpvar, int type);
+static bool lir_prepend_tmpvar_types(uint32_t *prefix);
 static void lir_fatal(const char *msg, ...);
 static void lir_out_of_memory(void);
 
@@ -282,6 +296,17 @@ lir_build(
 		tmpvar_top = 1;
 	}
 	tmpvar_count = tmpvar_top;
+	tmpvar_local_count = tmpvar_top;
+	memset(tmpvar_type_state, LIR_TMP_TYPE_UNSEEN,
+	       sizeof(tmpvar_type_state));
+	memset(tmpvar_fixed_type, -1, sizeof(tmpvar_fixed_type));
+	{
+		struct hir_local *local = hir_func->val.func.local;
+		while (local != NULL) {
+			lir_note_tmpvar_type(local->index, local->proven_type);
+			local = local->next;
+		}
+	}
 
 	/* Initialize the relocation table. */
 	loc_count = 0;
@@ -322,7 +347,12 @@ lir_build(
 			}
 			cur_block = cur_block->succ;
 		}
-		patch_block_address();
+		{
+			uint32_t prefix;
+			if (!lir_prepend_tmpvar_types(&prefix))
+				return false;
+			patch_block_address(prefix);
+		}
 	}
 
 	/* Make an lir_func. */
@@ -2334,7 +2364,7 @@ lir_visit_vfor_block(
 		return false;
 	if (!lir_put_imm8(4))
 		return false;
-	if (!lir_put_imm32(loop_addr))
+	if (!lir_put_absolute_addr(loop_addr))
 		return false;
 
 	/* exit label: extract each temp's lane 3 (= iteration mid-1,
@@ -2383,6 +2413,7 @@ lir_visit_for_range_block(
 	int start_tmpvar, stop_tmpvar, loop_tmpvar, cmp_tmpvar, guard_tmpvar;
 	int remaining_tmpvar;
 	int packed_flags;
+	int packed_factor;
 	struct hir_block *b;
 
 	assert(block != NULL);
@@ -2463,6 +2494,10 @@ lir_visit_for_range_block(
 	 * scalar operations below.
 	 */
 	if (block->val.for_.packed_lanes == 1) {
+		packed_factor = block->val.for_.scalar_unroll == 4 ? 4 : 1;
+		assert(block->val.for_.scalar_unroll == 0 ||
+		       block->val.for_.scalar_unroll == 1 ||
+		       block->val.for_.scalar_unroll == 4);
 		if (!lir_increment_tmpvar(&remaining_tmpvar))
 			return false;
 		if (!lir_put_opcode(OP_ISUB) ||
@@ -2475,6 +2510,8 @@ lir_visit_for_range_block(
 			packed_flags |= PLOOP_TYPED_INT;
 		if (lir_ploop_has_control(block))
 			packed_flags |= PLOOP_HAS_CONTROL;
+		if (packed_factor == 4)
+			packed_flags |= PLOOP_UNROLL4;
 		if (!lir_put_opcode(OP_PLOOP_HINT) ||
 		    !lir_put_tmpvar((uint16_t)loop_tmpvar) ||
 		    !lir_put_tmpvar((uint16_t)stop_tmpvar) ||
@@ -2497,12 +2534,12 @@ lir_visit_for_range_block(
 		block->cont_addr = (uint32_t)bytecode_top;
 		if (!lir_put_opcode(OP_INC) ||
 		    !lir_put_tmpvar((uint16_t)loop_tmpvar) ||
-		    !lir_put_imm8(1))
+		    !lir_put_imm8((uint8_t)packed_factor))
 			return false;
 		if (!lir_put_opcode(OP_SUBJNZ) ||
 		    !lir_put_tmpvar((uint16_t)remaining_tmpvar) ||
-		    !lir_put_imm8(1) ||
-		    !lir_put_imm32(loop_addr))
+		    !lir_put_imm8((uint8_t)packed_factor) ||
+		    !lir_put_absolute_addr(loop_addr))
 			return false;
 
 		lir_decrement_tmpvar(remaining_tmpvar);
@@ -2555,7 +2592,7 @@ lir_visit_for_range_block(
 	/* Put a back-edge jump. */
 	if (!lir_put_opcode(OP_JMP))
 		return false;
-	if (!lir_put_imm32(loop_addr))
+	if (!lir_put_absolute_addr(loop_addr))
 		return false;
 
 	lir_decrement_tmpvar(cmp_tmpvar);
@@ -2681,7 +2718,7 @@ lir_visit_for_kv_block(
 	/* Put a back-edge jump. */
 	if (!lir_put_opcode(OP_JMP))
 		return false;
-	if (!lir_put_imm32(loop_addr))
+	if (!lir_put_absolute_addr(loop_addr))
 		return false;
 
 	lir_decrement_tmpvar(cmp_tmpvar);
@@ -2798,7 +2835,7 @@ lir_visit_for_v_block(
 	/* Put a back-edge jump. */
 	if (!lir_put_opcode(OP_JMP))
 		return false;
-	if (!lir_put_imm32(loop_addr))
+	if (!lir_put_absolute_addr(loop_addr))
 		return false;
 
 	lir_decrement_tmpvar(cmp_tmpvar);
@@ -2887,7 +2924,7 @@ lir_visit_while_block(
 	/* Put a back-edge jump. */
 	if (!lir_put_opcode(OP_JMP))
 		return false;
-	if (!lir_put_imm32(loop_addr))
+	if (!lir_put_absolute_addr(loop_addr))
 		return false;
 
 	return true;
@@ -3250,6 +3287,72 @@ lir_visit_expr(
 		break;
 	}
 
+	/* Aggregate all definitions of a VM-frame slot.  A slot reused by
+	 * multiple compiler-temporary lifetimes remains fixed only when every
+	 * observed definition has the same primitive runtime tag. */
+	lir_note_tmpvar_type(dst_tmpvar, lir_expr_proven_type(expr, block));
+
+	return true;
+}
+
+static void
+lir_note_tmpvar_type(int tmpvar, int type)
+{
+	if (tmpvar < 0 || tmpvar >= LIR_TMPVAR_MAX)
+		return;
+	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
+	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
+		tmpvar_type_state[tmpvar] = LIR_TMP_TYPE_DYNAMIC;
+		return;
+	}
+	if (tmpvar_type_state[tmpvar] == LIR_TMP_TYPE_UNSEEN) {
+		tmpvar_type_state[tmpvar] = LIR_TMP_TYPE_FIXED;
+		tmpvar_fixed_type[tmpvar] = (int8_t)type;
+	} else if (tmpvar_type_state[tmpvar] == LIR_TMP_TYPE_FIXED &&
+		   tmpvar_fixed_type[tmpvar] != type) {
+		tmpvar_type_state[tmpvar] = LIR_TMP_TYPE_DYNAMIC;
+	}
+}
+
+/* OP_TMPVAR_TYPE is metadata and therefore may be prepended after the body
+ * has established the complete slot-type meet.  Relocation offsets and
+ * targets are adjusted by patch_block_address(prefix). */
+static bool
+lir_prepend_tmpvar_types(uint32_t *prefix)
+{
+	uint32_t i;
+	uint32_t count;
+	uint32_t p;
+
+	count = 0;
+	for (i = 0; i < tmpvar_count; i++) {
+		if (tmpvar_type_state[i] == LIR_TMP_TYPE_FIXED ||
+		    i >= tmpvar_local_count)
+			count++;
+	}
+	*prefix = count * 4;
+	if (*prefix == 0)
+		return true;
+	if (bytecode_top > BYTECODE_BUF_SIZE - *prefix) {
+		lir_fatal(N_TR("Bytecode is too large."));
+		return false;
+	}
+	memmove(bytecode + *prefix, bytecode, bytecode_top);
+	bytecode_top += *prefix;
+	p = 0;
+	for (i = 0; i < tmpvar_count; i++) {
+		if (tmpvar_type_state[i] != LIR_TMP_TYPE_FIXED &&
+		    i < tmpvar_local_count)
+			continue;
+		bytecode[p++] = OP_TMPVAR_TYPE;
+		bytecode[p++] = (uint8_t)(i >> 8);
+		bytecode[p++] = (uint8_t)i;
+		bytecode[p++] = (uint8_t)(
+			tmpvar_type_state[i] == LIR_TMP_TYPE_FIXED ?
+			tmpvar_fixed_type[i] : TMPVAR_TYPE_DYNAMIC) |
+			(i >= tmpvar_local_count ? TMPVAR_TYPE_COMPILER_TEMP : 0);
+	}
+	assert(p == *prefix);
 	return true;
 }
 
@@ -3318,13 +3421,23 @@ lir_visit_unary_expr(
  *   Lone: dst = 1
  *   Lend:
  */
-static void
+static bool
 lir_patch_u32(uint32_t at, uint32_t value)
 {
+	if (loc_count >= LOC_MAX) {
+		lir_fatal(N_TR("Too many jumps."));
+		return false;
+	}
 	bytecode[at]     = (uint8_t)((value >> 24) & 0xff);
 	bytecode[at + 1] = (uint8_t)((value >> 16) & 0xff);
 	bytecode[at + 2] = (uint8_t)((value >> 8) & 0xff);
 	bytecode[at + 3] = (uint8_t)(value & 0xff);
+	loc_tbl[loc_count].type = LOC_ABSOLUTE;
+	loc_tbl[loc_count].offset = at;
+	loc_tbl[loc_count].block = NULL;
+	loc_tbl[loc_count].addr = value;
+	loc_count++;
+	return true;
 }
 
 static bool
@@ -3392,9 +3505,10 @@ lir_visit_logical_expr(
 
 	end_addr = bytecode_top;
 
-	lir_patch_u32(patch0, decided_addr);
-	lir_patch_u32(patch1, decided_addr);
-	lir_patch_u32(patch_skip, end_addr);
+	if (!lir_patch_u32(patch0, decided_addr) ||
+	    !lir_patch_u32(patch1, decided_addr) ||
+	    !lir_patch_u32(patch_skip, end_addr))
+		return false;
 
 	lir_decrement_tmpvar(cond_tmpvar);
 
@@ -4704,6 +4818,21 @@ static bool lir_put_continue_addr(
 }
 
 static bool
+lir_put_absolute_addr(uint32_t addr)
+{
+	if (loc_count >= LOC_MAX) {
+		lir_fatal(N_TR("Too many jumps."));
+		return false;
+	}
+	loc_tbl[loc_count].type = LOC_ABSOLUTE;
+	loc_tbl[loc_count].offset = (uint32_t)bytecode_top;
+	loc_tbl[loc_count].block = NULL;
+	loc_tbl[loc_count].addr = addr;
+	loc_count++;
+	return lir_put_imm32(addr);
+}
+
+static bool
 lir_put_string(
 	const char *s)
 {
@@ -4799,7 +4928,7 @@ lir_put_u64(
 }
 
 static void
-patch_block_address(void)
+patch_block_address(uint32_t prefix)
 {
 	uint32_t offset, addr;
 	int i;
@@ -4807,16 +4936,24 @@ patch_block_address(void)
 	for (i = 0; i < loc_count; i++) {
 		switch (loc_tbl[i].type) {
 		case LOC_BLOCK_TOP:
-			offset = loc_tbl[i].offset;
-			addr = loc_tbl[i].block->addr;
+			offset = loc_tbl[i].offset + prefix;
+			addr = loc_tbl[i].block->addr + prefix;
 			bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
 			bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
 			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
 			bytecode[offset + 3] = (uint8_t)(addr & 0xff);
 			break;
 		case LOC_BLOCK_CONTINUE:
-			offset = loc_tbl[i].offset;
-			addr = loc_tbl[i].block->cont_addr;
+			offset = loc_tbl[i].offset + prefix;
+			addr = loc_tbl[i].block->cont_addr + prefix;
+			bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
+			bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
+			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
+			bytecode[offset + 3] = (uint8_t)(addr & 0xff);
+			break;
+		case LOC_ABSOLUTE:
+			offset = loc_tbl[i].offset + prefix;
+			addr = loc_tbl[i].addr + prefix;
 			bytecode[offset] = (uint8_t)((addr >> 24) & 0xff);
 			bytecode[offset + 1] = (uint8_t)((addr >> 16) & 0xff);
 			bytecode[offset + 2] = (uint8_t)((addr >> 8) & 0xff);
@@ -5510,6 +5647,16 @@ lir_dump(
 			printf("%04d: PLOOP_HINT(index:%d, stop:%d, remaining:%d, lanes:%u, flags:0x%02x)\n",
 			       ofs, index_tmp, stop_tmp, remaining_tmp,
 			       (unsigned)lanes, (unsigned)flags);
+			break;
+		}
+		case OP_TMPVAR_TYPE:
+		{
+			uint16_t tmp;
+			uint8_t type;
+			IMM2(tmp); IMM1(type);
+			printf("%04d: TMPVAR_TYPE(tmp:%d, type:%u, compiler:%u)\n",
+			       ofs, tmp, (unsigned)(type & 0x7f),
+			       (unsigned)((type & TMPVAR_TYPE_COMPILER_TEMP) != 0));
 			break;
 		}
 		case OP_SUBJNZ:

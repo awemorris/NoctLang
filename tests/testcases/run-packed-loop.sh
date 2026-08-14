@@ -50,6 +50,39 @@ diff packed-loop/three-base.noct.out "$tmp_dir/three-gpr1"
 diff packed-loop/three-base.noct.out "$tmp_dir/three-o2"
 echo 'PASS packed-loop/three-base.noct (nonzero start, three bases, spill)'
 
+for tc in unroll-width16 unroll-offset-tail; do
+    "$NOCT" -j0 -O0 "packed-loop/$tc.noct" >"$tmp_dir/$tc-o0"
+    diff "packed-loop/$tc.noct.out" "$tmp_dir/$tc-o0"
+    NOCT_UNROLL_ENABLE=1 "$NOCT" -j0 -O2 \
+        "packed-loop/$tc.noct" >"$tmp_dir/$tc-int"
+    diff "packed-loop/$tc.noct.out" "$tmp_dir/$tc-int"
+    NOCT_UNROLL_ENABLE=1 "$NOCT" -j -O2 \
+        "packed-loop/$tc.noct" >"$tmp_dir/$tc-jit"
+    diff "packed-loop/$tc.noct.out" "$tmp_dir/$tc-jit"
+    NOCT_UNROLL_DISABLE=1 "$NOCT" -j -O2 \
+        "packed-loop/$tc.noct" >"$tmp_dir/$tc-disabled"
+    diff "packed-loop/$tc.noct.out" "$tmp_dir/$tc-disabled"
+    NOCT_UNROLL_ENABLE=1 NOCT_UNROLL_DEBUG=1 NOCT_JIT_REGCACHE_DEBUG=1 \
+        "$NOCT" -j -O2 "packed-loop/$tc.noct" \
+        >"$tmp_dir/$tc-debug.out" 2>"$tmp_dir/$tc-debug.err"
+    diff "packed-loop/$tc.noct.out" "$tmp_dir/$tc-debug.out"
+    grep -F 'unrolled (factor=4' "$tmp_dir/$tc-debug.err" >/dev/null
+    grep -F 'flags=0x15' "$tmp_dir/$tc-debug.err" | \
+        grep -F 'accepted=1' >/dev/null
+    cp "packed-loop/$tc.noct" "$tmp_dir/$tc.noct"
+    NOCT_UNROLL_ENABLE=1 "$NOCT" --compile -O2 \
+        "$tmp_dir/$tc.noct" >/dev/null
+    "$NOCT" -j "$tmp_dir/$tc.nb" >"$tmp_dir/$tc-roundtrip"
+    diff "packed-loop/$tc.noct.out" "$tmp_dir/$tc-roundtrip"
+    echo "PASS packed-loop/$tc.noct (unroll4 interpreter/JIT/roundtrip)"
+done
+
+NOCT_UNROLL_ENABLE=1 NOCT_UNROLL_DEBUG=1 \
+    "$NOCT" -j0 -O2 packed-loop/regcache.noct \
+    >/dev/null 2>"$tmp_dir/div-cost.err"
+grep -F 'rejected (cost-division)' "$tmp_dir/div-cost.err" >/dev/null
+echo 'PASS variable-division profitability guard'
+
 "$NOCT" -j -O2 abce/width16.noct >"$tmp_dir/carried.out"
 diff abce/width16.noct.out "$tmp_dir/carried.out"
 echo 'PASS loop-carried scalar compatibility'

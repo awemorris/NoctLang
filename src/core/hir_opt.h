@@ -23,6 +23,7 @@
 bool hir_opt_abce_func(struct hir_block *func_block);
 bool hir_opt_inline_func(struct hir_block *func_block);
 bool hir_opt_simd_func(struct hir_block *func_block, bool simd_info);
+bool hir_opt_unroll_func(struct hir_block *func_block);
 bool hir_opt_cse_func(struct hir_block *func_block);
 bool hir_opt_typed_func(struct hir_block *func_block);
 bool hir_opt_accel_func(struct hir_block *func_block, bool accel_info);

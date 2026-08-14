@@ -135,6 +135,13 @@ func arch_test(name, toolchain, qemu, cc) {
         return 0;
     }
 
+    // Persisted factor-4 scalar Packed bytecode must execute everywhere.
+    // Only x86_64/ARM64 may consume its PBASE displacement metadata; other
+    // JITs and interpreters use the expanded portable instructions.
+    if (!run_testcase(qemu, "-j", "packed-loop/unroll-width16.nb")) {
+        return 0;
+    }
+
     return 1;
 }
 
