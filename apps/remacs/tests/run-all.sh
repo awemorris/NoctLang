@@ -7,6 +7,10 @@ REMACS=${REMACS:-../build-debug/remacs}
 echo '=== remacs test suites ==='
 sh run-unit.sh
 echo
+sh run-lisp.sh
+echo
+sh run-lisp-tail.sh
+echo
 echo 'pty tests'
 python3 term/harness.py "$REMACS" $(ls term/case_*.py | grep -v case_nb)
 echo

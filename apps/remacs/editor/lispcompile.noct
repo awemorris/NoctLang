@@ -5,10 +5,10 @@
 // translated into Noct source functions and registered on the running
 // VM with System.registerSource, so they become JIT-eligible. Control
 // flow (if/cond/progn/let/while/and/or/setq) becomes native Noct code;
-// every function application still goes through lispApplyNamed, so a
-// compiled function transparently calls other compiled functions,
-// interpreted closures, builtins, or the Editor bridge. Anything the
-// compiler cannot handle leaves the defun in the interpreter.
+// non-tail function applications still go through lispApplyNamed. A tail
+// application updates the evaluator's trampoline state, so compiled and
+// interpreted functions can tail-call each other without growing VM frames.
+// Anything the compiler cannot handle leaves the defun in the interpreter.
 //
 // The value representation is shared between the interpreter and
 // compiled code (int / string / array / cons-dict), so no marshalling
@@ -57,23 +57,21 @@ func lispCompileDefun(name) {
     for (b in clo.lbody) {
         Array.push(bodyNode, b);
     }
-    var rv = lispcExpr(cx, bodyNode);
+    lispcTail(cx, bodyNode, "__lisp_tail_state");
     if (cx.ok == 0) {
         return 0;
     }
 
     LispCompileSeq = LispCompileSeq + 1;
     var fname = "lispc_" + LispCompileSeq;
-    var src = "func " + fname + "(";
+    var src = "func " + fname + "(__lisp_tail_state";
     var i = 0;
     while (i < Array.size(params)) {
-        if (i > 0) { src = src + ", "; }
-        src = src + params[i];
+        src = src + ", " + params[i];
         i = i + 1;
     }
     src = src + ") {\n";
     src = src + cx.src;
-    src = src + "    return " + rv + ";\n";
     src = src + "}\n";
 
     // Register on the VM and grab the callable.
@@ -176,6 +174,165 @@ func lispcExpr(cx, node) {
     var t2 = lispcTmp(cx);
     lispcEmit(cx, "var " + t2 + " = lispApplyNamed(" + lispcStringLit(op) + ", " + arr + ");");
     return t2;
+}
+
+// Compile an expression whose value is returned directly by the current Lisp
+// function. Applications schedule the next trampoline step; other values are
+// returned normally. Every generated path terminates with return.
+func lispcTail(cx, node, stateName) {
+    if (cx.ok == 0) { return 0; }
+    if (Type.of(node) == "array" && Array.size(node) > 0) {
+        var head = node[0];
+        if (Type.of(head) == "dict" && Dict.hasKey(head, "sym")) {
+            var op = head.sym;
+            if (op == "if") { return lispcTailIf(cx, node, stateName); }
+            if (op == "cond") { return lispcTailCond(cx, node, stateName); }
+            if (op == "progn") { return lispcTailBody(cx, node, 1, stateName); }
+            if (op == "let") { return lispcTailLet(cx, node, 0, stateName); }
+            if (op == "let*") { return lispcTailLet(cx, node, 1, stateName); }
+            if (op == "and") { return lispcTailAndOr(cx, node, "and", stateName); }
+            if (op == "or") { return lispcTailAndOr(cx, node, "or", stateName); }
+            if (op != "quote" && op != "setq" && op != "while" &&
+                op != "lambda" && op != "function" && op != "defun" &&
+                op != "defvar" && op != "defconst" && op != "interactive") {
+                return lispcTailCall(cx, node, op, stateName);
+            }
+        }
+    }
+    var value = lispcExpr(cx, node);
+    if (cx.ok == 1) {
+        lispcEmit(cx, "return " + value + ";");
+    }
+    return 0;
+}
+
+func lispcTailCall(cx, node, op, stateName) {
+    var argExprs = [];
+    var i = 1;
+    while (i < Array.size(node)) {
+        Array.push(argExprs, lispcExpr(cx, node[i]));
+        i = i + 1;
+    }
+    var arr = "[";
+    var j = 0;
+    while (j < Array.size(argExprs)) {
+        if (j > 0) { arr = arr + ", "; }
+        arr = arr + argExprs[j];
+        j = j + 1;
+    }
+    arr = arr + "]";
+    if (cx.ok == 1) {
+        lispcEmit(cx, "lispScheduleTail(" + stateName + ", " +
+                  lispcStringLit(op) + ", " + arr + ");");
+        lispcEmit(cx, "return 0;");
+    }
+    return 0;
+}
+
+func lispcTailBody(cx, node, from, stateName) {
+    if (from >= Array.size(node)) {
+        lispcEmit(cx, "return 0;");
+        return 0;
+    }
+    var i = from;
+    while (i + 1 < Array.size(node)) {
+        lispcExpr(cx, node[i]);
+        i = i + 1;
+    }
+    return lispcTail(cx, node[i], stateName);
+}
+
+func lispcTailIf(cx, node, stateName) {
+    var cv = lispcExpr(cx, node[1]);
+    lispcEmit(cx, "if (lispTruthy(" + cv + ")) {");
+    if (Array.size(node) > 2) {
+        lispcTail(cx, node[2], stateName);
+    } else {
+        lispcEmit(cx, "return 0;");
+    }
+    lispcEmit(cx, "} else {");
+    lispcTailBody(cx, node, 3, stateName);
+    lispcEmit(cx, "}");
+    return 0;
+}
+
+func lispcTailCond(cx, node, stateName) {
+    var depth = 0;
+    var i = 1;
+    while (i < Array.size(node)) {
+        var clause = node[i];
+        var cv = lispcExpr(cx, clause[0]);
+        lispcEmit(cx, "if (lispTruthy(" + cv + ")) {");
+        if (Array.size(clause) == 1) {
+            lispcEmit(cx, "return " + cv + ";");
+        } else {
+            lispcTailBody(cx, clause, 1, stateName);
+        }
+        lispcEmit(cx, "} else {");
+        depth = depth + 1;
+        i = i + 1;
+    }
+    lispcEmit(cx, "return 0;");
+    var d = 0;
+    while (d < depth) {
+        lispcEmit(cx, "}");
+        d = d + 1;
+    }
+    return 0;
+}
+
+func lispcTailLet(cx, node, star, stateName) {
+    var names = [];
+    var saved = {};
+    for (b in node[1]) {
+        var lispName = "";
+        var valExpr = "0";
+        if (Type.of(b) == "dict" && Dict.hasKey(b, "sym")) {
+            lispName = b.sym;
+        } else {
+            lispName = b[0].sym;
+            if (Array.size(b) > 1) {
+                valExpr = lispcExpr(cx, b[1]);
+            }
+        }
+        var nn = "ll" + lispcTmp(cx);
+        lispcEmit(cx, "var " + nn + " = " + valExpr + ";");
+        Array.push(names, lispName);
+        if (Dict.hasKey(cx.locals, lispName)) {
+            saved[lispName] = cx.locals[lispName];
+        } else {
+            saved[lispName] = 0;
+        }
+        cx.locals[lispName] = nn;
+    }
+    lispcTailBody(cx, node, 2, stateName);
+    for (nm in names) {
+        if (Type.of(saved[nm]) == "string") {
+            cx.locals[nm] = saved[nm];
+        } else {
+            Dict.remove(cx.locals, nm);
+        }
+    }
+    return 0;
+}
+
+func lispcTailAndOr(cx, node, kind, stateName) {
+    if (Array.size(node) == 1) {
+        if (kind == "and") { lispcEmit(cx, "return 1;"); }
+        else { lispcEmit(cx, "return 0;"); }
+        return 0;
+    }
+    var i = 1;
+    while (i + 1 < Array.size(node)) {
+        var value = lispcExpr(cx, node[i]);
+        if (kind == "and") {
+            lispcEmit(cx, "if (!lispTruthy(" + value + ")) { return 0; }");
+        } else {
+            lispcEmit(cx, "if (lispTruthy(" + value + ")) { return " + value + "; }");
+        }
+        i = i + 1;
+    }
+    return lispcTail(cx, node[i], stateName);
 }
 
 func lispcProgn(cx, node, from) {

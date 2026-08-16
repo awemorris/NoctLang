@@ -238,16 +238,7 @@ func lispCallBuiltin(name, args) {
     // Higher order.
     if (name == "funcall") { return lispApply(args[0], lispRestArgs(args, 1)); }
     if (name == "apply") {
-        var fargs = lispRestArgs(args, 1);
-        var last = 0;
-        if (Array.size(fargs) > 0) {
-            last = fargs[Array.size(fargs) - 1];
-            Array.pop(fargs);
-            if (Type.of(last) == "array") {
-                for (e in last) { Array.push(fargs, e); }
-            }
-        }
-        return lispApply(args[0], fargs);
+        return lispApply(args[0], lispExpandApplyArgs(args));
     }
     if (name == "mapcar" || name == "mapc") {
         var out = [];
@@ -359,6 +350,21 @@ func lispRestArgs(args, from) {
         i = i + 1;
     }
     return out;
+}
+
+// Build apply's effective argument list. Keeping this separate lets the
+// tail-call trampoline forward apply without starting a nested trampoline.
+func lispExpandApplyArgs(args) {
+    var fargs = lispRestArgs(args, 1);
+    var last = 0;
+    if (Array.size(fargs) > 0) {
+        last = fargs[Array.size(fargs) - 1];
+        Array.pop(fargs);
+        if (Type.of(last) == "array") {
+            for (e in last) { Array.push(fargs, e); }
+        }
+    }
+    return fargs;
 }
 
 func lispToString(v) {
