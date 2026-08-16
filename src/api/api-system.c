@@ -35,6 +35,8 @@ static bool cfunc_System_getOSName(NoctEnv *env);
 static bool cfunc_System_checkFileExists(NoctEnv *env);
 static bool cfunc_System_pcall(NoctEnv *env);
 static bool cfunc_System_error(NoctEnv *env);
+static bool cfunc_System_loadDLL(NoctEnv *env);
+static bool cfunc_System_tryLoadDLL(NoctEnv *env);
 static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size);
 
 /* FFI table. */
@@ -103,6 +105,20 @@ static struct ffi_item ffi_items[] = {
 		cfunc_System_pcall
 	},
 	{
+		"System.loadDLL",
+		"loadDLL",
+		1,
+		{"name"},
+		cfunc_System_loadDLL
+	},
+	{
+		"System.tryLoadDLL",
+		"tryLoadDLL",
+		1,
+		{"name"},
+		cfunc_System_tryLoadDLL
+	},
+	{
 		"System.error",
 		"error",
 		1,
@@ -110,6 +126,48 @@ static struct ffi_item ffi_items[] = {
 		cfunc_System_error
 	},
 };
+
+static bool
+system_load_dll(
+	NoctEnv *env,
+	bool optional)
+{
+	NoctValue name;
+	NoctValue ret;
+	const char *text;
+	bool loaded;
+	bool ok;
+
+	memset(&name, 0, sizeof(name));
+	memset(&ret, 0, sizeof(ret));
+	if (!noct_pin_local(env, 2, &name, &ret))
+		return false;
+	ok = false;
+	if (!noct_get_arg_check_string(env, 0, &name, &text))
+		goto cleanup;
+	if (!noct_load_library(env, text, optional, &loaded))
+		goto cleanup;
+	if (!noct_set_return_make_int(env, &ret, loaded ? 1 : 0))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &name, &ret);
+	return ok;
+}
+
+static bool
+cfunc_System_loadDLL(
+	NoctEnv *env)
+{
+	return system_load_dll(env, false);
+}
+
+static bool
+cfunc_System_tryLoadDLL(
+	NoctEnv *env)
+{
+	return system_load_dll(env, true);
+}
 
 /*
  * Register "System.*" functions.

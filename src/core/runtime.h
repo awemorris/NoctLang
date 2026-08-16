@@ -49,6 +49,9 @@ struct rt_packed;
 struct rt_func;
 struct rt_bindglobal;
 struct rt_module;
+struct rt_library_transaction;
+struct rt_vm_finalizer;
+struct rt_library_state;
 struct jit_slab;
 
 /*
@@ -238,11 +241,27 @@ struct rt_func {
 	int call_count;
 
 	/* Function pointer. (if a cfunc) */
-	bool (*cfunc)(struct rt_env *env);
+	NoctCFunc cfunc;
+	NoctCFuncWithData cfunc_with_data;
+	void *cfunc_userdata;
 	bool cfunc_variadic;
+
+	/* Owning package entry, used for package-local native lookup. */
+	struct rt_module *owner_module;
 
 	/* Next. */
 	struct rt_func *next;
+};
+
+/* Source module retained for require de-duplication and package ownership. */
+struct rt_module {
+	char *key;
+	char *logical_name;
+	char *package_name;
+	char *package_dir;
+	bool is_package;
+	int state;
+	struct rt_module *next;
 };
 
 /*
@@ -341,6 +360,10 @@ struct rt_env {
 	 */
 	char error_message[1024];
 
+	/* Non-NULL only while noct_library_init() is staging registrations. */
+	struct rt_library_transaction *library_transaction;
+	bool loading_package_bytecode;
+
 	/*
 	 * Env linked list.
 	 */
@@ -402,6 +425,12 @@ struct rt_vm {
 	struct module_paths require_path;
 	struct rt_module *module_list;
 
+	/* Dynamically loaded library state and native cleanup callbacks. */
+	struct rt_library_state *library_list;
+	struct rt_vm_finalizer *vm_finalizer_list;
+	int library_registration_lock;
+	int library_state_lock;
+
 	/* GC. */
 	struct rt_gc_info gc;
 
@@ -423,6 +452,9 @@ struct rt_vm {
 	/* Config. */
 	struct rt_config config;
 	void *accel_runtime;
+	const struct accel_backend_ops *accel_backend[ACCEL_BACKEND_MAX];
+	uint32_t accel_backend_count;
+	const struct accel_backend_ops *selected_accel_backend;
 	struct accel_event accel_event[ACCEL_EVENT_MAX];
 
 	/* GC nest counter. */
@@ -502,6 +534,17 @@ rt_add_require_path(
 	struct rt_vm *vm,
 	const char *path_list);
 
+/* Resolve and register a source module or installed package. */
+bool
+rt_require_module(
+	struct rt_env *env,
+	const char *name);
+
+bool
+rt_require_package(
+	struct rt_env *env,
+	const char *name);
+
 /* Create an environment for another thread. (Call while in-flight.) */
 bool
 rt_create_thread_env(
@@ -548,8 +591,31 @@ rt_register_cfunc(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	bool (*cfunc)(struct rt_env *env),
+	NoctCFunc cfunc,
 	struct rt_func **ret_func);
+
+/* Register a native function carrying VM-local data. */
+bool
+rt_register_cfunc_with_data(
+	struct rt_env *env,
+	const char *name,
+	size_t param_count,
+	const char *param_name[],
+	NoctCFuncWithData cfunc,
+	void *userdata,
+	struct rt_func **ret_func);
+
+/* Register native cleanup for normal VM destruction. */
+bool
+rt_register_vm_finalizer(
+	struct rt_env *env,
+	NoctVMFinalizer finalizer,
+	void *userdata);
+
+/* Transaction used by the dynamic-library loader. */
+bool rt_library_transaction_begin(struct rt_env *env);
+bool rt_library_transaction_commit(struct rt_env *env);
+void rt_library_transaction_abort(struct rt_env *env);
 
 /*
  * Call

@@ -29,6 +29,7 @@ Main suites:
   httpserver       HTTP server API tests.
   webapp           Web application framework tests.
   process          Process API tests.
+  dynlib [build-dir] Dynamic-library ABI, loading and rollback tests.
   mmap [build-dir] FileUtil mmap and Packed native-finalizer tests.
   parallel-analysis Target-neutral loop fact/classification tests.
   accel            Accelerator syntax, contracts and serialization tests.
@@ -111,6 +112,7 @@ thread-stress)   run_script run-thread-stress.sh "$@" ;;
 httpserver)      run_script run-httpserver.sh "$@" ;;
 webapp)          run_script run-webapp.sh "$@" ;;
 process)         run_script run-process.sh "$@" ;;
+dynlib)          run_script run-dynlib.sh "$@" ;;
 mmap)            run_script run-fileutil-mmap.sh "$@" ;;
 parallel-analysis) run_script run-parallel-analysis.sh "$@" ;;
 accel)           run_script run-accel.sh "$@" ;;

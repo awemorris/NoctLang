@@ -44,6 +44,26 @@ module_is_absolute(const char *path)
 	       (isalpha((unsigned char)path[0]) && path[1] == ':');
 }
 
+static bool
+module_valid_package_name(const char *name)
+{
+	const unsigned char *p;
+	unsigned char c;
+
+	if (name == NULL)
+		return false;
+	c = (unsigned char)name[0];
+	if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+	      c == '_'))
+		return false;
+	for (p = (const unsigned char *)name + 1; *p != '\0'; p++)
+		if (!((*p >= 'A' && *p <= 'Z') ||
+		      (*p >= 'a' && *p <= 'z') ||
+		      (*p >= '0' && *p <= '9') || *p == '_'))
+			return false;
+	return true;
+}
+
 /* Lexically normalize slashes, '.', and '..'. */
 static char *
 module_normalize_absolute(const char *path)
@@ -236,57 +256,189 @@ module_read_file(const char *path, char **data)
 	return true;
 }
 
+void
+module_resolution_cleanup(struct module_resolution *result)
+{
+	if (result == NULL)
+		return;
+	free(result->physical);
+	free(result->logical);
+	free(result->data);
+	free(result->package_name);
+	free(result->package_dir);
+	memset(result, 0, sizeof(*result));
+}
+
+static bool
+module_try_flat(const char *dir, const char *name, const char *suffix,
+		struct module_resolution *result)
+{
+	char *candidate;
+	char *source;
+	size_t n;
+
+	n = strlen(dir) + 1 + strlen(name) + strlen(suffix) + 1;
+	candidate = malloc(n);
+	if (candidate == NULL)
+		return false;
+	snprintf(candidate, n, "%s/%s%s", dir, name, suffix);
+	if (!module_read_file(candidate, &source)) {
+		free(candidate);
+		return false;
+	}
+	result->physical = module_path_key(candidate);
+	free(candidate);
+	if (result->physical == NULL) {
+		free(source);
+		return false;
+	}
+	n = strlen("@require/") + strlen(name) + strlen(suffix) + 1;
+	result->logical = malloc(n);
+	if (result->logical == NULL) {
+		free(result->physical);
+		free(source);
+		result->physical = NULL;
+		return false;
+	}
+	snprintf(result->logical, n, "@require/%s%s", name, suffix);
+	result->data = source;
+	return true;
+}
+
+static bool
+module_try_package(const char *root, const char *name, const char *suffix,
+		   struct module_resolution *result)
+{
+	char *candidate;
+	char *source;
+	char *dir;
+	size_t n;
+
+	n = strlen(root) + 1 + strlen(name) + 1 + strlen(name) +
+	    strlen(suffix) + 1;
+	candidate = malloc(n);
+	if (candidate == NULL)
+		return false;
+	snprintf(candidate, n, "%s/%s/%s%s", root, name, name, suffix);
+	if (!module_read_file(candidate, &source)) {
+		free(candidate);
+		return false;
+	}
+	result->physical = module_path_key(candidate);
+	free(candidate);
+	if (result->physical == NULL) {
+		free(source);
+		return false;
+	}
+	n = strlen(root) + 1 + strlen(name) + 1;
+	dir = malloc(n);
+	if (dir == NULL)
+		goto oom;
+	snprintf(dir, n, "%s/%s", root, name);
+	result->package_dir = module_path_key(dir);
+	free(dir);
+	if (result->package_dir == NULL)
+		goto oom;
+	result->package_name = module_strdup(name);
+	if (result->package_name == NULL)
+		goto oom;
+	n = strlen("@package/") + strlen(name) + 1 + strlen(name) +
+	    strlen(suffix) + 1;
+	result->logical = malloc(n);
+	if (result->logical == NULL)
+		goto oom;
+	snprintf(result->logical, n, "@package/%s/%s%s", name, name, suffix);
+	result->data = source;
+	result->is_package = true;
+	return true;
+oom:
+	free(source);
+	module_resolution_cleanup(result);
+	return false;
+}
+
 bool
-module_resolve(const struct module_paths *paths, const char *name,
-		char **physical, char **logical, char **data)
+module_resolve_package(const char *name, struct module_resolution *result)
+{
+	static const char *suffix[] = { ".noct", ".nct" };
+	static const char *system_root[] = {
+		"/usr/local/share/noct/packages",
+		"/usr/share/noct/packages"
+	};
+	const char *home;
+	char *user_root;
+	uint32_t i;
+	uint32_t j;
+
+	memset(result, 0, sizeof(*result));
+	if (!module_valid_package_name(name))
+		return false;
+#if defined(NOCT_TARGET_WINDOWS)
+	home = getenv("USERPROFILE");
+#else
+	home = getenv("HOME");
+#endif
+	if (home != NULL && home[0] != '\0') {
+		size_t n = strlen(home) + strlen("/.noct/packages") + 1;
+		user_root = malloc(n);
+		if (user_root == NULL)
+			return false;
+		snprintf(user_root, n, "%s/.noct/packages", home);
+		for (j = 0; j < 2; j++) {
+			if (module_try_package(user_root, name, suffix[j], result)) {
+				free(user_root);
+				return true;
+			}
+		}
+		free(user_root);
+	}
+#if !defined(NOCT_TARGET_WINDOWS)
+	for (i = 0; i < (uint32_t)(sizeof(system_root) / sizeof(system_root[0])); i++)
+		for (j = 0; j < 2; j++)
+			if (module_try_package(system_root[i], name, suffix[j], result))
+				return true;
+#else
+	(void)system_root;
+#endif
+	return false;
+}
+
+bool
+module_resolve_ex(const struct module_paths *paths, const char *name,
+		  struct module_resolution *result)
 {
 	static const char *suffix[] = { ".noct", ".nct" };
 	uint32_t i;
 	uint32_t j;
 
-	*physical = NULL;
-	*logical = NULL;
-	*data = NULL;
+	memset(result, 0, sizeof(*result));
 	if (name == NULL || name[0] == '\0' || module_is_absolute(name) ||
 	    strchr(name, '/') != NULL || strchr(name, '\\') != NULL ||
 	    strstr(name, "..") != NULL)
 		return false;
-	for (i = 0; i < paths->count; i++) {
-		for (j = 0; j < 2; j++) {
-			char *candidate;
-			char *source;
-			size_t n;
+	/* Explicit --path modules preserve their historical precedence. */
+	for (i = 0; i < paths->count; i++)
+		for (j = 0; j < 2; j++)
+			if (module_try_flat(paths->item[i], name, suffix[j], result))
+				return true;
+	return module_resolve_package(name, result);
+}
 
-			n = strlen(paths->item[i]) + 1 + strlen(name) +
-			    strlen(suffix[j]) + 1;
-			candidate = malloc(n);
-			if (candidate == NULL)
-				return false;
-			snprintf(candidate, n, "%s/%s%s", paths->item[i], name,
-				 suffix[j]);
-			if (!module_read_file(candidate, &source)) {
-				free(candidate);
-				continue;
-			}
-			*physical = module_path_key(candidate);
-			free(candidate);
-			if (*physical == NULL) {
-				free(source);
-				return false;
-			}
-			n = strlen("@require/") + strlen(name) +
-			    strlen(suffix[j]) + 1;
-			*logical = malloc(n);
-			if (*logical == NULL) {
-				free(*physical);
-				free(source);
-				*physical = NULL;
-				return false;
-			}
-			snprintf(*logical, n, "@require/%s%s", name, suffix[j]);
-			*data = source;
-			return true;
-		}
-	}
-	return false;
+bool
+module_resolve(const struct module_paths *paths, const char *name,
+		char **physical, char **logical, char **data)
+{
+	struct module_resolution result;
+
+	*physical = NULL;
+	*logical = NULL;
+	*data = NULL;
+	if (!module_resolve_ex(paths, name, &result))
+		return false;
+	*physical = result.physical;
+	*logical = result.logical;
+	*data = result.data;
+	free(result.package_name);
+	free(result.package_dir);
+	return true;
 }

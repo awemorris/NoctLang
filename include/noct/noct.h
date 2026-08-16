@@ -83,6 +83,41 @@ typedef struct rt_value NoctValue;
 /* A function. */
 typedef struct rt_func NoctFunc;
 
+/* Native function forms used by statically linked and dynamically loaded APIs. */
+typedef bool (*NoctCFunc)(NoctEnv *env);
+typedef bool (*NoctCFuncWithData)(NoctEnv *env, void *userdata);
+typedef void (*NoctVMFinalizer)(void *userdata);
+
+/* Stable dynamic-library entry point. */
+#define NOCT_API_ABI_VERSION_1	1u
+#define NOCT_API_FEATURE_CFUNC_DATA	((uint64_t)1 << 0)
+#define NOCT_API_FEATURE_VM_FINALIZER	((uint64_t)1 << 1)
+
+struct NoctAPI;
+typedef struct NoctAPI NoctAPI;
+typedef bool (CDECL *NoctLibraryInit)(const NoctAPI *api, NoctEnv *env);
+
+#if defined(NOCT_TARGET_WINDOWS)
+#define NOCT_LIBRARY_EXPORT __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define NOCT_LIBRARY_EXPORT __attribute__((visibility("default")))
+#else
+#define NOCT_LIBRARY_EXPORT
+#endif
+
+/*
+ * Function table supplied to noct_library_init().  Fields are append-only.
+ * A library must check abi_version and struct_size before using a field.
+ */
+struct NoctAPI {
+	uint32_t abi_version;
+	uint32_t struct_size;
+	uint64_t feature_bits;
+#define NOCT_API_FIELD(ret, name, args) ret (*name) args;
+#include <noct/noct_api_fields.def>
+#undef NOCT_API_FIELD
+};
+
 /*
  * A value.
  *  - Members are private.
@@ -116,6 +151,7 @@ struct rt_value {
 #define NOCT_ACCEL_BACKEND_VULKAN  1
 #define NOCT_ACCEL_BACKEND_OPENGL  2
 #define NOCT_ACCEL_BACKEND_DX12    3
+#define NOCT_ACCEL_BACKEND_AUTO    255
 
 #define NOCT_OBJECT_MODEL_SINGLE   0
 #define NOCT_OBJECT_MODEL_MULTI    1
@@ -337,8 +373,51 @@ noct_register_cfunc(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	bool (*cfunc)(NoctEnv *env),
+	NoctCFunc cfunc,
 	NoctFunc **ret_func);
+
+/* Registers a native function carrying VM-local user data. */
+NOCT_DLL
+bool
+noct_register_cfunc_with_data(
+	NoctEnv *env,
+	const char *name,
+	size_t param_count,
+	const char *param_name[],
+	NoctCFuncWithData cfunc,
+	void *userdata,
+	NoctFunc **ret_func);
+
+/* Registers a native-only cleanup callback for normal VM destruction. */
+NOCT_DLL
+bool
+noct_register_vm_finalizer(
+	NoctEnv *env,
+	NoctVMFinalizer finalizer,
+	void *userdata);
+
+/* Loads and initializes a native library for this VM. */
+NOCT_DLL
+bool
+noct_load_library(
+	NoctEnv *env,
+	const char *name,
+	bool optional,
+	bool *loaded);
+
+/* Resolve and register one source module or installed package. */
+NOCT_DLL
+bool
+noct_require_module(
+	NoctEnv *env,
+	const char *name);
+
+/* Resolve and register an installed package, ignoring flat module paths. */
+NOCT_DLL
+bool
+noct_require_package(
+	NoctEnv *env,
+	const char *name);
 
 /*
  * Enters the VM in the current thread and invokes a function by name.

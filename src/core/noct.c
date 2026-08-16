@@ -13,6 +13,7 @@
 #include "runtime.h"
 #include "jit.h"
 #include "objectmodel.h"
+#include "dynlib.h"
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -137,7 +138,7 @@ noct_register_cfunc(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	bool (*cfunc)(NoctEnv *env),
+	NoctCFunc cfunc,
 	NoctFunc **ret_func)
 {
 	assert(env != NULL);
@@ -148,6 +149,75 @@ noct_register_cfunc(
 		return false;
 
 	return true;
+}
+
+NOCT_DLL
+bool
+noct_register_cfunc_with_data(
+	NoctEnv *env,
+	const char *name,
+	size_t param_count,
+	const char *param_name[],
+	NoctCFuncWithData cfunc,
+	void *userdata,
+	NoctFunc **ret_func)
+{
+	assert(env != NULL);
+	assert(name != NULL);
+	assert(cfunc != NULL);
+
+	return rt_register_cfunc_with_data(env, name, param_count, param_name,
+					   cfunc, userdata, ret_func);
+}
+
+NOCT_DLL
+bool
+noct_register_vm_finalizer(
+	NoctEnv *env,
+	NoctVMFinalizer finalizer,
+	void *userdata)
+{
+	assert(env != NULL);
+	assert(finalizer != NULL);
+
+	return rt_register_vm_finalizer(env, finalizer, userdata);
+}
+
+NOCT_DLL
+bool
+noct_load_library(
+	NoctEnv *env,
+	const char *name,
+	bool optional,
+	bool *loaded)
+{
+	assert(env != NULL);
+	assert(name != NULL);
+	assert(loaded != NULL);
+
+	return rt_load_library(env, name, optional, loaded);
+}
+
+NOCT_DLL
+bool
+noct_require_module(
+	NoctEnv *env,
+	const char *name)
+{
+	assert(env != NULL);
+	assert(name != NULL);
+	return rt_require_module(env, name);
+}
+
+NOCT_DLL
+bool
+noct_require_package(
+	NoctEnv *env,
+	const char *name)
+{
+	assert(env != NULL);
+	assert(name != NULL);
+	return rt_require_package(env, name);
 }
 
 NOCT_DLL

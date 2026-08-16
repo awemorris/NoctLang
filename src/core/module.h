@@ -18,6 +18,16 @@ struct module_paths {
 	uint32_t capacity;
 };
 
+/* Complete resolution result. Package strings are NULL for flat modules. */
+struct module_resolution {
+	char *physical;
+	char *logical;
+	char *data;
+	char *package_name;
+	char *package_dir;
+	bool is_package;
+};
+
 /* Initialize a path list.  The current directory is always first. */
 bool module_paths_init(struct module_paths *paths);
 void module_paths_cleanup(struct module_paths *paths);
@@ -33,6 +43,13 @@ bool module_paths_add(struct module_paths *paths, const char *path_list);
  */
 bool module_resolve(const struct module_paths *paths, const char *name,
 		    char **physical, char **logical, char **data);
+
+/* Resolve a flat module first, then the user and system package roots. */
+bool module_resolve_ex(const struct module_paths *paths, const char *name,
+		       struct module_resolution *result);
+bool module_resolve_package(const char *name,
+			    struct module_resolution *result);
+void module_resolution_cleanup(struct module_resolution *result);
 
 /* Return a normalized absolute key for an already named source file. */
 char *module_path_key(const char *path);

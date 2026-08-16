@@ -21,6 +21,10 @@
 #include "objectmodel.h"
 #include "objectmodel-backend.h"
 #include "atomic.h"
+#include "dynlib.h"
+#if defined(NOCT_USE_PACKAGE_CACHE)
+#include "package-cache.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,7 +60,8 @@ rt_use_mt_object_model(
 
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
-static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
+static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir,
+			    struct rt_module *owner_module);
 static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
 static bool rt_read_accel_program(struct rt_env *env, uint8_t *data,
@@ -99,17 +104,46 @@ static bool rt_init_global(struct rt_env *env);
 static void rt_cleanup_global(struct rt_env *env);
 static bool rt_expand_global(struct rt_env *env);
 
+struct rt_cfunc_stage {
+	struct rt_func *func;
+	char *global_name;
+	struct rt_cfunc_stage *next;
+};
+
+struct rt_finalizer_stage {
+	NoctVMFinalizer finalizer;
+	void *userdata;
+	struct rt_finalizer_stage *next;
+};
+
+struct rt_library_transaction {
+	struct rt_cfunc_stage *cfunc_head;
+	struct rt_cfunc_stage *cfunc_tail;
+	struct rt_finalizer_stage *finalizer_head;
+	struct rt_finalizer_stage *finalizer_tail;
+};
+
+struct rt_vm_finalizer {
+	NoctVMFinalizer finalizer;
+	void *userdata;
+	struct rt_vm_finalizer *next;
+};
+
+static struct rt_func *rt_create_cfunc(struct rt_env *env,
+				       const char *name, size_t param_count,
+				       const char *param_name[],
+				       NoctCFunc cfunc,
+				       NoctCFuncWithData cfunc_with_data,
+				       void *userdata);
+static bool rt_stage_or_publish_cfunc(struct rt_env *env,
+				      struct rt_func *func,
+				      struct rt_func **ret_func);
+static void rt_run_vm_finalizers(struct rt_vm *vm);
+
 enum rt_module_state {
 	RT_MODULE_LOADING,
 	RT_MODULE_LOADED,
 	RT_MODULE_FAILED
-};
-
-struct rt_module {
-	char *key;
-	char *logical_name;
-	int state;
-	struct rt_module *next;
 };
 
 static bool rt_register_source_internal(struct rt_env *env,
@@ -119,7 +153,9 @@ static bool rt_register_source_internal(struct rt_env *env,
 					bool prepare_fast_prototypes);
 static struct rt_module *rt_find_module(struct rt_vm *vm, const char *key);
 static struct rt_module *rt_add_module(struct rt_env *env, char *key,
-				       char *logical_name);
+				       char *logical_name,
+				       char *package_name,
+				       char *package_dir, bool is_package);
 static void rt_remove_module(struct rt_vm *vm, struct rt_module *module);
 static void rt_cleanup_modules(struct rt_vm *vm);
 
@@ -221,6 +257,9 @@ rt_create_vm(
 		return false;
 	}
 
+	/* Register compiled-in accelerator backends before their intrinsics. */
+	accel_register_builtin_backends(*vm);
+
 	/* Register the intrinsics. */
 	if (!rt_register_intrinsics(*default_env)) {
 		rt_cleanup_global(*default_env);
@@ -230,7 +269,6 @@ rt_create_vm(
 		noct_free(*vm);
 		return false;
 	}
-
 	return true;
 }
 
@@ -253,6 +291,8 @@ rt_destroy_vm(
 	if (vm->config.jit_enable)
 		jit_free(vm->env_list);
 	accel_runtime_cleanup(vm);
+	rt_run_vm_finalizers(vm);
+	rt_cleanup_libraries(vm);
 
 	/* Free global variables. */
 	rt_cleanup_global(vm->env_list);
@@ -305,7 +345,8 @@ rt_find_module(struct rt_vm *vm, const char *key)
 }
 
 static struct rt_module *
-rt_add_module(struct rt_env *env, char *key, char *logical_name)
+rt_add_module(struct rt_env *env, char *key, char *logical_name,
+	      char *package_name, char *package_dir, bool is_package)
 {
 	struct rt_module *module;
 
@@ -317,6 +358,9 @@ rt_add_module(struct rt_env *env, char *key, char *logical_name)
 	memset(module, 0, sizeof(*module));
 	module->key = key;
 	module->logical_name = logical_name;
+	module->package_name = package_name;
+	module->package_dir = package_dir;
+	module->is_package = is_package;
 	module->state = RT_MODULE_LOADING;
 	module->next = env->vm->module_list;
 	env->vm->module_list = module;
@@ -333,6 +377,8 @@ rt_remove_module(struct rt_vm *vm, struct rt_module *module)
 			*link = module->next;
 			free(module->key);
 			free(module->logical_name);
+			free(module->package_name);
+			free(module->package_dir);
 			noct_free(module);
 			return;
 		}
@@ -349,6 +395,8 @@ rt_cleanup_modules(struct rt_vm *vm)
 		next = module->next;
 		free(module->key);
 		free(module->logical_name);
+		free(module->package_name);
+		free(module->package_dir);
 		noct_free(module);
 	}
 	vm->module_list = NULL;
@@ -714,7 +762,7 @@ rt_register_source(
 		return false;
 	}
 	memcpy(logical, file_name, strlen(file_name) + 1);
-	module = rt_add_module(env, key, logical);
+	module = rt_add_module(env, key, logical, NULL, NULL, false);
 	if (module == NULL) {
 		free(key);
 		free(logical);
@@ -736,6 +784,145 @@ rt_register_source(
 }
 
 static bool
+rt_register_resolution(struct rt_env *env, const char *name,
+		       struct module_resolution *resolution)
+{
+	struct rt_module *module;
+	bool result;
+
+	if (resolution->is_package) {
+		for (module = env->vm->module_list; module != NULL;
+		     module = module->next) {
+			if (module->is_package && module->package_name != NULL &&
+			    strcmp(module->package_name, resolution->package_name) == 0 &&
+			    strcmp(module->key, resolution->physical) != 0) {
+				module_resolution_cleanup(resolution);
+				rt_error(env, "Package '%s' resolves to a different installed entry.",
+					 name);
+				return false;
+			}
+		}
+	}
+	module = rt_find_module(env->vm, resolution->physical);
+	if (module != NULL) {
+		module_resolution_cleanup(resolution);
+		if (module->state == RT_MODULE_LOADED)
+			return true;
+		rt_error(env, module->state == RT_MODULE_LOADING ?
+			 "Circular require involving '%s'." :
+			 "Module '%s' previously failed to load.", name);
+		return false;
+	}
+	module = rt_add_module(env, resolution->physical, resolution->logical,
+			       resolution->package_name, resolution->package_dir,
+			       resolution->is_package);
+	if (module == NULL) {
+		module_resolution_cleanup(resolution);
+		return false;
+	}
+	resolution->physical = NULL;
+	resolution->logical = NULL;
+	resolution->package_name = NULL;
+	resolution->package_dir = NULL;
+	result = rt_register_source_internal(env, module->logical_name,
+					     resolution->data, module, true);
+	free(resolution->data);
+	rt_commit_jit(env);
+	return result;
+}
+
+#if defined(NOCT_USE_PACKAGE_CACHE)
+static int
+rt_try_package_cache(struct rt_env *env, const char *name,
+		     struct module_resolution *root)
+{
+	struct package_cache_result cache;
+	struct package_cache_node *node;
+	struct rt_module *old_head;
+	struct rt_module *module;
+	bool ok;
+
+	memset(&cache, 0, sizeof(cache));
+	if (!package_cache_prepare(&env->vm->require_path, name, root,
+				   env->vm->config.optimize_level,
+				   env->vm->config.lineinfo, &cache)) {
+		package_cache_cleanup(&cache);
+		return 0;
+	}
+	/* A whole-graph container cannot be overlaid on already registered
+	 * modules without duplicating their public functions. */
+	for (node = cache.node; node != NULL; node = node->next) {
+		if (rt_find_module(env->vm, node->module.physical) != NULL) {
+			package_cache_cleanup(&cache);
+			return 0;
+		}
+	}
+	old_head = env->vm->module_list;
+	for (node = cache.node; node != NULL; node = node->next) {
+		module = rt_add_module(env, node->module.physical,
+				       node->module.logical,
+				       node->module.package_name,
+				       node->module.package_dir,
+				       node->module.is_package);
+		if (module == NULL) {
+			while (env->vm->module_list != old_head)
+				rt_remove_module(env->vm, env->vm->module_list);
+			package_cache_cleanup(&cache);
+			return -1;
+		}
+		node->module.physical = NULL;
+		node->module.logical = NULL;
+		node->module.package_name = NULL;
+		node->module.package_dir = NULL;
+	}
+	env->loading_package_bytecode = true;
+	ok = rt_register_bytecode(env, cache.bytecode_size, cache.bytecode);
+	env->loading_package_bytecode = false;
+	for (module = env->vm->module_list; module != old_head;
+	     module = module->next)
+		module->state = ok ? RT_MODULE_LOADED : RT_MODULE_FAILED;
+	package_cache_cleanup(&cache);
+	return ok ? 1 : -1;
+}
+#endif
+
+bool
+rt_require_module(struct rt_env *env, const char *name)
+{
+	struct module_resolution resolution;
+
+	if (!module_resolve_ex(&env->vm->require_path, name, &resolution)) {
+		rt_error(env, "Cannot resolve required module '%s'.", name);
+		return false;
+	}
+	return rt_register_resolution(env, name, &resolution);
+}
+
+bool
+rt_require_package(struct rt_env *env, const char *name)
+{
+	struct module_resolution resolution;
+#if defined(NOCT_USE_PACKAGE_CACHE)
+	int cache_result;
+#endif
+
+	if (!module_resolve_package(name, &resolution)) {
+		rt_error(env, "Cannot resolve installed package '%s'.", name);
+		return false;
+	}
+#if defined(NOCT_USE_PACKAGE_CACHE)
+	if (rt_find_module(env->vm, resolution.physical) == NULL) {
+		cache_result = rt_try_package_cache(env, name, &resolution);
+		if (cache_result != 0) {
+			module_resolution_cleanup(&resolution);
+			return cache_result > 0;
+		}
+	}
+#endif
+	return rt_register_resolution(env, name, &resolution);
+}
+
+static bool
 rt_register_source_internal(
 	struct rt_env *env,
 	const char *file_name,
@@ -750,11 +937,13 @@ rt_register_source_internal(
 	char **require_name;
 	bool is_succeeded;
 	char init_func_name[256];
+	char package_init_func_name[512];
 
 	is_succeeded = false;
 	require_count = 0;
 	require_name = NULL;
 	init_func_name[0] = '\0';
+	package_init_func_name[0] = '\0';
 	if (prepare_fast_prototypes &&
 	    !rt_prepare_fast_prototypes(env, file_name, source_text))
 		goto failed;
@@ -795,6 +984,12 @@ rt_register_source_internal(
 			rt_error(env, "%s", hir_get_error_message());
 			break;
 		}
+		if (ast_get_package_init_name() != NULL) {
+			strncpy(package_init_func_name,
+				ast_get_package_init_name(),
+				sizeof(package_init_func_name) - 1);
+			package_init_func_name[sizeof(package_init_func_name) - 1] = '\0';
+		}
 
 		/* Propagate the optimization level to the compiler. */
 		lir_set_optimize_level(env->vm->config.optimize_level);
@@ -822,7 +1017,8 @@ rt_register_source_internal(
 			}
 
 			/* Make a function object. */
-			if (!rt_register_lir(env, lfunc))
+			if (!rt_register_lir(env, lfunc,
+					     module->is_package ? module : NULL))
 				break;
 
 			/* Remember a load-time init function. */
@@ -850,24 +1046,20 @@ rt_register_source_internal(
 
 	/* Register current LIR first, then recursively load dependencies. */
 	for (i = 0; i < require_count; i++) {
-		char *physical;
-		char *logical;
-		char *data;
+		struct module_resolution resolution;
 		struct rt_module *dependency;
 
-		if (!module_resolve(&env->vm->require_path, require_name[i],
-				    &physical, &logical, &data)) {
+		if (!module_resolve_ex(&env->vm->require_path, require_name[i],
+				       &resolution)) {
 			strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
 			env->file_name[sizeof(env->file_name) - 1] = '\0';
 			rt_error(env, "Cannot resolve required module '%s'.",
 				 require_name[i]);
 			goto failed;
 		}
-		dependency = rt_find_module(env->vm, physical);
+		dependency = rt_find_module(env->vm, resolution.physical);
 		if (dependency != NULL) {
-			free(physical);
-			free(logical);
-			free(data);
+			module_resolution_cleanup(&resolution);
 			if (dependency->state == RT_MODULE_LOADING) {
 				strncpy(env->file_name, file_name,
 					sizeof(env->file_name) - 1);
@@ -883,19 +1075,38 @@ rt_register_source_internal(
 			}
 			continue;
 		}
-		dependency = rt_add_module(env, physical, logical);
+#if defined(NOCT_USE_PACKAGE_CACHE)
+		if (resolution.is_package) {
+			int cache_result;
+			cache_result = rt_try_package_cache(
+				env, resolution.package_name, &resolution);
+			if (cache_result != 0) {
+				module_resolution_cleanup(&resolution);
+				if (cache_result < 0)
+					goto failed;
+				continue;
+			}
+		}
+#endif
+		dependency = rt_add_module(env, resolution.physical,
+					   resolution.logical,
+					   resolution.package_name,
+					   resolution.package_dir,
+					   resolution.is_package);
 		if (dependency == NULL) {
-			free(physical);
-			free(logical);
-			free(data);
+			module_resolution_cleanup(&resolution);
 			goto failed;
 		}
+		resolution.physical = NULL;
+		resolution.logical = NULL;
+		resolution.package_name = NULL;
+		resolution.package_dir = NULL;
 		if (!rt_register_source_internal(env, dependency->logical_name,
-					 data, dependency, false)) {
-			free(data);
+					 resolution.data, dependency, false)) {
+			free(resolution.data);
 			goto failed;
 		}
-		free(data);
+		free(resolution.data);
 	}
 
 	/* Auto-execute the load-time init function ($init section). */
@@ -903,6 +1114,13 @@ rt_register_source_internal(
 		struct rt_value init_ret;
 		rt_commit_jit(env);
 		if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
+			goto failed;
+	}
+	if (package_init_func_name[0] != '\0') {
+		struct rt_value package_ret;
+		rt_commit_jit(env);
+		if (!rt_call_with_name(env, package_init_func_name, 0, NULL,
+				       &package_ret))
 			goto failed;
 	}
 
@@ -925,7 +1143,8 @@ failed:
 static bool
 rt_register_lir(
 	struct rt_env *env,
-	struct lir_func *lir)
+	struct lir_func *lir,
+	struct rt_module *owner_module)
 {
 	struct rt_func *func;
 	struct rt_value global;
@@ -937,6 +1156,7 @@ rt_register_lir(
 		return false;
 	}
 	memset(func, 0, sizeof(struct rt_func));
+	func->owner_module = owner_module;
 
 	func->name = noct_strdup(lir->func_name);
 	if (func->name == NULL) {
@@ -1364,11 +1584,15 @@ rt_register_bytecode_function(
 	bool succeeded;
 	struct accel_param_range loaded_range[LIR_PARAM_SIZE];
 	int loaded_parallel_mode;
+	char *function_file_name;
+	struct rt_module *owner_module;
 
 	memset(&lfunc, 0, sizeof(lfunc));
 	fast_signature_init(&lfunc.fast_signature);
 	memset(loaded_range, 0, sizeof(loaded_range));
 	loaded_parallel_mode = ACCEL_PARALLEL_NOT_APPLICABLE;
+	function_file_name = NULL;
+	owner_module = NULL;
 	lfunc.file_name = file_name;
 	lfunc.return_type = -1;
 	lfunc.return_packed_type = -1;
@@ -1407,8 +1631,20 @@ rt_register_bytecode_function(
 			init_name_out[init_name_size - 1] = '\0';
 		}
 
-		/* Check "Parameters". */
+		/* New containers retain a logical source for every function. */
 		line = rt_read_bytecode_line(data, size, pos);
+		if (line != NULL && strcmp(line, "Source") == 0) {
+			line = rt_read_bytecode_line(data, size, pos);
+			if (line == NULL)
+				break;
+			function_file_name = noct_strdup(line);
+			if (function_file_name == NULL)
+				break;
+			lfunc.file_name = function_file_name;
+			line = rt_read_bytecode_line(data, size, pos);
+		}
+
+		/* Check "Parameters". */
 		if (line == NULL || strcmp(line, "Parameters") != 0)
 			break;
 
@@ -1758,7 +1994,15 @@ rt_register_bytecode_function(
 
 		/* Load LIR. */
 		lfunc.bytecode = data + *pos;
-		if (!rt_register_lir(env, &lfunc))
+		if (env->loading_package_bytecode) {
+			for (owner_module = env->vm->module_list;
+			     owner_module != NULL; owner_module = owner_module->next)
+				if (owner_module->is_package &&
+				    strcmp(owner_module->logical_name,
+					   lfunc.file_name) == 0)
+					break;
+		}
+		if (!rt_register_lir(env, &lfunc, owner_module))
 			break;
 
 		/* Check "End Function". */
@@ -1779,6 +2023,7 @@ rt_register_bytecode_function(
 	}
 	accel_kernel_free(lfunc.accel_kernel);
 	accel_program_free(lfunc.accel_program);
+	noct_free(function_file_name);
 
 	if (!succeeded) {
 		noct_error(env, N_TR("Failed to load bytecode data."));
@@ -1816,64 +2061,247 @@ rt_read_bytecode_line(
 /*
  * Register a native function.
  */
+static struct rt_func *
+rt_create_cfunc(
+	struct rt_env *env,
+	const char *name,
+	size_t param_count,
+	const char *param_name[],
+	NoctCFunc cfunc,
+	NoctCFuncWithData cfunc_with_data,
+	void *userdata)
+{
+	struct rt_func *func;
+	uint32_t i;
+
+	if (name == NULL || name[0] == '\0' || param_count > NOCT_ARG_MAX ||
+	    (param_count != 0 && param_name == NULL) ||
+	    (cfunc == NULL) == (cfunc_with_data == NULL)) {
+		rt_error(env, N_TR("Invalid native function registration."));
+		return NULL;
+	}
+	func = noct_calloc(1, sizeof(*func));
+	if (func == NULL) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+	func->name = noct_strdup(name);
+	if (func->name == NULL)
+		goto oom;
+	func->param_count = param_count;
+	func->return_type = -1;
+	func->return_packed_type = -1;
+	for (i = 0; i < NOCT_ARG_MAX; i++) {
+		func->param_type[i] = -1;
+		func->param_packed_type[i] = -1;
+		func->param_accel_access[i] = ACCEL_ACCESS_NONE;
+	}
+	for (i = 0; i < param_count; i++) {
+		if (param_name[i] == NULL)
+			goto invalid;
+		func->param_name[i] = noct_strdup(param_name[i]);
+		if (func->param_name[i] == NULL)
+			goto oom;
+	}
+	func->cfunc = cfunc;
+	func->cfunc_with_data = cfunc_with_data;
+	func->cfunc_userdata = userdata;
+	func->tmpvar_size = (uint32_t)param_count + 1;
+	return func;
+
+invalid:
+	rt_error(env, N_TR("Invalid native function parameter name."));
+	rt_free_func(env, func);
+	return NULL;
+oom:
+	rt_out_of_memory(env);
+	rt_free_func(env, func);
+	return NULL;
+}
+
+static bool
+rt_stage_or_publish_cfunc(
+	struct rt_env *env,
+	struct rt_func *func,
+	struct rt_func **ret_func)
+{
+	struct rt_library_transaction *transaction;
+	struct rt_cfunc_stage *stage;
+	struct rt_value global;
+
+	transaction = env->library_transaction;
+	if (transaction != NULL) {
+		for (stage = transaction->cfunc_head; stage != NULL;
+		     stage = stage->next) {
+			if (strcmp(stage->func->name, func->name) == 0) {
+				rt_error(env, N_TR("Duplicate native function \"%s\"."),
+					 func->name);
+				rt_free_func(env, func);
+				return false;
+			}
+		}
+		stage = noct_calloc(1, sizeof(*stage));
+		if (stage == NULL) {
+			rt_out_of_memory(env);
+			rt_free_func(env, func);
+			return false;
+		}
+		stage->global_name = noct_strdup(func->name);
+		if (stage->global_name == NULL) {
+			noct_free(stage);
+			rt_out_of_memory(env);
+			rt_free_func(env, func);
+			return false;
+		}
+		stage->func = func;
+		if (transaction->cfunc_tail != NULL)
+			transaction->cfunc_tail->next = stage;
+		else
+			transaction->cfunc_head = stage;
+		transaction->cfunc_tail = stage;
+	} else {
+		global.type = NOCT_VALUE_FUNC;
+		global.val.func = func;
+		if (!rt_set_global(env, func->name, &global)) {
+			rt_free_func(env, func);
+			return false;
+		}
+		func->next = env->vm->func_list;
+		env->vm->func_list = func;
+	}
+	if (ret_func != NULL)
+		*ret_func = func;
+	return true;
+}
+
 bool
 rt_register_cfunc(
 	struct rt_env *env,
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	bool (*cfunc)(struct rt_env *env),
+	NoctCFunc cfunc,
 	struct rt_func **ret_func)
 {
 	struct rt_func *func;
-	struct rt_value global;
-	uint32_t i;
 
-	func = noct_malloc(sizeof(struct rt_func));
-	if (func == NULL) {
-		rt_out_of_memory(env);
+	func = rt_create_cfunc(env, name, param_count, param_name,
+			       cfunc, NULL, NULL);
+	return func != NULL && rt_stage_or_publish_cfunc(env, func, ret_func);
+}
+
+bool
+rt_register_cfunc_with_data(
+	struct rt_env *env,
+	const char *name,
+	size_t param_count,
+	const char *param_name[],
+	NoctCFuncWithData cfunc,
+	void *userdata,
+	struct rt_func **ret_func)
+{
+	struct rt_func *func;
+
+	func = rt_create_cfunc(env, name, param_count, param_name,
+			       NULL, cfunc, userdata);
+	return func != NULL && rt_stage_or_publish_cfunc(env, func, ret_func);
+}
+
+bool
+rt_register_vm_finalizer(
+	struct rt_env *env,
+	NoctVMFinalizer finalizer,
+	void *userdata)
+{
+	struct rt_finalizer_stage *stage;
+	struct rt_vm_finalizer *entry;
+
+	if (finalizer == NULL) {
+		rt_error(env, N_TR("Invalid VM finalizer."));
 		return false;
 	}
-	memset(func, 0, sizeof(struct rt_func));
-
-	func->name = noct_strdup(name);
-	if (func->name == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-	func->param_count = param_count;
-	func->return_type = -1;
-	func->return_packed_type = -1;
-	func->return_type_checked = false;
-	for (i = 0; i < NOCT_ARG_MAX; i++) {
-		func->param_type[i] = -1;
-		func->param_packed_type[i] = -1;
-		func->param_restricted[i] = false;
-		func->param_accel_access[i] = ACCEL_ACCESS_NONE;
-	}
-	for (i = 0; i < param_count; i++) {
-		func->param_name[i] = noct_strdup(param_name[i]);
-		if (func->param_name[i] == NULL) {
+	if (env->library_transaction != NULL) {
+		stage = noct_calloc(1, sizeof(*stage));
+		if (stage == NULL) {
 			rt_out_of_memory(env);
 			return false;
 		}
+		stage->finalizer = finalizer;
+		stage->userdata = userdata;
+		if (env->library_transaction->finalizer_tail != NULL)
+			env->library_transaction->finalizer_tail->next = stage;
+		else
+			env->library_transaction->finalizer_head = stage;
+		env->library_transaction->finalizer_tail = stage;
+		return true;
 	}
-	func->cfunc = cfunc;
-	func->tmpvar_size = (uint32_t)param_count + 1;
-
-	global.type = NOCT_VALUE_FUNC;
-	global.val.func = func;
-	if (!rt_set_global(env, name, &global))
+	entry = noct_malloc(sizeof(*entry));
+	if (entry == NULL) {
+		rt_out_of_memory(env);
 		return false;
-
-	/* Keep native functions on the VM-owned function list too. */
-	func->next = env->vm->func_list;
-	env->vm->func_list = func;
-
-	if (ret_func != NULL)
-		*ret_func = func;
-
+	}
+	entry->finalizer = finalizer;
+	entry->userdata = userdata;
+	entry->next = env->vm->vm_finalizer_list;
+	env->vm->vm_finalizer_list = entry;
 	return true;
+}
+
+bool
+rt_library_transaction_begin(
+	struct rt_env *env)
+{
+	if (env->library_transaction != NULL) {
+		rt_error(env, N_TR("Recursive native library initialization is not supported."));
+		return false;
+	}
+	env->library_transaction = noct_calloc(1, sizeof(*env->library_transaction));
+	if (env->library_transaction == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	return true;
+}
+
+void
+rt_library_transaction_abort(
+	struct rt_env *env)
+{
+	struct rt_library_transaction *transaction;
+	struct rt_cfunc_stage *cfunc;
+	struct rt_finalizer_stage *finalizer;
+
+	transaction = env->library_transaction;
+	if (transaction == NULL)
+		return;
+	env->library_transaction = NULL;
+	while (transaction->cfunc_head != NULL) {
+		cfunc = transaction->cfunc_head;
+		transaction->cfunc_head = cfunc->next;
+		noct_free(cfunc->global_name);
+		rt_free_func(env, cfunc->func);
+		noct_free(cfunc);
+	}
+	while (transaction->finalizer_head != NULL) {
+		finalizer = transaction->finalizer_head;
+		transaction->finalizer_head = finalizer->next;
+		noct_free(finalizer);
+	}
+	noct_free(transaction);
+}
+
+static void
+rt_run_vm_finalizers(
+	struct rt_vm *vm)
+{
+	struct rt_vm_finalizer *entry;
+
+	while (vm->vm_finalizer_list != NULL) {
+		entry = vm->vm_finalizer_list;
+		vm->vm_finalizer_list = entry->next;
+		entry->finalizer(entry->userdata);
+		noct_free(entry);
+	}
 }
 
 /*
@@ -2076,9 +2504,15 @@ rt_call(
 		env->frame->tmpvar[i] = arg[i];
 
 	/* Run. */
-	if (func->cfunc != NULL) {
+	if (func->cfunc != NULL || func->cfunc_with_data != NULL) {
 		/* Call an intrinsic or an FFI function implemented in C. */
-		if (!func->cfunc(env)) {
+		bool cfunc_result;
+		if (func->cfunc_with_data != NULL)
+			cfunc_result = func->cfunc_with_data(
+				env, func->cfunc_userdata);
+		else
+			cfunc_result = func->cfunc(env);
+		if (!cfunc_result) {
 			rt_leave_frame(env);
 			return false;
 		}
@@ -3529,8 +3963,10 @@ rt_set_global_with_hash(
 
 	/* Reisze if 75% is used. */
 	if (env->vm->global_size >= env->vm->global_alloc_size / 4 * 3) {
-		if (!rt_expand_global(env))
+		if (!rt_expand_global(env)) {
+			RELEASE_GLOBAL();
 			return false;
+		}
 	}
 
 	/* Search a place to insert or overwrite. */
@@ -3622,6 +4058,184 @@ rt_expand_global(
 	env->vm->global = new_tbl;
 	env->vm->global_alloc_size = new_size;
 
+	return true;
+}
+
+static void
+rt_library_registration_lock(
+	struct rt_env *env)
+{
+#if defined(NOCT_USE_MULTITHREAD)
+	if (rt_use_mt_object_model(env))
+		atomic_spin_lock(&env->vm->library_registration_lock);
+#else
+	UNUSED_PARAMETER(env);
+#endif
+}
+
+static void
+rt_library_registration_unlock(
+	struct rt_env *env)
+{
+#if defined(NOCT_USE_MULTITHREAD)
+	if (rt_use_mt_object_model(env))
+		atomic_spin_unlock(&env->vm->library_registration_lock);
+#else
+	UNUSED_PARAMETER(env);
+#endif
+}
+
+static bool
+rt_global_name_exists_locked(
+	struct rt_vm *vm,
+	const char *name)
+{
+	uint32_t i;
+
+	for (i = 0; i < vm->global_alloc_size; i++) {
+		if (vm->global[i].name != NULL && !vm->global[i].is_removed &&
+		    strcmp(vm->global[i].name, name) == 0)
+			return true;
+	}
+	return false;
+}
+
+static void
+rt_insert_global_owned_locked(
+	struct rt_vm *vm,
+	char *name,
+	struct rt_value *value)
+{
+	uint32_t hash;
+	uint32_t index;
+	uint32_t i;
+	size_t len;
+
+	len = strlen(name) + 1;
+	hash = rt_string_hash(name);
+	index = hash & (vm->global_alloc_size - 1);
+	for (i = index; ; i = (i + 1) & (vm->global_alloc_size - 1)) {
+		if (vm->global[i].name == NULL || vm->global[i].is_removed) {
+			vm->global[i].name = name;
+			vm->global[i].name_len = (uint32_t)len;
+			vm->global[i].name_hash = hash;
+			vm->global[i].val = *value;
+			vm->global[i].is_removed = false;
+			vm->global[i].is_const = false;
+			vm->global_size++;
+			return;
+		}
+	}
+}
+
+bool
+rt_library_transaction_commit(
+	struct rt_env *env)
+{
+	struct rt_library_transaction *transaction;
+	struct rt_cfunc_stage *stage;
+	struct rt_cfunc_stage *next_stage;
+	struct rt_finalizer_stage *finalizer_stage;
+	struct rt_finalizer_stage *next_finalizer_stage;
+	struct rt_vm_finalizer *prepared_finalizer;
+	struct rt_vm_finalizer *prepared_finalizer_tail;
+	struct rt_vm_finalizer *entry;
+	struct rt_vm_finalizer *next_entry;
+	struct rt_value global;
+	uint32_t cfunc_count;
+
+	transaction = env->library_transaction;
+	if (transaction == NULL) {
+		rt_error(env, N_TR("No native library registration is active."));
+		return false;
+	}
+
+	/* Allocate every finalizer node before publishing any function. */
+	prepared_finalizer = NULL;
+	prepared_finalizer_tail = NULL;
+	for (finalizer_stage = transaction->finalizer_head;
+	     finalizer_stage != NULL; finalizer_stage = finalizer_stage->next) {
+		entry = noct_malloc(sizeof(*entry));
+		if (entry == NULL) {
+			rt_out_of_memory(env);
+			while (prepared_finalizer != NULL) {
+				next_entry = prepared_finalizer->next;
+				noct_free(prepared_finalizer);
+				prepared_finalizer = next_entry;
+			}
+			rt_library_transaction_abort(env);
+			return false;
+		}
+		entry->finalizer = finalizer_stage->finalizer;
+		entry->userdata = finalizer_stage->userdata;
+		entry->next = prepared_finalizer;
+		prepared_finalizer = entry;
+		if (prepared_finalizer_tail == NULL)
+			prepared_finalizer_tail = entry;
+	}
+
+	cfunc_count = 0;
+	for (stage = transaction->cfunc_head; stage != NULL; stage = stage->next)
+		cfunc_count++;
+
+	rt_library_registration_lock(env);
+	ACQUIRE_GLOBAL();
+	for (stage = transaction->cfunc_head; stage != NULL; stage = stage->next) {
+		if (rt_global_name_exists_locked(env->vm, stage->func->name)) {
+			RELEASE_GLOBAL();
+			rt_library_registration_unlock(env);
+			rt_error(env, N_TR("Native function \"%s\" conflicts with an existing global."),
+				 stage->func->name);
+			while (prepared_finalizer != NULL) {
+				next_entry = prepared_finalizer->next;
+				noct_free(prepared_finalizer);
+				prepared_finalizer = next_entry;
+			}
+			rt_library_transaction_abort(env);
+			return false;
+		}
+	}
+	while (env->vm->global_size + cfunc_count >=
+	       env->vm->global_alloc_size / 4 * 3) {
+		if (!rt_expand_global(env)) {
+			RELEASE_GLOBAL();
+			rt_library_registration_unlock(env);
+			while (prepared_finalizer != NULL) {
+				next_entry = prepared_finalizer->next;
+				noct_free(prepared_finalizer);
+				prepared_finalizer = next_entry;
+			}
+			rt_library_transaction_abort(env);
+			return false;
+		}
+	}
+
+	for (stage = transaction->cfunc_head; stage != NULL; stage = stage->next) {
+		stage->func->next = env->vm->func_list;
+		env->vm->func_list = stage->func;
+		global.type = NOCT_VALUE_FUNC;
+		global.val.func = stage->func;
+		rt_insert_global_owned_locked(env->vm, stage->global_name, &global);
+		stage->global_name = NULL;
+	}
+	if (prepared_finalizer != NULL) {
+		prepared_finalizer_tail->next = env->vm->vm_finalizer_list;
+		env->vm->vm_finalizer_list = prepared_finalizer;
+	}
+	RELEASE_GLOBAL();
+	rt_library_registration_unlock(env);
+
+	env->library_transaction = NULL;
+	for (stage = transaction->cfunc_head; stage != NULL; stage = next_stage) {
+		next_stage = stage->next;
+		noct_free(stage);
+	}
+	for (finalizer_stage = transaction->finalizer_head;
+	     finalizer_stage != NULL; finalizer_stage = next_finalizer_stage) {
+		next_finalizer_stage = finalizer_stage->next;
+		noct_free(finalizer_stage);
+	}
+	noct_free(transaction);
 	return true;
 }
 

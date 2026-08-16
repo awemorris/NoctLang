@@ -59,6 +59,10 @@ NOCT_DLL bool noct_bcback_app_add_source(const char *source_file_name,
 NOCT_DLL bool noct_bcback_app_finalize(void);
 NOCT_DLL void noct_bcback_app_abort(void);
 
+/* Internal package-cache container writer (non-executable, main optional). */
+NOCT_DLL bool noct_bcback_package_start(const char *physical_output,
+					const char *logical_output);
+
 /*
  * C Backend
  */

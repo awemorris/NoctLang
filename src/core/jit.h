@@ -1066,7 +1066,9 @@ jit_context_init_regcache(struct jit_context *ctx)
 		rt_error(ctx->env, "JIT temporary-variable table is too large.");
 		return false;
 	}
-#if SIZE_MAX <= UINT32_MAX
+#if defined(NOCT_ARCH_X86) || defined(NOCT_ARCH_ARM32) || \
+	defined(NOCT_ARCH_PPC32) || defined(NOCT_ARCH_MIPS32) || \
+	defined(NOCT_ARCH_RISCV32)
 	if ((size_t)ctx->func->bytecode_size >
 	    SIZE_MAX / sizeof(*ctx->packed_access_disp)) {
 		rt_error(ctx->env, "JIT bytecode analysis table is too large.");
@@ -1508,10 +1510,10 @@ jit_visit_tmpvar_type_op(struct jit_context *ctx)
 	int tmp;
 	int type;
 	size_t count;
+	bool compiler_temp;
 
 	if (!jit_get_opr_tmpvar(ctx, &tmp) || !jit_get_imm8(ctx, &type))
 		return false;
-	bool compiler_temp;
 
 	compiler_temp = (type & TMPVAR_TYPE_COMPILER_TEMP) != 0;
 	type &= ~TMPVAR_TYPE_COMPILER_TEMP;

@@ -178,6 +178,8 @@ set(
   src/core/gpu_glsl.c      # Deterministic GLSL emission from GPU IR
   src/core/lir.c           # LIR (HIR->LIR construction)
   src/core/noct.c          # Public functions
+  src/core/noct-api.c      # Dynamic-library API function table
+  src/core/dynlib.c        # Restricted dynamic-library loader
   src/core/runtime.c       # Runtime main part
   src/core/interpreter.c   # Runtime interpreter part
   src/core/jit.c           # Runtime JIT part
@@ -189,6 +191,20 @@ set(
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
 )
+
+set(NOCT_DYNLIB_ENABLED OFF)
+if((WIN32 OR UNIX) AND
+   NOT NOCT_TARGET_UNITY AND NOT NOCT_TARGET_MACOS7 AND
+   NOT NOCT_TARGET_DOS4G AND NOT NOCT_TARGET_PC98DOS AND
+   NOT NOCT_TARGET_PC98BE)
+  if(WIN32)
+    list(APPEND NOCT_BASE_SOURCE src/core/dynlib-win.c)
+  else()
+    list(APPEND NOCT_BASE_SOURCE src/core/dynlib-posix.c)
+  endif()
+  add_definitions(-DNOCT_USE_DYNLIB=1)
+  set(NOCT_DYNLIB_ENABLED ON)
+endif()
 
 # Determine the HIR optimizer files.
 if(NOCT_ENABLE_OPTIMIZER)
@@ -270,7 +286,10 @@ if(NOCT_ENABLE_BCBACKEND)
   set(
     NOCT_BCBE_SOURCE
     src/backend/bcback.c
+    src/core/package-cache.c
+    src/core/sha256.c
   )
+  add_definitions(-DNOCT_USE_PACKAGE_CACHE=1)
 endif()
 
 # Determine the Emacs Lisp backend files.
@@ -609,6 +628,10 @@ endif()
 if(    NOT MSVC
    AND NOT CMAKE_C_COMPILER_ID MATCHES "Watcom")
   target_link_libraries(noct PUBLIC m)
+endif()
+
+if(NOCT_DYNLIB_ENABLED)
+  target_link_libraries(noct PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
 if(NOCT_ENABLE_ACCEL_VULKAN)

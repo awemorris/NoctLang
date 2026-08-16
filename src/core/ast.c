@@ -69,6 +69,9 @@ static struct ast_require *ast_require_list;
 static struct ast_require *ast_require_tail;
 static uint32_t ast_require_count;
 
+/* Implicitly file-local package initializer selected by @package paths. */
+static char *ast_package_init_name;
+
 /* File name. */
 static char *ast_file_name;
 
@@ -227,6 +230,7 @@ ast_build(
 	ast_require_list = NULL;
 	ast_require_tail = NULL;
 	ast_require_count = 0;
+	ast_package_init_name = NULL;
 	ast_error_message[0] = '\0';
 
 	/* Copy the file name. */
@@ -300,6 +304,7 @@ ast_build_app_initializer(
 	ast_require_list = NULL;
 	ast_require_tail = NULL;
 	ast_require_count = 0;
+	ast_package_init_name = NULL;
 	ast_error_message[0] = '\0';
 	ast_file_name = ast_strdup(file_name);
 	if (ast_file_name == NULL)
@@ -400,6 +405,31 @@ ast_register_static_symbol(char *name)
 	entry->next = ast_static_symbols;
 	ast_static_symbols = entry;
 	return entry->link_name;
+}
+
+static bool
+ast_is_package_entry(void)
+{
+	const char *name;
+	const char *file;
+	const char *slash;
+	const char *dot;
+	size_t name_len;
+
+	if (ast_file_name == NULL || strncmp(ast_file_name, "@package/", 9) != 0)
+		return false;
+	name = ast_file_name + 9;
+	slash = strchr(name, '/');
+	if (slash == NULL || slash == name)
+		return false;
+	file = slash + 1;
+	dot = strrchr(file, '.');
+	if (dot == NULL ||
+	    (strcmp(dot, ".noct") != 0 && strcmp(dot, ".nct") != 0))
+		return false;
+	name_len = (size_t)(slash - name);
+	return (size_t)(dot - file) == name_len &&
+	       strncmp(name, file, name_len) == 0;
 }
 
 static bool
@@ -813,8 +843,19 @@ ast_accept_func(
 	struct ast_stmt_list *stmt_list)
 {
 	struct ast_func *f;
+	bool is_package_init;
 
 	assert(name != NULL);
+	is_package_init = strcmp(name, "package_init") == 0 &&
+			  ast_is_package_entry();
+	if (is_package_init) {
+		if (param_list != NULL || return_type_name == NULL ||
+		    strcmp(return_type_name, "void") != 0) {
+			ast_printf(N_TR("package_init() must have no parameters and declare ': void'."));
+			return NULL;
+		}
+		flags |= AST_FUNC_STATIC;
+	}
 	if (!ast_register_declared_symbol(name))
 		return NULL;
 
@@ -838,6 +879,8 @@ ast_accept_func(
 		name = ast_register_static_symbol(name);
 		if (name == NULL)
 			return NULL;
+		if (is_package_init)
+			ast_package_init_name = name;
 	}
 
 	/* Allocate a func. */
@@ -860,6 +903,12 @@ ast_accept_func(
 	f->stmt_list = stmt_list;
 
 	return f;
+}
+
+const char *
+ast_get_package_init_name(void)
+{
+	return ast_package_init_name;
 }
 
 /* Called from the parser when it accepted a param_list. */

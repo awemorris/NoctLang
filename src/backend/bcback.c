@@ -57,6 +57,8 @@ static bool bcback_lineinfo = true;
 static bool bcback_simd_info;
 static bool app_active;
 static char *app_output;
+static char *app_physical_output;
+static bool app_package_cache;
 static struct app_func *app_func_head;
 static struct app_func *app_func_tail;
 static struct app_name *app_init_head;
@@ -239,8 +241,8 @@ bcback_write_function(FILE *out, const struct lir_func *f)
 	uint32_t j;
 	int any;
 
-	if (fprintf(out, "Begin Function\nName\n%s\nParameters\n%u\n",
-		    f->func_name, f->param_count) < 0)
+	if (fprintf(out, "Begin Function\nName\n%s\nSource\n%s\nParameters\n%u\n",
+		    f->func_name, f->file_name, f->param_count) < 0)
 		return false;
 	for (j = 0; j < f->param_count; j++)
 		if (fprintf(out, "%s\n", f->param_name[j]) < 0) return false;
@@ -520,7 +522,10 @@ noct_bcback_app_abort(void)
 	if (app_require_path_ready)
 		module_paths_cleanup(&app_require_path);
 	free(app_output);
+	free(app_physical_output);
 	app_output = NULL;
+	app_physical_output = NULL;
+	app_package_cache = false;
 	app_func_head = app_func_tail = NULL;
 	app_init_head = app_init_tail = NULL;
 	app_public = app_source = app_source_tail = NULL;
@@ -605,12 +610,49 @@ noct_bcback_app_start(const char *out_file_name)
 	app_output = bcback_normalize_path(out_file_name);
 	if (app_output == NULL)
 		return false;
-	if (!module_paths_init(&app_require_path)) {
+	app_physical_output = bcback_strdup(out_file_name);
+	if (app_physical_output == NULL) {
 		free(app_output);
 		app_output = NULL;
 		return false;
 	}
+	if (!module_paths_init(&app_require_path)) {
+		free(app_output);
+		free(app_physical_output);
+		app_output = NULL;
+		app_physical_output = NULL;
+		return false;
+	}
 	app_require_path_ready = true;
+	hir_fast_prototypes_reset();
+	app_active = true;
+	return true;
+}
+
+NOCT_DLL bool
+noct_bcback_package_start(const char *physical_output,
+			  const char *logical_output)
+{
+	if (app_active || physical_output == NULL || logical_output == NULL ||
+	    logical_output[0] == '\0' ||
+	    !bcback_has_suffix(physical_output, ".nbp"))
+		return false;
+	app_output = bcback_strdup(logical_output);
+	app_physical_output = bcback_strdup(physical_output);
+	if (app_output == NULL || app_physical_output == NULL) {
+		free(app_output);
+		free(app_physical_output);
+		app_output = app_physical_output = NULL;
+		return false;
+	}
+	if (!module_paths_init(&app_require_path)) {
+		free(app_output);
+		free(app_physical_output);
+		app_output = app_physical_output = NULL;
+		return false;
+	}
+	app_require_path_ready = true;
+	app_package_cache = true;
 	hir_fast_prototypes_reset();
 	app_active = true;
 	return true;
@@ -796,6 +838,7 @@ app_add_source_internal(const char *source_file_name,
 {
 	struct app_module *module;
 	char *init_name;
+	char *package_init_name;
 	char **require_name;
 	uint32_t require_count;
 	uint32_t i;
@@ -826,6 +869,7 @@ app_add_source_internal(const char *source_file_name,
 		return false;
 	}
 	init_name = NULL;
+	package_init_name = NULL;
 	require_name = NULL;
 	require_count = 0;
 	ast_ready = false;
@@ -845,6 +889,11 @@ app_add_source_internal(const char *source_file_name,
 		printf(N_TR("Error: %s:%d: %s\n"), ast_get_file_name(),
 		       ast_get_error_line(), ast_get_error_message());
 		goto cleanup;
+	}
+	if (ast_get_package_init_name() != NULL) {
+		package_init_name = bcback_strdup(ast_get_package_init_name());
+		if (package_init_name == NULL)
+			goto cleanup;
 	}
 	require_count = ast_get_require_count();
 	if (require_count != 0) {
@@ -929,6 +978,12 @@ app_add_source_internal(const char *source_file_name,
 				  logical_name)) goto cleanup;
 		app_init_count++;
 	}
+	if (package_init_name != NULL) {
+		if (!app_add_name(&app_init_head, &app_init_tail,
+				  package_init_name, logical_name))
+			goto cleanup;
+		app_init_count++;
+	}
 	if (!app_add_name(&app_source, &app_source_tail, logical_name, NULL))
 		goto cleanup;
 	module->state = APP_MODULE_LOADED;
@@ -937,6 +992,7 @@ cleanup:
 	if (!ok)
 		module->state = APP_MODULE_FAILED;
 	free(init_name);
+	free(package_init_name);
 	free(logical_name);
 	app_free_require_names(require_name, require_count);
 	if (hir_ready) hir_cleanup();
@@ -1010,31 +1066,34 @@ noct_bcback_app_finalize(void)
 		noct_bcback_app_abort();
 		return false;
 	}
-	if (app_main_count != 1 || app_main_params > 1) {
+	if (!app_package_cache &&
+	    (app_main_count != 1 || app_main_params > 1)) {
 		printf("Noct App requires exactly one public main() with zero or one parameter.\n");
 		noct_bcback_app_abort(); return false;
 	}
 	if (!app_build_aggregate()) { noct_bcback_app_abort(); return false; }
-	tmp = malloc(strlen(app_output) + 48);
+	tmp = malloc(strlen(app_physical_output) + 48);
 	if (tmp == NULL) { noct_bcback_app_abort(); return false; }
-	sprintf(tmp, "%s.tmp.%ld", app_output, (long)bcback_getpid());
+	sprintf(tmp, "%s.tmp.%ld", app_physical_output, (long)bcback_getpid());
 	out = fopen(tmp, "wb");
 	if (out == NULL) goto done;
-	if (fwrite(NOCT_APP_SHEBANG, 1, strlen(NOCT_APP_SHEBANG), out) !=
-	    strlen(NOCT_APP_SHEBANG) ||
+	if ((!app_package_cache &&
+	     fwrite(NOCT_APP_SHEBANG, 1, strlen(NOCT_APP_SHEBANG), out) !=
+	     strlen(NOCT_APP_SHEBANG)) ||
 	    !bcback_write_header(out, app_output, app_func_count)) goto close_out;
 	for (f = app_func_head; f != NULL; f = f->next)
 		if (!bcback_write_function(out, f->func)) goto close_out;
 	if (fclose(out) != 0) { out = NULL; goto done; }
 	out = NULL;
 #if !defined(_WIN32)
+	if (!app_package_cache)
 	{
 		struct stat st;
 		if (stat(tmp, &st) != 0 || chmod(tmp, st.st_mode | S_IXUSR) != 0)
 			goto done;
 	}
 #endif
-	if (rename(tmp, app_output) != 0) goto done;
+	if (rename(tmp, app_physical_output) != 0) goto done;
 	ok = true;
 	goto done;
 close_out:

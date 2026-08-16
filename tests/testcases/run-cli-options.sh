@@ -17,24 +17,32 @@ done
 # Both object models are linked into the normal multithread-capable CLI.
 # Exercise mutable arrays/dictionaries through the interpreter and JIT so
 # dispatch cannot silently select the wrong implementation.
-for model in -m0 -m1; do
+for model in -st -mt; do
     $NOCT "$model" -j0 syntax/04-array.noct > "$work/out"
     diff syntax/04-array.noct.out "$work/out"
     $NOCT "$model" -j -O2 syntax/05-dictionary.noct > "$work/out"
     diff syntax/05-dictionary.noct.out "$work/out"
 done
 
-if $NOCT -m0 --cpu -j0 simd/f32.noct > "$work/m0-cpu" 2>&1; then
-    echo '-m0 accepted automatic CPU parallelization' >&2
+if $NOCT -st --cpu -j0 simd/f32.noct > "$work/st-cpu" 2>&1; then
+    echo '-st accepted automatic CPU parallelization' >&2
     exit 1
 fi
-grep -q 'requires -m1' "$work/m0-cpu"
+grep -q 'requires -mt' "$work/st-cpu"
 
-if $NOCT -m0 -j0 thread/01-create-join.noct > "$work/m0-thread" 2>&1; then
-    echo '-m0 accepted Thread.createThread()' >&2
+if $NOCT -st -j0 thread/01-create-join.noct > "$work/st-thread" 2>&1; then
+    echo '-st accepted Thread.createThread()' >&2
     exit 1
 fi
-grep -q 'single-thread object model' "$work/m0-thread"
+grep -q 'single-thread object model' "$work/st-thread"
+
+for old_model in -m0 -m1; do
+    if $NOCT "$old_model" -j0 simd/f32.noct > "$work/old-model" 2>&1; then
+        echo "removed object-model option accepted: $old_model" >&2
+        exit 1
+    fi
+    grep -q 'use -st or -mt' "$work/old-model"
+done
 
 # Compile-mode option order is observable through O3-only FMA metadata.
 cp simd/drawimage/blend-alpha.noct "$work/blend-alpha.noct"

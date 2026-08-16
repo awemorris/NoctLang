@@ -218,6 +218,37 @@ enum accel_dispatch_result {
 	ACCEL_DISPATCH_OK = 1
 };
 
+/* Internal-only backend interface. It is intentionally absent from NoctAPI. */
+struct accel_event;
+#define ACCEL_BACKEND_INTERFACE_VERSION 1u
+struct accel_backend_ops {
+	uint32_t interface_version;
+	int id;
+	const char *name;
+	uint64_t capabilities;
+	bool (*list_devices)(void);
+	int (*dispatch)(struct rt_env *env, struct rt_func *func,
+			uint32_t arg_count, struct rt_value *arg);
+	int (*dispatch_raw_async)(struct rt_env *env, struct rt_func *func,
+				  uint32_t grid_size, uint32_t block_size,
+				  uint32_t arg_count, struct rt_value *arg,
+				  struct accel_event *event);
+	bool (*join)(struct rt_env *env, struct accel_event *event);
+	int (*copy_async)(struct rt_env *env, bool to_accel,
+			  struct rt_packed *source, size_t source_offset,
+			  struct rt_packed *destination,
+			  size_t destination_offset, size_t size,
+			  struct accel_event *event);
+	int (*copy_to)(struct rt_env *env, struct rt_packed *resource,
+		       size_t offset, size_t size);
+	int (*copy_from)(struct rt_env *env, struct rt_packed *resource,
+			 size_t offset, size_t size);
+	bool (*sync_cpu)(struct rt_env *env, struct rt_func *func,
+			 uint32_t arg_count, struct rt_value *arg,
+			 bool before_call);
+	void (*cleanup)(struct rt_vm *vm);
+};
+
 #define ACCEL_EVENT_MAX 64
 enum accel_event_state {
 	ACCEL_EVENT_FREE,
@@ -235,7 +266,15 @@ struct accel_event {
 	uint32_t retained_count;
 	struct rt_value retained[NOCT_ARG_MAX + 1];
 	void *backend_data;
+	const struct accel_backend_ops *backend;
 };
+
+#define ACCEL_BACKEND_MAX 3
+bool accel_register_backend(struct rt_vm *vm,
+			    const struct accel_backend_ops *backend);
+void accel_register_builtin_backends(struct rt_vm *vm);
+const struct accel_backend_ops *accel_get_backend(struct rt_vm *vm);
+bool accel_list_devices(void);
 
 int accel_vulkan_dispatch(struct rt_env *env, struct rt_func *func,
 			  uint32_t arg_count, struct rt_value *arg);

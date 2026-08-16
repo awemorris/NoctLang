@@ -410,6 +410,10 @@ ast_get_require_count(void);
 const char *
 ast_get_require_name(uint32_t index);
 
+/* Mangled package_init symbol, or NULL for a non-package compilation unit. */
+const char *
+ast_get_package_init_name(void);
+
 /* True when a source symbol names a top-level typed accelerator resource. */
 bool
 ast_is_accel_resource_symbol(const char *name);

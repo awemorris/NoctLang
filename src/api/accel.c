@@ -54,6 +54,113 @@ struct accel_copy_op {
 	size_t length;
 };
 
+#if defined(NOCT_USE_ACCEL_VULKAN)
+static const struct accel_backend_ops vulkan_backend = {
+	ACCEL_BACKEND_INTERFACE_VERSION, NOCT_ACCEL_BACKEND_VULKAN,
+	"Vulkan", 0, accel_vulkan_list_devices,
+	accel_vulkan_dispatch, NULL, NULL, NULL,
+	accel_vulkan_copy_to, accel_vulkan_copy_from, NULL,
+	accel_vulkan_cleanup
+};
+#endif
+#if defined(NOCT_USE_ACCEL_OPENGL)
+static const struct accel_backend_ops opengl_backend = {
+	ACCEL_BACKEND_INTERFACE_VERSION, NOCT_ACCEL_BACKEND_OPENGL,
+	"OpenGL ES", 0, accel_opengl_list_devices,
+	accel_opengl_dispatch, accel_opengl_dispatch_raw_async,
+	accel_opengl_join, accel_opengl_copy_async,
+	accel_opengl_copy_to, accel_opengl_copy_from,
+	accel_opengl_sync_cpu, accel_opengl_cleanup
+};
+#endif
+#if defined(NOCT_USE_ACCEL_DX12)
+static const struct accel_backend_ops dx12_backend = {
+	ACCEL_BACKEND_INTERFACE_VERSION, NOCT_ACCEL_BACKEND_DX12,
+	"DirectX 12", 0, accel_dx12_list_devices,
+	accel_dx12_dispatch, accel_dx12_dispatch_raw,
+	accel_dx12_join, accel_dx12_copy_async,
+	accel_dx12_copy_to, accel_dx12_copy_from, NULL,
+	accel_dx12_cleanup
+};
+#endif
+
+bool
+accel_register_backend(struct rt_vm *vm,
+		       const struct accel_backend_ops *backend)
+{
+	uint32_t i;
+
+	if (backend == NULL ||
+	    backend->interface_version != ACCEL_BACKEND_INTERFACE_VERSION ||
+	    backend->id <= NOCT_ACCEL_BACKEND_NONE || backend->name == NULL ||
+	    backend->name[0] == '\0' || backend->list_devices == NULL ||
+	    backend->dispatch == NULL || vm->accel_backend_count >= ACCEL_BACKEND_MAX)
+		return false;
+	for (i = 0; i < vm->accel_backend_count; i++)
+		if (vm->accel_backend[i]->id == backend->id ||
+		    strcmp(vm->accel_backend[i]->name, backend->name) == 0)
+			return false;
+	vm->accel_backend[vm->accel_backend_count++] = backend;
+	return true;
+}
+
+void
+accel_register_builtin_backends(struct rt_vm *vm)
+{
+	uint32_t i;
+
+	vm->accel_backend_count = 0;
+	vm->selected_accel_backend = NULL;
+#if defined(NOCT_USE_ACCEL_DX12)
+	(void)accel_register_backend(vm, &dx12_backend);
+#endif
+#if defined(NOCT_USE_ACCEL_VULKAN)
+	(void)accel_register_backend(vm, &vulkan_backend);
+#endif
+#if defined(NOCT_USE_ACCEL_OPENGL)
+	(void)accel_register_backend(vm, &opengl_backend);
+#endif
+	if (!vm->config.accel_enable)
+		return;
+	for (i = 0; i < vm->accel_backend_count; i++) {
+		if (vm->config.accel_backend == NOCT_ACCEL_BACKEND_NONE ||
+		    vm->config.accel_backend == NOCT_ACCEL_BACKEND_AUTO ||
+		    vm->accel_backend[i]->id == vm->config.accel_backend) {
+			vm->selected_accel_backend = vm->accel_backend[i];
+			vm->config.accel_backend =
+				(uint8_t)vm->accel_backend[i]->id;
+			break;
+		}
+	}
+}
+
+const struct accel_backend_ops *
+accel_get_backend(struct rt_vm *vm)
+{
+	return vm->selected_accel_backend;
+}
+
+bool
+accel_list_devices(void)
+{
+	bool found;
+
+	found = false;
+#if defined(NOCT_USE_ACCEL_DX12)
+	printf("Backend: %s\n", dx12_backend.name);
+	found = dx12_backend.list_devices() || found;
+#endif
+#if defined(NOCT_USE_ACCEL_VULKAN)
+	printf("Backend: %s\n", vulkan_backend.name);
+	found = vulkan_backend.list_devices() || found;
+#endif
+#if defined(NOCT_USE_ACCEL_OPENGL)
+	printf("Backend: %s\n", opengl_backend.name);
+	found = opengl_backend.list_devices() || found;
+#endif
+	return found;
+}
+
 bool
 rt_register_accel_intrinsics(
 	struct rt_env *env)
@@ -379,20 +486,17 @@ accel_copy_async(
 	struct accel_event *event;
 	uint32_t event_id;
 	int copy_result;
+	const struct accel_backend_ops *backend;
 
 	if (!accel_prepare_copy(env, to_accel, &op) ||
 	    !accel_reserve_event(env, &event_id, &event))
 		return false;
 	copy_result = ACCEL_DISPATCH_FALLBACK;
-	if (env->vm->config.accel_enable &&
-	    env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_OPENGL) {
-		copy_result = accel_opengl_copy_async(
-			env, to_accel, op.source.val.packed, op.source_offset,
-			op.destination.val.packed, op.destination_offset,
-			op.length, event);
-	} else if (env->vm->config.accel_enable &&
-		   env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12) {
-		copy_result = accel_dx12_copy_async(
+	backend = accel_get_backend(env->vm);
+	if (env->vm->config.accel_enable && backend != NULL &&
+	    backend->copy_async != NULL) {
+		event->backend = backend;
+		copy_result = backend->copy_async(
 			env, to_accel, op.source.val.packed, op.source_offset,
 			op.destination.val.packed, op.destination_offset,
 			op.length, event);
@@ -576,16 +680,9 @@ static const char *
 accel_backend_name(
 	struct rt_env *env)
 {
-	switch (env->vm->config.accel_backend) {
-	case NOCT_ACCEL_BACKEND_VULKAN:
-		return "Vulkan";
-	case NOCT_ACCEL_BACKEND_OPENGL:
-		return "OpenGL";
-	case NOCT_ACCEL_BACKEND_DX12:
-		return "DirectX 12";
-	default:
-		return "disabled";
-	}
+	const struct accel_backend_ops *backend;
+	backend = accel_get_backend(env->vm);
+	return backend != NULL ? backend->name : "disabled";
 }
 
 static int
@@ -595,16 +692,11 @@ accel_backend_dispatch(
 	uint32_t arg_count,
 	struct rt_value *arg)
 {
-	switch (env->vm->config.accel_backend) {
-	case NOCT_ACCEL_BACKEND_VULKAN:
-		return accel_vulkan_dispatch(env, func, arg_count, arg);
-	case NOCT_ACCEL_BACKEND_OPENGL:
-		return accel_opengl_dispatch(env, func, arg_count, arg);
-	case NOCT_ACCEL_BACKEND_DX12:
-		return accel_dx12_dispatch(env, func, arg_count, arg);
-	default:
+	const struct accel_backend_ops *backend;
+	backend = accel_get_backend(env->vm);
+	if (backend == NULL || backend->dispatch == NULL)
 		return ACCEL_DISPATCH_FALLBACK;
-	}
+	return backend->dispatch(env, func, arg_count, arg);
 }
 
 static int
@@ -615,23 +707,17 @@ accel_backend_copy(
 	size_t offset,
 	size_t size)
 {
+	const struct accel_backend_ops *backend;
+
 	if (!env->vm->config.accel_enable)
 		return ACCEL_DISPATCH_FALLBACK;
-	if (env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_OPENGL) {
-		if (to_accel)
-			return accel_opengl_copy_to(env, resource, offset, size);
-		return accel_opengl_copy_from(env, resource, offset, size);
-	}
-	if (env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_VULKAN) {
-		if (to_accel)
-			return accel_vulkan_copy_to(env, resource, offset, size);
-		return accel_vulkan_copy_from(env, resource, offset, size);
-	}
-	if (env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12) {
-		if (to_accel)
-			return accel_dx12_copy_to(env, resource, offset, size);
-		return accel_dx12_copy_from(env, resource, offset, size);
-	}
+	backend = accel_get_backend(env->vm);
+	if (backend == NULL)
+		return ACCEL_DISPATCH_FALLBACK;
+	if (to_accel && backend->copy_to != NULL)
+		return backend->copy_to(env, resource, offset, size);
+	if (!to_accel && backend->copy_from != NULL)
+		return backend->copy_from(env, resource, offset, size);
 	return ACCEL_DISPATCH_FALLBACK;
 }
 
@@ -658,6 +744,7 @@ accel_reserve_event(
 		event->output_pinned = false;
 		event->retained_count = 0;
 		event->backend_data = NULL;
+		event->backend = NULL;
 		*event_id = event->generation * ACCEL_EVENT_MAX + i;
 		*ret_event = event;
 		return true;
@@ -683,6 +770,7 @@ rt_intrin_Accel_dispatchAsync(
 	uint32_t i;
 	uint32_t j;
 	int result;
+	const struct accel_backend_ops *backend;
 
 	argc = env->frame->arg_count;
 	if (argc < 3 || argc > NOCT_ARG_MAX) {
@@ -732,22 +820,18 @@ rt_intrin_Accel_dispatchAsync(
 			}
 		}
 	}
-	if (!env->vm->config.accel_enable ||
-	    (env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_OPENGL &&
-	     env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_DX12)) {
+	backend = accel_get_backend(env->vm);
+	if (!env->vm->config.accel_enable || backend == NULL ||
+	    backend->dispatch_raw_async == NULL || backend->join == NULL) {
 		rt_error(env, "Accel.dispatchAsync(): __gpu func requires the OpenGL backend or DirectX 12 backend.");
 		return false;
 	}
 	if (!accel_reserve_event(env, &event_id, &event)) return false;
+	event->backend = backend;
 	event->retained[0] = kernel_value;
 	for (i = 0; i < arg_count; i++) event->retained[i + 1] = arg[i];
 	event->retained_count = arg_count + 1;
-	if (env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_OPENGL)
-		result = accel_opengl_dispatch_raw_async(env, func,
-			(uint32_t)grid_value.val.i, (uint32_t)block_value.val.i,
-			arg_count, arg, event);
-	else
-		result = accel_dx12_dispatch_raw(env, func,
+	result = backend->dispatch_raw_async(env, func,
 			(uint32_t)grid_value.val.i, (uint32_t)block_value.val.i,
 			arg_count, arg, event);
 	if (result != ACCEL_DISPATCH_OK) {
@@ -789,8 +873,8 @@ rt_intrin_Accel_dispatchSync(
 		rt_error(env, "Synchronous gpu launch produced a stale event.");
 		return false;
 	}
-	ok = env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12 ?
-		accel_dx12_join(env, event) : accel_opengl_join(env, event);
+	ok = event->backend != NULL && event->backend->join != NULL &&
+		event->backend->join(env, event);
 	event->retained_count = 0;
 	event->state = ACCEL_EVENT_JOINED;
 	if (!ok)
@@ -829,14 +913,11 @@ rt_intrin_Accel_join(
 	}
 	ok = true;
 	if (event->state == ACCEL_EVENT_SUBMITTED) {
-		if (env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_OPENGL &&
-		    env->vm->config.accel_backend != NOCT_ACCEL_BACKEND_DX12) {
+		if (event->backend == NULL || event->backend->join == NULL) {
 			rt_error(env, "Accel.join(): event backend is unavailable.");
 			ok = false;
 		} else {
-			ok = env->vm->config.accel_backend == NOCT_ACCEL_BACKEND_DX12 ?
-				accel_dx12_join(env, event) :
-				accel_opengl_join(env, event);
+			ok = event->backend->join(env, event);
 		}
 	}
 	/* A join always consumes the event, including a failed device wait. */
@@ -1148,19 +1229,10 @@ void
 accel_runtime_cleanup(
 	struct rt_vm *vm)
 {
-	switch (vm->config.accel_backend) {
-	case NOCT_ACCEL_BACKEND_VULKAN:
-		accel_vulkan_cleanup(vm);
-		break;
-	case NOCT_ACCEL_BACKEND_OPENGL:
-		accel_opengl_cleanup(vm);
-		break;
-	case NOCT_ACCEL_BACKEND_DX12:
-		accel_dx12_cleanup(vm);
-		break;
-	default:
-		break;
-	}
+	const struct accel_backend_ops *backend;
+	backend = accel_get_backend(vm);
+	if (backend != NULL && backend->cleanup != NULL)
+		backend->cleanup(vm);
 }
 
 struct accel_kernel *

@@ -111,6 +111,7 @@ void show_usage(void)
 	wide_printf("\n");
 	wide_printf(N_TR("Usage\n"));
 	wide_printf(N_TR("  noct <vm-options> <files>           ... run a program\n"));
+	wide_printf(N_TR("  noct <vm-options> -m NAME [args]    ... run NAME_main() from a package\n"));
 #if defined(NOCT_USE_BCBACKEND)
 	wide_printf(N_TR("  noct --compile <in-files>           ... convert to bytecode files\n"));
 	wide_printf(N_TR("  noct --compile --app <out.nap> <in-files> ... build a Noct App\n"));
@@ -127,7 +128,7 @@ void show_usage(void)
 	wide_printf("\n");
 	wide_printf(N_TR("vm-options:\n"));
 	wide_printf(N_TR("  -j, -j0              ... eager JIT (default), or interpreter only\n"));
-	wide_printf(N_TR("  -m0, -m1             ... object model (m1 default when available)\n"));
+	wide_printf(N_TR("  -st, -mt             ... single/multi-thread object model\n"));
 	wide_printf(N_TR("  -O, -O0..-O3, -O9    ... optimization preset\n"));
 	wide_printf(N_TR("  --cpu[=N]            ... enable CPU automatic parallelization\n"));
 	wide_printf(N_TR("  --cpu-pe=N           ... processing elements (default: logical CPUs)\n"));
