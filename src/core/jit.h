@@ -129,12 +129,12 @@ jit_build(
 	struct rt_func *func);
 
 /* Commit written code. */
-void
+bool
 jit_commit(
 	struct rt_env *env);
 
 /* Free all JIT-compiled code. */
-void
+bool
 jit_free(
 	struct rt_env *env);
 
@@ -192,8 +192,8 @@ void jit_slab_finish(struct rt_env *env, struct jit_slab *slab,
 		     void *code_end);
 void jit_slab_abandon(struct rt_env *env, struct jit_slab *slab);
 void jit_slab_clear_overflow(struct rt_env *env);
-void jit_slab_commit_all(struct rt_env *env);
-void jit_slab_free_all(struct rt_env *env);
+bool jit_slab_commit_all(struct rt_env *env);
+bool jit_slab_free_all(struct rt_env *env);
 
 /* Per-function dynamic JIT table bounds used by architecture backends. */
 #define PC_ENTRY_MAX		(ctx->pc_entry_capacity)
@@ -1279,10 +1279,10 @@ jit_dump_standard_code(struct jit_context *ctx, void *generated_end,
 bool jit_map_memory_region(void **region, size_t size);
 
 /* Unmap a region. */
-void jit_unmap_memory_region(void *region, size_t size);
+bool jit_unmap_memory_region(void *region, size_t size);
 
 /* Make a region executable. */
-void jit_map_executable(void * region, size_t size);
+bool jit_map_executable(void *region, size_t size);
 
 /* Standard backend body.  The backend supplies its SIMD capability probe;
  * branch patching remains local so architecture-specific ranges are kept. */

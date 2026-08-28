@@ -18,3 +18,12 @@ NOCT_JIT_DEBUG=1 NOCT_JIT_FORCE_LONG_BRANCH=1 \
 
 cmp "$expected_file" "$tmp_dir/actual"
 grep -q '^noct-jit: main: compiled$' "$tmp_dir/debug"
+grep -q '^noct-jit-memory: mmap-rw size=[0-9][0-9]* status=ok$' \
+	"$tmp_dir/debug"
+grep -q '^noct-jit-memory: mprotect-rx size=[0-9][0-9]* status=ok$' \
+	"$tmp_dir/debug"
+grep -q '^noct-jit-lifecycle: publish status=ok$' "$tmp_dir/debug"
+grep -q '^noct-jit: main: native-entry$' "$tmp_dir/debug"
+grep -q '^noct-jit-memory: munmap size=[0-9][0-9]* status=ok$' \
+	"$tmp_dir/debug"
+grep -q '^noct-jit-lifecycle: destroy status=ok$' "$tmp_dir/debug"

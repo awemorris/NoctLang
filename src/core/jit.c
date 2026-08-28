@@ -54,9 +54,29 @@
 #elif defined(NOCT_TARGET_PC98BE)
 /* Freestanding: allocation and cache/protection policy are supplied below. */
 #else
+#include <errno.h>		/* errno */
 #include <sys/mman.h>		/* mmap(), mprotect(), munmap() */
 #include <unistd.h>		/* sysconf() */
 #endif
+
+static bool
+jit_debug_enabled(void)
+{
+	return getenv("NOCT_JIT_DEBUG") != NULL;
+}
+
+static void
+jit_debug_memory(const char *operation, size_t size, bool success,
+		 unsigned long error)
+{
+	if (!jit_debug_enabled())
+		return;
+	fprintf(stderr, "noct-jit-memory: %s size=%lu status=%s", operation,
+		(unsigned long)size, success ? "ok" : "failed");
+	if (!success)
+		fprintf(stderr, " error=%lu", error);
+	fputc('\n', stderr);
+}
 
 static size_t
 jit_page_size(void)
@@ -173,7 +193,7 @@ jit_slab_clear_overflow(struct rt_env *env)
 	env->line = 0;
 }
 
-void
+bool
 jit_slab_commit_all(struct rt_env *env)
 {
 	struct jit_slab *slab;
@@ -187,28 +207,33 @@ jit_slab_commit_all(struct rt_env *env)
 		end = slab->base + jit_align_up(
 			(size_t)(slab->current - slab->base), page_size);
 		assert(end <= slab->end);
-		jit_map_executable(slab->committed,
-				   (size_t)(end - slab->committed));
+		if (!jit_map_executable(slab->committed,
+					(size_t)(end - slab->committed)))
+			return false;
 		slab->committed = end;
 		slab->current = end;
 	}
+	return true;
 }
 
-void
+bool
 jit_slab_free_all(struct rt_env *env)
 {
 	struct jit_slab *slab = env->vm->jit_slab_head;
+	bool succeeded = true;
 
 	while (slab != NULL) {
 		struct jit_slab *next = slab->next;
 
-		jit_unmap_memory_region(slab->base, slab->size);
+		if (!jit_unmap_memory_region(slab->base, slab->size))
+			succeeded = false;
 		noct_free(slab);
 		slab = next;
 	}
 	env->vm->jit_slab_head = NULL;
 	env->vm->jit_slab_tail = NULL;
 	env->vm->jit_slab_current = NULL;
+	return succeeded;
 }
 
 /*
@@ -219,9 +244,13 @@ jit_map_memory_region(
 	void **region,
 	size_t size)
 {
+	unsigned long error = 0;
+
 #if defined(_WIN32)
 	*region = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT,
 			       PAGE_READWRITE);
+	if (*region == NULL)
+		error = (unsigned long)GetLastError();
 #elif defined(__APPLE__)
 	/* Use MAP_JIT flag to avoid W^X. */
 	*region = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE | MAP_JIT, -1, 0);
@@ -246,6 +275,8 @@ jit_map_memory_region(
 		int386(0x31, &regs, &regs);
 		if (regs.w.cflag != 0) {
 			printf("Failed to expand the CS segment limit.\n");
+			jit_debug_memory("mmap-rw", size, false,
+					 (unsigned long)regs.w.ax);
 			return false;
 		}
 	}
@@ -259,12 +290,16 @@ jit_map_memory_region(
 #if !defined(_WIN32) && !defined(NOCT_TARGET_DOS4G) && \
     !defined(NOCT_TARGET_PC98BE)
 	if (*region == MAP_FAILED) {
+		error = (unsigned long)errno;
 		*region = NULL;
+		jit_debug_memory("mmap-rw", size, false, error);
 		return false;
 	}
 #else
-	if (*region == NULL)
+	if (*region == NULL) {
+		jit_debug_memory("mmap-rw", size, false, error);
 		return false;
+	}
 #endif
 
 	/* Anonymous mappings and VirtualAlloc are already zero-filled.  Only
@@ -273,49 +308,75 @@ jit_map_memory_region(
 	memset(*region, 0, size);
 #endif
 
+	jit_debug_memory("mmap-rw", size, true, error);
 	return true;
 }
 
 /*
  * Unmap the memory region for the generated code.
  */
-void
+bool
 jit_unmap_memory_region(
 	void *region,
 	size_t size)
 {
+	bool succeeded = true;
+	unsigned long error = 0;
+
 #if defined(_WIN32)
 	UNUSED_PARAMETER(size);
-	VirtualFree(region, 0, MEM_RELEASE);
+	if (!VirtualFree(region, 0, MEM_RELEASE)) {
+		succeeded = false;
+		error = (unsigned long)GetLastError();
+	}
 #elif defined(NOCT_TARGET_DOS4G)
 	/* Do nothing. */
 #elif defined(NOCT_TARGET_PC98BE)
 	UNUSED_PARAMETER(size);
 	noct_free(region);
 #else
-	munmap(region, size);
+	if (munmap(region, size) != 0) {
+		succeeded = false;
+		error = (unsigned long)errno;
+	}
 #endif
+	jit_debug_memory("munmap", size, succeeded, error);
+	return succeeded;
 }
 
 /*
  * Make a region executable and non-writable.
  */
-void
+bool
 jit_map_executable(
 	void *region,
 	size_t size)
 {
+	bool succeeded = true;
+	unsigned long error = 0;
+
 #if defined(_WIN32)
 	DWORD dwOldProt;
-	VirtualProtect(region, size, PAGE_EXECUTE_READ, &dwOldProt);
-	FlushInstructionCache(GetCurrentProcess(), region, size);
+	if (!VirtualProtect(region, size, PAGE_EXECUTE_READ, &dwOldProt)) {
+		succeeded = false;
+		error = (unsigned long)GetLastError();
+	} else if (!FlushInstructionCache(GetCurrentProcess(), region, size)) {
+		succeeded = false;
+		error = (unsigned long)GetLastError();
+	}
 #elif defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
 	UNUSED_PARAMETER(region);
 	UNUSED_PARAMETER(size);
 #else
-	mprotect(region, size, PROT_EXEC | PROT_READ);
-	__builtin___clear_cache((char *)region, (char *)region + size);
+	if (mprotect(region, size, PROT_EXEC | PROT_READ) != 0) {
+		succeeded = false;
+		error = (unsigned long)errno;
+	} else {
+		__builtin___clear_cache((char *)region, (char *)region + size);
+	}
 #endif
+	jit_debug_memory("mprotect-rx", size, succeeded, error);
+	return succeeded;
 }
 
 #else /* defined(NOCT_USE_JIT) */
@@ -344,25 +405,27 @@ jit_build(
 /*
  * Commit written code.
  */
-void
+bool
 jit_commit(
 	struct rt_env *env)
 {
 	UNUSED_PARAMETER(env);
 
 	/* stub */
+	return true;
 }
 
 /*
  * Free a JIT-compiled code for a function.
  */
-void
+bool
 jit_free(
 	struct rt_env *env)
 {
 	UNUSED_PARAMETER(env);
 
 	/* stub */
+	return true;
 }
 
 #endif /* defined(NOCT_USE_JIT) */

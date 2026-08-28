@@ -37,7 +37,8 @@ static bool cfunc_System_pcall(NoctEnv *env);
 static bool cfunc_System_error(NoctEnv *env);
 static bool cfunc_System_loadDLL(NoctEnv *env);
 static bool cfunc_System_tryLoadDLL(NoctEnv *env);
-static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size);
+static bool system_load_file(NoctEnv *env, const char *fname, char **data,
+			     size_t *size);
 
 /* FFI table. */
 struct ffi_item {
@@ -48,89 +49,33 @@ struct ffi_item {
 	bool (*cfunc)(NoctEnv *env);
 };
 static struct ffi_item ffi_items[] = {
-	{
-		"System.import",
-		"import",
-		1,
-		{"file"},
-		cfunc_System_import
-	},
-	{
-		"System.registerSource",
-		"registerSource",
-		1,
-		{"source"},
-		cfunc_System_registerSource
-	},
-	{
-		"System.getEnv",
-		"getEnv",
-		1,
-		{"name"},
-		cfunc_System_getEnv
-	},
-	{
-		"System.shell",
-		"shell",
-		1,
-		{"command"},
-		cfunc_System_shell
-	},
-	{
-		"System.runCommand",
-		"runCommand",
-		3,
-		{"command", "workDir", "waitForFinish"},
-		cfunc_System_runCommand
-	},
-	{
-		"System.getOSName",
-		"getOSName",
-		0,
-		{NULL},
-		cfunc_System_getOSName
-	},
-	{
-		"System.checkFileExists",
-		"checkFileExists",
-		1,
-		{"file"},
-		cfunc_System_checkFileExists
-	},
-	{
-		"System.pcall",
-		"pcall",
-		3,
-		{"f", "a", "b"},
-		cfunc_System_pcall
-	},
-	{
-		"System.loadDLL",
-		"loadDLL",
-		1,
-		{"name"},
-		cfunc_System_loadDLL
-	},
-	{
-		"System.tryLoadDLL",
-		"tryLoadDLL",
-		1,
-		{"name"},
-		cfunc_System_tryLoadDLL
-	},
-	{
-		"System.error",
-		"error",
-		1,
-		{"message"},
-		cfunc_System_error
-	},
+    {"System.import", "import", 1, {"file"}, cfunc_System_import},
+    {"System.registerSource",
+     "registerSource",
+     1,
+     {"source"},
+     cfunc_System_registerSource},
+    {"System.getEnv", "getEnv", 1, {"name"}, cfunc_System_getEnv},
+    {"System.shell", "shell", 1, {"command"}, cfunc_System_shell},
+    {"System.runCommand",
+     "runCommand",
+     3,
+     {"command", "workDir", "waitForFinish"},
+     cfunc_System_runCommand},
+    {"System.getOSName", "getOSName", 0, {NULL}, cfunc_System_getOSName},
+    {"System.checkFileExists",
+     "checkFileExists",
+     1,
+     {"file"},
+     cfunc_System_checkFileExists},
+    {"System.pcall", "pcall", 3, {"f", "a", "b"}, cfunc_System_pcall},
+    {"System.loadDLL", "loadDLL", 1, {"name"}, cfunc_System_loadDLL},
+    {"System.tryLoadDLL", "tryLoadDLL", 1, {"name"}, cfunc_System_tryLoadDLL},
+    {"System.error", "error", 1, {"message"}, cfunc_System_error},
 };
 
 static bool
-system_load_dll(
-	NoctEnv *env,
-	bool optional)
+system_load_dll(NoctEnv *env, bool optional)
 {
 	NoctValue name;
 	NoctValue ret;
@@ -156,15 +101,13 @@ cleanup:
 }
 
 static bool
-cfunc_System_loadDLL(
-	NoctEnv *env)
+cfunc_System_loadDLL(NoctEnv *env)
 {
 	return system_load_dll(env, false);
 }
 
 static bool
-cfunc_System_tryLoadDLL(
-	NoctEnv *env)
+cfunc_System_tryLoadDLL(NoctEnv *env)
 {
 	return system_load_dll(env, true);
 }
@@ -174,8 +117,7 @@ cfunc_System_tryLoadDLL(
  */
 NOCT_DLL
 bool
-noct_register_api_system(
-	NoctEnv *env)
+noct_register_api_system(NoctEnv *env)
 {
 	NoctValue dict;
 	size_t i;
@@ -192,12 +134,8 @@ noct_register_api_system(
 
 		/* Register a cfunc. */
 		if (!noct_register_cfunc(
-			    env,
-			    ffi_items[i].global_name,
-			    ffi_items[i].param_count,
-			    ffi_items[i].param,
-			    ffi_items[i].cfunc,
-			    NULL))
+			env, ffi_items[i].global_name, ffi_items[i].param_count,
+			ffi_items[i].param, ffi_items[i].cfunc, NULL))
 			return false;
 
 		/* Get a function value. */
@@ -205,11 +143,8 @@ noct_register_api_system(
 			return false;
 
 		/* Make a dictionary element. */
-		if (!noct_set_dict_elem_cstr(
-			    env,
-			    &dict,
-			    ffi_items[i].field_name,
-			    &funcval))
+		if (!noct_set_dict_elem_cstr(env, &dict,
+					     ffi_items[i].field_name, &funcval))
 			return false;
 	}
 
@@ -264,8 +199,7 @@ cleanup:
 }
 
 static bool
-cfunc_System_import(
-	NoctEnv *env)
+cfunc_System_import(NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *file;
@@ -280,7 +214,8 @@ cfunc_System_import(
 		return false;
 
 	/* Check for the bytecode header. */
-	if (strncmp(data, NOCT_BYTECODE_HEADER, strlen(NOCT_BYTECODE_HEADER)) != 0) {
+	if (strncmp(data, NOCT_BYTECODE_HEADER, strlen(NOCT_BYTECODE_HEADER)) !=
+	    0) {
 		/* It's a source file. */
 		if (!noct_register_source(env, file, data))
 			return false;
@@ -323,8 +258,7 @@ cfunc_System_registerSource(NoctEnv *env)
 
 /* Implementation of runCommand() */
 static bool
-cfunc_System_runCommand(
-	NoctEnv *env)
+cfunc_System_runCommand(NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *command;
@@ -349,32 +283,35 @@ cfunc_System_runCommand(
 		wchar_t wszWorkDir[1024];
 		BOOL bSuccess;
 
-		MultiByteToWideChar(CP_UTF8, 0, command, -1, wszCmdLine, sizeof(wszCmdLine) / sizeof(wchar_t) - 1);
-		MultiByteToWideChar(CP_UTF8, 0, work_dir, -1, wszWorkDir, sizeof(wszWorkDir) / sizeof(wchar_t) - 1);
+		MultiByteToWideChar(CP_UTF8, 0, command, -1, wszCmdLine,
+				    sizeof(wszCmdLine) / sizeof(wchar_t) - 1);
+		MultiByteToWideChar(CP_UTF8, 0, work_dir, -1, wszWorkDir,
+				    sizeof(wszWorkDir) / sizeof(wchar_t) - 1);
 
 		ZeroMemory(&si, sizeof(STARTUPINFOW));
 		si.cb = sizeof(STARTUPINFOW);
-		bSuccess = CreateProcessW(
-				NULL,		/* lpApplication */
-				wszCmdLine,	/* lpCommandLine */
-				NULL,		/* lpProcessAttribute */
-				NULL,		/* lpThreadAttributes */
-				FALSE,		/* bInheritHandles */
-				NORMAL_PRIORITY_CLASS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-				NULL,		/* lpEnvironment */
-				wszWorkDir,
-				&si,
-				&pi);
+		bSuccess = CreateProcessW(NULL,	      /* lpApplication */
+					  wszCmdLine, /* lpCommandLine */
+					  NULL,	      /* lpProcessAttribute */
+					  NULL,	      /* lpThreadAttributes */
+					  FALSE,      /* bInheritHandles */
+					  NORMAL_PRIORITY_CLASS |
+					      CREATE_NEW_PROCESS_GROUP |
+					      CREATE_NO_WINDOW,
+					  NULL, /* lpEnvironment */
+					  wszWorkDir, &si, &pi);
 		if (!bSuccess) {
 			noct_error(env, "CreateProcess() failed.");
 		}
 		if (pi.hProcess != NULL) {
 			ret = 0;
 			if (wait_for_finish) {
-				DWORD waitResult = WaitForSingleObject(pi.hProcess, INFINITE);
+				DWORD waitResult =
+				    WaitForSingleObject(pi.hProcess, INFINITE);
 				if (waitResult == WAIT_OBJECT_0) {
 					DWORD exitCode = 0;
-					GetExitCodeProcess(pi.hProcess, &exitCode);
+					GetExitCodeProcess(pi.hProcess,
+							   &exitCode);
 					ret = exitCode;
 				}
 			}
@@ -398,17 +335,17 @@ cfunc_System_runCommand(
 			char *argv[64];
 			char *token;
 			int i;
-			
+
 			/* Set the working directory. */
 			if (strcmp(work_dir, "") != 0) {
 				if (chdir(work_dir) != 0) {
 					printf("chdir() failed.\n");
 					return EXIT_FAILURE;
 				}
-
 			}
 
-			/* Parse the command line arguments. TODO: support quotation */
+			/* Parse the command line arguments. TODO: support
+			 * quotation */
 			cmd_copy = noct_strdup(command);
 			i = 0;
 			token = strtok(cmd_copy, " ");
@@ -440,8 +377,7 @@ cfunc_System_runCommand(
 
 /* Implementation of shell() */
 static bool
-cfunc_System_shell(
-	NoctEnv *env)
+cfunc_System_shell(NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *s;
@@ -463,8 +399,7 @@ cfunc_System_shell(
 
 /* Implementation of getOSName() */
 static bool
-cfunc_System_getOSName(
-	NoctEnv *env)
+cfunc_System_getOSName(NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *name;
@@ -473,6 +408,8 @@ cfunc_System_getOSName(
 	name = "windows";
 #elif defined(NOCT_TARGET_MACOS)
 	name = "macos";
+#elif defined(NOCT_TARGET_ZEDBSD)
+	name = "zedbsd";
 #elif defined(NOCT_TARGET_LINUX)
 	name = "linux";
 #elif defined(NOCT_TARGET_IOS)
@@ -508,8 +445,7 @@ cfunc_System_getOSName(
 
 /* Implementation of checkFileExists() */
 static bool
-cfunc_System_checkFileExists(
-	NoctEnv *env)
+cfunc_System_checkFileExists(NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *s;
@@ -532,7 +468,8 @@ cfunc_System_checkFileExists(
 }
 
 /* Load a file. */
-static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size)
+static bool
+system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size)
 {
 	FILE *fp;
 
@@ -581,8 +518,7 @@ static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_
  * the unused slots.
  */
 static bool
-cfunc_System_pcall(
-	NoctEnv *env)
+cfunc_System_pcall(NoctEnv *env)
 {
 	NoctValue func_value, arg_a, arg_b, result, ret, tmp;
 	NoctFunc *func;
@@ -595,8 +531,8 @@ cfunc_System_pcall(
 	memset(&result, 0, sizeof(result));
 	memset(&ret, 0, sizeof(ret));
 	memset(&tmp, 0, sizeof(tmp));
-	if (!noct_pin_local(env, 6, &func_value, &arg_a, &arg_b, &result,
-			    &ret, &tmp))
+	if (!noct_pin_local(env, 6, &func_value, &arg_a, &arg_b, &result, &ret,
+			    &tmp))
 		return false;
 	if (!noct_get_arg_check_func(env, 0, &func_value, &func))
 		goto fail;
@@ -620,18 +556,17 @@ cfunc_System_pcall(
 		const char *msg;
 
 		noct_get_error_message(env, &msg);
-		if (!noct_set_dict_elem_make_string(env, &result, "message",
-						    &tmp,
-						    msg != NULL ? msg : "?"))
+		if (!noct_set_dict_elem_make_string(
+			env, &result, "message", &tmp, msg != NULL ? msg : "?"))
 			goto fail;
 	}
 	if (!noct_set_return(env, &result))
 		goto fail;
-	noct_unpin_local(env, 6, &func_value, &arg_a, &arg_b, &result,
-			 &ret, &tmp);
+	noct_unpin_local(env, 6, &func_value, &arg_a, &arg_b, &result, &ret,
+			 &tmp);
 	return true;
 fail:
-	noct_unpin_local(env, 6, &func_value, &arg_a, &arg_b, &result,
-			 &ret, &tmp);
+	noct_unpin_local(env, 6, &func_value, &arg_a, &arg_b, &result, &ret,
+			 &tmp);
 	return false;
 }

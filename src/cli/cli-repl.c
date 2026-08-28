@@ -19,8 +19,8 @@
 #include <errno.h>
 #include <signal.h>
 
-#define REPL_SOURCE_SIZE	32768
-#define REPL_LINE_SIZE		(REPL_SOURCE_SIZE + 2)
+#define REPL_SOURCE_SIZE 32768
+#define REPL_LINE_SIZE (REPL_SOURCE_SIZE + 2)
 
 enum repl_read_result {
 	REPL_READ_LINE,
@@ -46,12 +46,14 @@ static bool install_repl_interrupt_handler(void);
 static void restore_repl_interrupt_handler(void);
 static void repl_interrupt_handler(int signal_number);
 
-int command_repl(void)
+int
+command_repl(void)
 {
 	return run_repl() ? 0 : 1;
 }
 
-static bool run_repl(void)
+static bool
+run_repl(void)
 {
 	NoctVM *vm;
 	NoctEnv *env;
@@ -67,20 +69,14 @@ static bool run_repl(void)
 
 	wide_printf(N_TR("Noct Programming Language\n"));
 	wide_printf(N_TR("Entering REPL mode.\n"));
-#if defined(NOCT_USE_JIT) &&                    \
-    (                                           \
-        defined(NOCT_ARCH_X86) ||               \
-        defined(NOCT_ARCH_X86_64) ||            \
-        defined(NOCT_ARCH_ARM32) ||             \
-        defined(NOCT_ARCH_ARM64) ||             \
-        defined(NOCT_ARCH_MIPS32) ||            \
-        defined(NOCT_ARCH_MIPS64) ||            \
-        defined(NOCT_ARCH_PPC32) ||             \
-        defined(NOCT_ARCH_PPC64) ||             \
-        defined(NOCT_ARCH_RISCV32) ||           \
-        defined(NOCT_ARCH_RISCV64)              \
-    )
-	wide_printf(N_TR("JIT compilation is enabled. Starting the fast VM...\n"));
+#if defined(NOCT_USE_JIT) &&                                                   \
+    (defined(NOCT_ARCH_X86) || defined(NOCT_ARCH_X86_64) ||                    \
+     defined(NOCT_ARCH_ARM32) || defined(NOCT_ARCH_ARM64) ||                   \
+     defined(NOCT_ARCH_MIPS32) || defined(NOCT_ARCH_MIPS64) ||                 \
+     defined(NOCT_ARCH_PPC32) || defined(NOCT_ARCH_PPC64) ||                   \
+     defined(NOCT_ARCH_RISCV32) || defined(NOCT_ARCH_RISCV64))
+	wide_printf(
+	    N_TR("JIT compilation is enabled. Starting the fast VM...\n"));
 #endif
 	wide_printf("\n");
 
@@ -99,7 +95,8 @@ static bool run_repl(void)
 		goto cleanup;
 	}
 	if (!install_repl_interrupt_handler()) {
-		wide_printf(N_TR("Cannot install the REPL interrupt handler.\n"));
+		wide_printf(
+		    N_TR("Cannot install the REPL interrupt handler.\n"));
 		goto cleanup;
 	}
 
@@ -165,7 +162,8 @@ cleanup:
 	return success;
 }
 
-static bool register_repl_libraries(NoctEnv *env)
+static bool
+register_repl_libraries(NoctEnv *env)
 {
 	if (!noct_register_api_system(env))
 		return false;
@@ -190,6 +188,8 @@ static bool register_repl_libraries(NoctEnv *env)
 #if defined(NOCT_USE_BEUI)
 #if defined(NOCT_TARGET_PC98DOS)
 	if (!noct_register_api_beui_pc98dos(env)) {
+#elif defined(NOCT_USE_BEUI_ZEDBSD)
+	if (!noct_register_api_beui_zedbsd(env)) {
 #elif defined(NOCT_USE_BEUI_SDL2)
 	if (!noct_register_api_beui_sdl2(env)) {
 #else
@@ -206,7 +206,8 @@ static bool register_repl_libraries(NoctEnv *env)
 	return register_cli_cfunc(env);
 }
 
-static void print_repl_error(NoctEnv *env)
+static void
+print_repl_error(NoctEnv *env)
 {
 	const char *file;
 	const char *message;
@@ -226,7 +227,8 @@ static void print_repl_error(NoctEnv *env)
 		wide_printf(N_TR("Error: %s\n"), message);
 }
 
-static enum repl_read_result read_repl_line(char *line, size_t size)
+static enum repl_read_result
+read_repl_line(char *line, size_t size)
 {
 	int c;
 
@@ -235,7 +237,8 @@ static enum repl_read_result read_repl_line(char *line, size_t size)
 		if (strchr(line, '\n') != NULL || feof(stdin))
 			return REPL_READ_LINE;
 
-		/* Discard the rest rather than executing a partial source line. */
+		/* Discard the rest rather than executing a partial source line.
+		 */
 		do {
 			c = fgetc(stdin);
 		} while (c != '\n' && c != EOF && !repl_interrupted);
@@ -252,7 +255,8 @@ static enum repl_read_result read_repl_line(char *line, size_t size)
 	return REPL_READ_EOF;
 }
 
-static bool install_repl_interrupt_handler(void)
+static bool
+install_repl_interrupt_handler(void)
 {
 	repl_interrupted = 0;
 #if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_MACOS)
@@ -260,7 +264,11 @@ static bool install_repl_interrupt_handler(void)
 		struct sigaction action;
 
 		memset(&action, 0, sizeof(action));
+#if defined(NOCT_TARGET_ZEDBSD)
+		action.sa_handler = (uint64_t)(uintptr_t)repl_interrupt_handler;
+#else
 		action.sa_handler = repl_interrupt_handler;
+#endif
 		sigemptyset(&action.sa_mask);
 		if (sigaction(SIGINT, &action, &repl_old_action) != 0)
 			return false;
@@ -274,7 +282,8 @@ static bool install_repl_interrupt_handler(void)
 	return true;
 }
 
-static void restore_repl_interrupt_handler(void)
+static void
+restore_repl_interrupt_handler(void)
 {
 	if (!repl_handler_installed)
 		return;
@@ -287,7 +296,8 @@ static void restore_repl_interrupt_handler(void)
 	repl_interrupted = 0;
 }
 
-static void repl_interrupt_handler(int signal_number)
+static void
+repl_interrupt_handler(int signal_number)
 {
 	(void)signal_number;
 	repl_interrupted = 1;

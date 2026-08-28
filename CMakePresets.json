@@ -36,6 +36,48 @@
             }
         },
         {
+            "name": "zedbsd",
+            "displayName": "zedBSD amd64 static build",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build-zedbsd",
+            "toolchainFile": "${sourceDir}/cmake/toolchains/zedbsd-amd64.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "ZEDBSD_SOURCE_DIR": "$env{ZEDBSD_SOURCE_DIR}",
+                "NOCT_TARGET_ZEDBSD": "ON",
+                "NOCT_ENABLE_STATIC": "ON",
+                "NOCT_ENABLE_SHARED": "OFF",
+                "NOCT_ENABLE_OBJECT": "OFF",
+                "NOCT_ENABLE_CLI": "ON",
+                "NOCT_ENABLE_JIT": "ON",
+                "NOCT_ENABLE_MULTITHREAD": "OFF",
+                "NOCT_ENABLE_I18N": "OFF",
+                "NOCT_ENABLE_I18N_LIBINTL": "OFF",
+                "NOCT_ENABLE_API": "ON",
+                "NOCT_ENABLE_API_SYSTEM": "ON",
+                "NOCT_ENABLE_API_CONSOLE": "ON",
+                "NOCT_ENABLE_API_FILE": "ON",
+                "NOCT_ENABLE_MODEL_WEIGHTS": "OFF",
+                "NOCT_ENABLE_API_THREAD": "OFF",
+                "NOCT_ENABLE_API_HTTPSERVER": "OFF",
+                "NOCT_ENABLE_API_TERM": "OFF",
+                "NOCT_ENABLE_API_BEUI": "ON",
+                "NOCT_ENABLE_API_BEUI_SDL2": "OFF",
+                "NOCT_ENABLE_API_BEUI_ZEDBSD": "ON",
+                "NOCT_ENABLE_API_PROCESS": "OFF",
+                "NOCT_ENABLE_INSTALL": "OFF",
+                "NOCT_ENABLE_BCBACKEND": "OFF",
+                "NOCT_ENABLE_CBACKEND": "OFF",
+                "NOCT_ENABLE_ELBACKEND": "OFF",
+                "NOCT_ENABLE_SCMBACKEND": "OFF",
+                "NOCT_ENABLE_REPL": "ON",
+                "NOCT_ENABLE_OPTIMIZER": "ON",
+                "NOCT_ENABLE_ACCEL_VULKAN": "OFF",
+                "NOCT_ENABLE_ACCEL_OPENGL": "OFF",
+                "NOCT_ENABLE_ACCEL_DX12": "OFF"
+            }
+        },
+        {
             "name": "shared",
             "displayName": "shared build",
             "generator": "Unix Makefiles",
@@ -987,6 +1029,10 @@
         {
             "name": "static",
             "configurePreset": "static"
+        },
+        {
+            "name": "zedbsd",
+            "configurePreset": "zedbsd"
         },
         {
             "name": "shared",

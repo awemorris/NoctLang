@@ -178,22 +178,22 @@ jit_build(
 /*
  * Free all JIT-compiled code.
  */
-void
+bool
 jit_free(
          struct rt_env *env)
 {
-	jit_slab_free_all(env);
+	return jit_slab_free_all(env);
 }
 
 /*
  * Commit written code.
  */
-void
+bool
 jit_commit(
         struct rt_env *env)
 
 {
-	jit_slab_commit_all(env);
+	return jit_slab_commit_all(env);
 }
 
 /*

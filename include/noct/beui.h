@@ -207,23 +207,21 @@ int noct_beui_is_open(void);
 int noct_beui_get_display_info(struct noct_beui_display_info *info);
 int noct_beui_fill(const struct noct_beui_rect *rect, uint32_t color);
 int noct_beui_line(unsigned x0, unsigned y0, unsigned x1, unsigned y1,
-		    uint32_t color);
+		   uint32_t color);
 int noct_beui_pattern_fill(const struct noct_beui_rect *rect, uint32_t color,
-			    uint64_t pattern);
+			   uint64_t pattern);
 int noct_beui_draw_image(unsigned x, unsigned y,
-			  const struct noct_beui_image *image);
+			 const struct noct_beui_image *image);
 int noct_beui_draw_image_region(const struct noct_beui_image *image,
-				 unsigned source_x, unsigned source_y,
-				 unsigned width, unsigned height,
-				 unsigned destination_x,
-				 unsigned destination_y);
+				unsigned source_x, unsigned source_y,
+				unsigned width, unsigned height,
+				unsigned destination_x, unsigned destination_y);
 int noct_beui_draw_image_pattern(unsigned x, unsigned y,
-				  const struct noct_beui_image *image,
-				  uint64_t pattern);
-int noct_beui_measure_text(const char *text, unsigned *width,
-			    unsigned *height);
+				 const struct noct_beui_image *image,
+				 uint64_t pattern);
+int noct_beui_measure_text(const char *text, unsigned *width, unsigned *height);
 int noct_beui_draw_text(const char *text, unsigned x, unsigned y,
-			 uint32_t foreground, uint32_t background);
+			uint32_t foreground, uint32_t background);
 /*
  * Services the backends and reports whether the display is still alive:
  * 1 to keep running, 0 once it has closed.  Scripts drive their main
@@ -246,11 +244,10 @@ int noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
  * Boots pre-boot environment need no DEFLATE implementation.
  */
 int noct_beui_bmp_measure(const void *data, size_t size,
-			   enum noct_beui_image_format *format,
-			   unsigned *width, unsigned *height,
-			   size_t *pixel_bytes);
+			  enum noct_beui_image_format *format, unsigned *width,
+			  unsigned *height, size_t *pixel_bytes);
 int noct_beui_bmp_decode(const void *data, size_t size, void *pixel_storage,
-			  size_t pixel_capacity, struct noct_beui_image *image);
+			 size_t pixel_capacity, struct noct_beui_image *image);
 
 /*
  * Decodes a BMP into a registry entry and returns its handle, or 0 on
@@ -266,10 +263,7 @@ int noct_beui_image_destroy(int handle);
  * (non-standard API)
  */
 NOCT_DLL
-bool
-noct_register_api_beui(
-	NoctEnv *env,
-	const struct noct_beui_hal *hal);
+bool noct_register_api_beui(NoctEnv *env, const struct noct_beui_hal *hal);
 
 /*
  * Register BeUI backed by the PC-98 MS-DOS backend (GDC display, CGROM
@@ -277,14 +271,14 @@ noct_register_api_beui(
  * NOCT_TARGET_PC98DOS is defined.
  */
 NOCT_DLL
-bool
-noct_register_api_beui_pc98dos(
-	NoctEnv *env);
+bool noct_register_api_beui_pc98dos(NoctEnv *env);
 
 /* Register BeUI backed by an SDL2 desktop window. */
 NOCT_DLL
-bool
-noct_register_api_beui_sdl2(
-	NoctEnv *env);
+bool noct_register_api_beui_sdl2(NoctEnv *env);
+
+/* Register BeUI backed by zedBSD /dev/graphics and evdev devices. */
+NOCT_DLL
+bool noct_register_api_beui_zedbsd(NoctEnv *env);
 
 #endif

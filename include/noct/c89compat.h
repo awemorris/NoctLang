@@ -65,13 +65,13 @@ extern "C" {
 
 /* x86 */
 #define NOCT_ARCH_X86
-#define NOCT_ARCH_LE		/* Always LE */
+#define NOCT_ARCH_LE /* Always LE */
 
 #elif defined(__x86_64__) || defined(_M_X64)
 
 /* x86_64 */
 #define NOCT_ARCH_X86_64
-#define NOCT_ARCH_LE		/* Always LE */
+#define NOCT_ARCH_LE /* Always LE */
 
 #elif defined(__aarch64__) || defined(_M_ARM64)
 
@@ -79,9 +79,9 @@ extern "C" {
 #define NOCT_ARCH_ARM64
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define NOCT_ARCH_BE	/* Can be BE*/
+#define NOCT_ARCH_BE /* Can be BE*/
 #else
-#define NOCT_ARCH_LE	/* Default, always LE on MSVC */
+#define NOCT_ARCH_LE /* Default, always LE on MSVC */
 #endif
 
 #elif defined(__arm__)
@@ -90,9 +90,9 @@ extern "C" {
 #define NOCT_ARCH_ARM32
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define NOCT_ARCH_BE	/* Can be BE */
+#define NOCT_ARCH_BE /* Can be BE */
 #else
-#define NOCT_ARCH_LE	/* Default, always LE on MSVC */
+#define NOCT_ARCH_LE /* Default, always LE on MSVC */
 #endif
 
 #elif defined(_ARCH_PPC64)
@@ -101,9 +101,9 @@ extern "C" {
 #define NOCT_ARCH_PPC64
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define NOCT_ARCH_BE	/* Can be BE optionally */
+#define NOCT_ARCH_BE /* Can be BE optionally */
 #else
-#define NOCT_ARCH_LE	/* Default, no MSVC support */
+#define NOCT_ARCH_LE /* Default, no MSVC support */
 #endif
 
 #elif defined(_ARCH_PPC)
@@ -112,9 +112,9 @@ extern "C" {
 #define NOCT_ARCH_PPC32
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define NOCT_ARCH_LE	/* Can be LE optionally */
+#define NOCT_ARCH_LE /* Can be LE optionally */
 #else
-#define NOCT_ARCH_BE	/* Default, always BE on MSVC */
+#define NOCT_ARCH_BE /* Default, always BE on MSVC */
 #endif
 
 #elif defined(__mips64) || defined(__mips64__)
@@ -123,9 +123,9 @@ extern "C" {
 #define NOCT_ARCH_MIPS64
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define NOCT_ARCH_LE	/* Can be LE */
+#define NOCT_ARCH_LE /* Can be LE */
 #else
-#define NOCT_ARCH_BE	/* Default, no MSVC support */
+#define NOCT_ARCH_BE /* Default, no MSVC support */
 #endif
 
 #elif defined(__mips__)
@@ -134,9 +134,9 @@ extern "C" {
 #define NOCT_ARCH_MIPS32
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define NOCT_ARCH_LE	/* Can be BE optionally */
+#define NOCT_ARCH_LE /* Can be BE optionally */
 #else
-#define NOCT_ARCH_BE	/* Default, always BE on MSVC */
+#define NOCT_ARCH_BE /* Default, always BE on MSVC */
 #endif
 
 #elif defined(__riscv) && (__riscv_xlen == 64)
@@ -145,9 +145,9 @@ extern "C" {
 #define NOCT_ARCH_RISCV64
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define NOCT_ARCH_BE	/* Can be BE optionally */
+#define NOCT_ARCH_BE /* Can be BE optionally */
 #else
-#define NOCT_ARCH_LE	/* Default, no MSVC support yet */
+#define NOCT_ARCH_LE /* Default, no MSVC support yet */
 #endif
 
 #elif defined(__riscv) && (__riscv_xlen == 32)
@@ -156,9 +156,9 @@ extern "C" {
 #define NOCT_ARCH_RISCV32
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define NOCT_ARCH_BE	/* Can be BE optionally */
+#define NOCT_ARCH_BE /* Can be BE optionally */
 #else
-#define NOCT_ARCH_LE	/* Default, no MSVC support yet */
+#define NOCT_ARCH_LE /* Default, no MSVC support yet */
 #endif
 
 #endif
@@ -184,6 +184,7 @@ extern "C" {
  * | NOCT_TARGET_BEOS      | BeOS and Haiku |                             |
  * | NOCT_TARGET_DOS4G     | DOS4G          |                             |
  * | NOCT_TARGET_PC98BE    | PC-98 BE       | Freestanding bootstrap env. |
+ * | NOCT_TARGET_ZEDBSD    | zedBSD         |                             |
  *
  * Additional:
 
@@ -217,14 +218,18 @@ extern "C" {
 #endif
 #endif
 
+/* zedBSD */
+#if defined(NOCT_TARGET_ZEDBSD)
+#ifndef NOCT_TARGET_POSIX
+#define NOCT_TARGET_POSIX
+#endif
+#endif
+
 /* Linux (non-Android) */
-#if defined(__linux) && \
-        ( \
-                !defined(__ANDROID__) &&   \
-                !defined(HAL_TARGET_UNITY) && \
-                !defined(HAL_TARGET_OPENHARMONY) && \
-		!defined(NOCT_TARGET_PC98BE) \
-	)
+#if defined(__linux) &&                                                        \
+    (!defined(__ANDROID__) && !defined(HAL_TARGET_UNITY) &&                    \
+     !defined(HAL_TARGET_OPENHARMONY) && !defined(NOCT_TARGET_PC98BE) &&       \
+     !defined(NOCT_TARGET_ZEDBSD))
 #define NOCT_TARGET_LINUX
 #ifndef NOCT_TARGET_POSIX
 #define NOCT_TARGET_POSIX
@@ -260,7 +265,7 @@ extern "C" {
 #endif
 
 /* SunOS/Solaris */
-#if defined(__sun) 
+#if defined(__sun)
 #if defined(__SunOS_5_11)
 #define NOCT_TARGET_SOLARIS11
 #else
@@ -290,24 +295,16 @@ extern "C" {
 #endif
 
 /* Error: No target detected. */
-#if !defined(NOCT_TARGET_WINDOWS) &&              \
-    !defined(NOCT_TARGET_MACOS) &&                \
-    !defined(NOCT_TARGET_MACOS7) &&               \
-    !defined(NOCT_TARGET_LINUX) &&                \
-    !defined(NOCT_TARGET_FREEBSD) &&              \
-    !defined(NOCT_TARGET_NETBSD) &&               \
-    !defined(NOCT_TARGET_OPENBSD) &&              \
-    !defined(NOCT_TARGET_SOLARIS11) &&            \
-    !defined(NOCT_TARGET_SOLARIS10) &&            \
-    !defined(NOCT_TARGET_POSIX) &&                \
-    !defined(NOCT_TARGET_IOS) &&                  \
-    !defined(NOCT_TARGET_ANDROID) &&              \
-    !defined(NOCT_TARGET_OPENHARMONY) &&          \
-    !defined(NOCT_TARGET_WASM) &&                 \
-    !defined(NOCT_TARGET_BEOS) &&                 \
-    !defined(NOCT_TARGET_UNITY) &&                \
-    !defined(NOCT_TARGET_DOS4G) &&                \
-    !defined(NOCT_TARGET_PC98BE)
+#if !defined(NOCT_TARGET_WINDOWS) && !defined(NOCT_TARGET_MACOS) &&            \
+    !defined(NOCT_TARGET_MACOS7) && !defined(NOCT_TARGET_LINUX) &&             \
+    !defined(NOCT_TARGET_FREEBSD) && !defined(NOCT_TARGET_NETBSD) &&           \
+    !defined(NOCT_TARGET_OPENBSD) && !defined(NOCT_TARGET_SOLARIS11) &&        \
+    !defined(NOCT_TARGET_SOLARIS10) && !defined(NOCT_TARGET_POSIX) &&          \
+    !defined(NOCT_TARGET_IOS) && !defined(NOCT_TARGET_ANDROID) &&              \
+    !defined(NOCT_TARGET_OPENHARMONY) && !defined(NOCT_TARGET_WASM) &&         \
+    !defined(NOCT_TARGET_BEOS) && !defined(NOCT_TARGET_UNITY) &&               \
+    !defined(NOCT_TARGET_DOS4G) && !defined(NOCT_TARGET_PC98BE) &&             \
+    !defined(NOCT_TARGET_ZEDBSD)
 #error "No target detected."
 #endif
 
@@ -317,7 +314,8 @@ extern "C" {
 #ifndef __cplusplus
 #if defined(HAVE_STDBOOL_H)
 #include <stdbool.h>
-#elif defined(_MSC_VER) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L)
+#elif defined(_MSC_VER) ||                                                     \
+    (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L)
 #include <stdbool.h>
 #else
 #if !defined(bool) && !defined(BOOL_DEF)
@@ -416,18 +414,18 @@ typedef unsigned long uintptr_t;
  */
 #if !defined(INLINE)
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-#define INLINE			inline		/* C99 standard */
+#define INLINE inline /* C99 standard */
 #elif defined(__GNUC__)
-#define INLINE			__inline__	/* GCC extension */
+#define INLINE __inline__ /* GCC extension */
 #elif defined(__xlc__)
-#define INLINE			__inline	/* IBM XLC extension */
+#define INLINE __inline /* IBM XLC extension */
 #elif defined(_MSC_VER)
-#define INLINE			__inline	/* MSVC extension */
+#define INLINE __inline /* MSVC extension */
 #elif defined(__WATCOMC__)
-#define INLINE			__inline	/* Watcom extension */
+#define INLINE __inline /* Watcom extension */
 #pragma warning 202 9
 #else
-#define INLINE					/* Not supported */
+#define INLINE /* Not supported */
 #endif
 #endif
 
@@ -436,13 +434,13 @@ typedef unsigned long uintptr_t;
  */
 #if !defined(RESTRICT)
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
-#define RESTRICT		restrict	/* C99 standard */
+#define RESTRICT restrict /* C99 standard */
 #elif defined(__GNUC__)
-#define RESTRICT		__restrict	/* GCC extension */
+#define RESTRICT __restrict /* GCC extension */
 #elif defined(_MSC_VER)
-#define RESTRICT		__restrict	/* MSVC extension */
+#define RESTRICT __restrict /* MSVC extension */
 #else
-#define RESTRICT				/* Not supported */
+#define RESTRICT /* Not supported */
 #endif
 #endif
 
@@ -480,12 +478,12 @@ typedef unsigned long uintptr_t;
  */
 #if defined(NOCT_USE_DLL)
 #if defined(__GNUC__)
-#define NOCT_DLL		__attribute__((visibility("default")))
+#define NOCT_DLL __attribute__((visibility("default")))
 #elif defined(_MSC_VER)
 #if defined(DLL_IMPL)
-#define NOCT_DLL		__declspec(dllexport)
+#define NOCT_DLL __declspec(dllexport)
 #else
-#define NOCT_DLL		__declspec(dllimport)
+#define NOCT_DLL __declspec(dllimport)
 #endif
 #endif
 #else
@@ -501,7 +499,7 @@ typedef unsigned long uintptr_t;
  * Suppress unused warnings.
  */
 #ifndef UNUSED_PARAMETER
-#define UNUSED_PARAMETER(x)	(void)(x)
+#define UNUSED_PARAMETER(x) (void)(x)
 #endif
 
 /*
@@ -509,11 +507,11 @@ typedef unsigned long uintptr_t;
  */
 #ifndef U8
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-#define U8(s)			u8##s		/* C23 standard */
+#define U8(s) u8##s /* C23 standard */
 #elif defined(__GNUC__) || defined(_MSC_VER)
-#define U8(s)			u8##s		/* GCC and MSVC extensions */
+#define U8(s) u8##s /* GCC and MSVC extensions */
 #else
-#define U8(s)			s		/* Not supported */
+#define U8(s) s /* Not supported */
 #endif
 #endif
 
@@ -523,11 +521,11 @@ typedef unsigned long uintptr_t;
  */
 #ifndef U32C
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-#define U32C(literal, unicode)	U##literal	/* C23 standard */
+#define U32C(literal, unicode) U##literal /* C23 standard */
 #elif defined(__GNUC__) || defined(_MSC_VER)
-#define U32C(literal, unicode)	U##literal	/* GCC and MSVC extensions */
+#define U32C(literal, unicode) U##literal /* GCC and MSVC extensions */
 #else
-#define U32C(literal, unicode)	(unicode)	/* C89 fallback */
+#define U32C(literal, unicode) (unicode) /* C89 fallback */
 #endif
 #endif
 
@@ -598,124 +596,144 @@ typedef unsigned long uintptr_t;
  */
 #if defined(NOCT_ARCH_LE)
 
-static INLINE uint64_t noct_host_to_le_64(uint64_t d) {
+static INLINE uint64_t
+noct_host_to_le_64(uint64_t d)
+{
 	return d;
 }
-static INLINE uint32_t noct_host_to_le_32(uint32_t d) {
+static INLINE uint32_t
+noct_host_to_le_32(uint32_t d)
+{
 	return d;
 }
-static INLINE uint16_t noct_host_to_le_16(uint16_t d) {
+static INLINE uint16_t
+noct_host_to_le_16(uint16_t d)
+{
 	return d;
 }
-static INLINE uint64_t noct_le_to_host_64(uint64_t d) {
+static INLINE uint64_t
+noct_le_to_host_64(uint64_t d)
+{
 	return d;
 }
-static INLINE uint32_t noct_le_to_host_32(uint32_t d) {
+static INLINE uint32_t
+noct_le_to_host_32(uint32_t d)
+{
 	return d;
 }
-static INLINE uint16_t noct_le_to_host_16(uint16_t d) {
+static INLINE uint16_t
+noct_le_to_host_16(uint16_t d)
+{
 	return d;
 }
-static INLINE uint64_t noct_be_to_host_64(uint64_t d) {
-	return ((d & 0xff) << 56) |
-		(((d >> 8) & 0xff) << 48) |
-		(((d >> 16) & 0xff) << 40) |
-		(((d >> 24) & 0xff) << 32) |
-		(((d >> 32) & 0xff) << 24) |
-		(((d >> 40) & 0xff) << 16) |
-		(((d >> 48) & 0xff) << 8) |
-		(((d >> 56) & 0xff));
+static INLINE uint64_t
+noct_be_to_host_64(uint64_t d)
+{
+	return ((d & 0xff) << 56) | (((d >> 8) & 0xff) << 48) |
+	       (((d >> 16) & 0xff) << 40) | (((d >> 24) & 0xff) << 32) |
+	       (((d >> 32) & 0xff) << 24) | (((d >> 40) & 0xff) << 16) |
+	       (((d >> 48) & 0xff) << 8) | (((d >> 56) & 0xff));
 }
-static INLINE uint32_t noct_be_to_host_32(uint32_t d) {
-	return ((d & 0xff) << 24) |
-		(((d >> 8) & 0xff) << 16) |
-		(((d >> 16) & 0xff) << 8) |
-		((d >> 24) & 0xff);
+static INLINE uint32_t
+noct_be_to_host_32(uint32_t d)
+{
+	return ((d & 0xff) << 24) | (((d >> 8) & 0xff) << 16) |
+	       (((d >> 16) & 0xff) << 8) | ((d >> 24) & 0xff);
 }
-static INLINE uint16_t noct_be_to_host_16(uint16_t d) {
-	return (uint16_t)(((uint32_t)(d & 0xff) << 8) |
-		          ((d >> 8) & 0xff));
+static INLINE uint16_t
+noct_be_to_host_16(uint16_t d)
+{
+	return (uint16_t)(((uint32_t)(d & 0xff) << 8) | ((d >> 8) & 0xff));
 }
-static INLINE uint64_t noct_host_to_be_64(uint64_t d) {
-	return ((d & 0xff) << 56) |
-		(((d >> 8) & 0xff) << 48) |
-		(((d >> 16) & 0xff) << 40) |
-		(((d >> 24) & 0xff) << 32) |
-		(((d >> 32) & 0xff) << 24) |
-		(((d >> 40) & 0xff) << 16) |
-		(((d >> 48) & 0xff) << 8) |
-		(((d >> 56) & 0xff));
+static INLINE uint64_t
+noct_host_to_be_64(uint64_t d)
+{
+	return ((d & 0xff) << 56) | (((d >> 8) & 0xff) << 48) |
+	       (((d >> 16) & 0xff) << 40) | (((d >> 24) & 0xff) << 32) |
+	       (((d >> 32) & 0xff) << 24) | (((d >> 40) & 0xff) << 16) |
+	       (((d >> 48) & 0xff) << 8) | (((d >> 56) & 0xff));
 }
-static INLINE uint32_t noct_host_to_be_32(uint32_t d) {
-	return ((d & 0xff) << 24) |
-		(((d >> 8) & 0xff) << 16) |
-		(((d >> 16) & 0xff) << 8) |
-		((d >> 24) & 0xff);
+static INLINE uint32_t
+noct_host_to_be_32(uint32_t d)
+{
+	return ((d & 0xff) << 24) | (((d >> 8) & 0xff) << 16) |
+	       (((d >> 16) & 0xff) << 8) | ((d >> 24) & 0xff);
 }
-static INLINE uint16_t noct_host_to_be_16(uint16_t d) {
-	return (uint16_t)(((uint32_t)(d & 0xff) << 8) |
-			  ((d >> 8) & 0xff));
+static INLINE uint16_t
+noct_host_to_be_16(uint16_t d)
+{
+	return (uint16_t)(((uint32_t)(d & 0xff) << 8) | ((d >> 8) & 0xff));
 }
 
 #else
 
-static INLINE uint64_t noct_host_to_be_64(uint64_t d) {
+static INLINE uint64_t
+noct_host_to_be_64(uint64_t d)
+{
 	return d;
 }
-static INLINE uint32_t noct_host_to_be_32(uint32_t d) {
+static INLINE uint32_t
+noct_host_to_be_32(uint32_t d)
+{
 	return d;
 }
-static INLINE uint16_t noct_host_to_be_16(uint16_t d) {
+static INLINE uint16_t
+noct_host_to_be_16(uint16_t d)
+{
 	return d;
 }
-static INLINE uint64_t noct_be_to_host_64(uint64_t d) {
+static INLINE uint64_t
+noct_be_to_host_64(uint64_t d)
+{
 	return d;
 }
-static INLINE uint32_t noct_be_to_host_32(uint32_t d) {
+static INLINE uint32_t
+noct_be_to_host_32(uint32_t d)
+{
 	return d;
 }
-static INLINE uint16_t noct_be_to_host_16(uint16_t d) {
+static INLINE uint16_t
+noct_be_to_host_16(uint16_t d)
+{
 	return d;
 }
-static INLINE uint64_t noct_le_to_host_64(uint64_t d) {
-	return ((d & 0xff) << 56) |
-		(((d >> 8) & 0xff) << 48) |
-		(((d >> 16) & 0xff) << 40) |
-		(((d >> 24) & 0xff) << 32) |
-		(((d >> 32) & 0xff) << 24) |
-		(((d >> 40) & 0xff) << 16) |
-		(((d >> 48) & 0xff) << 8) |
-		(((d >> 56) & 0xff));
+static INLINE uint64_t
+noct_le_to_host_64(uint64_t d)
+{
+	return ((d & 0xff) << 56) | (((d >> 8) & 0xff) << 48) |
+	       (((d >> 16) & 0xff) << 40) | (((d >> 24) & 0xff) << 32) |
+	       (((d >> 32) & 0xff) << 24) | (((d >> 40) & 0xff) << 16) |
+	       (((d >> 48) & 0xff) << 8) | (((d >> 56) & 0xff));
 }
-static INLINE uint32_t noct_le_to_host_32(uint32_t d) {
-	return ((d & 0xff) << 24) |
-		(((d >> 8) & 0xff) << 16) |
-		(((d >> 16) & 0xff) << 8) |
-		((d >> 24) & 0xff);
+static INLINE uint32_t
+noct_le_to_host_32(uint32_t d)
+{
+	return ((d & 0xff) << 24) | (((d >> 8) & 0xff) << 16) |
+	       (((d >> 16) & 0xff) << 8) | ((d >> 24) & 0xff);
 }
-static INLINE uint16_t noct_le_to_host_16(uint16_t d) {
-	return ((d & 0xff) << 8) |
-		((d >> 8) & 0xff);
+static INLINE uint16_t
+noct_le_to_host_16(uint16_t d)
+{
+	return ((d & 0xff) << 8) | ((d >> 8) & 0xff);
 }
-static INLINE uint64_t noct_host_to_le_64(uint64_t d) {
-	return ((d & 0xff) << 56) |
-		(((d >> 8) & 0xff) << 48) |
-		(((d >> 16) & 0xff) << 40) |
-		(((d >> 24) & 0xff) << 32) |
-		(((d >> 32) & 0xff) << 24) |
-		(((d >> 40) & 0xff) << 16) |
-		(((d >> 48) & 0xff) << 8) |
-		(((d >> 56) & 0xff));
+static INLINE uint64_t
+noct_host_to_le_64(uint64_t d)
+{
+	return ((d & 0xff) << 56) | (((d >> 8) & 0xff) << 48) |
+	       (((d >> 16) & 0xff) << 40) | (((d >> 24) & 0xff) << 32) |
+	       (((d >> 32) & 0xff) << 24) | (((d >> 40) & 0xff) << 16) |
+	       (((d >> 48) & 0xff) << 8) | (((d >> 56) & 0xff));
 }
-static INLINE uint32_t noct_host_to_le_32(uint32_t d) {
-	return ((d & 0xff) << 24) |
-		(((d >> 8) & 0xff) << 16) |
-		(((d >> 16) & 0xff) << 8) |
-		((d >> 24) & 0xff);
+static INLINE uint32_t
+noct_host_to_le_32(uint32_t d)
+{
+	return ((d & 0xff) << 24) | (((d >> 8) & 0xff) << 16) |
+	       (((d >> 16) & 0xff) << 8) | ((d >> 24) & 0xff);
 }
-static INLINE uint16_t noct_host_to_le_16(uint16_t d) {
-	return ((d & 0xff) << 8) |
-		((d >> 8) & 0xff);
+static INLINE uint16_t
+noct_host_to_le_16(uint16_t d)
+{
+	return ((d & 0xff) << 8) | ((d >> 8) & 0xff);
 }
 
 #endif
@@ -726,7 +744,7 @@ static INLINE uint16_t noct_host_to_le_16(uint16_t d) {
 #if defined(NOCT_USE_TRANSLATION) && !defined(NOCT_USE_LIBINTL)
 
 /* Translate messages. */
-#define N_TR(s)	noct_gettext(s)
+#define N_TR(s) noct_gettext(s)
 
 /* Translator. */
 const char *noct_gettext(const char *s);
@@ -740,7 +758,7 @@ const char *noct_gettext(const char *s);
 #else
 
 /* No translation. */
-#define N_TR(s)	(s)
+#define N_TR(s) (s)
 
 #endif
 

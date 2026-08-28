@@ -26,6 +26,7 @@ option(NOCT_ENABLE_API_HTTPSERVER "Enable the HttpServer standard API"    OFF)
 option(NOCT_ENABLE_API_TERM       "Enable the Term non-standard API"      OFF)
 option(NOCT_ENABLE_API_BEUI       "Enable the BeUI non-standard API"      OFF)
 option(NOCT_ENABLE_API_BEUI_SDL2  "Enable the SDL2 BeUI desktop backend"  OFF)
+option(NOCT_ENABLE_API_BEUI_ZEDBSD "Enable the zedBSD BeUI backend"        OFF)
 option(NOCT_ENABLE_API_PROCESS "Enable the Process non-standard API" ON)
 option(NOCT_ENABLE_INSTALL        "Enable installation"                   OFF)
 option(NOCT_ENABLE_BCBACKEND      "Enable bytecode backend"               OFF)
@@ -49,6 +50,12 @@ option(NOCT_TARGET_MACOS7         "Build for MacOS 7"                     OFF)
 option(NOCT_TARGET_DOS4G          "Build for DOS4G"                       OFF)
 option(NOCT_TARGET_PC98DOS        "Build for MS-DOS on PC-98 (with DOS4G)" OFF)
 option(NOCT_TARGET_PC98BE         "Build for PC-98 Bootstrap Environment" OFF)
+option(NOCT_TARGET_ZEDBSD         "Build for zedBSD"                      OFF)
+
+if(NOCT_TARGET_ZEDBSD)
+  # zedBSD supplies its own crt0 as assembly through the target adapter.
+  enable_language(ASM)
+endif()
 
 if(NOCT_TARGET_PC98BE AND NOCT_ENABLE_MULTITHREAD)
   message(FATAL_ERROR "NOCT_TARGET_PC98BE currently supports only the single-threaded object model")
@@ -196,7 +203,7 @@ set(NOCT_DYNLIB_ENABLED OFF)
 if((WIN32 OR UNIX) AND
    NOT NOCT_TARGET_UNITY AND NOT NOCT_TARGET_MACOS7 AND
    NOT NOCT_TARGET_DOS4G AND NOT NOCT_TARGET_PC98DOS AND
-   NOT NOCT_TARGET_PC98BE)
+   NOT NOCT_TARGET_PC98BE AND NOT NOCT_TARGET_ZEDBSD)
   if(WIN32)
     list(APPEND NOCT_BASE_SOURCE src/core/dynlib-win.c)
   else()
@@ -395,6 +402,16 @@ if(NOCT_ENABLE_API_BEUI)
   list(APPEND NOCT_API_SOURCE src/api/beui-core.c)
   list(APPEND NOCT_API_SOURCE src/api/beui-image.c)
   list(APPEND NOCT_API_SOURCE src/api/api-beui-backend.c)
+  if(NOCT_ENABLE_API_BEUI_ZEDBSD)
+    if(NOT NOCT_TARGET_ZEDBSD)
+      message(FATAL_ERROR
+        "NOCT_ENABLE_API_BEUI_ZEDBSD requires NOCT_TARGET_ZEDBSD")
+    endif()
+    if(NOCT_ENABLE_API_BEUI_SDL2)
+      message(FATAL_ERROR
+        "Select only one of the zedBSD and SDL2 BeUI backends")
+    endif()
+  endif()
   if(NOCT_TARGET_PC98DOS)
     # The CGROM glyph backend shares noct_jisx0208_to_ucs with api-file.
     if(NOT NOCT_ENABLE_API_FILE)
@@ -421,8 +438,15 @@ if(NOCT_ENABLE_API_BEUI)
     endif()
     list(APPEND NOCT_API_SOURCE src/api/api-beui-sdl2.c)
   endif()
-elseif(NOCT_ENABLE_API_BEUI_SDL2)
-  message(FATAL_ERROR "NOCT_ENABLE_API_BEUI_SDL2 requires NOCT_ENABLE_API_BEUI")
+  if(NOCT_ENABLE_API_BEUI_ZEDBSD)
+    list(APPEND NOCT_API_SOURCE
+      src/api/beui-zedbsd-input.c
+      src/api/api-beui-zedbsd.c
+    )
+  endif()
+elseif(NOCT_ENABLE_API_BEUI_SDL2 OR NOCT_ENABLE_API_BEUI_ZEDBSD)
+  message(FATAL_ERROR
+    "A BeUI backend requires NOCT_ENABLE_API_BEUI")
 endif()
 
 # Add the target "libnoctapi", the standard library.
@@ -516,6 +540,22 @@ if(NOCT_TARGET_OPENHARMONY)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_OPENHARMONY)
 endif()
 
+# zedBSD Target
+if(NOCT_TARGET_ZEDBSD)
+  list(APPEND NOCT_PUBLIC_CPPFLAGS
+    NOCT_TARGET_ZEDBSD
+    NOCT_TARGET_POSIX
+    NOCT_MEMORY_SMALL
+    NOCT_FORCE_SOFT_FMAF
+  )
+  set(NOCT_ZEDBSD_COMPILE_OPTIONS
+    -nostdinc
+    -U__linux__
+    -U__linux
+    -Ulinux
+  )
+endif()
+
 # Unity Target
 if(NOCT_TARGET_UNITY)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_UNITY NOCT_FORCE_SOFT_FMAF)
@@ -561,6 +601,13 @@ if(NOCT_ENABLE_API)
   target_compile_definitions(noctapi PRIVATE ${NOCT_PRIVATE_CPPFLAGS})
 endif()
 
+if(NOCT_TARGET_ZEDBSD)
+  target_compile_options(noct PRIVATE ${NOCT_ZEDBSD_COMPILE_OPTIONS})
+  if(NOCT_ENABLE_API)
+    target_compile_options(noctapi PRIVATE ${NOCT_ZEDBSD_COMPILE_OPTIONS})
+  endif()
+endif()
+
 if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
   target_compile_definitions(noct PRIVATE NOCT_USE_HTTPSERVER)
   target_compile_definitions(noctapi PRIVATE NOCT_USE_HTTPSERVER)
@@ -578,6 +625,10 @@ endif()
 
 if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI_SDL2)
   target_compile_definitions(noctapi PRIVATE NOCT_USE_BEUI_SDL2)
+endif()
+
+if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI_ZEDBSD)
+  target_compile_definitions(noctapi PRIVATE NOCT_USE_BEUI_ZEDBSD)
 endif()
 
 if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
@@ -626,7 +677,8 @@ endif()
 #
 
 if(    NOT MSVC
-   AND NOT CMAKE_C_COMPILER_ID MATCHES "Watcom")
+   AND NOT CMAKE_C_COMPILER_ID MATCHES "Watcom"
+   AND NOT NOCT_TARGET_ZEDBSD)
   target_link_libraries(noct PUBLIC m)
 endif()
 
@@ -741,6 +793,9 @@ if(NOCT_ENABLE_CLI)
   if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI_SDL2)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_BEUI_SDL2)
   endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI_ZEDBSD)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_BEUI_ZEDBSD)
+  endif()
   if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_PROCESS)
   endif()
@@ -780,12 +835,31 @@ if(NOCT_ENABLE_CLI)
      ${CMAKE_CURRENT_SOURCE_DIR}/src/core
      ${CMAKE_CURRENT_SOURCE_DIR}/src/backend
   )
+  if(NOCT_TARGET_ZEDBSD)
+    target_compile_options(noctcli PRIVATE ${NOCT_ZEDBSD_COMPILE_OPTIONS})
+  endif()
 
   # Link libnoct and libnoctapi.
   target_link_libraries(noctcli PRIVATE noct noctapi)
 
+  # zedBSD owns its libc, startup objects, linker script, and final static-link
+  # policy.  Keep those integration details outside the canonical Noct tree
+  # while making the CMake executable target the sole produced artifact.
+  if(NOCT_TARGET_ZEDBSD)
+    if(NOT DEFINED ZEDBSD_SOURCE_DIR OR ZEDBSD_SOURCE_DIR STREQUAL "")
+      message(FATAL_ERROR
+        "NOCT_TARGET_ZEDBSD requires ZEDBSD_SOURCE_DIR to name the zedBSD source tree")
+    endif()
+    include("${ZEDBSD_SOURCE_DIR}/userland/packages/lang/noct/zedbsd.cmake")
+    if(NOT COMMAND noct_configure_zedbsd_target)
+      message(FATAL_ERROR
+        "zedBSD integration did not define noct_configure_zedbsd_target")
+    endif()
+    noct_configure_zedbsd_target(noctcli)
+  endif()
+
   # Add -lm on UNIX.
-  if(UNIX)
+  if(UNIX AND NOT NOCT_TARGET_ZEDBSD)
     target_link_libraries(noctcli PRIVATE m)
   endif()
 

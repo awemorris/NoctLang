@@ -104,7 +104,7 @@ Our current roadmap is:
 
 - Desktop: Windows, macOS, Linux, FreeBSD
 - Mobile: iOS, Android, OpenHarmony
-- Exotic: Solaris 10/11, NetBSD, OpenBSD, Haiku
+- Exotic: zedBSD, Solaris 10/11, NetBSD, OpenBSD, Haiku
 - Retro: DPMI (DOS, OS/2, Windows 3.1-XP)
 - Consoles: Switch, PlayStation 4/5, Xbox Series X|S
 - Any POSIX compliant OS
@@ -243,6 +243,24 @@ cd build-static
 make
 make install
 ```
+
+### Build for zedBSD
+
+The amd64 zedBSD target is a static cross build. Set the one required target
+root variable to an absolute zedBSD source-tree path, then use the matching
+configure and build presets:
+
+```sh
+export ZEDBSD_SOURCE_DIR=/absolute/path/to/zedBSD
+cmake --preset zedbsd
+cmake --build --preset zedbsd --parallel 16
+```
+
+The executable is written to `build-zedbsd/noct`. The target uses zedBSD's
+headers, startup objects, libc, and linker policy through the integration file
+owned by the zedBSD tree. Configure fails when `ZEDBSD_SOURCE_DIR` is absent or
+does not identify a complete integration tree; it never falls back to host
+headers or host libc.
 
 ### Run
 

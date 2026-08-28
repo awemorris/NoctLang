@@ -14,8 +14,8 @@
 #include <noct/beui.h>
 #endif
 #include "cli-main.h"
-#if defined(NOCT_USE_ACCEL_DX12) || defined(NOCT_USE_ACCEL_VULKAN) || \
-	defined(NOCT_USE_ACCEL_OPENGL)
+#if defined(NOCT_USE_ACCEL_DX12) || defined(NOCT_USE_ACCEL_VULKAN) ||          \
+    defined(NOCT_USE_ACCEL_OPENGL)
 #include "../core/accel.h"
 #endif
 
@@ -26,7 +26,7 @@
 #include <windows.h>
 #elif !defined(NOCT_TARGET_DOS4G) && !defined(NOCT_TARGET_PC98BE)
 #include <unistd.h>
-#if defined(__linux__)
+#if defined(NOCT_TARGET_LINUX)
 #include <dirent.h>
 #endif
 #endif
@@ -60,7 +60,8 @@ static void print_gpu_list(void);
 /*
  * Top level function for the run mode.
  */
-int command_run(int argc, char *argv[])
+int
+command_run(int argc, char *argv[])
 {
 	NoctValue ret;
 	char package_entry[256];
@@ -113,37 +114,39 @@ int command_run(int argc, char *argv[])
 	/* Register libraries. */
 	if (!noct_register_api_system(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 	if (!noct_register_api_console(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 	if (!noct_register_api_file(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 #if defined(NOCT_USE_MULTITHREAD)
 	if (!noct_register_api_thread(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 #endif
 #if defined(NOCT_USE_HTTPSERVER)
 	if (!noct_register_api_httpserver(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 #endif
 #if defined(NOCT_USE_TERM)
 	if (!noct_register_api_term(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 #endif
 #if defined(NOCT_USE_BEUI)
 #if defined(NOCT_TARGET_PC98DOS)
 	if (!noct_register_api_beui_pc98dos(env)) {
+#elif defined(NOCT_USE_BEUI_ZEDBSD)
+	if (!noct_register_api_beui_zedbsd(env)) {
 #elif defined(NOCT_USE_BEUI_SDL2)
 	if (!noct_register_api_beui_sdl2(env)) {
 #else
@@ -154,13 +157,13 @@ int command_run(int argc, char *argv[])
 	if (!noct_register_api_beui(env, NULL)) {
 #endif
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 #endif
 #if defined(NOCT_USE_PROCESS)
 	if (!noct_register_api_process(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
-		return false;
+		return 1;
 	}
 #endif
 
@@ -192,10 +195,7 @@ int command_run(int argc, char *argv[])
 		return 1;
 
 	/* Run the "main()" function. */
-	if (!noct_enter_vm(env,
-			   entry_name,
-			   param_count == 0 ? 0 : 1,
-			   &arg,
+	if (!noct_enter_vm(env, entry_name, param_count == 0 ? 0 : 1, &arg,
 			   &ret)) {
 		const char *file, *msg;
 		int line;
@@ -214,9 +214,7 @@ int command_run(int argc, char *argv[])
 }
 
 static bool
-parse_options(
-	int argc,
-	char *argv[])
+parse_options(int argc, char *argv[])
 {
 	int i;
 	int optimize_level;
@@ -252,7 +250,8 @@ parse_options(
 		}
 		if (strcmp(argv[i], "-mt") == 0) {
 #if !defined(NOCT_USE_MULTITHREAD)
-			wide_printf(N_TR("The multi-thread object model is not available in this build.\n"));
+			wide_printf(N_TR("The multi-thread object model is not "
+					 "available in this build.\n"));
 			return false;
 #else
 			config.object_model = NOCT_OBJECT_MODEL_MULTI;
@@ -263,19 +262,23 @@ parse_options(
 		if (strcmp(argv[i], "-m") == 0) {
 			int j;
 			if (i + 1 >= argc || argv[i + 1][0] == '\0') {
-				wide_printf(N_TR("Specify a package name after -m.\n"));
+				wide_printf(
+				    N_TR("Specify a package name after -m.\n"));
 				return false;
 			}
 			for (j = i + 2; j < argc; j++) {
 				if (strcmp(argv[j], "-m") == 0 ||
 				    strcmp(argv[j], "-e") == 0 ||
 				    strcmp(argv[j], "--one-line") == 0) {
-					wide_printf(N_TR("Package mode cannot be combined with another -m or -e option.\n"));
+					wide_printf(N_TR(
+					    "Package mode cannot be combined "
+					    "with another -m or -e option.\n"));
 					return false;
 				}
 			}
 			if (is_oneliner) {
-				wide_printf(N_TR("-m and -e cannot be used together.\n"));
+				wide_printf(N_TR(
+				    "-m and -e cannot be used together.\n"));
 				return false;
 			}
 			package_mode = true;
@@ -284,8 +287,10 @@ parse_options(
 			file_arg = argc;
 			break;
 		}
-		if (strcmp(argv[i], "-m0") == 0 || strcmp(argv[i], "-m1") == 0) {
-			wide_printf(N_TR("Object-model option %s was removed; use -st or -mt.\n"),
+		if (strcmp(argv[i], "-m0") == 0 ||
+		    strcmp(argv[i], "-m1") == 0) {
+			wide_printf(N_TR("Object-model option %s was removed; "
+					 "use -st or -mt.\n"),
 				    argv[i]);
 			return false;
 		}
@@ -296,7 +301,7 @@ parse_options(
 		}
 		if (strncmp(argv[i], "--cpu=", 6) == 0) {
 			if (!parse_nonnegative_int(argv[i] + 6,
-					   &config.auto_parallel)) {
+						   &config.auto_parallel)) {
 				wide_printf(N_TR("Invalid --cpu option.\n"));
 				return false;
 			}
@@ -304,7 +309,8 @@ parse_options(
 			continue;
 		}
 		if (strncmp(argv[i], "--cpu-pe=", 9) == 0) {
-			if (!parse_nonnegative_int(argv[i] + 9, &config.cpu_pe) ||
+			if (!parse_nonnegative_int(argv[i] + 9,
+						   &config.cpu_pe) ||
 			    config.cpu_pe == 0) {
 				wide_printf(N_TR("Invalid --cpu-pe option.\n"));
 				return false;
@@ -314,7 +320,8 @@ parse_options(
 		}
 		if (strncmp(argv[i], "--cpu-affinity=", 15) == 0) {
 			if (!validate_cpu_affinity(argv[i] + 15)) {
-				wide_printf(N_TR("Invalid --cpu-affinity option.\n"));
+				wide_printf(
+				    N_TR("Invalid --cpu-affinity option.\n"));
 				return false;
 			}
 			config.cpu_affinity = argv[i] + 15;
@@ -333,7 +340,8 @@ parse_options(
 		}
 		if (strncmp(argv[i], "--gpu-name=", 11) == 0) {
 			if (argv[i][11] == '\0') {
-				wide_printf(N_TR("Invalid --gpu-name option.\n"));
+				wide_printf(
+				    N_TR("Invalid --gpu-name option.\n"));
 				return false;
 			}
 			config.gpu_name = argv[i] + 11;
@@ -351,7 +359,7 @@ parse_options(
 			continue;
 		}
 		optimize_result = parse_optimize_level_option(
-			argv[i], &optimize_level, &lineinfo);
+		    argv[i], &optimize_level, &lineinfo);
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
 			config.optimize_level = optimize_level;
 			config.lineinfo = lineinfo;
@@ -374,7 +382,8 @@ parse_options(
 		}
 		if (strcmp(argv[i], "--accel=vulkan") == 0) {
 #if !defined(NOCT_USE_ACCEL_VULKAN)
-			wide_printf(N_TR("Vulkan accelerator support is not available in this build.\n"));
+			wide_printf(N_TR("Vulkan accelerator support is not "
+					 "available in this build.\n"));
 			return false;
 #else
 			config.accel_enable = true;
@@ -385,7 +394,8 @@ parse_options(
 		}
 		if (strcmp(argv[i], "--accel=opengl") == 0) {
 #if !defined(NOCT_USE_ACCEL_OPENGL)
-			wide_printf(N_TR("OpenGL accelerator support is not available in this build.\n"));
+			wide_printf(N_TR("OpenGL accelerator support is not "
+					 "available in this build.\n"));
 			return false;
 #else
 			config.accel_enable = true;
@@ -396,7 +406,8 @@ parse_options(
 		}
 		if (strcmp(argv[i], "--accel=dx12") == 0) {
 #if !defined(NOCT_USE_ACCEL_DX12)
-			wide_printf(N_TR("DirectX 12 accelerator support is not available in this build.\n"));
+			wide_printf(N_TR("DirectX 12 accelerator support is "
+					 "not available in this build.\n"));
 			return false;
 #else
 			config.accel_enable = true;
@@ -418,8 +429,9 @@ parse_options(
 		}
 		if (strncmp(argv[i], "--path=", 7) == 0) {
 			if (argv[i][7] == '\0' ||
-			    require_path_count == (uint32_t)(sizeof(require_path) /
-							 sizeof(require_path[0]))) {
+			    require_path_count ==
+				(uint32_t)(sizeof(require_path) /
+					   sizeof(require_path[0]))) {
 				wide_printf(N_TR("Invalid --path option.\n"));
 				return false;
 			}
@@ -448,7 +460,8 @@ parse_options(
 			continue;
 		}
 		if (strncmp(argv[i], "--gc-promotion-threshold=", 25) == 0) {
-			config.gc_promotion_threshold = (size_t)atoi(argv[i] + 25);
+			config.gc_promotion_threshold =
+			    (size_t)atoi(argv[i] + 25);
 			file_arg++;
 			continue;
 		}
@@ -471,7 +484,8 @@ parse_options(
 
 	if (config.object_model == NOCT_OBJECT_MODEL_SINGLE &&
 	    config.auto_parallel > 0) {
-		wide_printf(N_TR("CPU automatic parallelization requires -mt.\n"));
+		wide_printf(
+		    N_TR("CPU automatic parallelization requires -mt.\n"));
 		return false;
 	}
 
@@ -492,7 +506,7 @@ parse_nonnegative_int(const char *text, int *value)
 #if LONG_MAX > INT_MAX
 	    || parsed > INT_MAX
 #endif
-	   )
+	)
 		return false;
 	*value = (int)parsed;
 	return true;
@@ -517,7 +531,7 @@ validate_cpu_affinity(const char *text)
 	}
 }
 
-#if defined(__linux__)
+#if defined(NOCT_TARGET_LINUX)
 static int
 read_cpu_topology_value(int cpu, const char *name)
 {
@@ -568,12 +582,12 @@ print_cpu_list(void)
 
 #if defined(NOCT_TARGET_WINDOWS)
 	SYSTEM_INFO info;
-	typedef DWORD (WINAPI *get_active_processor_count_fn)(WORD);
+	typedef DWORD(WINAPI * get_active_processor_count_fn)(WORD);
 	get_active_processor_count_fn get_active_processor_count;
 
-	get_active_processor_count = (get_active_processor_count_fn)
-		GetProcAddress(GetModuleHandleA("kernel32.dll"),
-			       "GetActiveProcessorCount");
+	get_active_processor_count =
+	    (get_active_processor_count_fn)GetProcAddress(
+		GetModuleHandleA("kernel32.dll"), "GetActiveProcessorCount");
 	if (get_active_processor_count != NULL)
 		count = (int)get_active_processor_count((WORD)0xffff);
 	else {
@@ -590,7 +604,7 @@ print_cpu_list(void)
 	wide_printf("Logical CPUs: %d\n", count);
 	wide_printf("ID  NUMA  Package  Core  SMT\n");
 	for (i = 0; i < count; i++) {
-#if defined(__linux__)
+#if defined(NOCT_TARGET_LINUX)
 		int package = read_cpu_topology_value(i, "physical_package_id");
 		int core = read_cpu_topology_value(i, "core_id");
 		int node = read_cpu_numa_node(i);
@@ -602,8 +616,8 @@ print_cpu_list(void)
 			    read_cpu_topology_value(j, "core_id") == core)
 				smt++;
 		}
-		wide_printf("%d  %d     %d        %d     %d\n",
-			    i, node, package, core, smt);
+		wide_printf("%d  %d     %d        %d     %d\n", i, node,
+			    package, core, smt);
 #else
 		wide_printf("%d  ?     ?        ?     ?\n", i);
 #endif
@@ -620,13 +634,16 @@ print_gpu_list(void)
 #elif defined(NOCT_USE_ACCEL_VULKAN)
 	if (accel_list_devices())
 		return;
-	wide_printf(N_TR("No compatible Vulkan compute devices are available.\n"));
+	wide_printf(
+	    N_TR("No compatible Vulkan compute devices are available.\n"));
 #elif defined(NOCT_USE_ACCEL_OPENGL)
 	if (accel_list_devices())
 		return;
-	wide_printf(N_TR("No compatible OpenGL ES compute devices are available.\n"));
+	wide_printf(
+	    N_TR("No compatible OpenGL ES compute devices are available.\n"));
 #else
-	wide_printf(N_TR("GPU backend is not linked; no devices are available.\n"));
+	wide_printf(
+	    N_TR("GPU backend is not linked; no devices are available.\n"));
 #endif
 }
 
@@ -639,17 +656,15 @@ static void
 enable_gpu(void)
 {
 	config.gpu_enable = true;
-#if defined(NOCT_USE_ACCEL_DX12) || defined(NOCT_USE_ACCEL_VULKAN) || \
-	defined(NOCT_USE_ACCEL_OPENGL)
+#if defined(NOCT_USE_ACCEL_DX12) || defined(NOCT_USE_ACCEL_VULKAN) ||          \
+    defined(NOCT_USE_ACCEL_OPENGL)
 	config.accel_enable = true;
 	config.accel_backend = NOCT_ACCEL_BACKEND_AUTO;
 #endif
 }
 
 static bool
-load_program(
-	int argc,
-	char *argv[])
+load_program(int argc, char *argv[])
 {
 	static char entire[32768];
 	char *data;
@@ -660,7 +675,8 @@ load_program(
 	/* Load an one liner if exists. */
 	if (is_oneliner) {
 		/* Make a function. */
-		snprintf(entire, sizeof(entire), "func main() { %s; }", argv[prog_arg]);
+		snprintf(entire, sizeof(entire), "func main() { %s; }",
+			 argv[prog_arg]);
 		if (!noct_register_source(env, "oneliner", entire)) {
 			const char *file, *msg;
 			int line;
@@ -668,7 +684,8 @@ load_program(
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line,
+				    msg);
 			return false;
 		}
 		return true;
@@ -680,7 +697,8 @@ load_program(
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line,
+				    msg);
 			return false;
 		}
 		return true;
@@ -706,7 +724,8 @@ load_program(
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line,
+				    msg);
 			free(data);
 			return false;
 		}
@@ -719,7 +738,8 @@ load_program(
 			noct_get_error_file(env, &file);
 			noct_get_error_line(env, &line);
 			noct_get_error_message(env, &msg);
-			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line, msg);
+			wide_printf(N_TR("%s:%d: Error: %s\n"), file, line,
+				    msg);
 			free(data);
 			return false;
 		}
@@ -730,15 +750,13 @@ load_program(
 }
 
 static bool
-load_args(
-	int argc,
-	char *argv[])
+load_args(int argc, char *argv[])
 {
 	NoctValue val;
 
 	/* Make the arguments for "main()". */
-        if (!noct_make_empty_array(env, &arg))
-                return false;
+	if (!noct_make_empty_array(env, &arg))
+		return false;
 
 #if defined(NOCT_TARGET_WINDOWS)
 	{
@@ -752,7 +770,8 @@ load_args(
 			char *utf8_buf = NULL;
 			int size_needed = 0;
 
-			size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
+			size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr, -1,
+							  NULL, 0, NULL, NULL);
 			if (size_needed <= 0)
 				return false;
 
@@ -760,9 +779,11 @@ load_args(
 			if (!utf8_buf)
 				return false;
 
-			WideCharToMultiByte(CP_UTF8, 0, wstr, -1, utf8_buf, size_needed, NULL, NULL);
+			WideCharToMultiByte(CP_UTF8, 0, wstr, -1, utf8_buf,
+					    size_needed, NULL, NULL);
 
-			if (!noct_set_array_elem_make_string(env, &arg, index++, &val, utf8_buf)) {
+			if (!noct_set_array_elem_make_string(env, &arg, index++,
+							     &val, utf8_buf)) {
 				free(utf8_buf);
 				return false;
 			}
@@ -777,10 +798,10 @@ load_args(
 		index = 0;
 		for (i = package_mode ? package_arg_start : file_arg + 1;
 		     i < argc; i++) {
-			if (!noct_set_array_elem_make_string(env, &arg, index++, &val, argv[i]))
+			if (!noct_set_array_elem_make_string(env, &arg, index++,
+							     &val, argv[i]))
 				return false;
 		}
-
 	}
 #endif
 
@@ -790,7 +811,7 @@ load_args(
 static bool
 check_params(const char *entry_name)
 {
-        NoctValue main_val;
+	NoctValue main_val;
 	NoctFunc *main_func;
 
 	/* Check for main(). */

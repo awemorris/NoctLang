@@ -71,7 +71,7 @@ static bool rt_read_accel_program(struct rt_env *env, uint8_t *data,
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_report_jit_result(struct rt_func *func, bool success,
 				 const char *reason);
-static void rt_commit_jit(struct rt_env *env);
+static bool rt_commit_jit(struct rt_env *env);
 
 /* Test/debug observability for JIT compilation and silent interpreter fallback. */
 static void
@@ -92,12 +92,40 @@ rt_report_jit_result(
 }
 
 static void
+rt_report_jit_lifecycle(const char *operation, bool success)
+{
+	if (getenv("NOCT_JIT_DEBUG") != NULL)
+		fprintf(stderr, "noct-jit-lifecycle: %s status=%s\n", operation,
+			success ? "ok" : "failed");
+}
+
+static void
+rt_invalidate_jit_entries(struct rt_vm *vm)
+{
+	struct rt_func *func;
+
+	for (func = vm->func_list; func != NULL; func = func->next) {
+		func->jit_code = NULL;
+		func->call_count = -1;
+	}
+}
+
+static bool
 rt_commit_jit(struct rt_env *env)
 {
 	if (env->vm->config.jit_enable && env->vm->is_jit_dirty) {
-		jit_commit(env);
+		if (!jit_commit(env)) {
+			rt_invalidate_jit_entries(env->vm);
+			(void)jit_free(env);
+			env->vm->is_jit_dirty = false;
+			rt_error(env, N_TR("JIT memory protection failed."));
+			rt_report_jit_lifecycle("publish", false);
+			return false;
+		}
 		env->vm->is_jit_dirty = false;
+		rt_report_jit_lifecycle("publish", true);
 	}
+	return true;
 }
 static void rt_leave_frame(struct rt_env *env);
 static bool rt_init_global(struct rt_env *env);
@@ -281,6 +309,7 @@ rt_destroy_vm(
 {
 	struct rt_env *env, *next_env;
 	struct rt_func *func, *next_func;
+	bool jit_cleanup_succeeded = true;
 
 	/* The fast-prototype cache owns process-global copies allocated through
 	 * this VM's active allocator.  Release them before that allocator's
@@ -288,8 +317,8 @@ rt_destroy_vm(
 	hir_fast_prototypes_reset();
 
 	/* Free the JIT region. */
-	if (vm->config.jit_enable)
-		jit_free(vm->env_list);
+	if (vm->config.jit_enable && !jit_free(vm->env_list))
+		jit_cleanup_succeeded = false;
 	accel_runtime_cleanup(vm);
 	rt_run_vm_finalizers(vm);
 	rt_cleanup_libraries(vm);
@@ -321,9 +350,11 @@ rt_destroy_vm(
 	module_paths_cleanup(&vm->require_path);
 
 	/* Free rt_env. */
+	if (vm->config.jit_enable)
+		rt_report_jit_lifecycle("destroy", jit_cleanup_succeeded);
 	noct_free(vm);
 
-	return true;
+	return jit_cleanup_succeeded;
 }
 
 bool
@@ -772,7 +803,8 @@ rt_register_source(
 					     true);
 	/* A failed registration can still have published earlier functions.
 	 * Keep those pointers executable until registration becomes transactional. */
-	rt_commit_jit(env);
+	if (!rt_commit_jit(env))
+		result = false;
 
 	/*
 	 * Public roots are registrations, not imports: REPL and
@@ -827,7 +859,10 @@ rt_register_resolution(struct rt_env *env, const char *name,
 	result = rt_register_source_internal(env, module->logical_name,
 					     resolution->data, module, true);
 	free(resolution->data);
-	rt_commit_jit(env);
+	if (!rt_commit_jit(env)) {
+		module->state = RT_MODULE_FAILED;
+		result = false;
+	}
 	return result;
 }
 
@@ -1112,14 +1147,14 @@ rt_register_source_internal(
 	/* Auto-execute the load-time init function ($init section). */
 	if (init_func_name[0] != '\0') {
 		struct rt_value init_ret;
-		rt_commit_jit(env);
-		if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
+		if (!rt_commit_jit(env) ||
+		    !rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
 			goto failed;
 	}
 	if (package_init_func_name[0] != '\0') {
 		struct rt_value package_ret;
-		rt_commit_jit(env);
-		if (!rt_call_with_name(env, package_init_func_name, 0, NULL,
+		if (!rt_commit_jit(env) ||
+		    !rt_call_with_name(env, package_init_func_name, 0, NULL,
 				       &package_ret))
 			goto failed;
 	}
@@ -1338,14 +1373,15 @@ rt_register_bytecode(
 		noct_free(file_name);
 
 	if (!succeeded) {
-		rt_commit_jit(env);
-		rt_error(env, N_TR("Failed to load bytecode."));
+		if (rt_commit_jit(env))
+			rt_error(env, N_TR("Failed to load bytecode."));
 		return false;
 	}
 
 	/* Publish every eagerly generated function before returning or running
 	 * the app/module initializer. */
-	rt_commit_jit(env);
+	if (!rt_commit_jit(env))
+		return false;
 
 	/* Auto-execute the load-time init function ($init section). */
 	if (init_func_name[0] != '\0') {
@@ -2525,6 +2561,9 @@ rt_call(
 
 		if (func->jit_code != NULL) {
 			/* Call a JIT-generated code. */
+			if (getenv("NOCT_JIT_DEBUG") != NULL)
+				fprintf(stderr, "noct-jit: %s: native-entry\n",
+					func->name);
 			if (!func->jit_code(env)) {
 				strncpy(env->file_name, old_file_name, sizeof(env->file_name) - 1);
 				rt_leave_frame(env);
