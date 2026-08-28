@@ -10,12 +10,30 @@ option(NOCT_ENABLE_STATIC         "Build a static library"                OFF)
 option(NOCT_ENABLE_SHARED         "Build a shared library"                OFF)
 option(NOCT_ENABLE_OBJECT         "Build objects only"                    OFF)
 
-# Options
-option(NOCT_ENABLE_CLI            "Enable CLI"                            OFF)
+# Core runtime options.
 option(NOCT_ENABLE_JIT            "Enable JIT compilation"                OFF)
+option(NOCT_ENABLE_OPTIMIZER      "Enable optimizer"                      OFF)
 option(NOCT_ENABLE_MULTITHREAD    "Enable multithread support"            OFF)
+
+# Program config options.
+option(NOCT_ENABLE_CLI            "Enable CLI"                            OFF)
+option(NOCT_ENABLE_REPL           "Enable reusable REPL and CLI mode"     OFF)
+option(NOCT_ENABLE_BCBACKEND      "Enable bytecode backend"               OFF)
+option(NOCT_ENABLE_CBACKEND       "Enable C backend"                      OFF)
+option(NOCT_ENABLE_ELBACKEND      "Enable Emacs Lisp backend"             OFF)
+option(NOCT_ENABLE_SCMBACKEND     "Enable Scheme backend"                 OFF)
+
+# Accelerator options.
+option(NOCT_ENABLE_ACCEL          "Enable GPU acceleration"               OFF)
+option(NOCT_ENABLE_ACCEL_VULKAN   "Enable Vulkan accelerator"             OFF)
+option(NOCT_ENABLE_ACCEL_OPENGL   "Enable OpenGL ES backend"              OFF)
+option(NOCT_ENABLE_ACCEL_DX12     "Enable Direct3D 12 backend"            OFF)
+
+# Multilingualization options.
 option(NOCT_ENABLE_I18N           "Enable translation (built-in)"         OFF)
 option(NOCT_ENABLE_I18N_LIBINTL   "Enable translation (gettext)"          OFF)
+
+# API options.
 option(NOCT_ENABLE_API            "Enable standard API"                   OFF)
 option(NOCT_ENABLE_API_SYSTEM     "Enable the System standard API"        OFF)
 option(NOCT_ENABLE_API_CONSOLE    "Enable the Console standard API"       OFF)
@@ -25,37 +43,21 @@ option(NOCT_ENABLE_API_THREAD     "Enable the Thread standard API"        OFF)
 option(NOCT_ENABLE_API_HTTPSERVER "Enable the HttpServer standard API"    OFF)
 option(NOCT_ENABLE_API_TERM       "Enable the Term non-standard API"      OFF)
 option(NOCT_ENABLE_API_BEUI       "Enable the BeUI non-standard API"      OFF)
-option(NOCT_ENABLE_API_BEUI_SDL2  "Enable the SDL2 BeUI desktop backend"  OFF)
-option(NOCT_ENABLE_API_BEUI_ZEDBSD "Enable the zedBSD BeUI backend"        OFF)
-option(NOCT_ENABLE_API_PROCESS "Enable the Process non-standard API" ON)
-option(NOCT_ENABLE_INSTALL        "Enable installation"                   OFF)
-option(NOCT_ENABLE_BCBACKEND      "Enable bytecode backend"               OFF)
-option(NOCT_ENABLE_CBACKEND       "Enable C backend"                      OFF)
-option(NOCT_ENABLE_ELBACKEND      "Enable Emacs Lisp backend"             OFF)
-option(NOCT_ENABLE_SCMBACKEND     "Enable Scheme backend"                 OFF)
-option(NOCT_ENABLE_REPL           "Enable reusable REPL and CLI mode"     OFF)
-option(NOCT_ENABLE_OPTIMIZER      "Enable the HIR optimizer"              OFF)
-option(NOCT_ENABLE_ACCEL_VULKAN   "Enable the Vulkan compute accelerator" OFF)
-option(NOCT_ENABLE_ACCEL_OPENGL   "Enable the OpenGL ES compute accelerator" OFF)
-option(NOCT_ENABLE_ACCEL_DX12     "Enable the DirectX 12 compute accelerator" OFF)
-option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
+option(NOCT_ENABLE_API_PROCESS    "Enable the Process non-standard API"   OFF)
 
 #
-# Choose one if needed.
+# Manual target options.
 #  - These targets cannot be automatically determined.
 #
 option(NOCT_TARGET_UNITY          "Build for Unity"                       OFF)
 option(NOCT_TARGET_OPENHARMONY    "Build for OpenHarmony"                 OFF)
 option(NOCT_TARGET_MACOS7         "Build for MacOS 7"                     OFF)
 option(NOCT_TARGET_DOS4G          "Build for DOS4G"                       OFF)
-option(NOCT_TARGET_PC98DOS        "Build for MS-DOS on PC-98 (with DOS4G)" OFF)
-option(NOCT_TARGET_PC98BE         "Build for PC-98 Bootstrap Environment" OFF)
-option(NOCT_TARGET_ZEDBSD         "Build for zedBSD"                      OFF)
+option(NOCT_TARGET_PC98DOS        "Build for DOS4G PC-98"                 OFF)
 
-if(NOCT_TARGET_ZEDBSD)
-  # zedBSD supplies its own crt0 as assembly through the target adapter.
-  enable_language(ASM)
-endif()
+# Installation options.
+option(NOCT_ENABLE_INSTALL        "Enable installation"                   OFF)
+option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
 
 if(NOCT_TARGET_PC98BE AND NOCT_ENABLE_MULTITHREAD)
   message(FATAL_ERROR "NOCT_TARGET_PC98BE currently supports only the single-threaded object model")
@@ -172,17 +174,8 @@ set(
   src/core/parser.tab.c    # Parser
   src/core/ast.c           # AST construction (called from parser)
   src/core/module.c        # Source module search path and resolver
-  src/core/accel_ops.c     # Stable compiler-only raw GPU operation registry
-  src/core/accel_program.c # Owned multi-kernel accelerator descriptors
   src/core/fast.c          # __fast function type and shape contracts
   src/core/hir.c           # HIR (AST->HIR construction)
-  src/core/hir_loop_analyze.c # Target-neutral loop effect analysis
-  src/core/hir_doall.c      # Target-neutral DOALL classification
-  src/core/hir_dosum.c      # Target-neutral additive reduction analysis
-  src/core/hir_opt_accel.c # Mandatory accel extraction (all optimization levels)
-  src/core/hir_gpu.c       # Mandatory raw GPU validation/GLSL extraction
-  src/core/gpu_ir.c        # Shared typed GPU kernel IR and validation
-  src/core/gpu_glsl.c      # Deterministic GLSL emission from GPU IR
   src/core/lir.c           # LIR (HIR->LIR construction)
   src/core/noct.c          # Public functions
   src/core/noct-api.c      # Dynamic-library API function table
@@ -193,8 +186,8 @@ set(
   src/core/execution.c     # Runtime execution helper part
   src/core/gc.c            # Runtime GC part
   src/core/intrinsics.c    # Intrinsics
-  src/api/accel.c          # Accelerator common runtime and CPU fallback
-  src/api/regex.c          # Regex engine (used by the Regex.* intrinsics)
+  src/accel/accel.c        # Accelerator common runtime and CPU fallback
+  src/core/regex.c         # Regex engine (used by the Regex.* intrinsics)
   ${FLEX_Lexer_OUTPUTS}
   ${BISON_Parser_OUTPUT_SOURCE}
 )
@@ -213,58 +206,73 @@ if((WIN32 OR UNIX) AND
   set(NOCT_DYNLIB_ENABLED ON)
 endif()
 
-# Determine the HIR optimizer files.
+# Determine optimizer files.
 if(NOCT_ENABLE_OPTIMIZER)
   list(APPEND NOCT_BASE_SOURCE
-    src/core/hir_opt_abce.c  # HIR optimizer (ABCE pass)
-    src/core/hir_opt_inline.c # HIR optimizer (static inline pass)
-    src/core/hir_opt_simd.c  # HIR optimizer (SIMD auto-vectorization)
-    src/core/hir_opt_unroll.c # HIR optimizer (scalar Packed loop unroll)
-    src/core/hir_opt_cse.c   # HIR optimizer (CSE pass)
-    src/core/hir_opt_typed.c # HIR optimizer (Stage B type lattice)
+    src/core/hir_opt_abce.c     # ABCE pass
+    src/core/hir_opt_inline.c   # static inline pass
+    src/core/hir_opt_simd.c     # SIMD auto-vectorization
+    src/core/hir_opt_unroll.c   # scalar Packed loop unroll
+    src/core/hir_opt_cse.c      # CSE pass
+    src/core/hir_opt_typed.c    # Stage B type lattice
+    src/core/hir_opt_loop.c     # loop effect analysis
+    src/core/hir_opt_doall.c    # DOALL classification
+    src/core/hir_opt_dosum.c    # additive reduction analysis
+) )
+endif()
+
+if(NOCT_ENABLE_ACCEL)
+  set(
+    NOCT_ACCEL_SOURCES
+    src/core/accel_ops.c     # Stable compiler-only raw GPU operation registry
+    src/core/accel_program.c # Owned multi-kernel accelerator descriptors
+    src/core/hir_opt_accel.c # Mandatory accel extraction (all optimization levels)
+    src/core/hir_gpu.c       # Mandatory raw GPU validation/GLSL extraction
+    src/core/gpu_ir.c        # Shared typed GPU kernel IR and validation
+    src/core/gpu_glsl.c      # Deterministic GLSL emission from GPU IR
   )
-endif()
 
-if(NOCT_ENABLE_ACCEL_VULKAN)
-  if(NOT (WIN32 OR UNIX) OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_VULKAN is supported only on desktop Windows/Linux builds")
+  if(NOCT_ENABLE_ACCEL_VULKAN)
+    if(NOT (WIN32 OR UNIX) OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
+      message(FATAL_ERROR "NOCT_ENABLE_ACCEL_VULKAN is supported only on desktop Windows/Linux builds")
+    endif()
+    find_package(Vulkan REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+    list(APPEND NOCT_BASE_SOURCE src/accel/accel_vulkan.c)
+    add_definitions(-DNOCT_USE_ACCEL_VULKAN=1)
   endif()
-  find_package(Vulkan REQUIRED)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
-  list(APPEND NOCT_BASE_SOURCE src/api/accel_vulkan.c)
-  add_definitions(-DNOCT_USE_ACCEL_VULKAN=1)
-endif()
 
-if(NOCT_ENABLE_ACCEL_OPENGL)
-  if(NOT UNIX OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_OPENGL currently requires a Unix EGL/OpenGL ES build")
+  if(NOCT_ENABLE_ACCEL_OPENGL)
+    if(NOT UNIX OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
+      message(FATAL_ERROR "NOCT_ENABLE_ACCEL_OPENGL currently requires a Unix EGL/OpenGL ES build")
+    endif()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(EGL REQUIRED IMPORTED_TARGET "egl>=1.5")
+    pkg_check_modules(GLESV2 REQUIRED IMPORTED_TARGET "glesv2>=3.1")
+    list(APPEND NOCT_BASE_SOURCE src/accel/accel_opengl.c)
+    add_definitions(-DNOCT_USE_ACCEL_OPENGL=1)
   endif()
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(EGL REQUIRED IMPORTED_TARGET "egl>=1.5")
-  pkg_check_modules(GLESV2 REQUIRED IMPORTED_TARGET "glesv2>=3.1")
-  list(APPEND NOCT_BASE_SOURCE src/api/accel_opengl.c)
-  add_definitions(-DNOCT_USE_ACCEL_OPENGL=1)
-endif()
 
-if(NOCT_ENABLE_ACCEL_DX12)
-  if(NOT WIN32 OR
-     NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
-     NOCT_TARGET_UNITY)
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL_DX12 requires a desktop Windows target")
+  if(NOCT_ENABLE_ACCEL_DX12)
+    if(NOT WIN32 OR
+       NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
+       NOCT_TARGET_UNITY)
+      message(FATAL_ERROR "NOCT_ENABLE_ACCEL_DX12 requires a desktop Windows target")
+    endif()
+    include(CheckIncludeFile)
+    set(CMAKE_REQUIRED_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/directx-headers/include")
+    set(CMAKE_REQUIRED_DEFINITIONS "-D__REQUIRED_RPCNDR_H_VERSION__=475")
+    check_include_file("directx/d3d12.h" NOCT_HAVE_D3D12_H)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_DEFINITIONS)
+    if(NOT NOCT_HAVE_D3D12_H)
+      message(FATAL_ERROR "The vendored DirectX 12 headers cannot be compiled by this toolchain")
+    endif()
+    list(APPEND NOCT_BASE_SOURCE src/accel/accel_dx12.c)
+    add_definitions(-DNOCT_USE_ACCEL_DX12=1)
   endif()
-  include(CheckIncludeFile)
-  set(CMAKE_REQUIRED_INCLUDES
-      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/directx-headers/include")
-  set(CMAKE_REQUIRED_DEFINITIONS "-D__REQUIRED_RPCNDR_H_VERSION__=475")
-  check_include_file("directx/d3d12.h" NOCT_HAVE_D3D12_H)
-  unset(CMAKE_REQUIRED_INCLUDES)
-  unset(CMAKE_REQUIRED_DEFINITIONS)
-  if(NOT NOCT_HAVE_D3D12_H)
-    message(FATAL_ERROR "The vendored DirectX 12 headers cannot be compiled by this toolchain")
-  endif()
-  list(APPEND NOCT_BASE_SOURCE src/api/accel_dx12.c)
-  add_definitions(-DNOCT_USE_ACCEL_DX12=1)
+
 endif()
 
 # Object model backends.  A multithread-capable binary carries both models so
@@ -364,65 +372,70 @@ if(NOCT_ENABLE_SHARED)
   )
 endif()
 
-# Determine the optional standard API files.
+#
+# Determine the optional API files.
+#
+
 set(NOCT_API_SOURCE)
+
 if(NOCT_ENABLE_API_SYSTEM)
   list(APPEND NOCT_API_SOURCE src/api/api-system.c)
 endif()
+
 if(NOCT_ENABLE_API_CONSOLE)
   list(APPEND NOCT_API_SOURCE src/api/api-console.c)
 endif()
+
 if(NOCT_ENABLE_MODEL_WEIGHTS AND NOT NOCT_ENABLE_API_FILE)
   message(FATAL_ERROR "NOCT_ENABLE_MODEL_WEIGHTS requires NOCT_ENABLE_API_FILE=ON")
 endif()
+
 if(NOCT_ENABLE_API_FILE)
   list(APPEND NOCT_API_SOURCE src/api/api-file.c)
   list(APPEND NOCT_API_SOURCE src/api/api-binary.c)
   list(APPEND NOCT_API_SOURCE src/core/sha256.c)
-  list(APPEND NOCT_API_SOURCE src/api/jisx0208.c)
   if(NOCT_ENABLE_MODEL_WEIGHTS)
     list(APPEND NOCT_API_SOURCE src/api/api-weights.c)
   endif()
 endif()
+
 if(NOCT_ENABLE_API_THREAD AND NOCT_ENABLE_MULTITHREAD)
   list(APPEND NOCT_API_SOURCE src/api/api-thread.c)
 endif()
+
 if(NOCT_ENABLE_API_HTTPSERVER)
   list(APPEND NOCT_API_SOURCE src/api/api-httpserver.c)
 endif()
+
 if(NOCT_ENABLE_API_TERM)
-  list(APPEND NOCT_API_SOURCE src/api/api-term.c)
-  list(APPEND NOCT_API_SOURCE src/api/api-term-backend.c)
-  list(APPEND NOCT_API_SOURCE src/api/api-term-win32.c)
+  if(WIN32)
+    list(APPEND NOCT_API_SOURCE src/api/api-term-win32.c)
+  else()
+    list(APPEND NOCT_API_SOURCE src/api/api-term-ansi.c)
+  endif()
 endif()
+
 if(NOCT_ENABLE_API_PROCESS)
   list(APPEND NOCT_API_SOURCE src/api/api-process.c)
 endif()
+
 if(NOCT_ENABLE_API_BEUI)
-  list(APPEND NOCT_API_SOURCE src/api/beui-core.c)
-  list(APPEND NOCT_API_SOURCE src/api/beui-image.c)
   set(NOCT_BEUI_PLATFORM_SOURCES)
+
   if(NOCT_ENABLE_API_BEUI_ZEDBSD)
     if(NOT NOCT_TARGET_ZEDBSD)
-      message(FATAL_ERROR
-        "NOCT_ENABLE_API_BEUI_ZEDBSD requires NOCT_TARGET_ZEDBSD")
+      message(FATAL_ERROR "NOCT_ENABLE_API_BEUI_ZEDBSD requires NOCT_TARGET_ZEDBSD")
     endif()
     if(NOCT_ENABLE_API_BEUI_SDL2)
       message(FATAL_ERROR
         "Select only one of the zedBSD and SDL2 BeUI backends")
     endif()
   endif()
+
   if(NOCT_TARGET_PC98DOS)
-    # The CGROM glyph backend shares noct_jisx0208_to_ucs with api-file.
-    if(NOT NOCT_ENABLE_API_FILE)
-      message(FATAL_ERROR "NOCT_TARGET_PC98DOS BeUI requires NOCT_ENABLE_API_FILE")
-    endif()
-    list(APPEND NOCT_API_SOURCE src/api/beui-pc98-gdc.c)
-    list(APPEND NOCT_API_SOURCE src/api/beui-pc98-glyph.c)
-    list(APPEND NOCT_API_SOURCE src/api/beui-pc98-cirrus.c)
-    list(APPEND NOCT_API_SOURCE src/api/beui-pc98-auto.c)
-    list(APPEND NOCT_BEUI_PLATFORM_SOURCES src/api/api-beui-pc98dos.c)
+    list(APPEND NOCT_BEUI_PLATFORM_SOURCES src/api/api-beui-pc98.c)
   endif()
+
   if(NOCT_ENABLE_API_BEUI_SDL2)
     if(NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
        NOCT_TARGET_UNITY)
@@ -438,9 +451,11 @@ if(NOCT_ENABLE_API_BEUI)
     endif()
     list(APPEND NOCT_BEUI_PLATFORM_SOURCES src/api/api-beui-sdl2.c)
   endif()
+
   if(NOCT_ENABLE_API_BEUI_ZEDBSD)
     list(APPEND NOCT_BEUI_PLATFORM_SOURCES src/api/api-beui-zedbsd.c)
   endif()
+
   list(LENGTH NOCT_BEUI_PLATFORM_SOURCES NOCT_BEUI_PLATFORM_COUNT)
   if(NOT NOCT_BEUI_PLATFORM_COUNT EQUAL 1)
     message(FATAL_ERROR
@@ -892,13 +907,6 @@ if(NOCT_ENABLE_INSTALL)
     DESTINATION
       "${CMAKE_INSTALL_INCLUDEDIR}/noct"
   )
-  if(NOCT_ENABLE_API_BEUI)
-    install(
-      FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/beui.h"
-      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/noct"
-    )
-  endif()
-
   # libnoct
   install(
     TARGETS noct RUNTIME

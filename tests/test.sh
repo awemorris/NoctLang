@@ -59,13 +59,13 @@ Model and ONNX suites:
   onnx-tinyyolo    Tiny YOLOv2 static-shape blocker test.
 
 Toolchain/integration suites:
-  api [build-dir]  Embed/API backend test (default: build-static).
+  api [build-dir]  Public File/Term registration test (default: build-static).
   ctrans [dir]     ANSI C translation tests (default: build-static).
   repl [dir]       REPL session tests (default: build-static).
   fma [dir]        FMA helper C test (default: build-debug).
   jit-slab [dir]   JIT slab allocator and retry tests.
   jit-branch ...   Long-branch test; arguments are [emulator ...] noct.
-  beui [dir]       BeUI and PC-98 backend host tests.
+  beui [dir]       Independent BeUI platform/core host tests.
   elisp            Emacs Lisp translation tests.
 
 Cross-architecture suites:
@@ -136,7 +136,7 @@ onnx-mnist)      run_script run-onnx-mnist-opengl.sh "$@" ;;
 onnx-cifar)      run_script run-onnx-cifar-opengl.sh "$@" ;;
 onnx-squeezenet) run_script run-onnx-squeezenet-opengl.sh "$@" ;;
 onnx-tinyyolo)   run_script run-onnx-tinyyolo-blocker.sh "$@" ;;
-api)             run_script run-api-backend.sh "$@" ;;
+api)             run_script run-api.sh "$@" ;;
 ctrans)          run_script run-ctrans.sh "$@" ;;
 repl)            run_script run-repl.sh "$@" ;;
 fma)             run_script run-fma-helper.sh "$@" ;;

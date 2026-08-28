@@ -1,0 +1,4190 @@
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * Complete NEC PC-9800 BeUI implementation.
+ *
+ * This platform translation unit intentionally owns the BeUI core, BMP image
+ * decoder, JIS X 0208 glyph table, GDC, Core-Graph/Cirrus, automatic display
+ * selection, and DOS host glue.  The sole external interface is
+ * noct_register_api_beui(); implementation duplication across platforms is
+ * deliberate.
+ */
+
+#include <noct/noct.h>
+
+#include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(NOCT_TARGET_PC98DOS)
+#include <conio.h>
+#include <i86.h>
+#endif
+
+/* Private BeUI contract. */
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * Private BeUI implementation contract.
+ *
+ * The API grew inside the Boots boot loader as its graphical layer and
+ * keeps the same hardware abstraction: a backend owns mode save/restore
+ * in enter()/leave(), and every drawing primitive goes through the HAL.
+ * This header owns the HAL, rendering core, and image interfaces shared only
+ * within this translation unit and its direct unit tests.  Installed callers
+ * use <noct/noct.h>, which exposes only noct_register_api_beui().
+ */
+
+
+
+
+struct noct_beui_rect {
+	unsigned x;
+	unsigned y;
+	unsigned width;
+	unsigned height;
+};
+
+struct noct_beui_display_info {
+	/* Input hint to enter(); zero means the backend's default depth. */
+	unsigned preferred_bits_per_pixel;
+	unsigned width;
+	unsigned height;
+	unsigned bits_per_pixel;
+	unsigned stride;
+};
+
+enum noct_beui_image_format {
+	NOCT_BEUI_IMAGE_INDEX8 = 1,
+	NOCT_BEUI_IMAGE_RGB24 = 2,
+};
+
+/*
+ * Images use a target-independent representation.  Indexed images always
+ * contain one palette index per pixel; RGB24 pixels are tightly packed in
+ * R, G, B order.  Palette entries and solid colors use 0x00RRGGBB.
+ */
+struct noct_beui_image {
+	enum noct_beui_image_format format;
+	unsigned width;
+	unsigned height;
+	size_t stride;
+	const uint8_t *pixels;
+	uint32_t palette[256];
+	unsigned palette_size;
+};
+
+enum noct_beui_pointer_button {
+	NOCT_BEUI_BUTTON_LEFT = 1U << 0,
+	NOCT_BEUI_BUTTON_RIGHT = 1U << 1,
+	NOCT_BEUI_BUTTON_MIDDLE = 1U << 2
+};
+
+/*
+ * Pointer positions are absolute display coordinates.  Targets whose
+ * hardware reports motion deltas (the PC-98 bus mouse) integrate and
+ * clamp inside their backend, so scripts see one coordinate space on
+ * every host.
+ */
+struct noct_beui_pointer_event {
+	unsigned x;
+	unsigned y;
+	unsigned buttons;
+};
+
+struct noct_beui_display_hal {
+	void *context;
+	int (*enter)(void *context, struct noct_beui_display_info *info);
+	void (*leave)(void *context);
+	/*
+	 * Optional.  Services the host window system and reports whether
+	 * the display is still alive: 1 to continue, 0 once the user has
+	 * asked to close it, negative on error.  Targets that own the
+	 * whole machine leave this NULL and never close.
+	 */
+	int (*poll_events)(void *context);
+	int (*fill)(void *context, const struct noct_beui_rect *rect,
+		    uint32_t color);
+	int (*line)(void *context, unsigned x0, unsigned y0, unsigned x1,
+		    unsigned y1, uint32_t color);
+	int (*pattern_fill)(void *context, const struct noct_beui_rect *rect,
+			    uint32_t color, uint64_t pattern);
+	int (*draw_image)(void *context, unsigned x, unsigned y,
+			  const struct noct_beui_image *image);
+	int (*draw_image_pattern)(void *context, unsigned x, unsigned y,
+				  const struct noct_beui_image *image,
+				  uint64_t pattern);
+	int (*flush)(void *context, const struct noct_beui_rect *rectangles,
+		     size_t rectangle_count);
+};
+
+struct noct_beui_glyph_hal {
+	void *context;
+	int (*measure)(void *context, uint32_t codepoint, unsigned *width,
+		       unsigned *height);
+	int (*draw)(void *context, unsigned x, unsigned y, uint32_t codepoint,
+		    uint32_t foreground, uint32_t background);
+};
+
+/*
+ * poll() reports the current absolute pointer state: 1 when the event
+ * was filled in, 0 when nothing has changed since the last call, and a
+ * negative value on error.  start() receives the display geometry so
+ * relative-motion hardware can clamp to the visible area.
+ */
+struct noct_beui_pointer_hal {
+	void *context;
+	int (*start)(void *context,
+		     const struct noct_beui_display_info *display);
+	void (*stop)(void *context);
+	int (*poll)(void *context, struct noct_beui_pointer_event *event);
+};
+
+/*
+ * The clock derives time from a polled counter on some targets; callers
+ * must invoke milliseconds() (or the core sleep/poll helpers) at least
+ * once per hardware counter period or elapsed time is lost.
+ */
+struct noct_beui_clock_hal {
+	void *context;
+	uint64_t (*milliseconds)(void *context);
+};
+
+struct noct_beui_audio_hal {
+	void *context;
+	int (*start)(void *context, unsigned sample_rate, unsigned channels);
+	void (*stop)(void *context);
+	int (*poll)(void *context);
+	int (*write)(void *context, const int16_t *samples, size_t frame_count);
+};
+
+/*
+ * Real-time key state for the NOCT_BEUI_KEY_* namespace plus lowercase
+ * ASCII.  is_key_down() returns 1 while the key is held, 0 when it is
+ * up, and -1 for keys the target cannot sense.  drain() empties the
+ * platform type-ahead buffer so keys held during a game never leak to
+ * the caller after BeUI closes; the core calls it from poll and sleep.
+ */
+struct noct_beui_input_hal {
+	void *context;
+	int (*is_key_down)(void *context, int key);
+	void (*drain)(void *context);
+};
+
+struct noct_beui_hal {
+	struct noct_beui_display_hal display;
+	struct noct_beui_glyph_hal glyph;
+	struct noct_beui_pointer_hal pointer;
+	struct noct_beui_clock_hal clock;
+	struct noct_beui_audio_hal audio;
+	struct noct_beui_input_hal input;
+};
+
+/*
+ * Key codes shared with the Boots BeUI implementation; the same compiled
+ * script must observe identical Key.* values on both hosts.
+ */
+enum noct_beui_key_code {
+	NOCT_BEUI_KEY_ESCAPE = 0x1b,
+	NOCT_BEUI_KEY_BACKSPACE = 0x08,
+	NOCT_BEUI_KEY_TAB = 0x09,
+	NOCT_BEUI_KEY_ENTER = 0x0d,
+	NOCT_BEUI_KEY_PAGE_UP = 0x136,
+	NOCT_BEUI_KEY_PAGE_DOWN = 0x137,
+	NOCT_BEUI_KEY_INSERT = 0x138,
+	NOCT_BEUI_KEY_DELETE = 0x139,
+	NOCT_BEUI_KEY_UP = 0x13a,
+	NOCT_BEUI_KEY_LEFT = 0x13b,
+	NOCT_BEUI_KEY_RIGHT = 0x13c,
+	NOCT_BEUI_KEY_DOWN = 0x13d,
+	NOCT_BEUI_KEY_HOME = 0x13e,
+	NOCT_BEUI_KEY_END = 0x13f,
+	NOCT_BEUI_KEY_F1 = 0x162,
+	NOCT_BEUI_KEY_F2 = 0x163,
+	NOCT_BEUI_KEY_F3 = 0x164,
+	NOCT_BEUI_KEY_F4 = 0x165,
+	NOCT_BEUI_KEY_F5 = 0x166,
+	NOCT_BEUI_KEY_F6 = 0x167,
+	NOCT_BEUI_KEY_F7 = 0x168,
+	NOCT_BEUI_KEY_F8 = 0x169,
+	NOCT_BEUI_KEY_F9 = 0x16a,
+	NOCT_BEUI_KEY_F10 = 0x16b,
+	/* State-only: modifiers never appear in buffered key streams. */
+	NOCT_BEUI_KEY_SHIFT = 0x170
+};
+
+/* PC-98-private core lifecycle and drawing. */
+static int noct_beui_bind(const struct noct_beui_hal *hal);
+static int noct_beui_init(void);
+static int noct_beui_init_with_hint(unsigned preferred_bits_per_pixel);
+static void noct_beui_close(void);
+static void noct_beui_cleanup(void);
+static int noct_beui_is_open(void);
+static int noct_beui_get_display_info(struct noct_beui_display_info *info);
+static int noct_beui_fill(const struct noct_beui_rect *rect, uint32_t color);
+static int noct_beui_line(unsigned x0, unsigned y0, unsigned x1, unsigned y1,
+		   uint32_t color);
+static int noct_beui_pattern_fill(const struct noct_beui_rect *rect, uint32_t color,
+			   uint64_t pattern);
+static int noct_beui_draw_image(unsigned x, unsigned y,
+			 const struct noct_beui_image *image);
+static int noct_beui_draw_image_region(const struct noct_beui_image *image,
+				unsigned source_x, unsigned source_y,
+				unsigned width, unsigned height,
+				unsigned destination_x, unsigned destination_y);
+static int noct_beui_draw_image_pattern(unsigned x, unsigned y,
+				 const struct noct_beui_image *image,
+				 uint64_t pattern);
+static int noct_beui_measure_text(const char *text, unsigned *width, unsigned *height);
+static int noct_beui_draw_text(const char *text, unsigned x, unsigned y,
+			uint32_t foreground, uint32_t background);
+/*
+ * Services the backends and reports whether the display is still alive:
+ * 1 to keep running, 0 once it has closed.  Scripts drive their main
+ * loop from it, so a closed window ends the loop instead of raising.
+ */
+static int noct_beui_poll(void);
+static int noct_beui_flush(void);
+static int noct_beui_get_milliseconds(uint64_t *milliseconds);
+static int noct_beui_sleep(unsigned milliseconds);
+static int noct_beui_is_key_down(int key);
+static void noct_beui_drain_input(void);
+/* Last known absolute pointer state; 0 when no pointer is available. */
+static int noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
+
+/*
+ * PC-98-private image decoding and handle registry.
+ *
+ * Only uncompressed Windows BMP with 1, 4, 8, or 24 bits per pixel is
+ * decoded.  BMP is used instead of PNG so freestanding hosts such as the
+ * Boots pre-boot environment need no DEFLATE implementation.
+ */
+static int noct_beui_bmp_measure(const void *data, size_t size,
+			  enum noct_beui_image_format *format, unsigned *width,
+			  unsigned *height, size_t *pixel_bytes);
+static int noct_beui_bmp_decode(const void *data, size_t size, void *pixel_storage,
+			 size_t pixel_capacity, struct noct_beui_image *image);
+
+/*
+ * Decodes a BMP into a registry entry and returns its handle, or 0 on
+ * failure.  Handles stay valid until noct_beui_image_destroy() or
+ * noct_beui_cleanup().
+ */
+static int noct_beui_image_load_bmp(const void *data, size_t size);
+static const struct noct_beui_image *noct_beui_image_get(int handle);
+static int noct_beui_image_destroy(int handle);
+
+
+
+/* Private PC-98 backend contracts. */
+/*
+ * Boots BeUI NEC PC-9800 GDC safe-mode backend
+ * Copyright (C) 2026 Awe Morris
+ * Copyright (C) 1996-2024 Keiichi Tabata
+ * SPDX-License-Identifier: Zlib
+ *
+ * Display sequencing is adapted from StratoHAL 98disp_gdc.c at commit
+ * 76e909577bdf4629f11e473539b446a948fef830. This Boots version is altered
+ * to preserve text VRAM and update only requested rectangles.
+ */
+
+
+
+#define NOCT_BEUI_GDC_PLANE_BYTES (640U * 400U / 8U)
+
+typedef int (*noct_beui_display_reset_fn)(void *context);
+typedef uint8_t (*noct_beui_pc98_in8_fn)(void *context, uint16_t port);
+typedef void (*noct_beui_pc98_out8_fn)(void *context, uint16_t port,
+					uint8_t value);
+
+struct noct_beui_pc98_gdc {
+	void *bios_context;
+	noct_beui_display_reset_fn display_reset;
+	noct_beui_display_reset_fn display_stop;
+	void *io_context;
+	uint8_t (*port_in8)(void *context, uint16_t port);
+	void (*port_out8)(void *context, uint16_t port, uint8_t value);
+	volatile uint8_t *planes[4];
+};
+
+static void noct_beui_pc98_gdc_default(
+	struct noct_beui_pc98_gdc *backend,
+	noct_beui_display_reset_fn display_reset,
+	noct_beui_display_reset_fn display_stop, void *bios_context,
+	noct_beui_pc98_in8_fn port_in8, noct_beui_pc98_out8_fn port_out8,
+	void *io_context);
+static int noct_beui_pc98_gdc_make_hal(struct noct_beui_hal *hal,
+				   struct noct_beui_pc98_gdc *backend);
+static int noct_beui_pc98_gdc_clear_graphics(
+	struct noct_beui_pc98_gdc *backend);
+
+
+/*
+ * Boots PC-98 CGROM glyph backend
+ * Copyright (C) 2026 Awe Morris
+ * SPDX-License-Identifier: Zlib
+ */
+
+
+
+struct noct_beui_pc98_glyph {
+	void *io_context;
+	uint8_t (*port_in8)(void *context, uint16_t port);
+	void (*port_out8)(void *context, uint16_t port, uint8_t value);
+	volatile uint8_t *cg_window;
+	struct noct_beui_display_hal *display;
+	struct {
+		uint16_t jis;
+		uint8_t valid;
+		uint8_t font[32];
+	} cache[64];
+	unsigned cache_next;
+};
+
+static void noct_beui_pc98_glyph_default(
+	struct noct_beui_pc98_glyph *backend,
+	struct noct_beui_display_hal *display,
+	noct_beui_pc98_in8_fn port_in8, noct_beui_pc98_out8_fn port_out8,
+	void *io_context);
+static int noct_beui_pc98_glyph_make_hal(struct noct_beui_glyph_hal *hal,
+	struct noct_beui_pc98_glyph *backend);
+static uint16_t noct_beui_pc98_unicode_to_jis(uint32_t codepoint);
+
+
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 1996-2024, Keiichi Tabata
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI NEC PC-9821 Core-Graph / Cirrus GD5440 display backend, imported
+ * from Boots.  The register sequence is adapted from StratoHAL
+ * 98disp_cirrus.c at commit 76e909577bdf4629f11e473539b446a948fef830 and
+ * is deliberately limited to the Core-Graph path at 640x480x8/24.
+ * Port I/O and the linear framebuffer are injected by the embedder so
+ * the driver stays compiler and host neutral.
+ */
+
+
+
+#define NOCT_BEUI_CIRRUS_WIDTH 640U
+#define NOCT_BEUI_CIRRUS_HEIGHT 480U
+#define NOCT_BEUI_CIRRUS_STRIDE_8 NOCT_BEUI_CIRRUS_WIDTH
+#define NOCT_BEUI_CIRRUS_STRIDE_24 (NOCT_BEUI_CIRRUS_WIDTH * 3U)
+#define NOCT_BEUI_CIRRUS_VISIBLE_BYTES \
+	(NOCT_BEUI_CIRRUS_STRIDE_24 * NOCT_BEUI_CIRRUS_HEIGHT)
+
+struct noct_beui_pc98_cirrus {
+	void *io_context;
+	uint8_t (*port_in8)(void *context, uint16_t port);
+	void (*port_out8)(void *context, uint16_t port, uint8_t value);
+	volatile uint8_t *framebuffer;
+	uint8_t saved_sleep;
+	uint8_t saved_window;
+	uint8_t saved_linear;
+	uint8_t saved_relay;
+	uint8_t bits_per_pixel;
+	uint8_t active;
+};
+
+/*
+ * framebuffer is the host's view of the board's linear aperture.  A
+ * target that maps physical memory one-to-one passes the aperture
+ * address itself; a hosted target passes whatever its memory manager
+ * returned for that physical range.
+ */
+static void noct_beui_pc98_cirrus_default(
+	struct noct_beui_pc98_cirrus *backend,
+	noct_beui_pc98_in8_fn port_in8, noct_beui_pc98_out8_fn port_out8,
+	void *io_context, volatile uint8_t *framebuffer);
+static int noct_beui_pc98_cirrus_make_hal(
+	struct noct_beui_hal *hal,
+	struct noct_beui_pc98_cirrus *backend);
+
+
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI PC-98 display selection, imported from Boots.  Probing prefers
+ * the Core-Graph / Cirrus board at 640x480x8 and falls back to the
+ * always-present GDC at 640x400x4, so one HAL covers both machines.
+ */
+
+
+
+struct noct_beui_pc98_auto {
+	struct noct_beui_pc98_cirrus cirrus;
+	struct noct_beui_pc98_gdc gdc;
+	struct noct_beui_pc98_glyph glyph;
+	struct noct_beui_hal cirrus_hal;
+	struct noct_beui_hal gdc_hal;
+	struct noct_beui_display_hal *active;
+};
+
+static void noct_beui_pc98_auto_default(
+	struct noct_beui_pc98_auto *backend,
+	noct_beui_display_reset_fn display_reset,
+	noct_beui_display_reset_fn display_stop, void *bios_context,
+	noct_beui_pc98_in8_fn port_in8, noct_beui_pc98_out8_fn port_out8,
+	void *io_context, volatile uint8_t *cirrus_framebuffer);
+static int noct_beui_pc98_auto_make_hal(struct noct_beui_hal *hal,
+	struct noct_beui_pc98_auto *backend);
+
+
+
+/* PC-98-owned JIS X 0208 table. */
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ */
+
+/*
+ * JIS X 0208 (EUC-JP code set 1) to Unicode BMP mapping.
+ *
+ * Generated from the standard euc-jp codec: rows 0xA1-0xF4, cells
+ * 0xA1-0xFE, row-major; zero means an unassigned cell.
+ */
+
+
+static const uint16_t noct_jisx0208_to_ucs[7896] = {
+	0x3000, 0x3001, 0x3002, 0xFF0C, 0xFF0E, 0x30FB, 0xFF1A, 0xFF1B, 0xFF1F, 0xFF01, 0x309B, 0x309C,
+	0x00B4, 0xFF40, 0x00A8, 0xFF3E, 0xFFE3, 0xFF3F, 0x30FD, 0x30FE, 0x309D, 0x309E, 0x3003, 0x4EDD,
+	0x3005, 0x3006, 0x3007, 0x30FC, 0x2015, 0x2010, 0xFF0F, 0xFF3C, 0x301C, 0x2016, 0xFF5C, 0x2026,
+	0x2025, 0x2018, 0x2019, 0x201C, 0x201D, 0xFF08, 0xFF09, 0x3014, 0x3015, 0xFF3B, 0xFF3D, 0xFF5B,
+	0xFF5D, 0x3008, 0x3009, 0x300A, 0x300B, 0x300C, 0x300D, 0x300E, 0x300F, 0x3010, 0x3011, 0xFF0B,
+	0x2212, 0x00B1, 0x00D7, 0x00F7, 0xFF1D, 0x2260, 0xFF1C, 0xFF1E, 0x2266, 0x2267, 0x221E, 0x2234,
+	0x2642, 0x2640, 0x00B0, 0x2032, 0x2033, 0x2103, 0xFFE5, 0xFF04, 0x00A2, 0x00A3, 0xFF05, 0xFF03,
+	0xFF06, 0xFF0A, 0xFF20, 0x00A7, 0x2606, 0x2605, 0x25CB, 0x25CF, 0x25CE, 0x25C7, 0x25C6, 0x25A1,
+	0x25A0, 0x25B3, 0x25B2, 0x25BD, 0x25BC, 0x203B, 0x3012, 0x2192, 0x2190, 0x2191, 0x2193, 0x3013,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x2208,
+	0x220B, 0x2286, 0x2287, 0x2282, 0x2283, 0x222A, 0x2229, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x2227, 0x2228, 0x00AC, 0x21D2, 0x21D4, 0x2200, 0x2203, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x2220, 0x22A5, 0x2312,
+	0x2202, 0x2207, 0x2261, 0x2252, 0x226A, 0x226B, 0x221A, 0x223D, 0x221D, 0x2235, 0x222B, 0x222C,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x212B, 0x2030, 0x266F, 0x266D, 0x266A,
+	0x2020, 0x2021, 0x00B6, 0x0000, 0x0000, 0x0000, 0x0000, 0x25EF, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0xFF10,
+	0xFF11, 0xFF12, 0xFF13, 0xFF14, 0xFF15, 0xFF16, 0xFF17, 0xFF18, 0xFF19, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0xFF21, 0xFF22, 0xFF23, 0xFF24, 0xFF25, 0xFF26, 0xFF27, 0xFF28,
+	0xFF29, 0xFF2A, 0xFF2B, 0xFF2C, 0xFF2D, 0xFF2E, 0xFF2F, 0xFF30, 0xFF31, 0xFF32, 0xFF33, 0xFF34,
+	0xFF35, 0xFF36, 0xFF37, 0xFF38, 0xFF39, 0xFF3A, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0xFF41, 0xFF42, 0xFF43, 0xFF44, 0xFF45, 0xFF46, 0xFF47, 0xFF48, 0xFF49, 0xFF4A, 0xFF4B, 0xFF4C,
+	0xFF4D, 0xFF4E, 0xFF4F, 0xFF50, 0xFF51, 0xFF52, 0xFF53, 0xFF54, 0xFF55, 0xFF56, 0xFF57, 0xFF58,
+	0xFF59, 0xFF5A, 0x0000, 0x0000, 0x0000, 0x0000, 0x3041, 0x3042, 0x3043, 0x3044, 0x3045, 0x3046,
+	0x3047, 0x3048, 0x3049, 0x304A, 0x304B, 0x304C, 0x304D, 0x304E, 0x304F, 0x3050, 0x3051, 0x3052,
+	0x3053, 0x3054, 0x3055, 0x3056, 0x3057, 0x3058, 0x3059, 0x305A, 0x305B, 0x305C, 0x305D, 0x305E,
+	0x305F, 0x3060, 0x3061, 0x3062, 0x3063, 0x3064, 0x3065, 0x3066, 0x3067, 0x3068, 0x3069, 0x306A,
+	0x306B, 0x306C, 0x306D, 0x306E, 0x306F, 0x3070, 0x3071, 0x3072, 0x3073, 0x3074, 0x3075, 0x3076,
+	0x3077, 0x3078, 0x3079, 0x307A, 0x307B, 0x307C, 0x307D, 0x307E, 0x307F, 0x3080, 0x3081, 0x3082,
+	0x3083, 0x3084, 0x3085, 0x3086, 0x3087, 0x3088, 0x3089, 0x308A, 0x308B, 0x308C, 0x308D, 0x308E,
+	0x308F, 0x3090, 0x3091, 0x3092, 0x3093, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x30A1, 0x30A2, 0x30A3, 0x30A4, 0x30A5, 0x30A6, 0x30A7, 0x30A8,
+	0x30A9, 0x30AA, 0x30AB, 0x30AC, 0x30AD, 0x30AE, 0x30AF, 0x30B0, 0x30B1, 0x30B2, 0x30B3, 0x30B4,
+	0x30B5, 0x30B6, 0x30B7, 0x30B8, 0x30B9, 0x30BA, 0x30BB, 0x30BC, 0x30BD, 0x30BE, 0x30BF, 0x30C0,
+	0x30C1, 0x30C2, 0x30C3, 0x30C4, 0x30C5, 0x30C6, 0x30C7, 0x30C8, 0x30C9, 0x30CA, 0x30CB, 0x30CC,
+	0x30CD, 0x30CE, 0x30CF, 0x30D0, 0x30D1, 0x30D2, 0x30D3, 0x30D4, 0x30D5, 0x30D6, 0x30D7, 0x30D8,
+	0x30D9, 0x30DA, 0x30DB, 0x30DC, 0x30DD, 0x30DE, 0x30DF, 0x30E0, 0x30E1, 0x30E2, 0x30E3, 0x30E4,
+	0x30E5, 0x30E6, 0x30E7, 0x30E8, 0x30E9, 0x30EA, 0x30EB, 0x30EC, 0x30ED, 0x30EE, 0x30EF, 0x30F0,
+	0x30F1, 0x30F2, 0x30F3, 0x30F4, 0x30F5, 0x30F6, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0391, 0x0392, 0x0393, 0x0394, 0x0395, 0x0396, 0x0397, 0x0398, 0x0399, 0x039A,
+	0x039B, 0x039C, 0x039D, 0x039E, 0x039F, 0x03A0, 0x03A1, 0x03A3, 0x03A4, 0x03A5, 0x03A6, 0x03A7,
+	0x03A8, 0x03A9, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x03B1, 0x03B2,
+	0x03B3, 0x03B4, 0x03B5, 0x03B6, 0x03B7, 0x03B8, 0x03B9, 0x03BA, 0x03BB, 0x03BC, 0x03BD, 0x03BE,
+	0x03BF, 0x03C0, 0x03C1, 0x03C3, 0x03C4, 0x03C5, 0x03C6, 0x03C7, 0x03C8, 0x03C9, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0401, 0x0416, 0x0417, 0x0418, 0x0419, 0x041A,
+	0x041B, 0x041C, 0x041D, 0x041E, 0x041F, 0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426,
+	0x0427, 0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0451, 0x0436, 0x0437, 0x0438, 0x0439, 0x043A,
+	0x043B, 0x043C, 0x043D, 0x043E, 0x043F, 0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446,
+	0x0447, 0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x2500, 0x2502,
+	0x250C, 0x2510, 0x2518, 0x2514, 0x251C, 0x252C, 0x2524, 0x2534, 0x253C, 0x2501, 0x2503, 0x250F,
+	0x2513, 0x251B, 0x2517, 0x2523, 0x2533, 0x252B, 0x253B, 0x254B, 0x2520, 0x252F, 0x2528, 0x2537,
+	0x253F, 0x251D, 0x2530, 0x2525, 0x2538, 0x2542, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x4E9C, 0x5516, 0x5A03, 0x963F, 0x54C0, 0x611B,
+	0x6328, 0x59F6, 0x9022, 0x8475, 0x831C, 0x7A50, 0x60AA, 0x63E1, 0x6E25, 0x65ED, 0x8466, 0x82A6,
+	0x9BF5, 0x6893, 0x5727, 0x65A1, 0x6271, 0x5B9B, 0x59D0, 0x867B, 0x98F4, 0x7D62, 0x7DBE, 0x9B8E,
+	0x6216, 0x7C9F, 0x88B7, 0x5B89, 0x5EB5, 0x6309, 0x6697, 0x6848, 0x95C7, 0x978D, 0x674F, 0x4EE5,
+	0x4F0A, 0x4F4D, 0x4F9D, 0x5049, 0x56F2, 0x5937, 0x59D4, 0x5A01, 0x5C09, 0x60DF, 0x610F, 0x6170,
+	0x6613, 0x6905, 0x70BA, 0x754F, 0x7570, 0x79FB, 0x7DAD, 0x7DEF, 0x80C3, 0x840E, 0x8863, 0x8B02,
+	0x9055, 0x907A, 0x533B, 0x4E95, 0x4EA5, 0x57DF, 0x80B2, 0x90C1, 0x78EF, 0x4E00, 0x58F1, 0x6EA2,
+	0x9038, 0x7A32, 0x8328, 0x828B, 0x9C2F, 0x5141, 0x5370, 0x54BD, 0x54E1, 0x56E0, 0x59FB, 0x5F15,
+	0x98F2, 0x6DEB, 0x80E4, 0x852D, 0x9662, 0x9670, 0x96A0, 0x97FB, 0x540B, 0x53F3, 0x5B87, 0x70CF,
+	0x7FBD, 0x8FC2, 0x96E8, 0x536F, 0x9D5C, 0x7ABA, 0x4E11, 0x7893, 0x81FC, 0x6E26, 0x5618, 0x5504,
+	0x6B1D, 0x851A, 0x9C3B, 0x59E5, 0x53A9, 0x6D66, 0x74DC, 0x958F, 0x5642, 0x4E91, 0x904B, 0x96F2,
+	0x834F, 0x990C, 0x53E1, 0x55B6, 0x5B30, 0x5F71, 0x6620, 0x66F3, 0x6804, 0x6C38, 0x6CF3, 0x6D29,
+	0x745B, 0x76C8, 0x7A4E, 0x9834, 0x82F1, 0x885B, 0x8A60, 0x92ED, 0x6DB2, 0x75AB, 0x76CA, 0x99C5,
+	0x60A6, 0x8B01, 0x8D8A, 0x95B2, 0x698E, 0x53AD, 0x5186, 0x5712, 0x5830, 0x5944, 0x5BB4, 0x5EF6,
+	0x6028, 0x63A9, 0x63F4, 0x6CBF, 0x6F14, 0x708E, 0x7114, 0x7159, 0x71D5, 0x733F, 0x7E01, 0x8276,
+	0x82D1, 0x8597, 0x9060, 0x925B, 0x9D1B, 0x5869, 0x65BC, 0x6C5A, 0x7525, 0x51F9, 0x592E, 0x5965,
+	0x5F80, 0x5FDC, 0x62BC, 0x65FA, 0x6A2A, 0x6B27, 0x6BB4, 0x738B, 0x7FC1, 0x8956, 0x9D2C, 0x9D0E,
+	0x9EC4, 0x5CA1, 0x6C96, 0x837B, 0x5104, 0x5C4B, 0x61B6, 0x81C6, 0x6876, 0x7261, 0x4E59, 0x4FFA,
+	0x5378, 0x6069, 0x6E29, 0x7A4F, 0x97F3, 0x4E0B, 0x5316, 0x4EEE, 0x4F55, 0x4F3D, 0x4FA1, 0x4F73,
+	0x52A0, 0x53EF, 0x5609, 0x590F, 0x5AC1, 0x5BB6, 0x5BE1, 0x79D1, 0x6687, 0x679C, 0x67B6, 0x6B4C,
+	0x6CB3, 0x706B, 0x73C2, 0x798D, 0x79BE, 0x7A3C, 0x7B87, 0x82B1, 0x82DB, 0x8304, 0x8377, 0x83EF,
+	0x83D3, 0x8766, 0x8AB2, 0x5629, 0x8CA8, 0x8FE6, 0x904E, 0x971E, 0x868A, 0x4FC4, 0x5CE8, 0x6211,
+	0x7259, 0x753B, 0x81E5, 0x82BD, 0x86FE, 0x8CC0, 0x96C5, 0x9913, 0x99D5, 0x4ECB, 0x4F1A, 0x89E3,
+	0x56DE, 0x584A, 0x58CA, 0x5EFB, 0x5FEB, 0x602A, 0x6094, 0x6062, 0x61D0, 0x6212, 0x62D0, 0x6539,
+	0x9B41, 0x6666, 0x68B0, 0x6D77, 0x7070, 0x754C, 0x7686, 0x7D75, 0x82A5, 0x87F9, 0x958B, 0x968E,
+	0x8C9D, 0x51F1, 0x52BE, 0x5916, 0x54B3, 0x5BB3, 0x5D16, 0x6168, 0x6982, 0x6DAF, 0x788D, 0x84CB,
+	0x8857, 0x8A72, 0x93A7, 0x9AB8, 0x6D6C, 0x99A8, 0x86D9, 0x57A3, 0x67FF, 0x86CE, 0x920E, 0x5283,
+	0x5687, 0x5404, 0x5ED3, 0x62E1, 0x64B9, 0x683C, 0x6838, 0x6BBB, 0x7372, 0x78BA, 0x7A6B, 0x899A,
+	0x89D2, 0x8D6B, 0x8F03, 0x90ED, 0x95A3, 0x9694, 0x9769, 0x5B66, 0x5CB3, 0x697D, 0x984D, 0x984E,
+	0x639B, 0x7B20, 0x6A2B, 0x6A7F, 0x68B6, 0x9C0D, 0x6F5F, 0x5272, 0x559D, 0x6070, 0x62EC, 0x6D3B,
+	0x6E07, 0x6ED1, 0x845B, 0x8910, 0x8F44, 0x4E14, 0x9C39, 0x53F6, 0x691B, 0x6A3A, 0x9784, 0x682A,
+	0x515C, 0x7AC3, 0x84B2, 0x91DC, 0x938C, 0x565B, 0x9D28, 0x6822, 0x8305, 0x8431, 0x7CA5, 0x5208,
+	0x82C5, 0x74E6, 0x4E7E, 0x4F83, 0x51A0, 0x5BD2, 0x520A, 0x52D8, 0x52E7, 0x5DFB, 0x559A, 0x582A,
+	0x59E6, 0x5B8C, 0x5B98, 0x5BDB, 0x5E72, 0x5E79, 0x60A3, 0x611F, 0x6163, 0x61BE, 0x63DB, 0x6562,
+	0x67D1, 0x6853, 0x68FA, 0x6B3E, 0x6B53, 0x6C57, 0x6F22, 0x6F97, 0x6F45, 0x74B0, 0x7518, 0x76E3,
+	0x770B, 0x7AFF, 0x7BA1, 0x7C21, 0x7DE9, 0x7F36, 0x7FF0, 0x809D, 0x8266, 0x839E, 0x89B3, 0x8ACC,
+	0x8CAB, 0x9084, 0x9451, 0x9593, 0x9591, 0x95A2, 0x9665, 0x97D3, 0x9928, 0x8218, 0x4E38, 0x542B,
+	0x5CB8, 0x5DCC, 0x73A9, 0x764C, 0x773C, 0x5CA9, 0x7FEB, 0x8D0B, 0x96C1, 0x9811, 0x9854, 0x9858,
+	0x4F01, 0x4F0E, 0x5371, 0x559C, 0x5668, 0x57FA, 0x5947, 0x5B09, 0x5BC4, 0x5C90, 0x5E0C, 0x5E7E,
+	0x5FCC, 0x63EE, 0x673A, 0x65D7, 0x65E2, 0x671F, 0x68CB, 0x68C4, 0x6A5F, 0x5E30, 0x6BC5, 0x6C17,
+	0x6C7D, 0x757F, 0x7948, 0x5B63, 0x7A00, 0x7D00, 0x5FBD, 0x898F, 0x8A18, 0x8CB4, 0x8D77, 0x8ECC,
+	0x8F1D, 0x98E2, 0x9A0E, 0x9B3C, 0x4E80, 0x507D, 0x5100, 0x5993, 0x5B9C, 0x622F, 0x6280, 0x64EC,
+	0x6B3A, 0x72A0, 0x7591, 0x7947, 0x7FA9, 0x87FB, 0x8ABC, 0x8B70, 0x63AC, 0x83CA, 0x97A0, 0x5409,
+	0x5403, 0x55AB, 0x6854, 0x6A58, 0x8A70, 0x7827, 0x6775, 0x9ECD, 0x5374, 0x5BA2, 0x811A, 0x8650,
+	0x9006, 0x4E18, 0x4E45, 0x4EC7, 0x4F11, 0x53CA, 0x5438, 0x5BAE, 0x5F13, 0x6025, 0x6551, 0x673D,
+	0x6C42, 0x6C72, 0x6CE3, 0x7078, 0x7403, 0x7A76, 0x7AAE, 0x7B08, 0x7D1A, 0x7CFE, 0x7D66, 0x65E7,
+	0x725B, 0x53BB, 0x5C45, 0x5DE8, 0x62D2, 0x62E0, 0x6319, 0x6E20, 0x865A, 0x8A31, 0x8DDD, 0x92F8,
+	0x6F01, 0x79A6, 0x9B5A, 0x4EA8, 0x4EAB, 0x4EAC, 0x4F9B, 0x4FA0, 0x50D1, 0x5147, 0x7AF6, 0x5171,
+	0x51F6, 0x5354, 0x5321, 0x537F, 0x53EB, 0x55AC, 0x5883, 0x5CE1, 0x5F37, 0x5F4A, 0x602F, 0x6050,
+	0x606D, 0x631F, 0x6559, 0x6A4B, 0x6CC1, 0x72C2, 0x72ED, 0x77EF, 0x80F8, 0x8105, 0x8208, 0x854E,
+	0x90F7, 0x93E1, 0x97FF, 0x9957, 0x9A5A, 0x4EF0, 0x51DD, 0x5C2D, 0x6681, 0x696D, 0x5C40, 0x66F2,
+	0x6975, 0x7389, 0x6850, 0x7C81, 0x50C5, 0x52E4, 0x5747, 0x5DFE, 0x9326, 0x65A4, 0x6B23, 0x6B3D,
+	0x7434, 0x7981, 0x79BD, 0x7B4B, 0x7DCA, 0x82B9, 0x83CC, 0x887F, 0x895F, 0x8B39, 0x8FD1, 0x91D1,
+	0x541F, 0x9280, 0x4E5D, 0x5036, 0x53E5, 0x533A, 0x72D7, 0x7396, 0x77E9, 0x82E6, 0x8EAF, 0x99C6,
+	0x99C8, 0x99D2, 0x5177, 0x611A, 0x865E, 0x55B0, 0x7A7A, 0x5076, 0x5BD3, 0x9047, 0x9685, 0x4E32,
+	0x6ADB, 0x91E7, 0x5C51, 0x5C48, 0x6398, 0x7A9F, 0x6C93, 0x9774, 0x8F61, 0x7AAA, 0x718A, 0x9688,
+	0x7C82, 0x6817, 0x7E70, 0x6851, 0x936C, 0x52F2, 0x541B, 0x85AB, 0x8A13, 0x7FA4, 0x8ECD, 0x90E1,
+	0x5366, 0x8888, 0x7941, 0x4FC2, 0x50BE, 0x5211, 0x5144, 0x5553, 0x572D, 0x73EA, 0x578B, 0x5951,
+	0x5F62, 0x5F84, 0x6075, 0x6176, 0x6167, 0x61A9, 0x63B2, 0x643A, 0x656C, 0x666F, 0x6842, 0x6E13,
+	0x7566, 0x7A3D, 0x7CFB, 0x7D4C, 0x7D99, 0x7E4B, 0x7F6B, 0x830E, 0x834A, 0x86CD, 0x8A08, 0x8A63,
+	0x8B66, 0x8EFD, 0x981A, 0x9D8F, 0x82B8, 0x8FCE, 0x9BE8, 0x5287, 0x621F, 0x6483, 0x6FC0, 0x9699,
+	0x6841, 0x5091, 0x6B20, 0x6C7A, 0x6F54, 0x7A74, 0x7D50, 0x8840, 0x8A23, 0x6708, 0x4EF6, 0x5039,
+	0x5026, 0x5065, 0x517C, 0x5238, 0x5263, 0x55A7, 0x570F, 0x5805, 0x5ACC, 0x5EFA, 0x61B2, 0x61F8,
+	0x62F3, 0x6372, 0x691C, 0x6A29, 0x727D, 0x72AC, 0x732E, 0x7814, 0x786F, 0x7D79, 0x770C, 0x80A9,
+	0x898B, 0x8B19, 0x8CE2, 0x8ED2, 0x9063, 0x9375, 0x967A, 0x9855, 0x9A13, 0x9E78, 0x5143, 0x539F,
+	0x53B3, 0x5E7B, 0x5F26, 0x6E1B, 0x6E90, 0x7384, 0x73FE, 0x7D43, 0x8237, 0x8A00, 0x8AFA, 0x9650,
+	0x4E4E, 0x500B, 0x53E4, 0x547C, 0x56FA, 0x59D1, 0x5B64, 0x5DF1, 0x5EAB, 0x5F27, 0x6238, 0x6545,
+	0x67AF, 0x6E56, 0x72D0, 0x7CCA, 0x88B4, 0x80A1, 0x80E1, 0x83F0, 0x864E, 0x8A87, 0x8DE8, 0x9237,
+	0x96C7, 0x9867, 0x9F13, 0x4E94, 0x4E92, 0x4F0D, 0x5348, 0x5449, 0x543E, 0x5A2F, 0x5F8C, 0x5FA1,
+	0x609F, 0x68A7, 0x6A8E, 0x745A, 0x7881, 0x8A9E, 0x8AA4, 0x8B77, 0x9190, 0x4E5E, 0x9BC9, 0x4EA4,
+	0x4F7C, 0x4FAF, 0x5019, 0x5016, 0x5149, 0x516C, 0x529F, 0x52B9, 0x52FE, 0x539A, 0x53E3, 0x5411,
+	0x540E, 0x5589, 0x5751, 0x57A2, 0x597D, 0x5B54, 0x5B5D, 0x5B8F, 0x5DE5, 0x5DE7, 0x5DF7, 0x5E78,
+	0x5E83, 0x5E9A, 0x5EB7, 0x5F18, 0x6052, 0x614C, 0x6297, 0x62D8, 0x63A7, 0x653B, 0x6602, 0x6643,
+	0x66F4, 0x676D, 0x6821, 0x6897, 0x69CB, 0x6C5F, 0x6D2A, 0x6D69, 0x6E2F, 0x6E9D, 0x7532, 0x7687,
+	0x786C, 0x7A3F, 0x7CE0, 0x7D05, 0x7D18, 0x7D5E, 0x7DB1, 0x8015, 0x8003, 0x80AF, 0x80B1, 0x8154,
+	0x818F, 0x822A, 0x8352, 0x884C, 0x8861, 0x8B1B, 0x8CA2, 0x8CFC, 0x90CA, 0x9175, 0x9271, 0x783F,
+	0x92FC, 0x95A4, 0x964D, 0x9805, 0x9999, 0x9AD8, 0x9D3B, 0x525B, 0x52AB, 0x53F7, 0x5408, 0x58D5,
+	0x62F7, 0x6FE0, 0x8C6A, 0x8F5F, 0x9EB9, 0x514B, 0x523B, 0x544A, 0x56FD, 0x7A40, 0x9177, 0x9D60,
+	0x9ED2, 0x7344, 0x6F09, 0x8170, 0x7511, 0x5FFD, 0x60DA, 0x9AA8, 0x72DB, 0x8FBC, 0x6B64, 0x9803,
+	0x4ECA, 0x56F0, 0x5764, 0x58BE, 0x5A5A, 0x6068, 0x61C7, 0x660F, 0x6606, 0x6839, 0x68B1, 0x6DF7,
+	0x75D5, 0x7D3A, 0x826E, 0x9B42, 0x4E9B, 0x4F50, 0x53C9, 0x5506, 0x5D6F, 0x5DE6, 0x5DEE, 0x67FB,
+	0x6C99, 0x7473, 0x7802, 0x8A50, 0x9396, 0x88DF, 0x5750, 0x5EA7, 0x632B, 0x50B5, 0x50AC, 0x518D,
+	0x6700, 0x54C9, 0x585E, 0x59BB, 0x5BB0, 0x5F69, 0x624D, 0x63A1, 0x683D, 0x6B73, 0x6E08, 0x707D,
+	0x91C7, 0x7280, 0x7815, 0x7826, 0x796D, 0x658E, 0x7D30, 0x83DC, 0x88C1, 0x8F09, 0x969B, 0x5264,
+	0x5728, 0x6750, 0x7F6A, 0x8CA1, 0x51B4, 0x5742, 0x962A, 0x583A, 0x698A, 0x80B4, 0x54B2, 0x5D0E,
+	0x57FC, 0x7895, 0x9DFA, 0x4F5C, 0x524A, 0x548B, 0x643E, 0x6628, 0x6714, 0x67F5, 0x7A84, 0x7B56,
+	0x7D22, 0x932F, 0x685C, 0x9BAD, 0x7B39, 0x5319, 0x518A, 0x5237, 0x5BDF, 0x62F6, 0x64AE, 0x64E6,
+	0x672D, 0x6BBA, 0x85A9, 0x96D1, 0x7690, 0x9BD6, 0x634C, 0x9306, 0x9BAB, 0x76BF, 0x6652, 0x4E09,
+	0x5098, 0x53C2, 0x5C71, 0x60E8, 0x6492, 0x6563, 0x685F, 0x71E6, 0x73CA, 0x7523, 0x7B97, 0x7E82,
+	0x8695, 0x8B83, 0x8CDB, 0x9178, 0x9910, 0x65AC, 0x66AB, 0x6B8B, 0x4ED5, 0x4ED4, 0x4F3A, 0x4F7F,
+	0x523A, 0x53F8, 0x53F2, 0x55E3, 0x56DB, 0x58EB, 0x59CB, 0x59C9, 0x59FF, 0x5B50, 0x5C4D, 0x5E02,
+	0x5E2B, 0x5FD7, 0x601D, 0x6307, 0x652F, 0x5B5C, 0x65AF, 0x65BD, 0x65E8, 0x679D, 0x6B62, 0x6B7B,
+	0x6C0F, 0x7345, 0x7949, 0x79C1, 0x7CF8, 0x7D19, 0x7D2B, 0x80A2, 0x8102, 0x81F3, 0x8996, 0x8A5E,
+	0x8A69, 0x8A66, 0x8A8C, 0x8AEE, 0x8CC7, 0x8CDC, 0x96CC, 0x98FC, 0x6B6F, 0x4E8B, 0x4F3C, 0x4F8D,
+	0x5150, 0x5B57, 0x5BFA, 0x6148, 0x6301, 0x6642, 0x6B21, 0x6ECB, 0x6CBB, 0x723E, 0x74BD, 0x75D4,
+	0x78C1, 0x793A, 0x800C, 0x8033, 0x81EA, 0x8494, 0x8F9E, 0x6C50, 0x9E7F, 0x5F0F, 0x8B58, 0x9D2B,
+	0x7AFA, 0x8EF8, 0x5B8D, 0x96EB, 0x4E03, 0x53F1, 0x57F7, 0x5931, 0x5AC9, 0x5BA4, 0x6089, 0x6E7F,
+	0x6F06, 0x75BE, 0x8CEA, 0x5B9F, 0x8500, 0x7BE0, 0x5072, 0x67F4, 0x829D, 0x5C61, 0x854A, 0x7E1E,
+	0x820E, 0x5199, 0x5C04, 0x6368, 0x8D66, 0x659C, 0x716E, 0x793E, 0x7D17, 0x8005, 0x8B1D, 0x8ECA,
+	0x906E, 0x86C7, 0x90AA, 0x501F, 0x52FA, 0x5C3A, 0x6753, 0x707C, 0x7235, 0x914C, 0x91C8, 0x932B,
+	0x82E5, 0x5BC2, 0x5F31, 0x60F9, 0x4E3B, 0x53D6, 0x5B88, 0x624B, 0x6731, 0x6B8A, 0x72E9, 0x73E0,
+	0x7A2E, 0x816B, 0x8DA3, 0x9152, 0x9996, 0x5112, 0x53D7, 0x546A, 0x5BFF, 0x6388, 0x6A39, 0x7DAC,
+	0x9700, 0x56DA, 0x53CE, 0x5468, 0x5B97, 0x5C31, 0x5DDE, 0x4FEE, 0x6101, 0x62FE, 0x6D32, 0x79C0,
+	0x79CB, 0x7D42, 0x7E4D, 0x7FD2, 0x81ED, 0x821F, 0x8490, 0x8846, 0x8972, 0x8B90, 0x8E74, 0x8F2F,
+	0x9031, 0x914B, 0x916C, 0x96C6, 0x919C, 0x4EC0, 0x4F4F, 0x5145, 0x5341, 0x5F93, 0x620E, 0x67D4,
+	0x6C41, 0x6E0B, 0x7363, 0x7E26, 0x91CD, 0x9283, 0x53D4, 0x5919, 0x5BBF, 0x6DD1, 0x795D, 0x7E2E,
+	0x7C9B, 0x587E, 0x719F, 0x51FA, 0x8853, 0x8FF0, 0x4FCA, 0x5CFB, 0x6625, 0x77AC, 0x7AE3, 0x821C,
+	0x99FF, 0x51C6, 0x5FAA, 0x65EC, 0x696F, 0x6B89, 0x6DF3, 0x6E96, 0x6F64, 0x76FE, 0x7D14, 0x5DE1,
+	0x9075, 0x9187, 0x9806, 0x51E6, 0x521D, 0x6240, 0x6691, 0x66D9, 0x6E1A, 0x5EB6, 0x7DD2, 0x7F72,
+	0x66F8, 0x85AF, 0x85F7, 0x8AF8, 0x52A9, 0x53D9, 0x5973, 0x5E8F, 0x5F90, 0x6055, 0x92E4, 0x9664,
+	0x50B7, 0x511F, 0x52DD, 0x5320, 0x5347, 0x53EC, 0x54E8, 0x5546, 0x5531, 0x5617, 0x5968, 0x59BE,
+	0x5A3C, 0x5BB5, 0x5C06, 0x5C0F, 0x5C11, 0x5C1A, 0x5E84, 0x5E8A, 0x5EE0, 0x5F70, 0x627F, 0x6284,
+	0x62DB, 0x638C, 0x6377, 0x6607, 0x660C, 0x662D, 0x6676, 0x677E, 0x68A2, 0x6A1F, 0x6A35, 0x6CBC,
+	0x6D88, 0x6E09, 0x6E58, 0x713C, 0x7126, 0x7167, 0x75C7, 0x7701, 0x785D, 0x7901, 0x7965, 0x79F0,
+	0x7AE0, 0x7B11, 0x7CA7, 0x7D39, 0x8096, 0x83D6, 0x848B, 0x8549, 0x885D, 0x88F3, 0x8A1F, 0x8A3C,
+	0x8A54, 0x8A73, 0x8C61, 0x8CDE, 0x91A4, 0x9266, 0x937E, 0x9418, 0x969C, 0x9798, 0x4E0A, 0x4E08,
+	0x4E1E, 0x4E57, 0x5197, 0x5270, 0x57CE, 0x5834, 0x58CC, 0x5B22, 0x5E38, 0x60C5, 0x64FE, 0x6761,
+	0x6756, 0x6D44, 0x72B6, 0x7573, 0x7A63, 0x84B8, 0x8B72, 0x91B8, 0x9320, 0x5631, 0x57F4, 0x98FE,
+	0x62ED, 0x690D, 0x6B96, 0x71ED, 0x7E54, 0x8077, 0x8272, 0x89E6, 0x98DF, 0x8755, 0x8FB1, 0x5C3B,
+	0x4F38, 0x4FE1, 0x4FB5, 0x5507, 0x5A20, 0x5BDD, 0x5BE9, 0x5FC3, 0x614E, 0x632F, 0x65B0, 0x664B,
+	0x68EE, 0x699B, 0x6D78, 0x6DF1, 0x7533, 0x75B9, 0x771F, 0x795E, 0x79E6, 0x7D33, 0x81E3, 0x82AF,
+	0x85AA, 0x89AA, 0x8A3A, 0x8EAB, 0x8F9B, 0x9032, 0x91DD, 0x9707, 0x4EBA, 0x4EC1, 0x5203, 0x5875,
+	0x58EC, 0x5C0B, 0x751A, 0x5C3D, 0x814E, 0x8A0A, 0x8FC5, 0x9663, 0x976D, 0x7B25, 0x8ACF, 0x9808,
+	0x9162, 0x56F3, 0x53A8, 0x9017, 0x5439, 0x5782, 0x5E25, 0x63A8, 0x6C34, 0x708A, 0x7761, 0x7C8B,
+	0x7FE0, 0x8870, 0x9042, 0x9154, 0x9310, 0x9318, 0x968F, 0x745E, 0x9AC4, 0x5D07, 0x5D69, 0x6570,
+	0x67A2, 0x8DA8, 0x96DB, 0x636E, 0x6749, 0x6919, 0x83C5, 0x9817, 0x96C0, 0x88FE, 0x6F84, 0x647A,
+	0x5BF8, 0x4E16, 0x702C, 0x755D, 0x662F, 0x51C4, 0x5236, 0x52E2, 0x59D3, 0x5F81, 0x6027, 0x6210,
+	0x653F, 0x6574, 0x661F, 0x6674, 0x68F2, 0x6816, 0x6B63, 0x6E05, 0x7272, 0x751F, 0x76DB, 0x7CBE,
+	0x8056, 0x58F0, 0x88FD, 0x897F, 0x8AA0, 0x8A93, 0x8ACB, 0x901D, 0x9192, 0x9752, 0x9759, 0x6589,
+	0x7A0E, 0x8106, 0x96BB, 0x5E2D, 0x60DC, 0x621A, 0x65A5, 0x6614, 0x6790, 0x77F3, 0x7A4D, 0x7C4D,
+	0x7E3E, 0x810A, 0x8CAC, 0x8D64, 0x8DE1, 0x8E5F, 0x78A9, 0x5207, 0x62D9, 0x63A5, 0x6442, 0x6298,
+	0x8A2D, 0x7A83, 0x7BC0, 0x8AAC, 0x96EA, 0x7D76, 0x820C, 0x8749, 0x4ED9, 0x5148, 0x5343, 0x5360,
+	0x5BA3, 0x5C02, 0x5C16, 0x5DDD, 0x6226, 0x6247, 0x64B0, 0x6813, 0x6834, 0x6CC9, 0x6D45, 0x6D17,
+	0x67D3, 0x6F5C, 0x714E, 0x717D, 0x65CB, 0x7A7F, 0x7BAD, 0x7DDA, 0x7E4A, 0x7FA8, 0x817A, 0x821B,
+	0x8239, 0x85A6, 0x8A6E, 0x8CCE, 0x8DF5, 0x9078, 0x9077, 0x92AD, 0x9291, 0x9583, 0x9BAE, 0x524D,
+	0x5584, 0x6F38, 0x7136, 0x5168, 0x7985, 0x7E55, 0x81B3, 0x7CCE, 0x564C, 0x5851, 0x5CA8, 0x63AA,
+	0x66FE, 0x66FD, 0x695A, 0x72D9, 0x758F, 0x758E, 0x790E, 0x7956, 0x79DF, 0x7C97, 0x7D20, 0x7D44,
+	0x8607, 0x8A34, 0x963B, 0x9061, 0x9F20, 0x50E7, 0x5275, 0x53CC, 0x53E2, 0x5009, 0x55AA, 0x58EE,
+	0x594F, 0x723D, 0x5B8B, 0x5C64, 0x531D, 0x60E3, 0x60F3, 0x635C, 0x6383, 0x633F, 0x63BB, 0x64CD,
+	0x65E9, 0x66F9, 0x5DE3, 0x69CD, 0x69FD, 0x6F15, 0x71E5, 0x4E89, 0x75E9, 0x76F8, 0x7A93, 0x7CDF,
+	0x7DCF, 0x7D9C, 0x8061, 0x8349, 0x8358, 0x846C, 0x84BC, 0x85FB, 0x88C5, 0x8D70, 0x9001, 0x906D,
+	0x9397, 0x971C, 0x9A12, 0x50CF, 0x5897, 0x618E, 0x81D3, 0x8535, 0x8D08, 0x9020, 0x4FC3, 0x5074,
+	0x5247, 0x5373, 0x606F, 0x6349, 0x675F, 0x6E2C, 0x8DB3, 0x901F, 0x4FD7, 0x5C5E, 0x8CCA, 0x65CF,
+	0x7D9A, 0x5352, 0x8896, 0x5176, 0x63C3, 0x5B58, 0x5B6B, 0x5C0A, 0x640D, 0x6751, 0x905C, 0x4ED6,
+	0x591A, 0x592A, 0x6C70, 0x8A51, 0x553E, 0x5815, 0x59A5, 0x60F0, 0x6253, 0x67C1, 0x8235, 0x6955,
+	0x9640, 0x99C4, 0x9A28, 0x4F53, 0x5806, 0x5BFE, 0x8010, 0x5CB1, 0x5E2F, 0x5F85, 0x6020, 0x614B,
+	0x6234, 0x66FF, 0x6CF0, 0x6EDE, 0x80CE, 0x817F, 0x82D4, 0x888B, 0x8CB8, 0x9000, 0x902E, 0x968A,
+	0x9EDB, 0x9BDB, 0x4EE3, 0x53F0, 0x5927, 0x7B2C, 0x918D, 0x984C, 0x9DF9, 0x6EDD, 0x7027, 0x5353,
+	0x5544, 0x5B85, 0x6258, 0x629E, 0x62D3, 0x6CA2, 0x6FEF, 0x7422, 0x8A17, 0x9438, 0x6FC1, 0x8AFE,
+	0x8338, 0x51E7, 0x86F8, 0x53EA, 0x53E9, 0x4F46, 0x9054, 0x8FB0, 0x596A, 0x8131, 0x5DFD, 0x7AEA,
+	0x8FBF, 0x68DA, 0x8C37, 0x72F8, 0x9C48, 0x6A3D, 0x8AB0, 0x4E39, 0x5358, 0x5606, 0x5766, 0x62C5,
+	0x63A2, 0x65E6, 0x6B4E, 0x6DE1, 0x6E5B, 0x70AD, 0x77ED, 0x7AEF, 0x7BAA, 0x7DBB, 0x803D, 0x80C6,
+	0x86CB, 0x8A95, 0x935B, 0x56E3, 0x58C7, 0x5F3E, 0x65AD, 0x6696, 0x6A80, 0x6BB5, 0x7537, 0x8AC7,
+	0x5024, 0x77E5, 0x5730, 0x5F1B, 0x6065, 0x667A, 0x6C60, 0x75F4, 0x7A1A, 0x7F6E, 0x81F4, 0x8718,
+	0x9045, 0x99B3, 0x7BC9, 0x755C, 0x7AF9, 0x7B51, 0x84C4, 0x9010, 0x79E9, 0x7A92, 0x8336, 0x5AE1,
+	0x7740, 0x4E2D, 0x4EF2, 0x5B99, 0x5FE0, 0x62BD, 0x663C, 0x67F1, 0x6CE8, 0x866B, 0x8877, 0x8A3B,
+	0x914E, 0x92F3, 0x99D0, 0x6A17, 0x7026, 0x732A, 0x82E7, 0x8457, 0x8CAF, 0x4E01, 0x5146, 0x51CB,
+	0x558B, 0x5BF5, 0x5E16, 0x5E33, 0x5E81, 0x5F14, 0x5F35, 0x5F6B, 0x5FB4, 0x61F2, 0x6311, 0x66A2,
+	0x671D, 0x6F6E, 0x7252, 0x753A, 0x773A, 0x8074, 0x8139, 0x8178, 0x8776, 0x8ABF, 0x8ADC, 0x8D85,
+	0x8DF3, 0x929A, 0x9577, 0x9802, 0x9CE5, 0x52C5, 0x6357, 0x76F4, 0x6715, 0x6C88, 0x73CD, 0x8CC3,
+	0x93AE, 0x9673, 0x6D25, 0x589C, 0x690E, 0x69CC, 0x8FFD, 0x939A, 0x75DB, 0x901A, 0x585A, 0x6802,
+	0x63B4, 0x69FB, 0x4F43, 0x6F2C, 0x67D8, 0x8FBB, 0x8526, 0x7DB4, 0x9354, 0x693F, 0x6F70, 0x576A,
+	0x58F7, 0x5B2C, 0x7D2C, 0x722A, 0x540A, 0x91E3, 0x9DB4, 0x4EAD, 0x4F4E, 0x505C, 0x5075, 0x5243,
+	0x8C9E, 0x5448, 0x5824, 0x5B9A, 0x5E1D, 0x5E95, 0x5EAD, 0x5EF7, 0x5F1F, 0x608C, 0x62B5, 0x633A,
+	0x63D0, 0x68AF, 0x6C40, 0x7887, 0x798E, 0x7A0B, 0x7DE0, 0x8247, 0x8A02, 0x8AE6, 0x8E44, 0x9013,
+	0x90B8, 0x912D, 0x91D8, 0x9F0E, 0x6CE5, 0x6458, 0x64E2, 0x6575, 0x6EF4, 0x7684, 0x7B1B, 0x9069,
+	0x93D1, 0x6EBA, 0x54F2, 0x5FB9, 0x64A4, 0x8F4D, 0x8FED, 0x9244, 0x5178, 0x586B, 0x5929, 0x5C55,
+	0x5E97, 0x6DFB, 0x7E8F, 0x751C, 0x8CBC, 0x8EE2, 0x985B, 0x70B9, 0x4F1D, 0x6BBF, 0x6FB1, 0x7530,
+	0x96FB, 0x514E, 0x5410, 0x5835, 0x5857, 0x59AC, 0x5C60, 0x5F92, 0x6597, 0x675C, 0x6E21, 0x767B,
+	0x83DF, 0x8CED, 0x9014, 0x90FD, 0x934D, 0x7825, 0x783A, 0x52AA, 0x5EA6, 0x571F, 0x5974, 0x6012,
+	0x5012, 0x515A, 0x51AC, 0x51CD, 0x5200, 0x5510, 0x5854, 0x5858, 0x5957, 0x5B95, 0x5CF6, 0x5D8B,
+	0x60BC, 0x6295, 0x642D, 0x6771, 0x6843, 0x68BC, 0x68DF, 0x76D7, 0x6DD8, 0x6E6F, 0x6D9B, 0x706F,
+	0x71C8, 0x5F53, 0x75D8, 0x7977, 0x7B49, 0x7B54, 0x7B52, 0x7CD6, 0x7D71, 0x5230, 0x8463, 0x8569,
+	0x85E4, 0x8A0E, 0x8B04, 0x8C46, 0x8E0F, 0x9003, 0x900F, 0x9419, 0x9676, 0x982D, 0x9A30, 0x95D8,
+	0x50CD, 0x52D5, 0x540C, 0x5802, 0x5C0E, 0x61A7, 0x649E, 0x6D1E, 0x77B3, 0x7AE5, 0x80F4, 0x8404,
+	0x9053, 0x9285, 0x5CE0, 0x9D07, 0x533F, 0x5F97, 0x5FB3, 0x6D9C, 0x7279, 0x7763, 0x79BF, 0x7BE4,
+	0x6BD2, 0x72EC, 0x8AAD, 0x6803, 0x6A61, 0x51F8, 0x7A81, 0x6934, 0x5C4A, 0x9CF6, 0x82EB, 0x5BC5,
+	0x9149, 0x701E, 0x5678, 0x5C6F, 0x60C7, 0x6566, 0x6C8C, 0x8C5A, 0x9041, 0x9813, 0x5451, 0x66C7,
+	0x920D, 0x5948, 0x90A3, 0x5185, 0x4E4D, 0x51EA, 0x8599, 0x8B0E, 0x7058, 0x637A, 0x934B, 0x6962,
+	0x99B4, 0x7E04, 0x7577, 0x5357, 0x6960, 0x8EDF, 0x96E3, 0x6C5D, 0x4E8C, 0x5C3C, 0x5F10, 0x8FE9,
+	0x5302, 0x8CD1, 0x8089, 0x8679, 0x5EFF, 0x65E5, 0x4E73, 0x5165, 0x5982, 0x5C3F, 0x97EE, 0x4EFB,
+	0x598A, 0x5FCD, 0x8A8D, 0x6FE1, 0x79B0, 0x7962, 0x5BE7, 0x8471, 0x732B, 0x71B1, 0x5E74, 0x5FF5,
+	0x637B, 0x649A, 0x71C3, 0x7C98, 0x4E43, 0x5EFC, 0x4E4B, 0x57DC, 0x56A2, 0x60A9, 0x6FC3, 0x7D0D,
+	0x80FD, 0x8133, 0x81BF, 0x8FB2, 0x8997, 0x86A4, 0x5DF4, 0x628A, 0x64AD, 0x8987, 0x6777, 0x6CE2,
+	0x6D3E, 0x7436, 0x7834, 0x5A46, 0x7F75, 0x82AD, 0x99AC, 0x4FF3, 0x5EC3, 0x62DD, 0x6392, 0x6557,
+	0x676F, 0x76C3, 0x724C, 0x80CC, 0x80BA, 0x8F29, 0x914D, 0x500D, 0x57F9, 0x5A92, 0x6885, 0x6973,
+	0x7164, 0x72FD, 0x8CB7, 0x58F2, 0x8CE0, 0x966A, 0x9019, 0x877F, 0x79E4, 0x77E7, 0x8429, 0x4F2F,
+	0x5265, 0x535A, 0x62CD, 0x67CF, 0x6CCA, 0x767D, 0x7B94, 0x7C95, 0x8236, 0x8584, 0x8FEB, 0x66DD,
+	0x6F20, 0x7206, 0x7E1B, 0x83AB, 0x99C1, 0x9EA6, 0x51FD, 0x7BB1, 0x7872, 0x7BB8, 0x8087, 0x7B48,
+	0x6AE8, 0x5E61, 0x808C, 0x7551, 0x7560, 0x516B, 0x9262, 0x6E8C, 0x767A, 0x9197, 0x9AEA, 0x4F10,
+	0x7F70, 0x629C, 0x7B4F, 0x95A5, 0x9CE9, 0x567A, 0x5859, 0x86E4, 0x96BC, 0x4F34, 0x5224, 0x534A,
+	0x53CD, 0x53DB, 0x5E06, 0x642C, 0x6591, 0x677F, 0x6C3E, 0x6C4E, 0x7248, 0x72AF, 0x73ED, 0x7554,
+	0x7E41, 0x822C, 0x85E9, 0x8CA9, 0x7BC4, 0x91C6, 0x7169, 0x9812, 0x98EF, 0x633D, 0x6669, 0x756A,
+	0x76E4, 0x78D0, 0x8543, 0x86EE, 0x532A, 0x5351, 0x5426, 0x5983, 0x5E87, 0x5F7C, 0x60B2, 0x6249,
+	0x6279, 0x62AB, 0x6590, 0x6BD4, 0x6CCC, 0x75B2, 0x76AE, 0x7891, 0x79D8, 0x7DCB, 0x7F77, 0x80A5,
+	0x88AB, 0x8AB9, 0x8CBB, 0x907F, 0x975E, 0x98DB, 0x6A0B, 0x7C38, 0x5099, 0x5C3E, 0x5FAE, 0x6787,
+	0x6BD8, 0x7435, 0x7709, 0x7F8E, 0x9F3B, 0x67CA, 0x7A17, 0x5339, 0x758B, 0x9AED, 0x5F66, 0x819D,
+	0x83F1, 0x8098, 0x5F3C, 0x5FC5, 0x7562, 0x7B46, 0x903C, 0x6867, 0x59EB, 0x5A9B, 0x7D10, 0x767E,
+	0x8B2C, 0x4FF5, 0x5F6A, 0x6A19, 0x6C37, 0x6F02, 0x74E2, 0x7968, 0x8868, 0x8A55, 0x8C79, 0x5EDF,
+	0x63CF, 0x75C5, 0x79D2, 0x82D7, 0x9328, 0x92F2, 0x849C, 0x86ED, 0x9C2D, 0x54C1, 0x5F6C, 0x658C,
+	0x6D5C, 0x7015, 0x8CA7, 0x8CD3, 0x983B, 0x654F, 0x74F6, 0x4E0D, 0x4ED8, 0x57E0, 0x592B, 0x5A66,
+	0x5BCC, 0x51A8, 0x5E03, 0x5E9C, 0x6016, 0x6276, 0x6577, 0x65A7, 0x666E, 0x6D6E, 0x7236, 0x7B26,
+	0x8150, 0x819A, 0x8299, 0x8B5C, 0x8CA0, 0x8CE6, 0x8D74, 0x961C, 0x9644, 0x4FAE, 0x64AB, 0x6B66,
+	0x821E, 0x8461, 0x856A, 0x90E8, 0x5C01, 0x6953, 0x98A8, 0x847A, 0x8557, 0x4F0F, 0x526F, 0x5FA9,
+	0x5E45, 0x670D, 0x798F, 0x8179, 0x8907, 0x8986, 0x6DF5, 0x5F17, 0x6255, 0x6CB8, 0x4ECF, 0x7269,
+	0x9B92, 0x5206, 0x543B, 0x5674, 0x58B3, 0x61A4, 0x626E, 0x711A, 0x596E, 0x7C89, 0x7CDE, 0x7D1B,
+	0x96F0, 0x6587, 0x805E, 0x4E19, 0x4F75, 0x5175, 0x5840, 0x5E63, 0x5E73, 0x5F0A, 0x67C4, 0x4E26,
+	0x853D, 0x9589, 0x965B, 0x7C73, 0x9801, 0x50FB, 0x58C1, 0x7656, 0x78A7, 0x5225, 0x77A5, 0x8511,
+	0x7B86, 0x504F, 0x5909, 0x7247, 0x7BC7, 0x7DE8, 0x8FBA, 0x8FD4, 0x904D, 0x4FBF, 0x52C9, 0x5A29,
+	0x5F01, 0x97AD, 0x4FDD, 0x8217, 0x92EA, 0x5703, 0x6355, 0x6B69, 0x752B, 0x88DC, 0x8F14, 0x7A42,
+	0x52DF, 0x5893, 0x6155, 0x620A, 0x66AE, 0x6BCD, 0x7C3F, 0x83E9, 0x5023, 0x4FF8, 0x5305, 0x5446,
+	0x5831, 0x5949, 0x5B9D, 0x5CF0, 0x5CEF, 0x5D29, 0x5E96, 0x62B1, 0x6367, 0x653E, 0x65B9, 0x670B,
+	0x6CD5, 0x6CE1, 0x70F9, 0x7832, 0x7E2B, 0x80DE, 0x82B3, 0x840C, 0x84EC, 0x8702, 0x8912, 0x8A2A,
+	0x8C4A, 0x90A6, 0x92D2, 0x98FD, 0x9CF3, 0x9D6C, 0x4E4F, 0x4EA1, 0x508D, 0x5256, 0x574A, 0x59A8,
+	0x5E3D, 0x5FD8, 0x5FD9, 0x623F, 0x66B4, 0x671B, 0x67D0, 0x68D2, 0x5192, 0x7D21, 0x80AA, 0x81A8,
+	0x8B00, 0x8C8C, 0x8CBF, 0x927E, 0x9632, 0x5420, 0x982C, 0x5317, 0x50D5, 0x535C, 0x58A8, 0x64B2,
+	0x6734, 0x7267, 0x7766, 0x7A46, 0x91E6, 0x52C3, 0x6CA1, 0x6B86, 0x5800, 0x5E4C, 0x5954, 0x672C,
+	0x7FFB, 0x51E1, 0x76C6, 0x6469, 0x78E8, 0x9B54, 0x9EBB, 0x57CB, 0x59B9, 0x6627, 0x679A, 0x6BCE,
+	0x54E9, 0x69D9, 0x5E55, 0x819C, 0x6795, 0x9BAA, 0x67FE, 0x9C52, 0x685D, 0x4EA6, 0x4FE3, 0x53C8,
+	0x62B9, 0x672B, 0x6CAB, 0x8FC4, 0x4FAD, 0x7E6D, 0x9EBF, 0x4E07, 0x6162, 0x6E80, 0x6F2B, 0x8513,
+	0x5473, 0x672A, 0x9B45, 0x5DF3, 0x7B95, 0x5CAC, 0x5BC6, 0x871C, 0x6E4A, 0x84D1, 0x7A14, 0x8108,
+	0x5999, 0x7C8D, 0x6C11, 0x7720, 0x52D9, 0x5922, 0x7121, 0x725F, 0x77DB, 0x9727, 0x9D61, 0x690B,
+	0x5A7F, 0x5A18, 0x51A5, 0x540D, 0x547D, 0x660E, 0x76DF, 0x8FF7, 0x9298, 0x9CF4, 0x59EA, 0x725D,
+	0x6EC5, 0x514D, 0x68C9, 0x7DBF, 0x7DEC, 0x9762, 0x9EBA, 0x6478, 0x6A21, 0x8302, 0x5984, 0x5B5F,
+	0x6BDB, 0x731B, 0x76F2, 0x7DB2, 0x8017, 0x8499, 0x5132, 0x6728, 0x9ED9, 0x76EE, 0x6762, 0x52FF,
+	0x9905, 0x5C24, 0x623B, 0x7C7E, 0x8CB0, 0x554F, 0x60B6, 0x7D0B, 0x9580, 0x5301, 0x4E5F, 0x51B6,
+	0x591C, 0x723A, 0x8036, 0x91CE, 0x5F25, 0x77E2, 0x5384, 0x5F79, 0x7D04, 0x85AC, 0x8A33, 0x8E8D,
+	0x9756, 0x67F3, 0x85AE, 0x9453, 0x6109, 0x6108, 0x6CB9, 0x7652, 0x8AED, 0x8F38, 0x552F, 0x4F51,
+	0x512A, 0x52C7, 0x53CB, 0x5BA5, 0x5E7D, 0x60A0, 0x6182, 0x63D6, 0x6709, 0x67DA, 0x6E67, 0x6D8C,
+	0x7336, 0x7337, 0x7531, 0x7950, 0x88D5, 0x8A98, 0x904A, 0x9091, 0x90F5, 0x96C4, 0x878D, 0x5915,
+	0x4E88, 0x4F59, 0x4E0E, 0x8A89, 0x8F3F, 0x9810, 0x50AD, 0x5E7C, 0x5996, 0x5BB9, 0x5EB8, 0x63DA,
+	0x63FA, 0x64C1, 0x66DC, 0x694A, 0x69D8, 0x6D0B, 0x6EB6, 0x7194, 0x7528, 0x7AAF, 0x7F8A, 0x8000,
+	0x8449, 0x84C9, 0x8981, 0x8B21, 0x8E0A, 0x9065, 0x967D, 0x990A, 0x617E, 0x6291, 0x6B32, 0x6C83,
+	0x6D74, 0x7FCC, 0x7FFC, 0x6DC0, 0x7F85, 0x87BA, 0x88F8, 0x6765, 0x83B1, 0x983C, 0x96F7, 0x6D1B,
+	0x7D61, 0x843D, 0x916A, 0x4E71, 0x5375, 0x5D50, 0x6B04, 0x6FEB, 0x85CD, 0x862D, 0x89A7, 0x5229,
+	0x540F, 0x5C65, 0x674E, 0x68A8, 0x7406, 0x7483, 0x75E2, 0x88CF, 0x88E1, 0x91CC, 0x96E2, 0x9678,
+	0x5F8B, 0x7387, 0x7ACB, 0x844E, 0x63A0, 0x7565, 0x5289, 0x6D41, 0x6E9C, 0x7409, 0x7559, 0x786B,
+	0x7C92, 0x9686, 0x7ADC, 0x9F8D, 0x4FB6, 0x616E, 0x65C5, 0x865C, 0x4E86, 0x4EAE, 0x50DA, 0x4E21,
+	0x51CC, 0x5BEE, 0x6599, 0x6881, 0x6DBC, 0x731F, 0x7642, 0x77AD, 0x7A1C, 0x7CE7, 0x826F, 0x8AD2,
+	0x907C, 0x91CF, 0x9675, 0x9818, 0x529B, 0x7DD1, 0x502B, 0x5398, 0x6797, 0x6DCB, 0x71D0, 0x7433,
+	0x81E8, 0x8F2A, 0x96A3, 0x9C57, 0x9E9F, 0x7460, 0x5841, 0x6D99, 0x7D2F, 0x985E, 0x4EE4, 0x4F36,
+	0x4F8B, 0x51B7, 0x52B1, 0x5DBA, 0x601C, 0x73B2, 0x793C, 0x82D3, 0x9234, 0x96B7, 0x96F6, 0x970A,
+	0x9E97, 0x9F62, 0x66A6, 0x6B74, 0x5217, 0x52A3, 0x70C8, 0x88C2, 0x5EC9, 0x604B, 0x6190, 0x6F23,
+	0x7149, 0x7C3E, 0x7DF4, 0x806F, 0x84EE, 0x9023, 0x932C, 0x5442, 0x9B6F, 0x6AD3, 0x7089, 0x8CC2,
+	0x8DEF, 0x9732, 0x52B4, 0x5A41, 0x5ECA, 0x5F04, 0x6717, 0x697C, 0x6994, 0x6D6A, 0x6F0F, 0x7262,
+	0x72FC, 0x7BED, 0x8001, 0x807E, 0x874B, 0x90CE, 0x516D, 0x9E93, 0x7984, 0x808B, 0x9332, 0x8AD6,
+	0x502D, 0x548C, 0x8A71, 0x6B6A, 0x8CC4, 0x8107, 0x60D1, 0x67A0, 0x9DF2, 0x4E99, 0x4E98, 0x9C10,
+	0x8A6B, 0x85C1, 0x8568, 0x6900, 0x6E7E, 0x7897, 0x8155, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x5F0C, 0x4E10, 0x4E15, 0x4E2A, 0x4E31, 0x4E36, 0x4E3C, 0x4E3F, 0x4E42, 0x4E56,
+	0x4E58, 0x4E82, 0x4E85, 0x8C6B, 0x4E8A, 0x8212, 0x5F0D, 0x4E8E, 0x4E9E, 0x4E9F, 0x4EA0, 0x4EA2,
+	0x4EB0, 0x4EB3, 0x4EB6, 0x4ECE, 0x4ECD, 0x4EC4, 0x4EC6, 0x4EC2, 0x4ED7, 0x4EDE, 0x4EED, 0x4EDF,
+	0x4EF7, 0x4F09, 0x4F5A, 0x4F30, 0x4F5B, 0x4F5D, 0x4F57, 0x4F47, 0x4F76, 0x4F88, 0x4F8F, 0x4F98,
+	0x4F7B, 0x4F69, 0x4F70, 0x4F91, 0x4F6F, 0x4F86, 0x4F96, 0x5118, 0x4FD4, 0x4FDF, 0x4FCE, 0x4FD8,
+	0x4FDB, 0x4FD1, 0x4FDA, 0x4FD0, 0x4FE4, 0x4FE5, 0x501A, 0x5028, 0x5014, 0x502A, 0x5025, 0x5005,
+	0x4F1C, 0x4FF6, 0x5021, 0x5029, 0x502C, 0x4FFE, 0x4FEF, 0x5011, 0x5006, 0x5043, 0x5047, 0x6703,
+	0x5055, 0x5050, 0x5048, 0x505A, 0x5056, 0x506C, 0x5078, 0x5080, 0x509A, 0x5085, 0x50B4, 0x50B2,
+	0x50C9, 0x50CA, 0x50B3, 0x50C2, 0x50D6, 0x50DE, 0x50E5, 0x50ED, 0x50E3, 0x50EE, 0x50F9, 0x50F5,
+	0x5109, 0x5101, 0x5102, 0x5116, 0x5115, 0x5114, 0x511A, 0x5121, 0x513A, 0x5137, 0x513C, 0x513B,
+	0x513F, 0x5140, 0x5152, 0x514C, 0x5154, 0x5162, 0x7AF8, 0x5169, 0x516A, 0x516E, 0x5180, 0x5182,
+	0x56D8, 0x518C, 0x5189, 0x518F, 0x5191, 0x5193, 0x5195, 0x5196, 0x51A4, 0x51A6, 0x51A2, 0x51A9,
+	0x51AA, 0x51AB, 0x51B3, 0x51B1, 0x51B2, 0x51B0, 0x51B5, 0x51BD, 0x51C5, 0x51C9, 0x51DB, 0x51E0,
+	0x8655, 0x51E9, 0x51ED, 0x51F0, 0x51F5, 0x51FE, 0x5204, 0x520B, 0x5214, 0x520E, 0x5227, 0x522A,
+	0x522E, 0x5233, 0x5239, 0x524F, 0x5244, 0x524B, 0x524C, 0x525E, 0x5254, 0x526A, 0x5274, 0x5269,
+	0x5273, 0x527F, 0x527D, 0x528D, 0x5294, 0x5292, 0x5271, 0x5288, 0x5291, 0x8FA8, 0x8FA7, 0x52AC,
+	0x52AD, 0x52BC, 0x52B5, 0x52C1, 0x52CD, 0x52D7, 0x52DE, 0x52E3, 0x52E6, 0x98ED, 0x52E0, 0x52F3,
+	0x52F5, 0x52F8, 0x52F9, 0x5306, 0x5308, 0x7538, 0x530D, 0x5310, 0x530F, 0x5315, 0x531A, 0x5323,
+	0x532F, 0x5331, 0x5333, 0x5338, 0x5340, 0x5346, 0x5345, 0x4E17, 0x5349, 0x534D, 0x51D6, 0x535E,
+	0x5369, 0x536E, 0x5918, 0x537B, 0x5377, 0x5382, 0x5396, 0x53A0, 0x53A6, 0x53A5, 0x53AE, 0x53B0,
+	0x53B6, 0x53C3, 0x7C12, 0x96D9, 0x53DF, 0x66FC, 0x71EE, 0x53EE, 0x53E8, 0x53ED, 0x53FA, 0x5401,
+	0x543D, 0x5440, 0x542C, 0x542D, 0x543C, 0x542E, 0x5436, 0x5429, 0x541D, 0x544E, 0x548F, 0x5475,
+	0x548E, 0x545F, 0x5471, 0x5477, 0x5470, 0x5492, 0x547B, 0x5480, 0x5476, 0x5484, 0x5490, 0x5486,
+	0x54C7, 0x54A2, 0x54B8, 0x54A5, 0x54AC, 0x54C4, 0x54C8, 0x54A8, 0x54AB, 0x54C2, 0x54A4, 0x54BE,
+	0x54BC, 0x54D8, 0x54E5, 0x54E6, 0x550F, 0x5514, 0x54FD, 0x54EE, 0x54ED, 0x54FA, 0x54E2, 0x5539,
+	0x5540, 0x5563, 0x554C, 0x552E, 0x555C, 0x5545, 0x5556, 0x5557, 0x5538, 0x5533, 0x555D, 0x5599,
+	0x5580, 0x54AF, 0x558A, 0x559F, 0x557B, 0x557E, 0x5598, 0x559E, 0x55AE, 0x557C, 0x5583, 0x55A9,
+	0x5587, 0x55A8, 0x55DA, 0x55C5, 0x55DF, 0x55C4, 0x55DC, 0x55E4, 0x55D4, 0x5614, 0x55F7, 0x5616,
+	0x55FE, 0x55FD, 0x561B, 0x55F9, 0x564E, 0x5650, 0x71DF, 0x5634, 0x5636, 0x5632, 0x5638, 0x566B,
+	0x5664, 0x562F, 0x566C, 0x566A, 0x5686, 0x5680, 0x568A, 0x56A0, 0x5694, 0x568F, 0x56A5, 0x56AE,
+	0x56B6, 0x56B4, 0x56C2, 0x56BC, 0x56C1, 0x56C3, 0x56C0, 0x56C8, 0x56CE, 0x56D1, 0x56D3, 0x56D7,
+	0x56EE, 0x56F9, 0x5700, 0x56FF, 0x5704, 0x5709, 0x5708, 0x570B, 0x570D, 0x5713, 0x5718, 0x5716,
+	0x55C7, 0x571C, 0x5726, 0x5737, 0x5738, 0x574E, 0x573B, 0x5740, 0x574F, 0x5769, 0x57C0, 0x5788,
+	0x5761, 0x577F, 0x5789, 0x5793, 0x57A0, 0x57B3, 0x57A4, 0x57AA, 0x57B0, 0x57C3, 0x57C6, 0x57D4,
+	0x57D2, 0x57D3, 0x580A, 0x57D6, 0x57E3, 0x580B, 0x5819, 0x581D, 0x5872, 0x5821, 0x5862, 0x584B,
+	0x5870, 0x6BC0, 0x5852, 0x583D, 0x5879, 0x5885, 0x58B9, 0x589F, 0x58AB, 0x58BA, 0x58DE, 0x58BB,
+	0x58B8, 0x58AE, 0x58C5, 0x58D3, 0x58D1, 0x58D7, 0x58D9, 0x58D8, 0x58E5, 0x58DC, 0x58E4, 0x58DF,
+	0x58EF, 0x58FA, 0x58F9, 0x58FB, 0x58FC, 0x58FD, 0x5902, 0x590A, 0x5910, 0x591B, 0x68A6, 0x5925,
+	0x592C, 0x592D, 0x5932, 0x5938, 0x593E, 0x7AD2, 0x5955, 0x5950, 0x594E, 0x595A, 0x5958, 0x5962,
+	0x5960, 0x5967, 0x596C, 0x5969, 0x5978, 0x5981, 0x599D, 0x4F5E, 0x4FAB, 0x59A3, 0x59B2, 0x59C6,
+	0x59E8, 0x59DC, 0x598D, 0x59D9, 0x59DA, 0x5A25, 0x5A1F, 0x5A11, 0x5A1C, 0x5A09, 0x5A1A, 0x5A40,
+	0x5A6C, 0x5A49, 0x5A35, 0x5A36, 0x5A62, 0x5A6A, 0x5A9A, 0x5ABC, 0x5ABE, 0x5ACB, 0x5AC2, 0x5ABD,
+	0x5AE3, 0x5AD7, 0x5AE6, 0x5AE9, 0x5AD6, 0x5AFA, 0x5AFB, 0x5B0C, 0x5B0B, 0x5B16, 0x5B32, 0x5AD0,
+	0x5B2A, 0x5B36, 0x5B3E, 0x5B43, 0x5B45, 0x5B40, 0x5B51, 0x5B55, 0x5B5A, 0x5B5B, 0x5B65, 0x5B69,
+	0x5B70, 0x5B73, 0x5B75, 0x5B78, 0x6588, 0x5B7A, 0x5B80, 0x5B83, 0x5BA6, 0x5BB8, 0x5BC3, 0x5BC7,
+	0x5BC9, 0x5BD4, 0x5BD0, 0x5BE4, 0x5BE6, 0x5BE2, 0x5BDE, 0x5BE5, 0x5BEB, 0x5BF0, 0x5BF6, 0x5BF3,
+	0x5C05, 0x5C07, 0x5C08, 0x5C0D, 0x5C13, 0x5C20, 0x5C22, 0x5C28, 0x5C38, 0x5C39, 0x5C41, 0x5C46,
+	0x5C4E, 0x5C53, 0x5C50, 0x5C4F, 0x5B71, 0x5C6C, 0x5C6E, 0x4E62, 0x5C76, 0x5C79, 0x5C8C, 0x5C91,
+	0x5C94, 0x599B, 0x5CAB, 0x5CBB, 0x5CB6, 0x5CBC, 0x5CB7, 0x5CC5, 0x5CBE, 0x5CC7, 0x5CD9, 0x5CE9,
+	0x5CFD, 0x5CFA, 0x5CED, 0x5D8C, 0x5CEA, 0x5D0B, 0x5D15, 0x5D17, 0x5D5C, 0x5D1F, 0x5D1B, 0x5D11,
+	0x5D14, 0x5D22, 0x5D1A, 0x5D19, 0x5D18, 0x5D4C, 0x5D52, 0x5D4E, 0x5D4B, 0x5D6C, 0x5D73, 0x5D76,
+	0x5D87, 0x5D84, 0x5D82, 0x5DA2, 0x5D9D, 0x5DAC, 0x5DAE, 0x5DBD, 0x5D90, 0x5DB7, 0x5DBC, 0x5DC9,
+	0x5DCD, 0x5DD3, 0x5DD2, 0x5DD6, 0x5DDB, 0x5DEB, 0x5DF2, 0x5DF5, 0x5E0B, 0x5E1A, 0x5E19, 0x5E11,
+	0x5E1B, 0x5E36, 0x5E37, 0x5E44, 0x5E43, 0x5E40, 0x5E4E, 0x5E57, 0x5E54, 0x5E5F, 0x5E62, 0x5E64,
+	0x5E47, 0x5E75, 0x5E76, 0x5E7A, 0x9EBC, 0x5E7F, 0x5EA0, 0x5EC1, 0x5EC2, 0x5EC8, 0x5ED0, 0x5ECF,
+	0x5ED6, 0x5EE3, 0x5EDD, 0x5EDA, 0x5EDB, 0x5EE2, 0x5EE1, 0x5EE8, 0x5EE9, 0x5EEC, 0x5EF1, 0x5EF3,
+	0x5EF0, 0x5EF4, 0x5EF8, 0x5EFE, 0x5F03, 0x5F09, 0x5F5D, 0x5F5C, 0x5F0B, 0x5F11, 0x5F16, 0x5F29,
+	0x5F2D, 0x5F38, 0x5F41, 0x5F48, 0x5F4C, 0x5F4E, 0x5F2F, 0x5F51, 0x5F56, 0x5F57, 0x5F59, 0x5F61,
+	0x5F6D, 0x5F73, 0x5F77, 0x5F83, 0x5F82, 0x5F7F, 0x5F8A, 0x5F88, 0x5F91, 0x5F87, 0x5F9E, 0x5F99,
+	0x5F98, 0x5FA0, 0x5FA8, 0x5FAD, 0x5FBC, 0x5FD6, 0x5FFB, 0x5FE4, 0x5FF8, 0x5FF1, 0x5FDD, 0x60B3,
+	0x5FFF, 0x6021, 0x6060, 0x6019, 0x6010, 0x6029, 0x600E, 0x6031, 0x601B, 0x6015, 0x602B, 0x6026,
+	0x600F, 0x603A, 0x605A, 0x6041, 0x606A, 0x6077, 0x605F, 0x604A, 0x6046, 0x604D, 0x6063, 0x6043,
+	0x6064, 0x6042, 0x606C, 0x606B, 0x6059, 0x6081, 0x608D, 0x60E7, 0x6083, 0x609A, 0x6084, 0x609B,
+	0x6096, 0x6097, 0x6092, 0x60A7, 0x608B, 0x60E1, 0x60B8, 0x60E0, 0x60D3, 0x60B4, 0x5FF0, 0x60BD,
+	0x60C6, 0x60B5, 0x60D8, 0x614D, 0x6115, 0x6106, 0x60F6, 0x60F7, 0x6100, 0x60F4, 0x60FA, 0x6103,
+	0x6121, 0x60FB, 0x60F1, 0x610D, 0x610E, 0x6147, 0x613E, 0x6128, 0x6127, 0x614A, 0x613F, 0x613C,
+	0x612C, 0x6134, 0x613D, 0x6142, 0x6144, 0x6173, 0x6177, 0x6158, 0x6159, 0x615A, 0x616B, 0x6174,
+	0x616F, 0x6165, 0x6171, 0x615F, 0x615D, 0x6153, 0x6175, 0x6199, 0x6196, 0x6187, 0x61AC, 0x6194,
+	0x619A, 0x618A, 0x6191, 0x61AB, 0x61AE, 0x61CC, 0x61CA, 0x61C9, 0x61F7, 0x61C8, 0x61C3, 0x61C6,
+	0x61BA, 0x61CB, 0x7F79, 0x61CD, 0x61E6, 0x61E3, 0x61F6, 0x61FA, 0x61F4, 0x61FF, 0x61FD, 0x61FC,
+	0x61FE, 0x6200, 0x6208, 0x6209, 0x620D, 0x620C, 0x6214, 0x621B, 0x621E, 0x6221, 0x622A, 0x622E,
+	0x6230, 0x6232, 0x6233, 0x6241, 0x624E, 0x625E, 0x6263, 0x625B, 0x6260, 0x6268, 0x627C, 0x6282,
+	0x6289, 0x627E, 0x6292, 0x6293, 0x6296, 0x62D4, 0x6283, 0x6294, 0x62D7, 0x62D1, 0x62BB, 0x62CF,
+	0x62FF, 0x62C6, 0x64D4, 0x62C8, 0x62DC, 0x62CC, 0x62CA, 0x62C2, 0x62C7, 0x629B, 0x62C9, 0x630C,
+	0x62EE, 0x62F1, 0x6327, 0x6302, 0x6308, 0x62EF, 0x62F5, 0x6350, 0x633E, 0x634D, 0x641C, 0x634F,
+	0x6396, 0x638E, 0x6380, 0x63AB, 0x6376, 0x63A3, 0x638F, 0x6389, 0x639F, 0x63B5, 0x636B, 0x6369,
+	0x63BE, 0x63E9, 0x63C0, 0x63C6, 0x63E3, 0x63C9, 0x63D2, 0x63F6, 0x63C4, 0x6416, 0x6434, 0x6406,
+	0x6413, 0x6426, 0x6436, 0x651D, 0x6417, 0x6428, 0x640F, 0x6467, 0x646F, 0x6476, 0x644E, 0x652A,
+	0x6495, 0x6493, 0x64A5, 0x64A9, 0x6488, 0x64BC, 0x64DA, 0x64D2, 0x64C5, 0x64C7, 0x64BB, 0x64D8,
+	0x64C2, 0x64F1, 0x64E7, 0x8209, 0x64E0, 0x64E1, 0x62AC, 0x64E3, 0x64EF, 0x652C, 0x64F6, 0x64F4,
+	0x64F2, 0x64FA, 0x6500, 0x64FD, 0x6518, 0x651C, 0x6505, 0x6524, 0x6523, 0x652B, 0x6534, 0x6535,
+	0x6537, 0x6536, 0x6538, 0x754B, 0x6548, 0x6556, 0x6555, 0x654D, 0x6558, 0x655E, 0x655D, 0x6572,
+	0x6578, 0x6582, 0x6583, 0x8B8A, 0x659B, 0x659F, 0x65AB, 0x65B7, 0x65C3, 0x65C6, 0x65C1, 0x65C4,
+	0x65CC, 0x65D2, 0x65DB, 0x65D9, 0x65E0, 0x65E1, 0x65F1, 0x6772, 0x660A, 0x6603, 0x65FB, 0x6773,
+	0x6635, 0x6636, 0x6634, 0x661C, 0x664F, 0x6644, 0x6649, 0x6641, 0x665E, 0x665D, 0x6664, 0x6667,
+	0x6668, 0x665F, 0x6662, 0x6670, 0x6683, 0x6688, 0x668E, 0x6689, 0x6684, 0x6698, 0x669D, 0x66C1,
+	0x66B9, 0x66C9, 0x66BE, 0x66BC, 0x66C4, 0x66B8, 0x66D6, 0x66DA, 0x66E0, 0x663F, 0x66E6, 0x66E9,
+	0x66F0, 0x66F5, 0x66F7, 0x670F, 0x6716, 0x671E, 0x6726, 0x6727, 0x9738, 0x672E, 0x673F, 0x6736,
+	0x6741, 0x6738, 0x6737, 0x6746, 0x675E, 0x6760, 0x6759, 0x6763, 0x6764, 0x6789, 0x6770, 0x67A9,
+	0x677C, 0x676A, 0x678C, 0x678B, 0x67A6, 0x67A1, 0x6785, 0x67B7, 0x67EF, 0x67B4, 0x67EC, 0x67B3,
+	0x67E9, 0x67B8, 0x67E4, 0x67DE, 0x67DD, 0x67E2, 0x67EE, 0x67B9, 0x67CE, 0x67C6, 0x67E7, 0x6A9C,
+	0x681E, 0x6846, 0x6829, 0x6840, 0x684D, 0x6832, 0x684E, 0x68B3, 0x682B, 0x6859, 0x6863, 0x6877,
+	0x687F, 0x689F, 0x688F, 0x68AD, 0x6894, 0x689D, 0x689B, 0x6883, 0x6AAE, 0x68B9, 0x6874, 0x68B5,
+	0x68A0, 0x68BA, 0x690F, 0x688D, 0x687E, 0x6901, 0x68CA, 0x6908, 0x68D8, 0x6922, 0x6926, 0x68E1,
+	0x690C, 0x68CD, 0x68D4, 0x68E7, 0x68D5, 0x6936, 0x6912, 0x6904, 0x68D7, 0x68E3, 0x6925, 0x68F9,
+	0x68E0, 0x68EF, 0x6928, 0x692A, 0x691A, 0x6923, 0x6921, 0x68C6, 0x6979, 0x6977, 0x695C, 0x6978,
+	0x696B, 0x6954, 0x697E, 0x696E, 0x6939, 0x6974, 0x693D, 0x6959, 0x6930, 0x6961, 0x695E, 0x695D,
+	0x6981, 0x696A, 0x69B2, 0x69AE, 0x69D0, 0x69BF, 0x69C1, 0x69D3, 0x69BE, 0x69CE, 0x5BE8, 0x69CA,
+	0x69DD, 0x69BB, 0x69C3, 0x69A7, 0x6A2E, 0x6991, 0x69A0, 0x699C, 0x6995, 0x69B4, 0x69DE, 0x69E8,
+	0x6A02, 0x6A1B, 0x69FF, 0x6B0A, 0x69F9, 0x69F2, 0x69E7, 0x6A05, 0x69B1, 0x6A1E, 0x69ED, 0x6A14,
+	0x69EB, 0x6A0A, 0x6A12, 0x6AC1, 0x6A23, 0x6A13, 0x6A44, 0x6A0C, 0x6A72, 0x6A36, 0x6A78, 0x6A47,
+	0x6A62, 0x6A59, 0x6A66, 0x6A48, 0x6A38, 0x6A22, 0x6A90, 0x6A8D, 0x6AA0, 0x6A84, 0x6AA2, 0x6AA3,
+	0x6A97, 0x8617, 0x6ABB, 0x6AC3, 0x6AC2, 0x6AB8, 0x6AB3, 0x6AAC, 0x6ADE, 0x6AD1, 0x6ADF, 0x6AAA,
+	0x6ADA, 0x6AEA, 0x6AFB, 0x6B05, 0x8616, 0x6AFA, 0x6B12, 0x6B16, 0x9B31, 0x6B1F, 0x6B38, 0x6B37,
+	0x76DC, 0x6B39, 0x98EE, 0x6B47, 0x6B43, 0x6B49, 0x6B50, 0x6B59, 0x6B54, 0x6B5B, 0x6B5F, 0x6B61,
+	0x6B78, 0x6B79, 0x6B7F, 0x6B80, 0x6B84, 0x6B83, 0x6B8D, 0x6B98, 0x6B95, 0x6B9E, 0x6BA4, 0x6BAA,
+	0x6BAB, 0x6BAF, 0x6BB2, 0x6BB1, 0x6BB3, 0x6BB7, 0x6BBC, 0x6BC6, 0x6BCB, 0x6BD3, 0x6BDF, 0x6BEC,
+	0x6BEB, 0x6BF3, 0x6BEF, 0x9EBE, 0x6C08, 0x6C13, 0x6C14, 0x6C1B, 0x6C24, 0x6C23, 0x6C5E, 0x6C55,
+	0x6C62, 0x6C6A, 0x6C82, 0x6C8D, 0x6C9A, 0x6C81, 0x6C9B, 0x6C7E, 0x6C68, 0x6C73, 0x6C92, 0x6C90,
+	0x6CC4, 0x6CF1, 0x6CD3, 0x6CBD, 0x6CD7, 0x6CC5, 0x6CDD, 0x6CAE, 0x6CB1, 0x6CBE, 0x6CBA, 0x6CDB,
+	0x6CEF, 0x6CD9, 0x6CEA, 0x6D1F, 0x884D, 0x6D36, 0x6D2B, 0x6D3D, 0x6D38, 0x6D19, 0x6D35, 0x6D33,
+	0x6D12, 0x6D0C, 0x6D63, 0x6D93, 0x6D64, 0x6D5A, 0x6D79, 0x6D59, 0x6D8E, 0x6D95, 0x6FE4, 0x6D85,
+	0x6DF9, 0x6E15, 0x6E0A, 0x6DB5, 0x6DC7, 0x6DE6, 0x6DB8, 0x6DC6, 0x6DEC, 0x6DDE, 0x6DCC, 0x6DE8,
+	0x6DD2, 0x6DC5, 0x6DFA, 0x6DD9, 0x6DE4, 0x6DD5, 0x6DEA, 0x6DEE, 0x6E2D, 0x6E6E, 0x6E2E, 0x6E19,
+	0x6E72, 0x6E5F, 0x6E3E, 0x6E23, 0x6E6B, 0x6E2B, 0x6E76, 0x6E4D, 0x6E1F, 0x6E43, 0x6E3A, 0x6E4E,
+	0x6E24, 0x6EFF, 0x6E1D, 0x6E38, 0x6E82, 0x6EAA, 0x6E98, 0x6EC9, 0x6EB7, 0x6ED3, 0x6EBD, 0x6EAF,
+	0x6EC4, 0x6EB2, 0x6ED4, 0x6ED5, 0x6E8F, 0x6EA5, 0x6EC2, 0x6E9F, 0x6F41, 0x6F11, 0x704C, 0x6EEC,
+	0x6EF8, 0x6EFE, 0x6F3F, 0x6EF2, 0x6F31, 0x6EEF, 0x6F32, 0x6ECC, 0x6F3E, 0x6F13, 0x6EF7, 0x6F86,
+	0x6F7A, 0x6F78, 0x6F81, 0x6F80, 0x6F6F, 0x6F5B, 0x6FF3, 0x6F6D, 0x6F82, 0x6F7C, 0x6F58, 0x6F8E,
+	0x6F91, 0x6FC2, 0x6F66, 0x6FB3, 0x6FA3, 0x6FA1, 0x6FA4, 0x6FB9, 0x6FC6, 0x6FAA, 0x6FDF, 0x6FD5,
+	0x6FEC, 0x6FD4, 0x6FD8, 0x6FF1, 0x6FEE, 0x6FDB, 0x7009, 0x700B, 0x6FFA, 0x7011, 0x7001, 0x700F,
+	0x6FFE, 0x701B, 0x701A, 0x6F74, 0x701D, 0x7018, 0x701F, 0x7030, 0x703E, 0x7032, 0x7051, 0x7063,
+	0x7099, 0x7092, 0x70AF, 0x70F1, 0x70AC, 0x70B8, 0x70B3, 0x70AE, 0x70DF, 0x70CB, 0x70DD, 0x70D9,
+	0x7109, 0x70FD, 0x711C, 0x7119, 0x7165, 0x7155, 0x7188, 0x7166, 0x7162, 0x714C, 0x7156, 0x716C,
+	0x718F, 0x71FB, 0x7184, 0x7195, 0x71A8, 0x71AC, 0x71D7, 0x71B9, 0x71BE, 0x71D2, 0x71C9, 0x71D4,
+	0x71CE, 0x71E0, 0x71EC, 0x71E7, 0x71F5, 0x71FC, 0x71F9, 0x71FF, 0x720D, 0x7210, 0x721B, 0x7228,
+	0x722D, 0x722C, 0x7230, 0x7232, 0x723B, 0x723C, 0x723F, 0x7240, 0x7246, 0x724B, 0x7258, 0x7274,
+	0x727E, 0x7282, 0x7281, 0x7287, 0x7292, 0x7296, 0x72A2, 0x72A7, 0x72B9, 0x72B2, 0x72C3, 0x72C6,
+	0x72C4, 0x72CE, 0x72D2, 0x72E2, 0x72E0, 0x72E1, 0x72F9, 0x72F7, 0x500F, 0x7317, 0x730A, 0x731C,
+	0x7316, 0x731D, 0x7334, 0x732F, 0x7329, 0x7325, 0x733E, 0x734E, 0x734F, 0x9ED8, 0x7357, 0x736A,
+	0x7368, 0x7370, 0x7378, 0x7375, 0x737B, 0x737A, 0x73C8, 0x73B3, 0x73CE, 0x73BB, 0x73C0, 0x73E5,
+	0x73EE, 0x73DE, 0x74A2, 0x7405, 0x746F, 0x7425, 0x73F8, 0x7432, 0x743A, 0x7455, 0x743F, 0x745F,
+	0x7459, 0x7441, 0x745C, 0x7469, 0x7470, 0x7463, 0x746A, 0x7476, 0x747E, 0x748B, 0x749E, 0x74A7,
+	0x74CA, 0x74CF, 0x74D4, 0x73F1, 0x74E0, 0x74E3, 0x74E7, 0x74E9, 0x74EE, 0x74F2, 0x74F0, 0x74F1,
+	0x74F8, 0x74F7, 0x7504, 0x7503, 0x7505, 0x750C, 0x750E, 0x750D, 0x7515, 0x7513, 0x751E, 0x7526,
+	0x752C, 0x753C, 0x7544, 0x754D, 0x754A, 0x7549, 0x755B, 0x7546, 0x755A, 0x7569, 0x7564, 0x7567,
+	0x756B, 0x756D, 0x7578, 0x7576, 0x7586, 0x7587, 0x7574, 0x758A, 0x7589, 0x7582, 0x7594, 0x759A,
+	0x759D, 0x75A5, 0x75A3, 0x75C2, 0x75B3, 0x75C3, 0x75B5, 0x75BD, 0x75B8, 0x75BC, 0x75B1, 0x75CD,
+	0x75CA, 0x75D2, 0x75D9, 0x75E3, 0x75DE, 0x75FE, 0x75FF, 0x75FC, 0x7601, 0x75F0, 0x75FA, 0x75F2,
+	0x75F3, 0x760B, 0x760D, 0x7609, 0x761F, 0x7627, 0x7620, 0x7621, 0x7622, 0x7624, 0x7634, 0x7630,
+	0x763B, 0x7647, 0x7648, 0x7646, 0x765C, 0x7658, 0x7661, 0x7662, 0x7668, 0x7669, 0x766A, 0x7667,
+	0x766C, 0x7670, 0x7672, 0x7676, 0x7678, 0x767C, 0x7680, 0x7683, 0x7688, 0x768B, 0x768E, 0x7696,
+	0x7693, 0x7699, 0x769A, 0x76B0, 0x76B4, 0x76B8, 0x76B9, 0x76BA, 0x76C2, 0x76CD, 0x76D6, 0x76D2,
+	0x76DE, 0x76E1, 0x76E5, 0x76E7, 0x76EA, 0x862F, 0x76FB, 0x7708, 0x7707, 0x7704, 0x7729, 0x7724,
+	0x771E, 0x7725, 0x7726, 0x771B, 0x7737, 0x7738, 0x7747, 0x775A, 0x7768, 0x776B, 0x775B, 0x7765,
+	0x777F, 0x777E, 0x7779, 0x778E, 0x778B, 0x7791, 0x77A0, 0x779E, 0x77B0, 0x77B6, 0x77B9, 0x77BF,
+	0x77BC, 0x77BD, 0x77BB, 0x77C7, 0x77CD, 0x77D7, 0x77DA, 0x77DC, 0x77E3, 0x77EE, 0x77FC, 0x780C,
+	0x7812, 0x7926, 0x7820, 0x792A, 0x7845, 0x788E, 0x7874, 0x7886, 0x787C, 0x789A, 0x788C, 0x78A3,
+	0x78B5, 0x78AA, 0x78AF, 0x78D1, 0x78C6, 0x78CB, 0x78D4, 0x78BE, 0x78BC, 0x78C5, 0x78CA, 0x78EC,
+	0x78E7, 0x78DA, 0x78FD, 0x78F4, 0x7907, 0x7912, 0x7911, 0x7919, 0x792C, 0x792B, 0x7940, 0x7960,
+	0x7957, 0x795F, 0x795A, 0x7955, 0x7953, 0x797A, 0x797F, 0x798A, 0x799D, 0x79A7, 0x9F4B, 0x79AA,
+	0x79AE, 0x79B3, 0x79B9, 0x79BA, 0x79C9, 0x79D5, 0x79E7, 0x79EC, 0x79E1, 0x79E3, 0x7A08, 0x7A0D,
+	0x7A18, 0x7A19, 0x7A20, 0x7A1F, 0x7980, 0x7A31, 0x7A3B, 0x7A3E, 0x7A37, 0x7A43, 0x7A57, 0x7A49,
+	0x7A61, 0x7A62, 0x7A69, 0x9F9D, 0x7A70, 0x7A79, 0x7A7D, 0x7A88, 0x7A97, 0x7A95, 0x7A98, 0x7A96,
+	0x7AA9, 0x7AC8, 0x7AB0, 0x7AB6, 0x7AC5, 0x7AC4, 0x7ABF, 0x9083, 0x7AC7, 0x7ACA, 0x7ACD, 0x7ACF,
+	0x7AD5, 0x7AD3, 0x7AD9, 0x7ADA, 0x7ADD, 0x7AE1, 0x7AE2, 0x7AE6, 0x7AED, 0x7AF0, 0x7B02, 0x7B0F,
+	0x7B0A, 0x7B06, 0x7B33, 0x7B18, 0x7B19, 0x7B1E, 0x7B35, 0x7B28, 0x7B36, 0x7B50, 0x7B7A, 0x7B04,
+	0x7B4D, 0x7B0B, 0x7B4C, 0x7B45, 0x7B75, 0x7B65, 0x7B74, 0x7B67, 0x7B70, 0x7B71, 0x7B6C, 0x7B6E,
+	0x7B9D, 0x7B98, 0x7B9F, 0x7B8D, 0x7B9C, 0x7B9A, 0x7B8B, 0x7B92, 0x7B8F, 0x7B5D, 0x7B99, 0x7BCB,
+	0x7BC1, 0x7BCC, 0x7BCF, 0x7BB4, 0x7BC6, 0x7BDD, 0x7BE9, 0x7C11, 0x7C14, 0x7BE6, 0x7BE5, 0x7C60,
+	0x7C00, 0x7C07, 0x7C13, 0x7BF3, 0x7BF7, 0x7C17, 0x7C0D, 0x7BF6, 0x7C23, 0x7C27, 0x7C2A, 0x7C1F,
+	0x7C37, 0x7C2B, 0x7C3D, 0x7C4C, 0x7C43, 0x7C54, 0x7C4F, 0x7C40, 0x7C50, 0x7C58, 0x7C5F, 0x7C64,
+	0x7C56, 0x7C65, 0x7C6C, 0x7C75, 0x7C83, 0x7C90, 0x7CA4, 0x7CAD, 0x7CA2, 0x7CAB, 0x7CA1, 0x7CA8,
+	0x7CB3, 0x7CB2, 0x7CB1, 0x7CAE, 0x7CB9, 0x7CBD, 0x7CC0, 0x7CC5, 0x7CC2, 0x7CD8, 0x7CD2, 0x7CDC,
+	0x7CE2, 0x9B3B, 0x7CEF, 0x7CF2, 0x7CF4, 0x7CF6, 0x7CFA, 0x7D06, 0x7D02, 0x7D1C, 0x7D15, 0x7D0A,
+	0x7D45, 0x7D4B, 0x7D2E, 0x7D32, 0x7D3F, 0x7D35, 0x7D46, 0x7D73, 0x7D56, 0x7D4E, 0x7D72, 0x7D68,
+	0x7D6E, 0x7D4F, 0x7D63, 0x7D93, 0x7D89, 0x7D5B, 0x7D8F, 0x7D7D, 0x7D9B, 0x7DBA, 0x7DAE, 0x7DA3,
+	0x7DB5, 0x7DC7, 0x7DBD, 0x7DAB, 0x7E3D, 0x7DA2, 0x7DAF, 0x7DDC, 0x7DB8, 0x7D9F, 0x7DB0, 0x7DD8,
+	0x7DDD, 0x7DE4, 0x7DDE, 0x7DFB, 0x7DF2, 0x7DE1, 0x7E05, 0x7E0A, 0x7E23, 0x7E21, 0x7E12, 0x7E31,
+	0x7E1F, 0x7E09, 0x7E0B, 0x7E22, 0x7E46, 0x7E66, 0x7E3B, 0x7E35, 0x7E39, 0x7E43, 0x7E37, 0x7E32,
+	0x7E3A, 0x7E67, 0x7E5D, 0x7E56, 0x7E5E, 0x7E59, 0x7E5A, 0x7E79, 0x7E6A, 0x7E69, 0x7E7C, 0x7E7B,
+	0x7E83, 0x7DD5, 0x7E7D, 0x8FAE, 0x7E7F, 0x7E88, 0x7E89, 0x7E8C, 0x7E92, 0x7E90, 0x7E93, 0x7E94,
+	0x7E96, 0x7E8E, 0x7E9B, 0x7E9C, 0x7F38, 0x7F3A, 0x7F45, 0x7F4C, 0x7F4D, 0x7F4E, 0x7F50, 0x7F51,
+	0x7F55, 0x7F54, 0x7F58, 0x7F5F, 0x7F60, 0x7F68, 0x7F69, 0x7F67, 0x7F78, 0x7F82, 0x7F86, 0x7F83,
+	0x7F88, 0x7F87, 0x7F8C, 0x7F94, 0x7F9E, 0x7F9D, 0x7F9A, 0x7FA3, 0x7FAF, 0x7FB2, 0x7FB9, 0x7FAE,
+	0x7FB6, 0x7FB8, 0x8B71, 0x7FC5, 0x7FC6, 0x7FCA, 0x7FD5, 0x7FD4, 0x7FE1, 0x7FE6, 0x7FE9, 0x7FF3,
+	0x7FF9, 0x98DC, 0x8006, 0x8004, 0x800B, 0x8012, 0x8018, 0x8019, 0x801C, 0x8021, 0x8028, 0x803F,
+	0x803B, 0x804A, 0x8046, 0x8052, 0x8058, 0x805A, 0x805F, 0x8062, 0x8068, 0x8073, 0x8072, 0x8070,
+	0x8076, 0x8079, 0x807D, 0x807F, 0x8084, 0x8086, 0x8085, 0x809B, 0x8093, 0x809A, 0x80AD, 0x5190,
+	0x80AC, 0x80DB, 0x80E5, 0x80D9, 0x80DD, 0x80C4, 0x80DA, 0x80D6, 0x8109, 0x80EF, 0x80F1, 0x811B,
+	0x8129, 0x8123, 0x812F, 0x814B, 0x968B, 0x8146, 0x813E, 0x8153, 0x8151, 0x80FC, 0x8171, 0x816E,
+	0x8165, 0x8166, 0x8174, 0x8183, 0x8188, 0x818A, 0x8180, 0x8182, 0x81A0, 0x8195, 0x81A4, 0x81A3,
+	0x815F, 0x8193, 0x81A9, 0x81B0, 0x81B5, 0x81BE, 0x81B8, 0x81BD, 0x81C0, 0x81C2, 0x81BA, 0x81C9,
+	0x81CD, 0x81D1, 0x81D9, 0x81D8, 0x81C8, 0x81DA, 0x81DF, 0x81E0, 0x81E7, 0x81FA, 0x81FB, 0x81FE,
+	0x8201, 0x8202, 0x8205, 0x8207, 0x820A, 0x820D, 0x8210, 0x8216, 0x8229, 0x822B, 0x8238, 0x8233,
+	0x8240, 0x8259, 0x8258, 0x825D, 0x825A, 0x825F, 0x8264, 0x8262, 0x8268, 0x826A, 0x826B, 0x822E,
+	0x8271, 0x8277, 0x8278, 0x827E, 0x828D, 0x8292, 0x82AB, 0x829F, 0x82BB, 0x82AC, 0x82E1, 0x82E3,
+	0x82DF, 0x82D2, 0x82F4, 0x82F3, 0x82FA, 0x8393, 0x8303, 0x82FB, 0x82F9, 0x82DE, 0x8306, 0x82DC,
+	0x8309, 0x82D9, 0x8335, 0x8334, 0x8316, 0x8332, 0x8331, 0x8340, 0x8339, 0x8350, 0x8345, 0x832F,
+	0x832B, 0x8317, 0x8318, 0x8385, 0x839A, 0x83AA, 0x839F, 0x83A2, 0x8396, 0x8323, 0x838E, 0x8387,
+	0x838A, 0x837C, 0x83B5, 0x8373, 0x8375, 0x83A0, 0x8389, 0x83A8, 0x83F4, 0x8413, 0x83EB, 0x83CE,
+	0x83FD, 0x8403, 0x83D8, 0x840B, 0x83C1, 0x83F7, 0x8407, 0x83E0, 0x83F2, 0x840D, 0x8422, 0x8420,
+	0x83BD, 0x8438, 0x8506, 0x83FB, 0x846D, 0x842A, 0x843C, 0x855A, 0x8484, 0x8477, 0x846B, 0x84AD,
+	0x846E, 0x8482, 0x8469, 0x8446, 0x842C, 0x846F, 0x8479, 0x8435, 0x84CA, 0x8462, 0x84B9, 0x84BF,
+	0x849F, 0x84D9, 0x84CD, 0x84BB, 0x84DA, 0x84D0, 0x84C1, 0x84C6, 0x84D6, 0x84A1, 0x8521, 0x84FF,
+	0x84F4, 0x8517, 0x8518, 0x852C, 0x851F, 0x8515, 0x8514, 0x84FC, 0x8540, 0x8563, 0x8558, 0x8548,
+	0x8541, 0x8602, 0x854B, 0x8555, 0x8580, 0x85A4, 0x8588, 0x8591, 0x858A, 0x85A8, 0x856D, 0x8594,
+	0x859B, 0x85EA, 0x8587, 0x859C, 0x8577, 0x857E, 0x8590, 0x85C9, 0x85BA, 0x85CF, 0x85B9, 0x85D0,
+	0x85D5, 0x85DD, 0x85E5, 0x85DC, 0x85F9, 0x860A, 0x8613, 0x860B, 0x85FE, 0x85FA, 0x8606, 0x8622,
+	0x861A, 0x8630, 0x863F, 0x864D, 0x4E55, 0x8654, 0x865F, 0x8667, 0x8671, 0x8693, 0x86A3, 0x86A9,
+	0x86AA, 0x868B, 0x868C, 0x86B6, 0x86AF, 0x86C4, 0x86C6, 0x86B0, 0x86C9, 0x8823, 0x86AB, 0x86D4,
+	0x86DE, 0x86E9, 0x86EC, 0x86DF, 0x86DB, 0x86EF, 0x8712, 0x8706, 0x8708, 0x8700, 0x8703, 0x86FB,
+	0x8711, 0x8709, 0x870D, 0x86F9, 0x870A, 0x8734, 0x873F, 0x8737, 0x873B, 0x8725, 0x8729, 0x871A,
+	0x8760, 0x875F, 0x8778, 0x874C, 0x874E, 0x8774, 0x8757, 0x8768, 0x876E, 0x8759, 0x8753, 0x8763,
+	0x876A, 0x8805, 0x87A2, 0x879F, 0x8782, 0x87AF, 0x87CB, 0x87BD, 0x87C0, 0x87D0, 0x96D6, 0x87AB,
+	0x87C4, 0x87B3, 0x87C7, 0x87C6, 0x87BB, 0x87EF, 0x87F2, 0x87E0, 0x880F, 0x880D, 0x87FE, 0x87F6,
+	0x87F7, 0x880E, 0x87D2, 0x8811, 0x8816, 0x8815, 0x8822, 0x8821, 0x8831, 0x8836, 0x8839, 0x8827,
+	0x883B, 0x8844, 0x8842, 0x8852, 0x8859, 0x885E, 0x8862, 0x886B, 0x8881, 0x887E, 0x889E, 0x8875,
+	0x887D, 0x88B5, 0x8872, 0x8882, 0x8897, 0x8892, 0x88AE, 0x8899, 0x88A2, 0x888D, 0x88A4, 0x88B0,
+	0x88BF, 0x88B1, 0x88C3, 0x88C4, 0x88D4, 0x88D8, 0x88D9, 0x88DD, 0x88F9, 0x8902, 0x88FC, 0x88F4,
+	0x88E8, 0x88F2, 0x8904, 0x890C, 0x890A, 0x8913, 0x8943, 0x891E, 0x8925, 0x892A, 0x892B, 0x8941,
+	0x8944, 0x893B, 0x8936, 0x8938, 0x894C, 0x891D, 0x8960, 0x895E, 0x8966, 0x8964, 0x896D, 0x896A,
+	0x896F, 0x8974, 0x8977, 0x897E, 0x8983, 0x8988, 0x898A, 0x8993, 0x8998, 0x89A1, 0x89A9, 0x89A6,
+	0x89AC, 0x89AF, 0x89B2, 0x89BA, 0x89BD, 0x89BF, 0x89C0, 0x89DA, 0x89DC, 0x89DD, 0x89E7, 0x89F4,
+	0x89F8, 0x8A03, 0x8A16, 0x8A10, 0x8A0C, 0x8A1B, 0x8A1D, 0x8A25, 0x8A36, 0x8A41, 0x8A5B, 0x8A52,
+	0x8A46, 0x8A48, 0x8A7C, 0x8A6D, 0x8A6C, 0x8A62, 0x8A85, 0x8A82, 0x8A84, 0x8AA8, 0x8AA1, 0x8A91,
+	0x8AA5, 0x8AA6, 0x8A9A, 0x8AA3, 0x8AC4, 0x8ACD, 0x8AC2, 0x8ADA, 0x8AEB, 0x8AF3, 0x8AE7, 0x8AE4,
+	0x8AF1, 0x8B14, 0x8AE0, 0x8AE2, 0x8AF7, 0x8ADE, 0x8ADB, 0x8B0C, 0x8B07, 0x8B1A, 0x8AE1, 0x8B16,
+	0x8B10, 0x8B17, 0x8B20, 0x8B33, 0x97AB, 0x8B26, 0x8B2B, 0x8B3E, 0x8B28, 0x8B41, 0x8B4C, 0x8B4F,
+	0x8B4E, 0x8B49, 0x8B56, 0x8B5B, 0x8B5A, 0x8B6B, 0x8B5F, 0x8B6C, 0x8B6F, 0x8B74, 0x8B7D, 0x8B80,
+	0x8B8C, 0x8B8E, 0x8B92, 0x8B93, 0x8B96, 0x8B99, 0x8B9A, 0x8C3A, 0x8C41, 0x8C3F, 0x8C48, 0x8C4C,
+	0x8C4E, 0x8C50, 0x8C55, 0x8C62, 0x8C6C, 0x8C78, 0x8C7A, 0x8C82, 0x8C89, 0x8C85, 0x8C8A, 0x8C8D,
+	0x8C8E, 0x8C94, 0x8C7C, 0x8C98, 0x621D, 0x8CAD, 0x8CAA, 0x8CBD, 0x8CB2, 0x8CB3, 0x8CAE, 0x8CB6,
+	0x8CC8, 0x8CC1, 0x8CE4, 0x8CE3, 0x8CDA, 0x8CFD, 0x8CFA, 0x8CFB, 0x8D04, 0x8D05, 0x8D0A, 0x8D07,
+	0x8D0F, 0x8D0D, 0x8D10, 0x9F4E, 0x8D13, 0x8CCD, 0x8D14, 0x8D16, 0x8D67, 0x8D6D, 0x8D71, 0x8D73,
+	0x8D81, 0x8D99, 0x8DC2, 0x8DBE, 0x8DBA, 0x8DCF, 0x8DDA, 0x8DD6, 0x8DCC, 0x8DDB, 0x8DCB, 0x8DEA,
+	0x8DEB, 0x8DDF, 0x8DE3, 0x8DFC, 0x8E08, 0x8E09, 0x8DFF, 0x8E1D, 0x8E1E, 0x8E10, 0x8E1F, 0x8E42,
+	0x8E35, 0x8E30, 0x8E34, 0x8E4A, 0x8E47, 0x8E49, 0x8E4C, 0x8E50, 0x8E48, 0x8E59, 0x8E64, 0x8E60,
+	0x8E2A, 0x8E63, 0x8E55, 0x8E76, 0x8E72, 0x8E7C, 0x8E81, 0x8E87, 0x8E85, 0x8E84, 0x8E8B, 0x8E8A,
+	0x8E93, 0x8E91, 0x8E94, 0x8E99, 0x8EAA, 0x8EA1, 0x8EAC, 0x8EB0, 0x8EC6, 0x8EB1, 0x8EBE, 0x8EC5,
+	0x8EC8, 0x8ECB, 0x8EDB, 0x8EE3, 0x8EFC, 0x8EFB, 0x8EEB, 0x8EFE, 0x8F0A, 0x8F05, 0x8F15, 0x8F12,
+	0x8F19, 0x8F13, 0x8F1C, 0x8F1F, 0x8F1B, 0x8F0C, 0x8F26, 0x8F33, 0x8F3B, 0x8F39, 0x8F45, 0x8F42,
+	0x8F3E, 0x8F4C, 0x8F49, 0x8F46, 0x8F4E, 0x8F57, 0x8F5C, 0x8F62, 0x8F63, 0x8F64, 0x8F9C, 0x8F9F,
+	0x8FA3, 0x8FAD, 0x8FAF, 0x8FB7, 0x8FDA, 0x8FE5, 0x8FE2, 0x8FEA, 0x8FEF, 0x9087, 0x8FF4, 0x9005,
+	0x8FF9, 0x8FFA, 0x9011, 0x9015, 0x9021, 0x900D, 0x901E, 0x9016, 0x900B, 0x9027, 0x9036, 0x9035,
+	0x9039, 0x8FF8, 0x904F, 0x9050, 0x9051, 0x9052, 0x900E, 0x9049, 0x903E, 0x9056, 0x9058, 0x905E,
+	0x9068, 0x906F, 0x9076, 0x96A8, 0x9072, 0x9082, 0x907D, 0x9081, 0x9080, 0x908A, 0x9089, 0x908F,
+	0x90A8, 0x90AF, 0x90B1, 0x90B5, 0x90E2, 0x90E4, 0x6248, 0x90DB, 0x9102, 0x9112, 0x9119, 0x9132,
+	0x9130, 0x914A, 0x9156, 0x9158, 0x9163, 0x9165, 0x9169, 0x9173, 0x9172, 0x918B, 0x9189, 0x9182,
+	0x91A2, 0x91AB, 0x91AF, 0x91AA, 0x91B5, 0x91B4, 0x91BA, 0x91C0, 0x91C1, 0x91C9, 0x91CB, 0x91D0,
+	0x91D6, 0x91DF, 0x91E1, 0x91DB, 0x91FC, 0x91F5, 0x91F6, 0x921E, 0x91FF, 0x9214, 0x922C, 0x9215,
+	0x9211, 0x925E, 0x9257, 0x9245, 0x9249, 0x9264, 0x9248, 0x9295, 0x923F, 0x924B, 0x9250, 0x929C,
+	0x9296, 0x9293, 0x929B, 0x925A, 0x92CF, 0x92B9, 0x92B7, 0x92E9, 0x930F, 0x92FA, 0x9344, 0x932E,
+	0x9319, 0x9322, 0x931A, 0x9323, 0x933A, 0x9335, 0x933B, 0x935C, 0x9360, 0x937C, 0x936E, 0x9356,
+	0x93B0, 0x93AC, 0x93AD, 0x9394, 0x93B9, 0x93D6, 0x93D7, 0x93E8, 0x93E5, 0x93D8, 0x93C3, 0x93DD,
+	0x93D0, 0x93C8, 0x93E4, 0x941A, 0x9414, 0x9413, 0x9403, 0x9407, 0x9410, 0x9436, 0x942B, 0x9435,
+	0x9421, 0x943A, 0x9441, 0x9452, 0x9444, 0x945B, 0x9460, 0x9462, 0x945E, 0x946A, 0x9229, 0x9470,
+	0x9475, 0x9477, 0x947D, 0x945A, 0x947C, 0x947E, 0x9481, 0x947F, 0x9582, 0x9587, 0x958A, 0x9594,
+	0x9596, 0x9598, 0x9599, 0x95A0, 0x95A8, 0x95A7, 0x95AD, 0x95BC, 0x95BB, 0x95B9, 0x95BE, 0x95CA,
+	0x6FF6, 0x95C3, 0x95CD, 0x95CC, 0x95D5, 0x95D4, 0x95D6, 0x95DC, 0x95E1, 0x95E5, 0x95E2, 0x9621,
+	0x9628, 0x962E, 0x962F, 0x9642, 0x964C, 0x964F, 0x964B, 0x9677, 0x965C, 0x965E, 0x965D, 0x965F,
+	0x9666, 0x9672, 0x966C, 0x968D, 0x9698, 0x9695, 0x9697, 0x96AA, 0x96A7, 0x96B1, 0x96B2, 0x96B0,
+	0x96B4, 0x96B6, 0x96B8, 0x96B9, 0x96CE, 0x96CB, 0x96C9, 0x96CD, 0x894D, 0x96DC, 0x970D, 0x96D5,
+	0x96F9, 0x9704, 0x9706, 0x9708, 0x9713, 0x970E, 0x9711, 0x970F, 0x9716, 0x9719, 0x9724, 0x972A,
+	0x9730, 0x9739, 0x973D, 0x973E, 0x9744, 0x9746, 0x9748, 0x9742, 0x9749, 0x975C, 0x9760, 0x9764,
+	0x9766, 0x9768, 0x52D2, 0x976B, 0x9771, 0x9779, 0x9785, 0x977C, 0x9781, 0x977A, 0x9786, 0x978B,
+	0x978F, 0x9790, 0x979C, 0x97A8, 0x97A6, 0x97A3, 0x97B3, 0x97B4, 0x97C3, 0x97C6, 0x97C8, 0x97CB,
+	0x97DC, 0x97ED, 0x9F4F, 0x97F2, 0x7ADF, 0x97F6, 0x97F5, 0x980F, 0x980C, 0x9838, 0x9824, 0x9821,
+	0x9837, 0x983D, 0x9846, 0x984F, 0x984B, 0x986B, 0x986F, 0x9870, 0x9871, 0x9874, 0x9873, 0x98AA,
+	0x98AF, 0x98B1, 0x98B6, 0x98C4, 0x98C3, 0x98C6, 0x98E9, 0x98EB, 0x9903, 0x9909, 0x9912, 0x9914,
+	0x9918, 0x9921, 0x991D, 0x991E, 0x9924, 0x9920, 0x992C, 0x992E, 0x993D, 0x993E, 0x9942, 0x9949,
+	0x9945, 0x9950, 0x994B, 0x9951, 0x9952, 0x994C, 0x9955, 0x9997, 0x9998, 0x99A5, 0x99AD, 0x99AE,
+	0x99BC, 0x99DF, 0x99DB, 0x99DD, 0x99D8, 0x99D1, 0x99ED, 0x99EE, 0x99F1, 0x99F2, 0x99FB, 0x99F8,
+	0x9A01, 0x9A0F, 0x9A05, 0x99E2, 0x9A19, 0x9A2B, 0x9A37, 0x9A45, 0x9A42, 0x9A40, 0x9A43, 0x9A3E,
+	0x9A55, 0x9A4D, 0x9A5B, 0x9A57, 0x9A5F, 0x9A62, 0x9A65, 0x9A64, 0x9A69, 0x9A6B, 0x9A6A, 0x9AAD,
+	0x9AB0, 0x9ABC, 0x9AC0, 0x9ACF, 0x9AD1, 0x9AD3, 0x9AD4, 0x9ADE, 0x9ADF, 0x9AE2, 0x9AE3, 0x9AE6,
+	0x9AEF, 0x9AEB, 0x9AEE, 0x9AF4, 0x9AF1, 0x9AF7, 0x9AFB, 0x9B06, 0x9B18, 0x9B1A, 0x9B1F, 0x9B22,
+	0x9B23, 0x9B25, 0x9B27, 0x9B28, 0x9B29, 0x9B2A, 0x9B2E, 0x9B2F, 0x9B32, 0x9B44, 0x9B43, 0x9B4F,
+	0x9B4D, 0x9B4E, 0x9B51, 0x9B58, 0x9B74, 0x9B93, 0x9B83, 0x9B91, 0x9B96, 0x9B97, 0x9B9F, 0x9BA0,
+	0x9BA8, 0x9BB4, 0x9BC0, 0x9BCA, 0x9BB9, 0x9BC6, 0x9BCF, 0x9BD1, 0x9BD2, 0x9BE3, 0x9BE2, 0x9BE4,
+	0x9BD4, 0x9BE1, 0x9C3A, 0x9BF2, 0x9BF1, 0x9BF0, 0x9C15, 0x9C14, 0x9C09, 0x9C13, 0x9C0C, 0x9C06,
+	0x9C08, 0x9C12, 0x9C0A, 0x9C04, 0x9C2E, 0x9C1B, 0x9C25, 0x9C24, 0x9C21, 0x9C30, 0x9C47, 0x9C32,
+	0x9C46, 0x9C3E, 0x9C5A, 0x9C60, 0x9C67, 0x9C76, 0x9C78, 0x9CE7, 0x9CEC, 0x9CF0, 0x9D09, 0x9D08,
+	0x9CEB, 0x9D03, 0x9D06, 0x9D2A, 0x9D26, 0x9DAF, 0x9D23, 0x9D1F, 0x9D44, 0x9D15, 0x9D12, 0x9D41,
+	0x9D3F, 0x9D3E, 0x9D46, 0x9D48, 0x9D5D, 0x9D5E, 0x9D64, 0x9D51, 0x9D50, 0x9D59, 0x9D72, 0x9D89,
+	0x9D87, 0x9DAB, 0x9D6F, 0x9D7A, 0x9D9A, 0x9DA4, 0x9DA9, 0x9DB2, 0x9DC4, 0x9DC1, 0x9DBB, 0x9DB8,
+	0x9DBA, 0x9DC6, 0x9DCF, 0x9DC2, 0x9DD9, 0x9DD3, 0x9DF8, 0x9DE6, 0x9DED, 0x9DEF, 0x9DFD, 0x9E1A,
+	0x9E1B, 0x9E1E, 0x9E75, 0x9E79, 0x9E7D, 0x9E81, 0x9E88, 0x9E8B, 0x9E8C, 0x9E92, 0x9E95, 0x9E91,
+	0x9E9D, 0x9EA5, 0x9EA9, 0x9EB8, 0x9EAA, 0x9EAD, 0x9761, 0x9ECC, 0x9ECE, 0x9ECF, 0x9ED0, 0x9ED4,
+	0x9EDC, 0x9EDE, 0x9EDD, 0x9EE0, 0x9EE5, 0x9EE8, 0x9EEF, 0x9EF4, 0x9EF6, 0x9EF7, 0x9EF9, 0x9EFB,
+	0x9EFC, 0x9EFD, 0x9F07, 0x9F08, 0x76B7, 0x9F15, 0x9F21, 0x9F2C, 0x9F3E, 0x9F4A, 0x9F52, 0x9F54,
+	0x9F63, 0x9F5F, 0x9F60, 0x9F61, 0x9F66, 0x9F67, 0x9F6C, 0x9F6A, 0x9F77, 0x9F72, 0x9F76, 0x9F95,
+	0x9F9C, 0x9FA0, 0x582F, 0x69C7, 0x9059, 0x7464, 0x51DC, 0x7199, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+};
+
+
+/* PC-98-owned BMP image decoder and BeUI state/core. */
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI image decoders, imported from the Boots graphical layer
+ * (beui/image.c) when BeUI was promoted to a Noct non-standard API.
+ *
+ * BMP is used instead of PNG so a pre-boot environment does not require
+ * a DEFLATE implementation.  The decoder is freestanding and
+ * allocation-free: callers measure first, then supply pixel storage.
+ */
+
+
+
+struct bmp_layout {
+	const uint8_t *bytes;
+	size_t size;
+	size_t data_offset;
+	size_t source_stride;
+	size_t output_stride;
+	size_t output_size;
+	size_t palette_offset;
+	unsigned palette_size;
+	unsigned width;
+	unsigned height;
+	unsigned bits_per_pixel;
+	int top_down;
+	enum noct_beui_image_format format;
+};
+
+static uint16_t
+read_u16(const uint8_t *bytes)
+{
+	return (uint16_t)(bytes[0] | (uint16_t)bytes[1] << 8);
+}
+
+static uint32_t
+read_u32(const uint8_t *bytes)
+{
+	return (uint32_t)bytes[0] | (uint32_t)bytes[1] << 8 |
+	       (uint32_t)bytes[2] << 16 | (uint32_t)bytes[3] << 24;
+}
+
+static int32_t
+read_s32(const uint8_t *bytes)
+{
+	return (int32_t)read_u32(bytes);
+}
+
+static int
+add_overflows(size_t left, size_t right)
+{
+	return left > SIZE_MAX - right;
+}
+
+static int
+multiply_overflows(size_t left, size_t right)
+{
+	return left != 0 && right > SIZE_MAX / left;
+}
+
+static int
+parse_layout(const void *data, size_t size, struct bmp_layout *layout)
+{
+	const uint8_t *bytes = data;
+	uint32_t dib_size;
+	uint32_t data_offset;
+	uint32_t colors_used;
+	int32_t signed_width;
+	int32_t signed_height;
+	size_t row_bits;
+	size_t palette_end;
+	size_t source_bytes;
+	unsigned bytes_per_pixel;
+
+	if (bytes == NULL || layout == NULL || size < 54U || bytes[0] != 'B' ||
+	    bytes[1] != 'M')
+		return 0;
+	dib_size = read_u32(bytes + 14);
+	data_offset = read_u32(bytes + 10);
+	if (dib_size < 40U || add_overflows(14U, dib_size) ||
+	    14U + dib_size > size || data_offset > size)
+		return 0;
+	signed_width = read_s32(bytes + 18);
+	signed_height = read_s32(bytes + 22);
+	if (signed_width <= 0 || signed_height == 0 || signed_height == INT32_MIN ||
+	    read_u16(bytes + 26) != 1U || read_u32(bytes + 30) != 0U)
+		return 0;
+	memset(layout, 0, sizeof(*layout));
+	layout->bytes = bytes;
+	layout->size = size;
+	layout->data_offset = data_offset;
+	layout->width = (unsigned)signed_width;
+	layout->height = signed_height < 0 ? (unsigned)-signed_height :
+		(unsigned)signed_height;
+	layout->top_down = signed_height < 0;
+	layout->bits_per_pixel = read_u16(bytes + 28);
+	switch (layout->bits_per_pixel) {
+	case 1:
+	case 4:
+	case 8:
+		layout->format = NOCT_BEUI_IMAGE_INDEX8;
+		bytes_per_pixel = 1;
+		colors_used = read_u32(bytes + 46);
+		layout->palette_size = colors_used != 0 ? colors_used :
+			1U << layout->bits_per_pixel;
+		if (layout->palette_size == 0 || layout->palette_size > 256U)
+			return 0;
+		layout->palette_offset = 14U + dib_size;
+		if (multiply_overflows(layout->palette_size, 4U) ||
+		    add_overflows(layout->palette_offset,
+				  (size_t)layout->palette_size * 4U))
+			return 0;
+		palette_end = layout->palette_offset +
+			(size_t)layout->palette_size * 4U;
+		if (palette_end > data_offset || palette_end > size)
+			return 0;
+		break;
+	case 24:
+		layout->format = NOCT_BEUI_IMAGE_RGB24;
+		bytes_per_pixel = 3;
+		break;
+	default:
+		return 0;
+	}
+	if (multiply_overflows(layout->width, layout->bits_per_pixel))
+		return 0;
+	row_bits = (size_t)layout->width * layout->bits_per_pixel;
+	if (add_overflows(row_bits, 31U))
+		return 0;
+	layout->source_stride = ((row_bits + 31U) / 32U) * 4U;
+	if (multiply_overflows(layout->width, bytes_per_pixel))
+		return 0;
+	layout->output_stride = (size_t)layout->width * bytes_per_pixel;
+	if (multiply_overflows(layout->source_stride, layout->height) ||
+	    multiply_overflows(layout->output_stride, layout->height))
+		return 0;
+	source_bytes = layout->source_stride * layout->height;
+	layout->output_size = layout->output_stride * layout->height;
+	if (add_overflows(data_offset, source_bytes) ||
+	    data_offset + source_bytes > size)
+		return 0;
+	return 1;
+}
+
+static int
+noct_beui_bmp_measure(const void *data, size_t size,
+		       enum noct_beui_image_format *format,
+		       unsigned *width, unsigned *height, size_t *pixel_bytes)
+{
+	struct bmp_layout layout;
+
+	if (format == NULL || width == NULL || height == NULL ||
+	    pixel_bytes == NULL || !parse_layout(data, size, &layout))
+		return 0;
+	*format = layout.format;
+	*width = layout.width;
+	*height = layout.height;
+	*pixel_bytes = layout.output_size;
+	return 1;
+}
+
+static int
+noct_beui_bmp_decode(const void *data, size_t size, void *pixel_storage,
+		      size_t pixel_capacity, struct noct_beui_image *image)
+{
+	struct bmp_layout layout;
+	uint8_t *output = pixel_storage;
+	unsigned y;
+
+	if (output == NULL || image == NULL ||
+	    !parse_layout(data, size, &layout) ||
+	    pixel_capacity < layout.output_size)
+		return 0;
+	memset(image, 0, sizeof(*image));
+	image->format = layout.format;
+	image->width = layout.width;
+	image->height = layout.height;
+	image->stride = layout.output_stride;
+	image->pixels = output;
+	image->palette_size = layout.palette_size;
+	for (y = 0; y < layout.palette_size; y++) {
+		const uint8_t *entry = layout.bytes + layout.palette_offset +
+			(size_t)y * 4U;
+
+		image->palette[y] = (uint32_t)entry[2] << 16 |
+			(uint32_t)entry[1] << 8 | entry[0];
+	}
+	for (y = 0; y < layout.height; y++) {
+		unsigned source_y = layout.top_down ? y : layout.height - 1U - y;
+		const uint8_t *source = layout.bytes + layout.data_offset +
+			(size_t)source_y * layout.source_stride;
+		uint8_t *destination = output + (size_t)y * layout.output_stride;
+		unsigned x;
+
+		if (layout.bits_per_pixel == 1U) {
+			for (x = 0; x < layout.width; x++)
+				destination[x] = (uint8_t)(
+					(source[x >> 3] >> (7U - (x & 7U))) & 1U);
+		} else if (layout.bits_per_pixel == 4U) {
+			for (x = 0; x < layout.width; x++)
+				destination[x] = (uint8_t)(
+					(source[x >> 1] >> ((x & 1U) ? 0U : 4U)) &
+					0x0fU);
+		} else if (layout.bits_per_pixel == 8U) {
+			memcpy(destination, source, layout.width);
+		} else {
+			for (x = 0; x < layout.width; x++) {
+				destination[(size_t)x * 3U] = source[(size_t)x * 3U + 2U];
+				destination[(size_t)x * 3U + 1U] = source[(size_t)x * 3U + 1U];
+				destination[(size_t)x * 3U + 2U] = source[(size_t)x * 3U];
+			}
+		}
+	}
+	return 1;
+}
+
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI lifecycle and hardware abstraction, imported from the Boots
+ * graphical layer (beui/beui.c) when BeUI was promoted to a Noct
+ * non-standard API.
+ */
+
+
+
+/*
+ * A decoded image lives until the script destroys it or the VM shuts
+ * down.  Pixels are appended to the entry so one allocation covers both.
+ */
+struct noct_beui_image_entry {
+	struct noct_beui_image_entry *next;
+	int handle;
+	struct noct_beui_image image;
+	uint8_t pixels[1];
+};
+
+#define NOCT_BEUI_IMAGE_SOURCE_MAX (2U * 1024U * 1024U)
+#define NOCT_BEUI_IMAGE_PIXELS_MAX (2U * 1024U * 1024U)
+
+struct noct_beui_state {
+	const struct noct_beui_hal *hal;
+	struct noct_beui_display_info display;
+	int display_open;
+	int pointer_open;
+	int audio_open;
+	int close_requested;
+	unsigned pointer_x;
+	unsigned pointer_y;
+	unsigned pointer_buttons;
+	struct noct_beui_image_entry *images;
+	int next_image_handle;
+};
+
+static struct noct_beui_state state;
+
+static int
+noct_beui_bind(const struct noct_beui_hal *hal)
+{
+	if (state.display_open || state.pointer_open || state.audio_open)
+		return 0;
+	state.hal = hal;
+	return 1;
+}
+
+static int
+noct_beui_init(void)
+{
+	return noct_beui_init_with_hint(0);
+}
+
+static int
+noct_beui_init_with_hint(unsigned preferred_bits_per_pixel)
+{
+	if (state.display_open)
+		return 1;
+	if (state.hal == NULL || state.hal->display.enter == NULL ||
+	    state.hal->display.leave == NULL)
+		return 0;
+	memset(&state.display, 0, sizeof(state.display));
+	state.display.preferred_bits_per_pixel = preferred_bits_per_pixel;
+	if (!state.hal->display.enter(state.hal->display.context,
+				      &state.display))
+		return 0;
+	state.display_open = 1;
+	state.close_requested = 0;
+	state.pointer_buttons = 0;
+	/* Input typed before the graphics session belongs to the caller's
+	 * previous screen.  Discard it before the application begins waiting
+	 * for BeUI keys, just as close() drains keys before returning. */
+	noct_beui_drain_input();
+	if (state.display.width == 0 || state.display.height == 0)
+		goto fail;
+	/* A pointer starts centred so scripts never read a stale origin. */
+	state.pointer_x = state.display.width / 2U;
+	state.pointer_y = state.display.height / 2U;
+	if (state.hal->pointer.start != NULL) {
+		if (!state.hal->pointer.start(state.hal->pointer.context,
+					      &state.display))
+			goto fail;
+		state.pointer_open = 1;
+	}
+	return 1;
+
+fail:
+	noct_beui_close();
+	return 0;
+}
+
+static void
+noct_beui_close(void)
+{
+	if (state.hal == NULL)
+		return;
+	/* Keys held during a session must not leak to the caller. */
+	noct_beui_drain_input();
+	if (state.audio_open && state.hal->audio.stop != NULL)
+		state.hal->audio.stop(state.hal->audio.context);
+	state.audio_open = 0;
+	if (state.pointer_open && state.hal->pointer.stop != NULL)
+		state.hal->pointer.stop(state.hal->pointer.context);
+	state.pointer_open = 0;
+	if (state.display_open && state.hal->display.leave != NULL)
+		state.hal->display.leave(state.hal->display.context);
+	state.display_open = 0;
+	memset(&state.display, 0, sizeof(state.display));
+}
+
+static void
+noct_beui_cleanup(void)
+{
+	struct noct_beui_image_entry *entry = state.images;
+
+	noct_beui_close();
+	while (entry != NULL) {
+		struct noct_beui_image_entry *next = entry->next;
+
+		free(entry);
+		entry = next;
+	}
+	memset(&state, 0, sizeof(state));
+}
+
+static int
+noct_beui_is_open(void)
+{
+	return state.display_open;
+}
+
+static int
+noct_beui_get_display_info(struct noct_beui_display_info *info)
+{
+	if (!state.display_open || info == NULL)
+		return 0;
+	*info = state.display;
+	return 1;
+}
+
+static int
+noct_beui_fill(const struct noct_beui_rect *rect, uint32_t color)
+{
+	if (!state.display_open || rect == NULL || rect->width == 0 ||
+	    rect->height == 0 || rect->x >= state.display.width ||
+	    rect->y >= state.display.height ||
+	    rect->width > state.display.width - rect->x ||
+	    rect->height > state.display.height - rect->y ||
+	    state.hal->display.fill == NULL)
+		return 0;
+	return state.hal->display.fill(state.hal->display.context, rect, color);
+}
+
+static int
+noct_beui_line(unsigned x0, unsigned y0, unsigned x1, unsigned y1,
+		 uint32_t color)
+{
+	if (!state.display_open || x0 >= state.display.width ||
+	    x1 >= state.display.width || y0 >= state.display.height ||
+	    y1 >= state.display.height || state.hal->display.line == NULL)
+		return 0;
+	return state.hal->display.line(state.hal->display.context, x0, y0, x1,
+				       y1, color);
+}
+
+static int
+noct_beui_pattern_fill(const struct noct_beui_rect *rect, uint32_t color,
+			 uint64_t pattern)
+{
+	if (!state.display_open || rect == NULL || rect->width == 0 ||
+	    rect->height == 0 || rect->x >= state.display.width ||
+	    rect->y >= state.display.height ||
+	    rect->width > state.display.width - rect->x ||
+	    rect->height > state.display.height - rect->y ||
+	    state.hal->display.pattern_fill == NULL)
+		return 0;
+	return state.hal->display.pattern_fill(state.hal->display.context, rect,
+					       color, pattern);
+}
+
+static int
+image_valid(const struct noct_beui_image *image)
+{
+	if (image == NULL || image->pixels == NULL ||
+	    image->width == 0 || image->height == 0 ||
+	    (image->format != NOCT_BEUI_IMAGE_INDEX8 &&
+	     image->format != NOCT_BEUI_IMAGE_RGB24) ||
+	    (image->format == NOCT_BEUI_IMAGE_INDEX8 &&
+	     (image->palette_size == 0 || image->palette_size > 256)))
+		return 0;
+	if (image->format == NOCT_BEUI_IMAGE_RGB24)
+		return image->stride / 3U >= image->width;
+	return image->stride >= image->width;
+}
+
+static int
+noct_beui_draw_image(unsigned x, unsigned y,
+		       const struct noct_beui_image *image)
+{
+	if (!state.display_open || !image_valid(image) ||
+	    x >= state.display.width || y >= state.display.height ||
+	    image->width > state.display.width - x ||
+	    image->height > state.display.height - y ||
+	    state.hal->display.draw_image == NULL)
+		return 0;
+	return state.hal->display.draw_image(state.hal->display.context, x, y,
+					     image);
+}
+
+static int
+noct_beui_draw_image_region(const struct noct_beui_image *image,
+			      unsigned source_x, unsigned source_y,
+			      unsigned width, unsigned height,
+			      unsigned destination_x,
+			      unsigned destination_y)
+{
+	struct noct_beui_image region;
+	size_t pixel_size;
+	size_t offset;
+
+	if (!image_valid(image) || width == 0 || height == 0 ||
+	    source_x >= image->width || source_y >= image->height ||
+	    width > image->width - source_x ||
+	    height > image->height - source_y ||
+	    source_y > (size_t)-1 / image->stride)
+		return 0;
+	pixel_size = image->format == NOCT_BEUI_IMAGE_RGB24 ? 3U : 1U;
+	offset = (size_t)source_y * image->stride;
+	if (source_x > ((size_t)-1 - offset) / pixel_size)
+		return 0;
+	offset += (size_t)source_x * pixel_size;
+	region = *image;
+	region.width = width;
+	region.height = height;
+	region.pixels += offset;
+	return noct_beui_draw_image(destination_x, destination_y, &region);
+}
+
+static int
+noct_beui_draw_image_pattern(unsigned x, unsigned y,
+			       const struct noct_beui_image *image,
+			       uint64_t pattern)
+{
+	if (!state.display_open || !image_valid(image) ||
+	    x >= state.display.width || y >= state.display.height ||
+	    image->width > state.display.width - x ||
+	    image->height > state.display.height - y ||
+	    state.hal->display.draw_image_pattern == NULL)
+		return 0;
+	return state.hal->display.draw_image_pattern(
+		state.hal->display.context, x, y, image, pattern);
+}
+
+static uint32_t
+decode_utf8(const char **cursor)
+{
+	const unsigned char *text = (const unsigned char *)*cursor;
+	uint32_t codepoint;
+	unsigned length;
+	unsigned index;
+
+	if (text[0] < 0x80U) {
+		(*cursor)++;
+		return text[0];
+	}
+	if ((text[0] & 0xe0U) == 0xc0U) {
+		codepoint = text[0] & 0x1fU;
+		length = 2;
+	} else if ((text[0] & 0xf0U) == 0xe0U) {
+		codepoint = text[0] & 0x0fU;
+		length = 3;
+	} else if ((text[0] & 0xf8U) == 0xf0U) {
+		codepoint = text[0] & 0x07U;
+		length = 4;
+	} else {
+		(*cursor)++;
+		return 0xfffdU;
+	}
+	for (index = 1; index < length; index++) {
+		if ((text[index] & 0xc0U) != 0x80U) {
+			(*cursor)++;
+			return 0xfffdU;
+		}
+		codepoint = (codepoint << 6) | (text[index] & 0x3fU);
+	}
+	if ((length == 2 && codepoint < 0x80U) ||
+	    (length == 3 && codepoint < 0x800U) ||
+	    (length == 4 && codepoint < 0x10000U) || codepoint > 0x10ffffU ||
+	    (codepoint >= 0xd800U && codepoint <= 0xdfffU)) {
+		(*cursor)++;
+		return 0xfffdU;
+	}
+	*cursor += length;
+	return codepoint;
+}
+
+static int
+noct_beui_measure_text(const char *text, unsigned *width, unsigned *height)
+{
+	const char *cursor = text;
+	unsigned line_width = 0;
+	unsigned maximum_width = 0;
+	unsigned total_height = 16;
+
+	if (!state.display_open || text == NULL || width == NULL ||
+	    height == NULL || state.hal->glyph.measure == NULL)
+		return 0;
+	while (*cursor != '\0') {
+		uint32_t codepoint = decode_utf8(&cursor);
+		unsigned glyph_width;
+		unsigned glyph_height;
+
+		if (codepoint == '\r')
+			continue;
+		if (codepoint == '\n') {
+			if (line_width > maximum_width)
+				maximum_width = line_width;
+			line_width = 0;
+			if (total_height > (unsigned)-1 - 16U)
+				return 0;
+			total_height += 16U;
+			continue;
+		}
+		if (!state.hal->glyph.measure(state.hal->glyph.context, codepoint,
+			&glyph_width, &glyph_height) || glyph_height > 16U ||
+		    line_width > (unsigned)-1 - glyph_width)
+			return 0;
+		line_width += glyph_width;
+	}
+	if (line_width > maximum_width)
+		maximum_width = line_width;
+	*width = maximum_width;
+	*height = total_height;
+	return 1;
+}
+
+static int
+noct_beui_draw_text(const char *text, unsigned x, unsigned y,
+	uint32_t foreground, uint32_t background)
+{
+	const char *cursor = text;
+	unsigned origin_x = x;
+	unsigned width;
+	unsigned height;
+
+	if (!noct_beui_measure_text(text, &width, &height) ||
+	    x > state.display.width || y > state.display.height ||
+	    width > state.display.width - x ||
+	    height > state.display.height - y || state.hal->glyph.draw == NULL)
+		return 0;
+	while (*cursor != '\0') {
+		uint32_t codepoint = decode_utf8(&cursor);
+		unsigned glyph_width;
+		unsigned glyph_height;
+
+		if (codepoint == '\r')
+			continue;
+		if (codepoint == '\n') {
+			x = origin_x;
+			y += 16U;
+			continue;
+		}
+		if (!state.hal->glyph.measure(state.hal->glyph.context, codepoint,
+			&glyph_width, &glyph_height) ||
+		    !state.hal->glyph.draw(state.hal->glyph.context, x, y,
+			codepoint, foreground, background))
+			return 0;
+		x += glyph_width;
+	}
+	return 1;
+}
+
+static int
+noct_beui_poll(void)
+{
+	struct noct_beui_pointer_event event;
+
+	if (!state.display_open || state.close_requested)
+		return 0;
+	if (state.hal->display.poll_events != NULL &&
+	    state.hal->display.poll_events(state.hal->display.context) != 1) {
+		/* A closed window is sticky: every later poll reports it, so a
+		 * script loop ends on the iteration after the user closes it. */
+		state.close_requested = 1;
+		return 0;
+	}
+	noct_beui_drain_input();
+	if (state.pointer_open && state.hal->pointer.poll != NULL) {
+		int updated;
+
+		memset(&event, 0, sizeof(event));
+		updated = state.hal->pointer.poll(state.hal->pointer.context,
+						  &event);
+		if (updated < 0) {
+			state.close_requested = 1;
+			return 0;
+		}
+		if (updated > 0) {
+			state.pointer_x = event.x < state.display.width ?
+				event.x : state.display.width - 1U;
+			state.pointer_y = event.y < state.display.height ?
+				event.y : state.display.height - 1U;
+			state.pointer_buttons = event.buttons;
+		}
+	}
+	if (state.audio_open && state.hal->audio.poll != NULL &&
+	    !state.hal->audio.poll(state.hal->audio.context)) {
+		state.close_requested = 1;
+		return 0;
+	}
+	return 1;
+}
+
+static int
+noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons)
+{
+	if (!state.display_open || !state.pointer_open)
+		return 0;
+	if (x != NULL)
+		*x = state.pointer_x;
+	if (y != NULL)
+		*y = state.pointer_y;
+	if (buttons != NULL)
+		*buttons = state.pointer_buttons;
+	return 1;
+}
+
+static int
+noct_beui_flush(void)
+{
+	if (!state.display_open)
+		return 0;
+	if (state.hal->display.flush == NULL)
+		return 1;
+	return state.hal->display.flush(state.hal->display.context, NULL, 0);
+}
+
+static int
+noct_beui_get_milliseconds(uint64_t *milliseconds)
+{
+	if (milliseconds == NULL || state.hal == NULL ||
+	    state.hal->clock.milliseconds == NULL)
+		return 0;
+	*milliseconds = state.hal->clock.milliseconds(state.hal->clock.context);
+	return 1;
+}
+
+static int
+noct_beui_sleep(unsigned milliseconds)
+{
+	uint64_t start;
+	uint64_t now;
+
+	if (!noct_beui_get_milliseconds(&start))
+		return 0;
+	/* The busy loop doubles as the clock poll and keeps the pointer,
+	 * audio, and type-ahead backends serviced while the script idles. */
+	do {
+		noct_beui_drain_input();
+		/* A window closed mid-sleep ends the wait; the script sees it
+		 * on its next BeUI.poll(). */
+		if (state.display_open && !noct_beui_poll())
+			break;
+		if (!noct_beui_get_milliseconds(&now))
+			return 0;
+	} while (now - start < milliseconds);
+	return 1;
+}
+
+static int
+noct_beui_is_key_down(int key)
+{
+	if (state.hal == NULL || state.hal->input.is_key_down == NULL)
+		return -1;
+	return state.hal->input.is_key_down(state.hal->input.context, key);
+}
+
+static void
+noct_beui_drain_input(void)
+{
+	if (state.hal != NULL && state.hal->input.drain != NULL)
+		state.hal->input.drain(state.hal->input.context);
+}
+
+static int
+noct_beui_image_load_bmp(const void *data, size_t size)
+{
+	struct noct_beui_image_entry *entry;
+	enum noct_beui_image_format format;
+	unsigned width;
+	unsigned height;
+	size_t pixel_size;
+
+	if (data == NULL || size == 0 || size > NOCT_BEUI_IMAGE_SOURCE_MAX ||
+	    !noct_beui_bmp_measure(data, size, &format, &width, &height,
+				   &pixel_size) ||
+	    pixel_size == 0 || pixel_size > NOCT_BEUI_IMAGE_PIXELS_MAX)
+		return 0;
+	entry = malloc(offsetof(struct noct_beui_image_entry, pixels) +
+		       pixel_size);
+	if (entry == NULL)
+		return 0;
+	if (!noct_beui_bmp_decode(data, size, entry->pixels, pixel_size,
+				  &entry->image)) {
+		free(entry);
+		return 0;
+	}
+	if (state.next_image_handle <= 0)
+		state.next_image_handle = 1;
+	entry->handle = state.next_image_handle++;
+	entry->next = state.images;
+	state.images = entry;
+	return entry->handle;
+}
+
+static const struct noct_beui_image *
+noct_beui_image_get(int handle)
+{
+	struct noct_beui_image_entry *entry;
+
+	if (handle <= 0)
+		return NULL;
+	for (entry = state.images; entry != NULL; entry = entry->next)
+		if (entry->handle == handle)
+			return &entry->image;
+	return NULL;
+}
+
+static int
+noct_beui_image_destroy(int handle)
+{
+	struct noct_beui_image_entry **link;
+
+	if (handle <= 0)
+		return 0;
+	for (link = &state.images; *link != NULL; link = &(*link)->next) {
+		struct noct_beui_image_entry *entry = *link;
+
+		if (entry->handle != handle)
+			continue;
+		*link = entry->next;
+		free(entry);
+		return 1;
+	}
+	return 0;
+}
+
+
+/* PC-98 glyph, GDC, Cirrus, and display-selection implementations. */
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI PC-98 CGROM glyph backend, imported from Boots.
+ * CGROM selection and read sequencing is adapted from StratoHAL 98glyph.c,
+ * commit 76e909577bdf4629f11e473539b446a948fef830.  In particular, preserve
+ * its VSYNC exclusion, 0x68 mode switch, CG-window byte layout, and symbol
+ * bank handling; these details matter on physical PC-98 hardware.
+ */
+
+
+
+
+static void
+wait_vsync(struct noct_beui_pc98_glyph *backend)
+{
+	while (backend->port_in8(backend->io_context, 0x60) & 0x20U)
+		;
+	while (!(backend->port_in8(backend->io_context, 0x60) & 0x20U))
+		;
+}
+
+static uint16_t
+noct_beui_pc98_unicode_to_jis(uint32_t codepoint)
+{
+	size_t index;
+	uint16_t value;
+
+	if (codepoint > 0xffffU)
+		return 0;
+	value = (uint16_t)codepoint;
+	if (value < 0x80U)
+		return (uint16_t)(0x2000U | value);
+	if (value >= 0xff61U && value <= 0xff9fU)
+		return (uint16_t)(0x20a1U + (value - 0xff61U));
+
+	for (index = 0; index < 7896U; index++) {
+		if (noct_jisx0208_to_ucs[index] == value) {
+			unsigned row = (unsigned)(index / 94U) + 0x21U;
+			unsigned cell = (unsigned)(index % 94U) + 0x21U;
+
+			return (uint16_t)((row << 8) | cell);
+		}
+	}
+	return 0;
+}
+
+static unsigned
+glyph_width(uint16_t jis)
+{
+	return (jis >> 8) == 0x20U ? 8U : 16U;
+}
+
+static int
+read_font(struct noct_beui_pc98_glyph *backend, uint16_t jis,
+	  uint8_t font[32])
+{
+	uint8_t row = (uint8_t)(jis >> 8);
+	uint8_t cell = (uint8_t)jis;
+	int special = (row >= 0x29U && row <= 0x2fU) ||
+		(row >= 0x76U && row <= 0x7fU);
+	unsigned index;
+
+	if (backend->port_in8 == NULL || backend->port_out8 == NULL ||
+	    backend->cg_window == NULL)
+		return 0;
+	if (!special) {
+		for (index = 0; index < 64U; index++) {
+			if (backend->cache[index].valid &&
+			    backend->cache[index].jis == jis) {
+				memcpy(font, backend->cache[index].font, 32);
+				return 1;
+			}
+		}
+	}
+	memset(font, 0, 32);
+	wait_vsync(backend);
+	backend->port_out8(backend->io_context, 0x68, 0x0b);
+
+	if (row == 0x20U) {
+		backend->port_out8(backend->io_context, 0xa1, 0x00);
+		backend->port_out8(backend->io_context, 0xa3, cell);
+		backend->port_out8(backend->io_context, 0xa5, 0x00);
+		for (index = 0; index < 16U; index++)
+			font[index] = backend->cg_window[index * 2U + 1U];
+	} else if (!special) {
+		backend->port_out8(backend->io_context, 0xa1, cell);
+		backend->port_out8(backend->io_context, 0xa3,
+			(uint8_t)(row - 0x20U));
+		backend->port_out8(backend->io_context, 0xa5, 0x00);
+		for (index = 0; index < 32U; index++)
+			font[index] = backend->cg_window[index];
+	} else {
+		backend->port_out8(backend->io_context, 0xa1, cell);
+		backend->port_out8(backend->io_context, 0xa3,
+			(uint8_t)(row - 0x20U));
+		backend->port_out8(backend->io_context, 0xa5, 0x20);
+		for (index = 0; index < 16U; index++)
+			font[index * 2U] =
+				backend->cg_window[index * 2U + 1U];
+		backend->port_out8(backend->io_context, 0xa5, 0x00);
+		for (index = 0; index < 16U; index++)
+			font[index * 2U + 1U] =
+				backend->cg_window[index * 2U + 1U];
+	}
+
+	backend->port_out8(backend->io_context, 0x68, 0x0a);
+	if (!special) {
+		index = backend->cache_next++ % 64U;
+		backend->cache[index].jis = jis;
+		backend->cache[index].valid = 1;
+		memcpy(backend->cache[index].font, font, 32);
+	}
+	return 1;
+}
+
+static int
+glyph_measure(void *context, uint32_t codepoint, unsigned *width,
+	      unsigned *height)
+{
+	uint16_t jis;
+
+	(void)context;
+	if (width == NULL || height == NULL)
+		return 0;
+	jis = noct_beui_pc98_unicode_to_jis(codepoint);
+	if (jis == 0)
+		jis = noct_beui_pc98_unicode_to_jis('?');
+	*width = glyph_width(jis);
+	*height = 16;
+	return 1;
+}
+
+static uint64_t
+font_pattern(const uint8_t font[32], unsigned bytes_per_row,
+	     unsigned byte_index, unsigned first_row)
+{
+	uint64_t pattern = 0;
+	unsigned row;
+
+	for (row = 0; row < 8U; row++)
+		pattern |= (uint64_t)font[(first_row + row) * bytes_per_row +
+			byte_index] << (row * 8U);
+	return pattern;
+}
+
+static int
+glyph_draw(void *context, unsigned x, unsigned y, uint32_t codepoint,
+	   uint32_t foreground, uint32_t background)
+{
+	struct noct_beui_pc98_glyph *backend = context;
+	struct noct_beui_rect rectangle;
+	uint8_t font[32];
+	uint16_t jis = noct_beui_pc98_unicode_to_jis(codepoint);
+	unsigned width;
+	unsigned column;
+	unsigned band;
+
+	if (jis == 0)
+		jis = noct_beui_pc98_unicode_to_jis('?');
+	width = glyph_width(jis);
+	if (backend == NULL || backend->display == NULL ||
+	    backend->display->fill == NULL ||
+	    backend->display->pattern_fill == NULL ||
+	    !read_font(backend, jis, font))
+		return 0;
+
+	rectangle.x = x;
+	rectangle.y = y;
+	rectangle.width = width;
+	rectangle.height = 16;
+	if (!backend->display->fill(backend->display->context, &rectangle,
+		background))
+		return 0;
+
+	for (band = 0; band < 2U; band++) {
+		for (column = 0; column < width / 8U; column++) {
+			rectangle.x = x + column * 8U;
+			rectangle.y = y + band * 8U;
+			rectangle.width = 8;
+			rectangle.height = 8;
+			if (!backend->display->pattern_fill(
+				backend->display->context, &rectangle, foreground,
+				font_pattern(font, width / 8U, column, band * 8U)))
+				return 0;
+		}
+	}
+	return 1;
+}
+
+static void
+noct_beui_pc98_glyph_default(struct noct_beui_pc98_glyph *backend,
+	struct noct_beui_display_hal *display,
+	noct_beui_pc98_in8_fn port_in8, noct_beui_pc98_out8_fn port_out8,
+	void *io_context)
+{
+	memset(backend, 0, sizeof(*backend));
+	backend->port_in8 = port_in8;
+	backend->port_out8 = port_out8;
+	backend->io_context = io_context;
+	backend->cg_window = (volatile uint8_t *)0x000a4000U;
+	backend->display = display;
+}
+
+static int
+noct_beui_pc98_glyph_make_hal(struct noct_beui_glyph_hal *hal,
+	struct noct_beui_pc98_glyph *backend)
+{
+	if (hal == NULL || backend == NULL || backend->display == NULL ||
+	    backend->port_in8 == NULL || backend->port_out8 == NULL ||
+	    backend->cg_window == NULL)
+		return 0;
+	memset(hal, 0, sizeof(*hal));
+	hal->context = backend;
+	hal->measure = glyph_measure;
+	hal->draw = glyph_draw;
+	return 1;
+}
+
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 1996-2024, Keiichi Tabata
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI NEC PC-9800 GDC safe-mode display backend, imported from Boots.
+ * Display sequencing is adapted from StratoHAL 98disp_gdc.c at commit
+ * 76e909577bdf4629f11e473539b446a948fef830, altered to preserve text
+ * VRAM and update only requested rectangles.  Port I/O is injected by
+ * the embedder so the driver stays compiler neutral.
+ */
+
+
+
+#define GDC_WIDTH 640U
+#define GDC_HEIGHT 400U
+#define GDC_STRIDE (GDC_WIDTH / 8U)
+
+static int
+gdc_command(struct noct_beui_pc98_gdc *backend, uint8_t command)
+{
+	unsigned timeout;
+
+	for (timeout = 100000U; timeout != 0; timeout--)
+		if (!(backend->port_in8(backend->io_context, 0x60) & 0x02U))
+			break;
+	if (timeout == 0)
+		return 0;
+	backend->port_out8(backend->io_context, 0x62, command);
+	return 1;
+}
+
+static void
+clear_planes(struct noct_beui_pc98_gdc *backend)
+{
+	unsigned plane;
+	unsigned offset;
+
+	for (plane = 0; plane < 4; plane++)
+		for (offset = 0; offset < NOCT_BEUI_GDC_PLANE_BYTES; offset++)
+			backend->planes[plane][offset] = 0;
+}
+
+static int
+noct_beui_pc98_gdc_clear_graphics(struct noct_beui_pc98_gdc *backend)
+{
+	if (backend == NULL || backend->port_out8 == NULL ||
+	    backend->planes[0] == NULL || backend->planes[1] == NULL ||
+	    backend->planes[2] == NULL || backend->planes[3] == NULL)
+		return 0;
+
+	/* Match the real-mode loader's transition sequence.  In particular,
+	 * disable GRCG/EGC interception before touching all four planar VRAM
+	 * apertures; firmware and Cirrus may leave those controls non-default. */
+	backend->port_out8(backend->io_context, 0x7cU, 0x00U);
+	backend->port_out8(backend->io_context, 0x5fU, 0x00U);
+	backend->port_out8(backend->io_context, 0x6aU, 0x07U);
+	backend->port_out8(backend->io_context, 0x6aU, 0x20U);
+	backend->port_out8(backend->io_context, 0x6aU, 0x04U);
+	backend->port_out8(backend->io_context, 0x6aU, 0x06U);
+	backend->port_out8(backend->io_context, 0x6aU, 0x01U);
+	backend->port_out8(backend->io_context, 0x5fU, 0x01U);
+	clear_planes(backend);
+	return 1;
+}
+
+static uint8_t
+rgb_to_gdc(uint32_t color)
+{
+	unsigned red = (color >> 16) & 0xffU;
+	unsigned green = (color >> 8) & 0xffU;
+	unsigned blue = color & 0xffU;
+	unsigned luminance = (red + (green << 1) + blue) >> 2;
+
+	/*
+	 * Keep the integer-only StratoHAL RGBI conversion model, but use a
+	 * half-range threshold for each component and a green-weighted
+	 * luminance for the intensity plane.  The B/R/G bit order is the
+	 * native PC-98 GDC plane order.
+	 */
+	return (uint8_t)((blue > 127U ? 1U : 0U) |
+			 (red > 127U ? 2U : 0U) |
+			 (green > 127U ? 4U : 0U) |
+			 (luminance > 127U ? 8U : 0U));
+}
+
+static void
+gdc_write_pixel(struct noct_beui_pc98_gdc *backend, unsigned x,
+		unsigned y, uint8_t color)
+{
+	unsigned offset = y * GDC_STRIDE + (x >> 3);
+	uint8_t mask = (uint8_t)(0x80U >> (x & 7U));
+	unsigned plane;
+
+	for (plane = 0; plane < 4; plane++) {
+		uint8_t old = backend->planes[plane][offset];
+
+		backend->planes[plane][offset] = (uint8_t)(
+			(old & (uint8_t)~mask) |
+			(((color >> plane) & 1U) ? mask : 0U));
+	}
+}
+
+static int
+gdc_pattern_bit(uint64_t pattern, unsigned x, unsigned y)
+{
+	uint8_t row = (uint8_t)(pattern >> ((y & 7U) * 8U));
+
+	return (row & (uint8_t)(0x80U >> (x & 7U))) != 0;
+}
+
+static int
+gdc_enter(void *context, struct noct_beui_display_info *info)
+{
+	struct noct_beui_pc98_gdc *backend = context;
+
+	if (backend == NULL || info == NULL || backend->display_reset == NULL ||
+	    backend->port_in8 == NULL || backend->port_out8 == NULL ||
+	    backend->planes[0] == NULL || backend->planes[1] == NULL ||
+	    backend->planes[2] == NULL || backend->planes[3] == NULL)
+		return 0;
+	/* Clear every graphics plane before starting the slave GDC.  Otherwise
+	 * firmware VRAM is briefly visible between GDC_START and this clear. */
+	if (!noct_beui_pc98_gdc_clear_graphics(backend) ||
+	    !backend->display_reset(backend->bios_context))
+		return 0;
+	/* Hide text only after the clean graphics display is running. */
+	if (!gdc_command(backend, 0x0c)) {
+		(void)gdc_command(backend, 0x0d);
+		return 0;
+	}
+	info->width = GDC_WIDTH;
+	info->height = GDC_HEIGHT;
+	info->bits_per_pixel = 4;
+	info->stride = GDC_STRIDE;
+	return 1;
+}
+
+static void
+gdc_leave(void *context)
+{
+	struct noct_beui_pc98_gdc *backend = context;
+
+	if (backend->display_stop != NULL)
+		(void)backend->display_stop(backend->bios_context);
+	clear_planes(backend);
+	(void)gdc_command(backend, 0x0d);
+}
+
+static int
+gdc_fill(void *context, const struct noct_beui_rect *rect, uint32_t color)
+{
+	struct noct_beui_pc98_gdc *backend = context;
+	uint8_t gdc_color = rgb_to_gdc(color);
+	unsigned first_byte = rect->x >> 3;
+	unsigned last_pixel = rect->x + rect->width - 1U;
+	unsigned last_byte = last_pixel >> 3;
+	unsigned y;
+	unsigned byte;
+	unsigned plane;
+
+	for (y = rect->y; y < rect->y + rect->height; y++) {
+		for (byte = first_byte; byte <= last_byte; byte++) {
+			uint8_t mask = 0xffU;
+			unsigned offset = y * GDC_STRIDE + byte;
+
+			if (byte == first_byte)
+				mask &= (uint8_t)(0xffU >> (rect->x & 7U));
+			if (byte == last_byte)
+				mask &= (uint8_t)(0xffU << (7U - (last_pixel & 7U)));
+			for (plane = 0; plane < 4; plane++) {
+				uint8_t old = backend->planes[plane][offset];
+
+				backend->planes[plane][offset] =
+					(uint8_t)((old & (uint8_t)~mask) |
+					(((gdc_color >> plane) & 1U) ? mask : 0));
+			}
+		}
+	}
+	return 1;
+}
+
+static int
+gdc_line(void *context, unsigned x0, unsigned y0, unsigned x1, unsigned y1,
+	 uint32_t color)
+{
+	struct noct_beui_pc98_gdc *backend = context;
+	int x = (int)x0;
+	int y = (int)y0;
+	int target_x = (int)x1;
+	int target_y = (int)y1;
+	int delta_x = target_x >= x ? target_x - x : x - target_x;
+	int step_x = x < target_x ? 1 : -1;
+	int delta_y = target_y >= y ? y - target_y : target_y - y;
+	int step_y = y < target_y ? 1 : -1;
+	int error = delta_x + delta_y;
+	uint8_t gdc_color = rgb_to_gdc(color);
+
+	for (;;) {
+		int twice_error;
+
+		gdc_write_pixel(backend, (unsigned)x, (unsigned)y, gdc_color);
+		if (x == target_x && y == target_y)
+			break;
+		twice_error = error * 2;
+		if (twice_error >= delta_y) {
+			error += delta_y;
+			x += step_x;
+		}
+		if (twice_error <= delta_x) {
+			error += delta_x;
+			y += step_y;
+		}
+	}
+	return 1;
+}
+
+static int
+gdc_pattern_fill(void *context, const struct noct_beui_rect *rect,
+		 uint32_t color, uint64_t pattern)
+{
+	struct noct_beui_pc98_gdc *backend = context;
+	uint8_t gdc_color = rgb_to_gdc(color);
+	unsigned y;
+
+	for (y = rect->y; y < rect->y + rect->height; y++) {
+		unsigned x;
+
+		for (x = rect->x; x < rect->x + rect->width; x++)
+			if (gdc_pattern_bit(pattern, x - rect->x, y - rect->y))
+				gdc_write_pixel(backend, x, y, gdc_color);
+	}
+	return 1;
+}
+
+static int
+gdc_draw_image_common(void *context, unsigned destination_x,
+		      unsigned destination_y,
+		      const struct noct_beui_image *image, uint64_t pattern)
+{
+	struct noct_beui_pc98_gdc *backend = context;
+	unsigned y;
+
+	for (y = 0; y < image->height; y++) {
+		const uint8_t *row = image->pixels + (size_t)y * image->stride;
+		unsigned x;
+
+		for (x = 0; x < image->width; x++) {
+			uint32_t rgb;
+
+			if (!gdc_pattern_bit(pattern, x, y))
+				continue;
+
+			if (image->format == NOCT_BEUI_IMAGE_INDEX8) {
+				unsigned index = row[x];
+
+				rgb = index < image->palette_size ?
+					image->palette[index] : 0;
+			} else {
+				const uint8_t *pixel = row + (size_t)x * 3U;
+
+				rgb = ((uint32_t)pixel[0] << 16) |
+				      ((uint32_t)pixel[1] << 8) | pixel[2];
+			}
+			gdc_write_pixel(backend, destination_x + x,
+					destination_y + y, rgb_to_gdc(rgb));
+		}
+	}
+	return 1;
+}
+
+static int
+gdc_draw_image(void *context, unsigned destination_x, unsigned destination_y,
+	       const struct noct_beui_image *image)
+{
+	return gdc_draw_image_common(context, destination_x, destination_y, image,
+				     UINT64_MAX);
+}
+
+static int
+gdc_draw_image_pattern(void *context, unsigned destination_x,
+		       unsigned destination_y,
+		       const struct noct_beui_image *image, uint64_t pattern)
+{
+	return gdc_draw_image_common(context, destination_x, destination_y, image,
+				     pattern);
+}
+
+static int
+gdc_flush(void *context, const struct noct_beui_rect *rectangles,
+	  size_t rectangle_count)
+{
+	/* GDC VRAM is updated directly; there is no backing-image copy. */
+	(void)context;
+	(void)rectangles;
+	(void)rectangle_count;
+	return 1;
+}
+
+static void
+noct_beui_pc98_gdc_default(struct noct_beui_pc98_gdc *backend,
+			     noct_beui_display_reset_fn display_reset,
+			     noct_beui_display_reset_fn display_stop,
+			     void *bios_context,
+			     noct_beui_pc98_in8_fn port_in8,
+			     noct_beui_pc98_out8_fn port_out8,
+			     void *io_context)
+{
+	memset(backend, 0, sizeof(*backend));
+	backend->bios_context = bios_context;
+	backend->display_reset = display_reset;
+	backend->display_stop = display_stop;
+	backend->io_context = io_context;
+	backend->port_in8 = port_in8;
+	backend->port_out8 = port_out8;
+	backend->planes[0] = (volatile uint8_t *)0x000a8000U;
+	backend->planes[1] = (volatile uint8_t *)0x000b0000U;
+	backend->planes[2] = (volatile uint8_t *)0x000b8000U;
+	backend->planes[3] = (volatile uint8_t *)0x000e0000U;
+}
+
+static int
+noct_beui_pc98_gdc_make_hal(struct noct_beui_hal *hal,
+			      struct noct_beui_pc98_gdc *backend)
+{
+	if (hal == NULL || backend == NULL)
+		return 0;
+	memset(hal, 0, sizeof(*hal));
+	hal->display.context = backend;
+	hal->display.enter = gdc_enter;
+	hal->display.leave = gdc_leave;
+	hal->display.fill = gdc_fill;
+	hal->display.line = gdc_line;
+	hal->display.pattern_fill = gdc_pattern_fill;
+	hal->display.draw_image = gdc_draw_image;
+	hal->display.draw_image_pattern = gdc_draw_image_pattern;
+	hal->display.flush = gdc_flush;
+	return 1;
+}
+
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 1996-2024, Keiichi Tabata
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI NEC PC-9821 Core-Graph / Cirrus GD5440 display backend, imported
+ * from Boots.  The register sequence is adapted from StratoHAL
+ * 98disp_cirrus.c at commit 76e909577bdf4629f11e473539b446a948fef830 and
+ * is deliberately limited to the Core-Graph path at 640x480x8/24.
+ * Port I/O and the linear framebuffer are injected by the embedder so
+ * the driver stays compiler and host neutral.
+ */
+
+
+
+#define WAB_INDEX 0x0faaU
+#define WAB_DATA 0x0fabU
+#define WAB_REG_ID 0x00U
+#define WAB_REG_WINDOW 0x01U
+#define WAB_REG_LINEAR 0x02U
+#define WAB_REG_RELAY 0x03U
+#define WAB_RELAY_SETUP 0x01U
+#define WAB_RELAY_WAB 0x03U
+#define CIRRUS_SLEEP 0x0ca3U
+#define CIRRUS_IO 0x0ca0U
+#define CIRRUS_CRTC 0x0da4U
+#define CIRRUS_CRTC_MONO 0x0ba4U
+#define CIRRUS_STATUS 0x0daaU
+#define PC98_WAIT 0x005fU
+#define PC98_GDC_MODE 0x0068U
+#define PC98_VRAM_SWITCH 0x006aU
+
+static uint8_t
+in8(struct noct_beui_pc98_cirrus *backend, uint16_t port)
+{
+	return backend->port_in8(backend->io_context, port);
+}
+
+static void
+out8(struct noct_beui_pc98_cirrus *backend, uint16_t port, uint8_t value)
+{
+	backend->port_out8(backend->io_context, port, value);
+}
+
+static void
+wab_write(struct noct_beui_pc98_cirrus *backend, uint8_t index,
+	  uint8_t value)
+{
+	out8(backend, WAB_INDEX, index);
+	out8(backend, WAB_DATA, value);
+}
+
+static uint8_t
+wab_read(struct noct_beui_pc98_cirrus *backend, uint8_t index)
+{
+	out8(backend, WAB_INDEX, index);
+	return in8(backend, WAB_DATA);
+}
+
+static void
+seq_write(struct noct_beui_pc98_cirrus *backend, uint8_t index,
+	  uint8_t value)
+{
+	out8(backend, CIRRUS_IO + 4U, index);
+	out8(backend, CIRRUS_IO + 5U, value);
+}
+
+static uint8_t
+seq_read(struct noct_beui_pc98_cirrus *backend, uint8_t index)
+{
+	out8(backend, CIRRUS_IO + 4U, index);
+	return in8(backend, CIRRUS_IO + 5U);
+}
+
+static void
+gfx_write(struct noct_beui_pc98_cirrus *backend, uint8_t index,
+	  uint8_t value)
+{
+	out8(backend, CIRRUS_IO + 0x0eU, index);
+	out8(backend, CIRRUS_IO + 0x0fU, value);
+}
+
+static void
+crtc_write(struct noct_beui_pc98_cirrus *backend, uint8_t index,
+	   uint8_t value)
+{
+	uint16_t port = (in8(backend, CIRRUS_IO + 0x0cU) & 1U) ?
+		CIRRUS_CRTC : CIRRUS_CRTC_MONO;
+
+	out8(backend, port, index);
+	out8(backend, port + 1U, value);
+}
+
+static uint8_t
+crtc_read(struct noct_beui_pc98_cirrus *backend, uint8_t index)
+{
+	uint16_t port = (in8(backend, CIRRUS_IO + 0x0cU) & 1U) ?
+		CIRRUS_CRTC : CIRRUS_CRTC_MONO;
+
+	out8(backend, port, index);
+	return in8(backend, port + 1U);
+}
+
+static void
+hidden_dac_write(struct noct_beui_pc98_cirrus *backend, uint8_t value)
+{
+	unsigned i;
+
+	(void)in8(backend, CIRRUS_IO + 8U);
+	for (i = 0; i < 4; i++)
+		(void)in8(backend, CIRRUS_IO + 6U);
+	out8(backend, CIRRUS_IO + 6U, value);
+}
+
+static void
+load_rgb332_palette(struct noct_beui_pc98_cirrus *backend)
+{
+	unsigned i;
+
+	out8(backend, CIRRUS_IO + 6U, 0xffU);
+	out8(backend, CIRRUS_IO + 8U, 0);
+	for (i = 0; i < 256; i++) {
+		unsigned red = (i >> 5) & 7U;
+		unsigned green = (i >> 2) & 7U;
+		unsigned blue = i & 3U;
+
+		out8(backend, CIRRUS_IO + 9U, (uint8_t)(red * 63U / 7U));
+		out8(backend, CIRRUS_IO + 9U, (uint8_t)(green * 63U / 7U));
+		out8(backend, CIRRUS_IO + 9U, (uint8_t)(blue * 63U / 3U));
+	}
+}
+
+static int
+coregraph_id_present(struct noct_beui_pc98_cirrus *backend)
+{
+	uint8_t id = wab_read(backend, WAB_REG_ID);
+
+	return id >= 0x58U && id <= 0x5dU;
+}
+
+static void
+coregraph_gate_enter(struct noct_beui_pc98_cirrus *backend)
+{
+	out8(backend, PC98_GDC_MODE, 0x0eU);
+	out8(backend, PC98_VRAM_SWITCH, 0x07U);
+	out8(backend, PC98_VRAM_SWITCH, 0x8fU);
+	out8(backend, PC98_VRAM_SWITCH, 0x06U);
+	wab_write(backend, WAB_REG_RELAY, WAB_RELAY_WAB);
+	out8(backend, PC98_WAIT, 0);
+	out8(backend, PC98_WAIT, 0);
+	out8(backend, CIRRUS_SLEEP, 0x01U);
+}
+
+static void
+coregraph_gate_leave(struct noct_beui_pc98_cirrus *backend)
+{
+	unsigned i;
+
+	out8(backend, CIRRUS_SLEEP, 0);
+	wab_write(backend, WAB_REG_RELAY, 0);
+	out8(backend, PC98_WAIT, 0);
+	out8(backend, PC98_VRAM_SWITCH, 0x07U);
+	out8(backend, PC98_VRAM_SWITCH, 0x8eU);
+	out8(backend, PC98_VRAM_SWITCH, 0x06U);
+	for (i = 0; i < 200000U; i++)
+		out8(backend, PC98_WAIT, 0);
+	out8(backend, PC98_GDC_MODE, 0x0fU);
+}
+
+static void
+coregraph_mode_640x480(struct noct_beui_pc98_cirrus *backend,
+		       unsigned bits_per_pixel)
+{
+	static const uint8_t seq_index[] = {
+		0x00, 0x01, 0x02, 0x03, 0x04, 0x07, 0x08,
+		0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x16, 0x18,
+		0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+	};
+	static const uint8_t seq_value[] = {
+		0x01, 0x01, 0x0f, 0x00, 0x0e, 0x11, 0x00,
+		0x66, 0x48, 0x56, 0x60, 0x30, 0x58, 0x40,
+		0x3b, 0x23, 0x3d, 0x3b, 0x20
+	};
+	static const uint8_t crtc[0x1c] = {
+		0x5f,0x4f,0x50,0x84,0x54,0x80,0x0b,0x3e,
+		0x00,0x40,0x00,0x00,0x00,0x00,0x00,0x00,
+		0xe5,0x87,0xdf,0x50,0x00,0xe7,0x04,0xe3,
+		0xff,0x00,0x90,0x22
+	};
+	static const uint8_t graphics[9] = {
+		0x00,0x00,0x00,0x00,0x00,0x40,0x05,0x0f,0xff
+	};
+	static const uint8_t attribute[21] = {
+		0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+		0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,
+		0x41,0x00,0x0f,0x00,0x00
+	};
+	unsigned i;
+
+	gfx_write(backend, 0x33U, 0);
+	gfx_write(backend, 0x31U, 0x04U);
+	gfx_write(backend, 0x31U, 0);
+	seq_write(backend, 0x06U, 0x12U);
+	seq_write(backend, 0x12U, 0);
+	for (i = 0; i < sizeof(seq_index); i++) {
+		uint8_t value = seq_value[i];
+
+		if (seq_index[i] == 0x07U && bits_per_pixel == 24U)
+			value = 0x15U;
+		seq_write(backend, seq_index[i], value);
+	}
+	seq_write(backend, 0x0fU,
+		  (uint8_t)((seq_read(backend, 0x0fU) & 0xdfU) | 0x20U));
+	out8(backend, CIRRUS_IO + 2U, 0xe3U);
+	gfx_write(backend, 0x06U, 0x05U);
+	seq_write(backend, 0x00U, 0x03U);
+	crtc_write(backend, 0x11U, 0x20U);
+	for (i = 0; i < sizeof(crtc); i++) {
+		uint8_t value = crtc[i];
+
+		if (i == 0x13U && bits_per_pixel == 24U)
+			value = 0xf0U;
+		crtc_write(backend, (uint8_t)i, value);
+	}
+	for (i = 0; i < sizeof(graphics); i++)
+		gfx_write(backend, (uint8_t)i, graphics[i]);
+	(void)in8(backend, CIRRUS_STATUS);
+	for (i = 0; i < sizeof(attribute); i++) {
+		out8(backend, CIRRUS_IO, (uint8_t)i);
+		out8(backend, CIRRUS_IO, attribute[i]);
+	}
+	(void)in8(backend, CIRRUS_STATUS);
+	out8(backend, CIRRUS_IO, 0x20U);
+	hidden_dac_write(backend, bits_per_pixel == 24U ? 0xc5U : 0x20U);
+	out8(backend, CIRRUS_IO + 6U, 0xffU);
+	gfx_write(backend, 0x09U, 0);
+	gfx_write(backend, 0x0aU, 0);
+	gfx_write(backend, 0x0bU, 0x21U);
+	seq_write(backend, 0x17U,
+		  (uint8_t)(seq_read(backend, 0x17U) | 0x44U));
+	seq_write(backend, 0x18U,
+		  (uint8_t)(seq_read(backend, 0x18U) & 0xbfU));
+	gfx_write(backend, 0x31U, 0x04U);
+	gfx_write(backend, 0x31U, 0);
+	if (bits_per_pixel == 8U)
+		load_rgb332_palette(backend);
+	seq_write(backend, 0x01U, 0x21U);
+}
+
+static uint8_t
+rgb332(uint32_t color)
+{
+	return (uint8_t)(((color >> 16) & 0xe0U) |
+			 ((color >> 11) & 0x1cU) | ((color >> 6) & 0x03U));
+}
+
+static int
+cirrus_pattern_bit(uint64_t pattern, unsigned x, unsigned y)
+{
+	uint8_t row = (uint8_t)(pattern >> ((y & 7U) * 8U));
+
+	return (row & (uint8_t)(0x80U >> (x & 7U))) != 0;
+}
+
+static void
+write_pixel(struct noct_beui_pc98_cirrus *backend, unsigned x, unsigned y,
+	    uint32_t color)
+{
+	volatile uint8_t *pixel;
+
+	if (backend->bits_per_pixel == 8U) {
+		backend->framebuffer[y * NOCT_BEUI_CIRRUS_STRIDE_8 + x] =
+			rgb332(color);
+		return;
+	}
+	pixel = backend->framebuffer + y * NOCT_BEUI_CIRRUS_STRIDE_24 + x * 3U;
+	pixel[0] = (uint8_t)color;
+	pixel[1] = (uint8_t)(color >> 8);
+	pixel[2] = (uint8_t)(color >> 16);
+}
+
+static int
+cirrus_enter(void *context, struct noct_beui_display_info *info)
+{
+	struct noct_beui_pc98_cirrus *backend = context;
+	uint8_t relay_setup;
+	uint8_t chip;
+	unsigned bits_per_pixel;
+	unsigned stride;
+	unsigned visible_bytes;
+	unsigned i;
+
+	if (backend == NULL || info == NULL || backend->port_in8 == NULL ||
+	    backend->port_out8 == NULL || backend->framebuffer == NULL ||
+	    !coregraph_id_present(backend))
+		return 0;
+	bits_per_pixel = info->preferred_bits_per_pixel == 24U ? 24U : 8U;
+	stride = bits_per_pixel == 24U ? NOCT_BEUI_CIRRUS_STRIDE_24 :
+		NOCT_BEUI_CIRRUS_STRIDE_8;
+	visible_bytes = stride * NOCT_BEUI_CIRRUS_HEIGHT;
+	backend->saved_sleep = in8(backend, CIRRUS_SLEEP);
+	backend->saved_window = wab_read(backend, WAB_REG_WINDOW);
+	backend->saved_linear = wab_read(backend, WAB_REG_LINEAR);
+	backend->saved_relay = wab_read(backend, WAB_REG_RELAY);
+	out8(backend, CIRRUS_SLEEP, (uint8_t)(backend->saved_sleep | 1U));
+	relay_setup = (uint8_t)((backend->saved_relay & (uint8_t)~2U) |
+				WAB_RELAY_SETUP);
+	wab_write(backend, WAB_REG_RELAY, relay_setup);
+	/* The motherboard ID is only a hint; validate the temporarily woken VGA. */
+	seq_write(backend, 0x06U, 0x12U);
+	chip = crtc_read(backend, 0x27U);
+	if (chip == 0 || chip == 0xffU)
+		goto fail;
+	wab_write(backend, WAB_REG_LINEAR, 0xf0U);
+	if (wab_read(backend, WAB_REG_LINEAR) != 0xf0U)
+		goto fail;
+	coregraph_mode_640x480(backend, bits_per_pixel);
+	/* Keep the motherboard GDC on the monitor while Cirrus is configured
+	 * and its visible framebuffer is erased.  WAB_REG_RELAY bit 1 in
+	 * coregraph_gate_enter() is the actual GDC-to-Cirrus scanout switch. */
+	for (i = 0; i < visible_bytes; i++)
+		backend->framebuffer[i] = 0;
+	coregraph_gate_enter(backend);
+	seq_write(backend, 0x01U, 0x01U);
+	backend->bits_per_pixel = (uint8_t)bits_per_pixel;
+	backend->active = 1;
+	info->width = NOCT_BEUI_CIRRUS_WIDTH;
+	info->height = NOCT_BEUI_CIRRUS_HEIGHT;
+	info->bits_per_pixel = bits_per_pixel;
+	info->stride = stride;
+	return 1;
+
+fail:
+	wab_write(backend, WAB_REG_LINEAR, backend->saved_linear);
+	wab_write(backend, WAB_REG_WINDOW, backend->saved_window);
+	wab_write(backend, WAB_REG_RELAY, backend->saved_relay);
+	out8(backend, CIRRUS_SLEEP, backend->saved_sleep);
+	return 0;
+}
+
+static void
+cirrus_leave(void *context)
+{
+	struct noct_beui_pc98_cirrus *backend = context;
+
+	if (backend == NULL || !backend->active)
+		return;
+	seq_write(backend, 0x01U, 0x21U);
+	coregraph_gate_leave(backend);
+	wab_write(backend, WAB_REG_LINEAR, backend->saved_linear);
+	wab_write(backend, WAB_REG_WINDOW, backend->saved_window);
+	/* coregraph_gate_leave() deliberately selects the motherboard GDC and
+	 * puts Cirrus to sleep.  Restoring the saved relay/sleep registers here
+	 * would immediately select and wake Cirrus again, leaving later text-VRAM
+	 * output invisible.  Saved values are only for the failed-enter rollback. */
+	backend->active = 0;
+	backend->bits_per_pixel = 0;
+}
+
+static int
+cirrus_fill(void *context, const struct noct_beui_rect *rect,
+	    uint32_t color)
+{
+	struct noct_beui_pc98_cirrus *backend = context;
+	unsigned y;
+
+	if (backend->bits_per_pixel == 8U) {
+		uint8_t pixel = rgb332(color);
+
+		for (y = rect->y; y < rect->y + rect->height; y++) {
+			volatile uint8_t *row = backend->framebuffer +
+				y * NOCT_BEUI_CIRRUS_STRIDE_8 + rect->x;
+			unsigned x;
+
+			for (x = 0; x < rect->width; x++)
+				row[x] = pixel;
+		}
+		return 1;
+	}
+	for (y = rect->y; y < rect->y + rect->height; y++) {
+		volatile uint8_t *row = backend->framebuffer +
+			y * NOCT_BEUI_CIRRUS_STRIDE_24 + rect->x * 3U;
+		unsigned x;
+
+		for (x = 0; x < rect->width; x++) {
+			row[x * 3U] = (uint8_t)color;
+			row[x * 3U + 1U] = (uint8_t)(color >> 8);
+			row[x * 3U + 2U] = (uint8_t)(color >> 16);
+		}
+	}
+	return 1;
+}
+
+static int
+cirrus_line(void *context, unsigned x0, unsigned y0, unsigned x1,
+	    unsigned y1, uint32_t color)
+{
+	struct noct_beui_pc98_cirrus *backend = context;
+	int x = (int)x0;
+	int y = (int)y0;
+	int target_x = (int)x1;
+	int target_y = (int)y1;
+	int delta_x = target_x >= x ? target_x - x : x - target_x;
+	int step_x = x < target_x ? 1 : -1;
+	int delta_y = target_y >= y ? y - target_y : target_y - y;
+	int step_y = y < target_y ? 1 : -1;
+	int error = delta_x + delta_y;
+
+	for (;;) {
+		int twice_error;
+
+		write_pixel(backend, (unsigned)x, (unsigned)y, color);
+		if (x == target_x && y == target_y)
+			break;
+		twice_error = error * 2;
+		if (twice_error >= delta_y) {
+			error += delta_y;
+			x += step_x;
+		}
+		if (twice_error <= delta_x) {
+			error += delta_x;
+			y += step_y;
+		}
+	}
+	return 1;
+}
+
+static int
+cirrus_pattern_fill(void *context, const struct noct_beui_rect *rect,
+		    uint32_t color, uint64_t pattern)
+{
+	struct noct_beui_pc98_cirrus *backend = context;
+	unsigned y;
+
+	for (y = 0; y < rect->height; y++) {
+		unsigned x;
+
+		for (x = 0; x < rect->width; x++)
+			if (cirrus_pattern_bit(pattern, x, y))
+				write_pixel(backend, rect->x + x, rect->y + y,
+					    color);
+	}
+	return 1;
+}
+
+static int
+cirrus_draw_image_common(void *context, unsigned destination_x,
+			 unsigned destination_y,
+			 const struct noct_beui_image *image, uint64_t pattern)
+{
+	struct noct_beui_pc98_cirrus *backend = context;
+	unsigned y;
+
+	for (y = 0; y < image->height; y++) {
+		const uint8_t *row = image->pixels + (size_t)y * image->stride;
+		unsigned x;
+
+		for (x = 0; x < image->width; x++) {
+			uint32_t rgb;
+
+			if (!cirrus_pattern_bit(pattern, x, y))
+				continue;
+			if (image->format == NOCT_BEUI_IMAGE_INDEX8) {
+				unsigned index = row[x];
+
+				rgb = index < image->palette_size ?
+					image->palette[index] : 0;
+			} else {
+				const uint8_t *source = row + (size_t)x * 3U;
+
+				rgb = ((uint32_t)source[0] << 16) |
+				      ((uint32_t)source[1] << 8) | source[2];
+			}
+			write_pixel(backend, destination_x + x,
+				    destination_y + y, rgb);
+		}
+	}
+	return 1;
+}
+
+static int
+cirrus_draw_image(void *context, unsigned x, unsigned y,
+		  const struct noct_beui_image *image)
+{
+	return cirrus_draw_image_common(context, x, y, image, UINT64_MAX);
+}
+
+static int
+cirrus_draw_image_pattern(void *context, unsigned x, unsigned y,
+			  const struct noct_beui_image *image,
+			  uint64_t pattern)
+{
+	return cirrus_draw_image_common(context, x, y, image, pattern);
+}
+
+static int
+cirrus_flush(void *context, const struct noct_beui_rect *rectangles,
+	     size_t rectangle_count)
+{
+	(void)context;
+	(void)rectangles;
+	(void)rectangle_count;
+	return 1;
+}
+
+static void
+noct_beui_pc98_cirrus_default(struct noct_beui_pc98_cirrus *backend,
+			       noct_beui_pc98_in8_fn port_in8,
+			       noct_beui_pc98_out8_fn port_out8,
+			       void *io_context, volatile uint8_t *framebuffer)
+{
+	memset(backend, 0, sizeof(*backend));
+	backend->port_in8 = port_in8;
+	backend->port_out8 = port_out8;
+	backend->io_context = io_context;
+	backend->framebuffer = framebuffer;
+}
+
+static int
+noct_beui_pc98_cirrus_make_hal(struct noct_beui_hal *hal,
+				 struct noct_beui_pc98_cirrus *backend)
+{
+	if (hal == NULL || backend == NULL)
+		return 0;
+	memset(hal, 0, sizeof(*hal));
+	hal->display.context = backend;
+	hal->display.enter = cirrus_enter;
+	hal->display.leave = cirrus_leave;
+	hal->display.fill = cirrus_fill;
+	hal->display.line = cirrus_line;
+	hal->display.pattern_fill = cirrus_pattern_fill;
+	hal->display.draw_image = cirrus_draw_image;
+	hal->display.draw_image_pattern = cirrus_draw_image_pattern;
+	hal->display.flush = cirrus_flush;
+	return 1;
+}
+
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ *
+ * BeUI PC-98 display selection, imported from Boots.  Probing prefers
+ * the Core-Graph / Cirrus board at 640x480x8 by default (or 24bpp when
+ * hinted) and falls back to the always-present GDC at 640x400x4, so one
+ * HAL covers both machines.
+ */
+
+
+
+static int
+auto_enter(void *context, struct noct_beui_display_info *info)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	backend->active = NULL;
+	if (backend->cirrus_hal.display.enter != NULL &&
+	    backend->cirrus_hal.display.enter(
+		backend->cirrus_hal.display.context, info)) {
+		backend->active = &backend->cirrus_hal.display;
+		return 1;
+	}
+	if (backend->gdc_hal.display.enter != NULL &&
+	    backend->gdc_hal.display.enter(backend->gdc_hal.display.context,
+					   info)) {
+		backend->active = &backend->gdc_hal.display;
+		return 1;
+	}
+	return 0;
+}
+
+static void
+auto_leave(void *context)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	if (backend->active != NULL && backend->active->leave != NULL)
+		backend->active->leave(backend->active->context);
+	backend->active = NULL;
+}
+
+static int
+auto_fill(void *context, const struct noct_beui_rect *rect, uint32_t color)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	return backend->active != NULL && backend->active->fill != NULL &&
+		backend->active->fill(backend->active->context, rect, color);
+}
+
+static int
+auto_line(void *context, unsigned x0, unsigned y0, unsigned x1, unsigned y1,
+	  uint32_t color)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	return backend->active != NULL && backend->active->line != NULL &&
+		backend->active->line(backend->active->context, x0, y0, x1, y1,
+				      color);
+}
+
+static int
+auto_pattern_fill(void *context, const struct noct_beui_rect *rect,
+		  uint32_t color, uint64_t pattern)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	return backend->active != NULL &&
+		backend->active->pattern_fill != NULL &&
+		backend->active->pattern_fill(backend->active->context, rect,
+					      color, pattern);
+}
+
+static int
+auto_draw_image(void *context, unsigned x, unsigned y,
+		const struct noct_beui_image *image)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	return backend->active != NULL && backend->active->draw_image != NULL &&
+		backend->active->draw_image(backend->active->context, x, y, image);
+}
+
+static int
+auto_draw_image_pattern(void *context, unsigned x, unsigned y,
+			const struct noct_beui_image *image,
+			uint64_t pattern)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	return backend->active != NULL &&
+		backend->active->draw_image_pattern != NULL &&
+		backend->active->draw_image_pattern(backend->active->context,
+			x, y, image, pattern);
+}
+
+static int
+auto_flush(void *context, const struct noct_beui_rect *rectangles,
+	   size_t rectangle_count)
+{
+	struct noct_beui_pc98_auto *backend = context;
+
+	return backend->active != NULL &&
+		(backend->active->flush == NULL ||
+		 backend->active->flush(backend->active->context, rectangles,
+					rectangle_count));
+}
+
+static void
+noct_beui_pc98_auto_default(struct noct_beui_pc98_auto *backend,
+	noct_beui_display_reset_fn display_reset,
+	noct_beui_display_reset_fn display_stop, void *bios_context,
+	noct_beui_pc98_in8_fn port_in8, noct_beui_pc98_out8_fn port_out8,
+	void *io_context, volatile uint8_t *cirrus_framebuffer)
+{
+	memset(backend, 0, sizeof(*backend));
+	noct_beui_pc98_cirrus_default(&backend->cirrus, port_in8, port_out8,
+				       io_context, cirrus_framebuffer);
+	noct_beui_pc98_gdc_default(&backend->gdc, display_reset, display_stop,
+				    bios_context, port_in8, port_out8,
+				    io_context);
+	noct_beui_pc98_glyph_default(&backend->glyph, NULL, port_in8, port_out8,
+				      io_context);
+}
+
+static int
+noct_beui_pc98_auto_make_hal(struct noct_beui_hal *hal,
+			      struct noct_beui_pc98_auto *backend)
+{
+	if (hal == NULL || backend == NULL ||
+	    !noct_beui_pc98_cirrus_make_hal(&backend->cirrus_hal,
+					      &backend->cirrus) ||
+	    !noct_beui_pc98_gdc_make_hal(&backend->gdc_hal, &backend->gdc))
+		return 0;
+	memset(hal, 0, sizeof(*hal));
+	hal->display.context = backend;
+	hal->display.enter = auto_enter;
+	hal->display.leave = auto_leave;
+	hal->display.fill = auto_fill;
+	hal->display.line = auto_line;
+	hal->display.pattern_fill = auto_pattern_fill;
+	hal->display.draw_image = auto_draw_image;
+	hal->display.draw_image_pattern = auto_draw_image_pattern;
+	hal->display.flush = auto_flush;
+	backend->glyph.display = &hal->display;
+	return noct_beui_pc98_glyph_make_hal(&hal->glyph, &backend->glyph);
+}
+
+
+/* DOS/4GW platform glue and the sole public registration entry point. */
+#if defined(NOCT_TARGET_PC98DOS)
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
+/*
+ * Noct Programming Language
+ * Copyright (c) 2025, 2026, Awe Morris
+ */
+
+/*
+ * BeUI backend for MS-DOS on the NEC PC-9800 series (DOS/4GW).
+ *
+ * The GDC display and CGROM glyph drivers are the compiler-neutral cores
+ * shared with Boots; this file supplies what the pre-boot environment got
+ * from its Stage 1 BIOS gateway.  Under DOS the low megabyte is mapped
+ * linear-to-physical and interrupts stay enabled, so the BIOS work areas
+ * are read directly and the display mode calls go through INT 18h, which
+ * DOS/4GW reflects to real mode.
+ *
+ * The millisecond clock must not touch i8253 channel 0: DOS timekeeping
+ * owns it.  Channel 1 only feeds the beeper, whose speaker gate is
+ * separate from the counter, so the clock programs channel 1 as a
+ * free-running rate generator and accumulates latched deltas exactly
+ * like the Boots Stage 2 timer.  A machine whose channel 1 gate is held
+ * off falls back to latch-polling channel 0 with a measured reload; in
+ * mode 3 the fraction then jitters by half a period, which the BeUI
+ * clock contract tolerates.  DOS beeps while BeUI is open may glitch
+ * the fallback-free path; DOS reprograms the channel on its next beep.
+ */
+
+
+
+
+/*
+ * Complete BeUI language binding for this platform.  It is intentionally
+ * owned by this source rather than shared through a backend dispatcher.
+ */
+
+static bool cfunc_BeUI_init(NoctEnv *env);
+static bool cfunc_BeUI_initWithHint(NoctEnv *env);
+static bool cfunc_BeUI_close(NoctEnv *env);
+static bool cfunc_BeUI_isOpen(NoctEnv *env);
+static bool cfunc_BeUI_getWidth(NoctEnv *env);
+static bool cfunc_BeUI_getHeight(NoctEnv *env);
+static bool cfunc_BeUI_poll(NoctEnv *env);
+static bool cfunc_BeUI_flush(NoctEnv *env);
+static bool cfunc_BeUI_fill(NoctEnv *env);
+static bool cfunc_BeUI_line(NoctEnv *env);
+static bool cfunc_BeUI_patternFill(NoctEnv *env);
+static bool cfunc_BeUI_textWidth(NoctEnv *env);
+static bool cfunc_BeUI_textHeight(NoctEnv *env);
+static bool cfunc_BeUI_drawText(NoctEnv *env);
+static bool cfunc_BeUI_getMilliseconds(NoctEnv *env);
+static bool cfunc_BeUI_sleep(NoctEnv *env);
+static bool cfunc_BeUI_isKeyDown(NoctEnv *env);
+static bool cfunc_BeUI_getPointerX(NoctEnv *env);
+static bool cfunc_BeUI_getPointerY(NoctEnv *env);
+static bool cfunc_BeUI_getPointerButtons(NoctEnv *env);
+static bool cfunc_BeUI_loadImage(NoctEnv *env);
+static bool cfunc_BeUI_getImageWidth(NoctEnv *env);
+static bool cfunc_BeUI_getImageHeight(NoctEnv *env);
+static bool cfunc_BeUI_drawImage(NoctEnv *env);
+static bool cfunc_BeUI_drawImageRegion(NoctEnv *env);
+static bool cfunc_BeUI_drawImagePattern(NoctEnv *env);
+static bool cfunc_BeUI_destroyImage(NoctEnv *env);
+
+struct beui_ffi_item {
+	const char *global_name;
+	const char *field_name;
+	size_t param_count;
+	const char *param[NOCT_ARG_MAX];
+	bool (*cfunc)(NoctEnv *env);
+};
+
+static struct beui_ffi_item beui_ffi_items[] = {
+	{"BeUI.init", "init", 0, {NULL}, cfunc_BeUI_init},
+	{"BeUI.initWithHint", "initWithHint", 1, {"bitsPerPixel"},
+	 cfunc_BeUI_initWithHint},
+	{"BeUI.close", "close", 0, {NULL}, cfunc_BeUI_close},
+	{"BeUI.isOpen", "isOpen", 0, {NULL}, cfunc_BeUI_isOpen},
+	{"BeUI.getWidth", "getWidth", 0, {NULL}, cfunc_BeUI_getWidth},
+	{"BeUI.getHeight", "getHeight", 0, {NULL}, cfunc_BeUI_getHeight},
+	{"BeUI.poll", "poll", 0, {NULL}, cfunc_BeUI_poll},
+	{"BeUI.flush", "flush", 0, {NULL}, cfunc_BeUI_flush},
+	{"BeUI.fill", "fill", 5, {"x", "y", "width", "height", "color"},
+	 cfunc_BeUI_fill},
+	{"BeUI.line", "line", 5, {"x0", "y0", "x1", "y1", "color"},
+	 cfunc_BeUI_line},
+	{"BeUI.patternFill", "patternFill", 6,
+	 {"x", "y", "width", "height", "color", "pattern"},
+	 cfunc_BeUI_patternFill},
+	{"BeUI.textWidth", "textWidth", 1, {"text"}, cfunc_BeUI_textWidth},
+	{"BeUI.textHeight", "textHeight", 1, {"text"}, cfunc_BeUI_textHeight},
+	{"BeUI.drawText", "drawText", 5,
+	 {"text", "x", "y", "foreground", "background"}, cfunc_BeUI_drawText},
+	{"BeUI.getMilliseconds", "getMilliseconds", 0, {NULL},
+	 cfunc_BeUI_getMilliseconds},
+	{"BeUI.sleep", "sleep", 1, {"milliseconds"}, cfunc_BeUI_sleep},
+	{"BeUI.isKeyDown", "isKeyDown", 1, {"key"}, cfunc_BeUI_isKeyDown},
+	{"BeUI.getPointerX", "getPointerX", 0, {NULL},
+	 cfunc_BeUI_getPointerX},
+	{"BeUI.getPointerY", "getPointerY", 0, {NULL},
+	 cfunc_BeUI_getPointerY},
+	{"BeUI.getPointerButtons", "getPointerButtons", 0, {NULL},
+	 cfunc_BeUI_getPointerButtons},
+	{"BeUI.loadImage", "loadImage", 1, {"bytes"}, cfunc_BeUI_loadImage},
+	{"BeUI.getImageWidth", "getImageWidth", 1, {"image"},
+	 cfunc_BeUI_getImageWidth},
+	{"BeUI.getImageHeight", "getImageHeight", 1, {"image"},
+	 cfunc_BeUI_getImageHeight},
+	{"BeUI.drawImage", "drawImage", 3, {"image", "x", "y"},
+	 cfunc_BeUI_drawImage},
+	{"BeUI.drawImageRegion", "drawImageRegion", 7,
+	 {"image", "sourceX", "sourceY", "width", "height", "x", "y"},
+	 cfunc_BeUI_drawImageRegion},
+	{"BeUI.drawImagePattern", "drawImagePattern", 4,
+	 {"image", "x", "y", "pattern"}, cfunc_BeUI_drawImagePattern},
+	{"BeUI.destroyImage", "destroyImage", 1, {"image"},
+	 cfunc_BeUI_destroyImage},
+};
+
+struct beui_int_constant {
+	const char *name;
+	int value;
+};
+
+/* Key names shared with the Boots BeUI implementation. */
+static const struct beui_int_constant beui_keys[] = {
+	{"Escape", NOCT_BEUI_KEY_ESCAPE},
+	{"Tab", NOCT_BEUI_KEY_TAB},
+	{"Enter", NOCT_BEUI_KEY_ENTER},
+	{"Backspace", NOCT_BEUI_KEY_BACKSPACE},
+	{"Delete", NOCT_BEUI_KEY_DELETE},
+	{"Insert", NOCT_BEUI_KEY_INSERT},
+	{"Up", NOCT_BEUI_KEY_UP},
+	{"Down", NOCT_BEUI_KEY_DOWN},
+	{"Left", NOCT_BEUI_KEY_LEFT},
+	{"Right", NOCT_BEUI_KEY_RIGHT},
+	{"Home", NOCT_BEUI_KEY_HOME},
+	{"End", NOCT_BEUI_KEY_END},
+	{"PageUp", NOCT_BEUI_KEY_PAGE_UP},
+	{"PageDown", NOCT_BEUI_KEY_PAGE_DOWN},
+	{"F1", NOCT_BEUI_KEY_F1}, {"F2", NOCT_BEUI_KEY_F2},
+	{"F3", NOCT_BEUI_KEY_F3}, {"F4", NOCT_BEUI_KEY_F4},
+	{"F5", NOCT_BEUI_KEY_F5}, {"F6", NOCT_BEUI_KEY_F6},
+	{"F7", NOCT_BEUI_KEY_F7}, {"F8", NOCT_BEUI_KEY_F8},
+	{"F9", NOCT_BEUI_KEY_F9}, {"F10", NOCT_BEUI_KEY_F10},
+	{"Space", ' '},
+	{"Shift", NOCT_BEUI_KEY_SHIFT},
+};
+
+/* Bit values returned by BeUI.getPointerButtons. */
+static const struct beui_int_constant beui_buttons[] = {
+	{"Left", NOCT_BEUI_BUTTON_LEFT},
+	{"Right", NOCT_BEUI_BUTTON_RIGHT},
+	{"Middle", NOCT_BEUI_BUTTON_MIDDLE},
+};
+
+static bool
+return_int(NoctEnv *env, int value)
+{
+	NoctValue result;
+	bool ok;
+
+	memset(&result, 0, sizeof(result));
+	if (!noct_pin_local(env, 1, &result))
+		return false;
+	ok = noct_set_return_make_int(env, &result, value);
+	(void)noct_unpin_local(env, 1, &result);
+	return ok;
+}
+
+static bool
+get_int_arg(NoctEnv *env, uint32_t index, int *result)
+{
+	NoctValue value;
+	int64_t long_value;
+	bool ok;
+
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	ok = noct_get_arg_check_long(env, index, &value, &long_value);
+	if (!ok) {
+		int int_value;
+
+		ok = noct_get_arg_check_int(env, index, &value, &int_value);
+		if (ok)
+			long_value = int_value;
+	}
+	if (ok)
+		*result = (int)long_value;
+	(void)noct_unpin_local(env, 1, &value);
+	return ok;
+}
+
+static bool
+cfunc_BeUI_init(NoctEnv *env)
+{
+	return return_int(env, noct_beui_init() ? 1 : 0);
+}
+
+static bool
+cfunc_BeUI_initWithHint(NoctEnv *env)
+{
+	int bits_per_pixel;
+
+	if (!get_int_arg(env, 0, &bits_per_pixel) ||
+	    (bits_per_pixel != 8 && bits_per_pixel != 24)) {
+		noct_error(env,
+			   "BeUI.initWithHint expects 8 or 24 bits per pixel.");
+		return false;
+	}
+	return return_int(env,
+		noct_beui_init_with_hint((unsigned)bits_per_pixel) ? 1 : 0);
+}
+
+static bool
+cfunc_BeUI_close(NoctEnv *env)
+{
+	noct_beui_close();
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_isOpen(NoctEnv *env)
+{
+	return return_int(env, noct_beui_is_open() ? 1 : 0);
+}
+
+static bool
+cfunc_BeUI_getWidth(NoctEnv *env)
+{
+	struct noct_beui_display_info info;
+
+	if (!noct_beui_get_display_info(&info)) {
+		noct_error(env, "BeUI is not open.");
+		return false;
+	}
+	return return_int(env, (int)info.width);
+}
+
+static bool
+cfunc_BeUI_getHeight(NoctEnv *env)
+{
+	struct noct_beui_display_info info;
+
+	if (!noct_beui_get_display_info(&info)) {
+		noct_error(env, "BeUI is not open.");
+		return false;
+	}
+	return return_int(env, (int)info.height);
+}
+
+/*
+ * Returns 1 while the display is alive and 0 once it has closed, so the
+ * canonical loop is "while (BeUI.poll()) { ... }".  Targets that own the
+ * whole machine never return 0.
+ */
+static bool
+cfunc_BeUI_poll(NoctEnv *env)
+{
+	return return_int(env, noct_beui_poll() ? 1 : 0);
+}
+
+static bool
+cfunc_BeUI_flush(NoctEnv *env)
+{
+	if (!noct_beui_flush()) {
+		noct_error(env, "BeUI.flush failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_fill(NoctEnv *env)
+{
+	struct noct_beui_rect rectangle;
+	int x, y, width, height, color;
+
+	if (!get_int_arg(env, 0, &x) || !get_int_arg(env, 1, &y) ||
+	    !get_int_arg(env, 2, &width) || !get_int_arg(env, 3, &height) ||
+	    !get_int_arg(env, 4, &color) || x < 0 || y < 0 || width <= 0 ||
+	    height <= 0 || color < 0 || color > 0xffffff) {
+		noct_error(env, "BeUI.fill received an invalid argument.");
+		return false;
+	}
+	rectangle.x = (unsigned)x;
+	rectangle.y = (unsigned)y;
+	rectangle.width = (unsigned)width;
+	rectangle.height = (unsigned)height;
+	if (!noct_beui_fill(&rectangle, (uint32_t)color)) {
+		noct_error(env, "BeUI.fill failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_line(NoctEnv *env)
+{
+	int x0, y0, x1, y1, color;
+
+	if (!get_int_arg(env, 0, &x0) || !get_int_arg(env, 1, &y0) ||
+	    !get_int_arg(env, 2, &x1) || !get_int_arg(env, 3, &y1) ||
+	    !get_int_arg(env, 4, &color) || x0 < 0 || y0 < 0 || x1 < 0 ||
+	    y1 < 0 || color < 0 || color > 0xffffff) {
+		noct_error(env, "BeUI.line received an invalid argument.");
+		return false;
+	}
+	if (!noct_beui_line((unsigned)x0, (unsigned)y0, (unsigned)x1,
+			    (unsigned)y1, (uint32_t)color)) {
+		noct_error(env, "BeUI.line failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_patternFill(NoctEnv *env)
+{
+	struct noct_beui_rect rectangle;
+	NoctValue value;
+	int x, y, width, height, color;
+	int64_t pattern;
+	bool ok;
+
+	if (!get_int_arg(env, 0, &x) || !get_int_arg(env, 1, &y) ||
+	    !get_int_arg(env, 2, &width) || !get_int_arg(env, 3, &height) ||
+	    !get_int_arg(env, 4, &color) || x < 0 || y < 0 || width <= 0 ||
+	    height <= 0 || color < 0 || color > 0xffffff) {
+		noct_error(env,
+			   "BeUI.patternFill received an invalid argument.");
+		return false;
+	}
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	ok = noct_get_arg_check_long(env, 5, &value, &pattern);
+	if (!ok) {
+		int int_pattern;
+
+		ok = noct_get_arg_check_int(env, 5, &value, &int_pattern);
+		if (ok)
+			pattern = (int64_t)(uint32_t)int_pattern;
+	}
+	(void)noct_unpin_local(env, 1, &value);
+	if (!ok) {
+		noct_error(env,
+			   "BeUI.patternFill received an invalid argument.");
+		return false;
+	}
+	rectangle.x = (unsigned)x;
+	rectangle.y = (unsigned)y;
+	rectangle.width = (unsigned)width;
+	rectangle.height = (unsigned)height;
+	if (!noct_beui_pattern_fill(&rectangle, (uint32_t)color,
+				    (uint64_t)pattern)) {
+		noct_error(env, "BeUI.patternFill failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+measure_text_arg(NoctEnv *env, const char *api, unsigned *width,
+		 unsigned *height)
+{
+	NoctValue value;
+	const char *text;
+	bool ok = false;
+
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &value, &text) ||
+	    !noct_beui_measure_text(text, width, height)) {
+		noct_error(env, "%s failed.", api);
+		goto cleanup;
+	}
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 1, &value);
+	return ok;
+}
+
+static bool
+cfunc_BeUI_textWidth(NoctEnv *env)
+{
+	unsigned width, height;
+
+	if (!measure_text_arg(env, "BeUI.textWidth", &width, &height))
+		return false;
+	return return_int(env, (int)width);
+}
+
+static bool
+cfunc_BeUI_textHeight(NoctEnv *env)
+{
+	unsigned width, height;
+
+	if (!measure_text_arg(env, "BeUI.textHeight", &width, &height))
+		return false;
+	return return_int(env, (int)height);
+}
+
+static bool
+cfunc_BeUI_drawText(NoctEnv *env)
+{
+	NoctValue value;
+	const char *text;
+	int x, y, foreground, background;
+	bool ok = false;
+
+	if (!get_int_arg(env, 1, &x) || !get_int_arg(env, 2, &y) ||
+	    !get_int_arg(env, 3, &foreground) ||
+	    !get_int_arg(env, 4, &background) || x < 0 || y < 0 ||
+	    foreground < 0 || foreground > 0xffffff || background < 0 ||
+	    background > 0xffffff) {
+		noct_error(env, "BeUI.drawText received an invalid argument.");
+		return false;
+	}
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	if (!noct_get_arg_check_string(env, 0, &value, &text) ||
+	    !noct_beui_draw_text(text, (unsigned)x, (unsigned)y,
+				 (uint32_t)foreground,
+				 (uint32_t)background)) {
+		noct_error(env, "BeUI.drawText failed.");
+		goto cleanup;
+	}
+	ok = return_int(env, 1);
+cleanup:
+	(void)noct_unpin_local(env, 1, &value);
+	return ok;
+}
+
+static bool
+cfunc_BeUI_getMilliseconds(NoctEnv *env)
+{
+	uint64_t milliseconds;
+
+	if (!noct_beui_get_milliseconds(&milliseconds)) {
+		noct_error(env, "BeUI.getMilliseconds is unavailable.");
+		return false;
+	}
+	return return_int(env, (int)(milliseconds & 0x7fffffffu));
+}
+
+static bool
+cfunc_BeUI_sleep(NoctEnv *env)
+{
+	int milliseconds;
+
+	if (!get_int_arg(env, 0, &milliseconds) || milliseconds < 0 ||
+	    milliseconds > 3600000) {
+		noct_error(env, "BeUI.sleep received an invalid argument.");
+		return false;
+	}
+	if (!noct_beui_sleep((unsigned)milliseconds)) {
+		noct_error(env, "BeUI.sleep is unavailable.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_isKeyDown(NoctEnv *env)
+{
+	int key;
+
+	if (!get_int_arg(env, 0, &key) || key < 0) {
+		noct_error(env, "BeUI.isKeyDown received an invalid argument.");
+		return false;
+	}
+	/* Keys the target cannot sense read as released. */
+	return return_int(env, noct_beui_is_key_down(key) == 1);
+}
+
+static bool
+pointer_field(NoctEnv *env, const char *api, unsigned *x, unsigned *y,
+	      unsigned *buttons)
+{
+	if (!noct_beui_get_pointer(x, y, buttons)) {
+		noct_error(env, "%s is unavailable.", api);
+		return false;
+	}
+	return true;
+}
+
+static bool
+cfunc_BeUI_getPointerX(NoctEnv *env)
+{
+	unsigned x;
+
+	if (!pointer_field(env, "BeUI.getPointerX", &x, NULL, NULL))
+		return false;
+	return return_int(env, (int)x);
+}
+
+static bool
+cfunc_BeUI_getPointerY(NoctEnv *env)
+{
+	unsigned y;
+
+	if (!pointer_field(env, "BeUI.getPointerY", NULL, &y, NULL))
+		return false;
+	return return_int(env, (int)y);
+}
+
+static bool
+cfunc_BeUI_getPointerButtons(NoctEnv *env)
+{
+	unsigned buttons;
+
+	if (!pointer_field(env, "BeUI.getPointerButtons", NULL, NULL, &buttons))
+		return false;
+	return return_int(env, (int)buttons);
+}
+
+/*
+ * BeUI.loadImage takes the file contents rather than a path: BeUI draws
+ * and the File API reads, so the graphical layer needs no filesystem of
+ * its own and behaves identically on every host.
+ */
+static bool
+cfunc_BeUI_loadImage(NoctEnv *env)
+{
+	NoctValue value;
+	void *data;
+	size_t size;
+	int handle;
+	bool ok = false;
+
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	if (!noct_get_arg_check_packed(env, 0, &value, NOCT_PACKED_UINT8) ||
+	    !noct_get_packed_size(env, &value, &size) ||
+	    !noct_get_packed_pointer(env, &value, &data)) {
+		noct_error(env, "BeUI.loadImage expects a byte array.");
+		goto cleanup;
+	}
+	handle = noct_beui_image_load_bmp(data, size);
+	if (handle == 0) {
+		noct_error(env, "BeUI.loadImage received an unsupported image.");
+		goto cleanup;
+	}
+	ok = return_int(env, handle);
+cleanup:
+	(void)noct_unpin_local(env, 1, &value);
+	return ok;
+}
+
+static bool
+cfunc_BeUI_getImageWidth(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle;
+
+	if (!get_int_arg(env, 0, &handle) ||
+	    (image = noct_beui_image_get(handle)) == NULL) {
+		noct_error(env,
+			   "BeUI.getImageWidth received an invalid handle.");
+		return false;
+	}
+	return return_int(env, (int)image->width);
+}
+
+static bool
+cfunc_BeUI_getImageHeight(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle;
+
+	if (!get_int_arg(env, 0, &handle) ||
+	    (image = noct_beui_image_get(handle)) == NULL) {
+		noct_error(env,
+			   "BeUI.getImageHeight received an invalid handle.");
+		return false;
+	}
+	return return_int(env, (int)image->height);
+}
+
+static bool
+cfunc_BeUI_drawImage(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle, x, y;
+
+	if (!get_int_arg(env, 0, &handle) || !get_int_arg(env, 1, &x) ||
+	    !get_int_arg(env, 2, &y) || x < 0 || y < 0 ||
+	    (image = noct_beui_image_get(handle)) == NULL ||
+	    !noct_beui_draw_image((unsigned)x, (unsigned)y, image)) {
+		noct_error(env, "BeUI.drawImage failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_drawImageRegion(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	int handle, source_x, source_y, width, height, x, y;
+
+	if (!get_int_arg(env, 0, &handle) ||
+	    !get_int_arg(env, 1, &source_x) ||
+	    !get_int_arg(env, 2, &source_y) ||
+	    !get_int_arg(env, 3, &width) ||
+	    !get_int_arg(env, 4, &height) || !get_int_arg(env, 5, &x) ||
+	    !get_int_arg(env, 6, &y) || source_x < 0 || source_y < 0 ||
+	    width <= 0 || height <= 0 || x < 0 || y < 0 ||
+	    (image = noct_beui_image_get(handle)) == NULL ||
+	    !noct_beui_draw_image_region(image, (unsigned)source_x,
+					 (unsigned)source_y, (unsigned)width,
+					 (unsigned)height, (unsigned)x,
+					 (unsigned)y)) {
+		noct_error(env, "BeUI.drawImageRegion failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_drawImagePattern(NoctEnv *env)
+{
+	const struct noct_beui_image *image;
+	NoctValue value;
+	int handle, x, y;
+	int64_t pattern;
+	bool ok;
+
+	if (!get_int_arg(env, 0, &handle) || !get_int_arg(env, 1, &x) ||
+	    !get_int_arg(env, 2, &y) || x < 0 || y < 0) {
+		noct_error(env,
+			   "BeUI.drawImagePattern received an invalid argument.");
+		return false;
+	}
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	ok = noct_get_arg_check_long(env, 3, &value, &pattern);
+	if (!ok) {
+		int int_pattern;
+
+		ok = noct_get_arg_check_int(env, 3, &value, &int_pattern);
+		if (ok)
+			pattern = (int64_t)(uint32_t)int_pattern;
+	}
+	(void)noct_unpin_local(env, 1, &value);
+	if (!ok || (image = noct_beui_image_get(handle)) == NULL ||
+	    !noct_beui_draw_image_pattern((unsigned)x, (unsigned)y, image,
+					  (uint64_t)pattern)) {
+		noct_error(env, "BeUI.drawImagePattern failed.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_BeUI_destroyImage(NoctEnv *env)
+{
+	int handle;
+
+	if (!get_int_arg(env, 0, &handle) || !noct_beui_image_destroy(handle)) {
+		noct_error(env, "BeUI.destroyImage received an invalid handle.");
+		return false;
+	}
+	return return_int(env, 1);
+}
+
+static bool
+register_int_dictionary(NoctEnv *env, const char *name,
+			const struct beui_int_constant *entries, size_t count)
+{
+	NoctValue dictionary;
+	NoctValue scratch;
+	size_t index;
+	bool ok = false;
+
+	memset(&dictionary, 0, sizeof(dictionary));
+	memset(&scratch, 0, sizeof(scratch));
+	if (!noct_pin_local(env, 2, &dictionary, &scratch))
+		return false;
+	if (!noct_make_empty_dict(env, &dictionary))
+		goto cleanup;
+	for (index = 0; index < count; index++)
+		if (!noct_set_dict_elem_make_int(env, &dictionary,
+						 entries[index].name, &scratch,
+						 entries[index].value))
+			goto cleanup;
+	if (!noct_set_global(env, name, &dictionary))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &dictionary, &scratch);
+	return ok;
+}
+
+
+static bool
+register_beui_api(NoctEnv *env, const struct noct_beui_hal *hal)
+{
+	NoctValue beui_dict, function;
+	size_t index;
+	bool ok = false;
+
+	if (!noct_beui_bind(hal))
+		return false;
+	memset(&beui_dict, 0, sizeof(beui_dict));
+	memset(&function, 0, sizeof(function));
+	if (!noct_pin_local(env, 2, &beui_dict, &function))
+		return false;
+	if (!noct_make_empty_dict(env, &beui_dict) ||
+	    !noct_set_global(env, "BeUI", &beui_dict))
+		goto cleanup;
+	for (index = 0; index < sizeof(beui_ffi_items) /
+					 sizeof(beui_ffi_items[0]); index++) {
+		struct beui_ffi_item *item = &beui_ffi_items[index];
+
+		if (!noct_register_cfunc(env, item->global_name,
+					 item->param_count, item->param,
+					 item->cfunc, NULL) ||
+		    !noct_get_global(env, item->global_name, &function) ||
+		    !noct_set_dict_elem_cstr(env, &beui_dict, item->field_name,
+					     &function))
+			goto cleanup;
+	}
+	if (!register_int_dictionary(env, "Key", beui_keys,
+				     sizeof(beui_keys) / sizeof(beui_keys[0])) ||
+	    !register_int_dictionary(env, "Button", beui_buttons,
+				     sizeof(beui_buttons) /
+					     sizeof(beui_buttons[0])))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &beui_dict, &function);
+	return ok;
+}
+
+/* i8253 system timer. */
+#define PIT_COUNTER1 0x73U
+#define PIT_CONTROL 0x77U
+/* Channel 1, low/high byte access, mode 2, binary. */
+#define PIT_PROGRAM_CH1 0x74U
+#define PIT_LATCH_CH1 0x40U
+#define PIT_LATCH_CH0 0x00U
+#define PIT_COUNTER0 0x71U
+
+#define TICKS_PER_5MS_2457600HZ 12288U
+#define TICKS_PER_5MS_1996800HZ 9984U
+
+/* BIOS work area. */
+#define BIOS_SYSTEM_CLOCK_FLAG 0x501U
+#define BIOS_KEY_STATE_TABLE 0x52aU
+
+/* The Core-Graph aperture the Cirrus backend expects at board level. */
+#define CIRRUS_PHYSICAL_APERTURE 0xf0000000UL
+
+static struct noct_beui_pc98_auto auto_backend;
+static struct noct_beui_hal pc98dos_hal;
+
+static struct {
+	int initialized;
+	int use_channel0;
+	uint16_t reload;
+	uint16_t last_count;
+	uint64_t ticks;
+	uint32_t ticks_per_5ms;
+} clock_state;
+
+static uint8_t
+port_in8(void *context, uint16_t port)
+{
+	(void)context;
+	return (uint8_t)inp(port);
+}
+
+static void
+port_out8(void *context, uint16_t port, uint8_t value)
+{
+	(void)context;
+	outp(port, value);
+}
+
+static uint8_t
+read_low_byte(uint32_t address)
+{
+	return *(volatile uint8_t *)address;
+}
+
+/* INT 18h AH=42h/CH=C0h selects the 640x400 display region; AH=40h shows
+ * graphics.  AH=41h hides graphics again for the DOS prompt. */
+static int
+display_reset(void *context)
+{
+	union REGS regs;
+
+	(void)context;
+	memset(&regs, 0, sizeof(regs));
+	regs.h.ah = 0x42;
+	regs.h.ch = 0xc0;
+	int386(0x18, &regs, &regs);
+	memset(&regs, 0, sizeof(regs));
+	regs.h.ah = 0x40;
+	int386(0x18, &regs, &regs);
+	return 1;
+}
+
+static int
+display_stop(void *context)
+{
+	union REGS regs;
+
+	(void)context;
+	memset(&regs, 0, sizeof(regs));
+	regs.h.ah = 0x41;
+	int386(0x18, &regs, &regs);
+	return 1;
+}
+
+/* ------------------------------------------------------------------- */
+/* Millisecond clock.                                                  */
+
+static uint16_t
+latch_counter(uint8_t latch_command, uint16_t data_port)
+{
+	uint16_t value;
+
+	_disable();
+	outp(PIT_CONTROL, latch_command);
+	value = (uint16_t)inp(data_port);
+	value = (uint16_t)(value | ((uint16_t)inp(data_port) << 8));
+	_enable();
+	return value;
+}
+
+static int
+counter_is_running(uint8_t latch_command, uint16_t data_port)
+{
+	uint16_t first = latch_counter(latch_command, data_port);
+	unsigned spins;
+
+	for (spins = 0; spins < 10000U; spins++)
+		if (latch_counter(latch_command, data_port) != first)
+			return 1;
+	return 0;
+}
+
+static void
+clock_start(void)
+{
+	clock_state.ticks_per_5ms =
+		(read_low_byte(BIOS_SYSTEM_CLOCK_FLAG) & 0x80U) != 0 ?
+		TICKS_PER_5MS_1996800HZ : TICKS_PER_5MS_2457600HZ;
+	clock_state.ticks = 0;
+	/* Preferred source: channel 1 as a free-running rate generator. */
+	outp(PIT_CONTROL, PIT_PROGRAM_CH1);
+	outp(PIT_COUNTER1, 0x00);
+	outp(PIT_COUNTER1, 0x00);
+	if (counter_is_running(PIT_LATCH_CH1, PIT_COUNTER1)) {
+		clock_state.use_channel0 = 0;
+		clock_state.reload = 0; /* 65536 */
+		clock_state.last_count = 0;
+	} else {
+		/* Gate held off: fall back to the DOS system counter with a
+		 * measured reload.  The maximum latched value across several
+		 * periods approximates the reload. */
+		uint16_t maximum = 0;
+		unsigned spins;
+
+		for (spins = 0; spins < 200000U; spins++) {
+			uint16_t value = latch_counter(PIT_LATCH_CH0,
+						       PIT_COUNTER0);
+
+			if (value > maximum)
+				maximum = value;
+		}
+		clock_state.use_channel0 = 1;
+		clock_state.reload = (uint16_t)(maximum + 1U);
+		clock_state.last_count = latch_counter(PIT_LATCH_CH0,
+						       PIT_COUNTER0);
+	}
+	clock_state.initialized = 1;
+}
+
+static uint64_t
+clock_milliseconds(void *context)
+{
+	uint32_t period;
+	uint16_t count;
+	uint16_t delta;
+
+	(void)context;
+	if (!clock_state.initialized) {
+		clock_start();
+		return 0;
+	}
+	if (clock_state.use_channel0) {
+		period = clock_state.reload != 0 ? clock_state.reload : 65536U;
+		count = latch_counter(PIT_LATCH_CH0, PIT_COUNTER0);
+		if (count <= clock_state.last_count)
+			delta = (uint16_t)(clock_state.last_count - count);
+		else
+			delta = (uint16_t)(clock_state.last_count +
+					   (period - count));
+	} else {
+		count = latch_counter(PIT_LATCH_CH1, PIT_COUNTER1);
+		delta = (uint16_t)(clock_state.last_count - count);
+	}
+	clock_state.ticks += delta;
+	clock_state.last_count = count;
+	return clock_state.ticks * 5U / clock_state.ticks_per_5ms;
+}
+
+/* ------------------------------------------------------------------- */
+/* Key state and type-ahead drain.                                     */
+
+/* Normalized key code to PC-98 scan code (group * 8 + bit) for the BIOS
+ * real-time key state table.  Letters use their lowercase codes. */
+static int
+key_to_scan(int key)
+{
+	static const uint8_t letters[26] = {
+		0x1d, 0x2d, 0x2b, 0x1f, 0x12, 0x20, 0x21, 0x22, 0x17,
+		0x23, 0x24, 0x25, 0x2f, 0x2e, 0x18, 0x19, 0x10, 0x13,
+		0x1e, 0x14, 0x15, 0x2c, 0x11, 0x2a, 0x16, 0x29,
+	};
+
+	if (key >= 'a' && key <= 'z')
+		return letters[key - 'a'];
+	if (key >= '1' && key <= '9')
+		return 0x01 + (key - '1');
+	switch (key) {
+	case '0': return 0x0a;
+	case ' ': return 0x34;
+	case NOCT_BEUI_KEY_ESCAPE: return 0x00;
+	case NOCT_BEUI_KEY_TAB: return 0x0f;
+	case NOCT_BEUI_KEY_ENTER: return 0x1c;
+	case NOCT_BEUI_KEY_BACKSPACE: return 0x0e;
+	case NOCT_BEUI_KEY_INSERT: return 0x38;
+	case NOCT_BEUI_KEY_DELETE: return 0x39;
+	case NOCT_BEUI_KEY_UP: return 0x3a;
+	case NOCT_BEUI_KEY_LEFT: return 0x3b;
+	case NOCT_BEUI_KEY_RIGHT: return 0x3c;
+	case NOCT_BEUI_KEY_DOWN: return 0x3d;
+	case NOCT_BEUI_KEY_HOME: return 0x3e;
+	case NOCT_BEUI_KEY_PAGE_UP: return 0x36;
+	case NOCT_BEUI_KEY_PAGE_DOWN: return 0x37;
+	case NOCT_BEUI_KEY_SHIFT: return 0x70;
+	default: return -1;
+	}
+}
+
+static int
+input_is_key_down(void *context, int key)
+{
+	int scan = key_to_scan(key);
+	uint8_t bits;
+
+	(void)context;
+	if (scan < 0)
+		return -1;
+	/* The ROM keyboard handler keeps a 16-byte bitmap of pressed keys
+	 * at 0000:052Ah; with interrupts enabled it is always current. */
+	bits = read_low_byte(BIOS_KEY_STATE_TABLE + ((unsigned)scan >> 3));
+	return (bits >> (scan & 7)) & 1;
+}
+
+static void
+input_drain(void *context)
+{
+	(void)context;
+	while (kbhit())
+		(void)getch();
+}
+
+/* ------------------------------------------------------------------- */
+/* Core-Graph aperture.                                                */
+
+/*
+ * Protected mode under DOS/4GW does not map the board aperture, so ask
+ * DPMI (INT 31h, AX=0800h "Physical Address Mapping") for a linear view
+ * of it.  DOS/4GW runs a zero-based flat model, so the linear address it
+ * returns is usable as a near pointer.  A machine without the board — or
+ * a DPMI host that refuses the mapping — yields NULL, and the display
+ * selector then falls back to the GDC.
+ */
+static volatile uint8_t *
+map_cirrus_aperture(void)
+{
+	union REGS regs;
+	unsigned long size = NOCT_BEUI_CIRRUS_VISIBLE_BYTES;
+	unsigned long linear;
+
+	memset(&regs, 0, sizeof(regs));
+	regs.w.ax = 0x0800;
+	regs.w.bx = (unsigned short)(CIRRUS_PHYSICAL_APERTURE >> 16);
+	regs.w.cx = (unsigned short)(CIRRUS_PHYSICAL_APERTURE & 0xffff);
+	regs.w.si = (unsigned short)(size >> 16);
+	regs.w.di = (unsigned short)(size & 0xffff);
+	int386(0x31, &regs, &regs);
+	if (regs.w.cflag != 0)
+		return NULL;
+	linear = ((unsigned long)regs.w.bx << 16) | regs.w.cx;
+	if (linear == 0)
+		return NULL;
+	return (volatile uint8_t *)linear;
+}
+
+/* ------------------------------------------------------------------- */
+
+NOCT_DLL
+bool
+noct_register_api_beui(NoctEnv *env)
+{
+	noct_beui_cleanup();
+	memset(&pc98dos_hal, 0, sizeof(pc98dos_hal));
+	noct_beui_pc98_auto_default(&auto_backend, display_reset, display_stop,
+				    NULL, port_in8, port_out8, NULL,
+				    map_cirrus_aperture());
+	if (!noct_beui_pc98_auto_make_hal(&pc98dos_hal, &auto_backend))
+		return false;
+	pc98dos_hal.clock.context = NULL;
+	pc98dos_hal.clock.milliseconds = clock_milliseconds;
+	pc98dos_hal.input.context = NULL;
+	pc98dos_hal.input.is_key_down = input_is_key_down;
+	pc98dos_hal.input.drain = input_drain;
+	return register_beui_api(env, &pc98dos_hal);
+}
+
+
+#endif /* NOCT_TARGET_PC98DOS */

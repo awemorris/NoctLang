@@ -10,7 +10,7 @@
  * was promoted to a Noct non-standard API.
  */
 
-#include "beui-internal.h"
+#include "../../src/api/api-beui-pc98.c"
 
 #include <stdint.h>
 #include <stdio.h>

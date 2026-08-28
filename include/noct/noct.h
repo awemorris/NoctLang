@@ -2118,7 +2118,17 @@ noct_string_hash_and_len(
 	uint32_t *hash,
 	uint32_t *len);
 
-/* Library Installation */
+/*
+ * Library Installation
+ */
+
+/* Register the "Thread.*" APIs. (Multithread build only) */
+#if defined(NOCT_USE_MULTITHREAD)
+NOCT_DLL
+bool
+noct_register_api_thread(
+	NoctEnv *env);
+#endif
 
 /* Register the "System.*" APIs. */
 NOCT_DLL
@@ -2132,34 +2142,26 @@ bool
 noct_register_api_console(
 	NoctEnv *env);
 
+/* Register the "Term.*" APIs. */
+NOCT_DLL
+bool
+noct_register_api_term(
+	NoctEnv *env);
+
 /* Register the "File.*" APIs. */
 NOCT_DLL
 bool
 noct_register_api_file(
 	NoctEnv *env);
 
-/*
- * Optional directory enumerator for freestanding FileUtil backends.
- * read() returns 1 for an entry, 0 at end-of-directory, and -1 on error.
- */
-struct NoctDirectoryBackend {
-	int (*read)(void *context, const char *path, size_t index,
-		    char *name, size_t name_capacity, int *is_directory);
-};
-
-NOCT_DLL
-void
-noct_set_directory_backend(
-	const struct NoctDirectoryBackend *backend,
-	void *context);
-
-/* Register the "Thread.*" APIs. (Multithread build only) */
-#if defined(NOCT_USE_MULTITHREAD)
+/* Register the "Process.*" APIs. */
 NOCT_DLL
 bool
-noct_register_api_thread(
-	NoctEnv *env);
-#endif
+noct_register_api_process(NoctEnv *env);
+
+/* Register the "BeUI.*" APIs. */
+NOCT_DLL
+bool noct_register_api_beui(NoctEnv *env);
 
 /* Register the "HttpServer.*" APIs. */
 NOCT_DLL
@@ -2168,114 +2170,11 @@ noct_register_api_httpserver(
 	NoctEnv *env);
 
 /*
- * Register the "Term.*" APIs. (non-standard API)
- *
- * A full-screen terminal abstraction. On platforms without a backend,
- * registration succeeds but Term.open() reports failure.
- */
-NOCT_DLL
-bool
-noct_register_api_term(
-	NoctEnv *env);
-
-/*
- * Target-neutral backend for Term.*.
- *
- * Freestanding targets can implement the terminal without emulating a POSIX
- * tty.  Rows and columns are one-based at the Noct API boundary.  read_key()
- * returns a Unicode codepoint, a NOCT_TERM_KEY_* value with optional modifier
- * bits, or -1 when the timeout expires.
- */
-struct NoctTermStyle {
-	int foreground;		/* -1 means the terminal default. */
-	int background;		/* -1 means the terminal default. */
-	bool bold;
-	bool reverse;
-	bool underline;
-};
-
-struct NoctTermBackend {
-	int (*open)(void *context);
-	void (*close)(void *context);
-	int (*is_tty)(void *context);
-	int (*size)(void *context, unsigned *rows, unsigned *columns);
-	int (*resized)(void *context);
-	int (*move_to)(void *context, unsigned row, unsigned column);
-	int (*write)(void *context, const char *utf8, size_t length);
-	int (*clear)(void *context);
-	int (*clear_to_eol)(void *context);
-	int (*set_style)(void *context, const struct NoctTermStyle *style);
-	int (*show_cursor)(void *context, int visible);
-	int (*flush)(void *context);
-	int (*read_key)(void *context, int timeout_ms);
-	int (*pending_input)(void *context);
-};
-
-#define NOCT_TERM_MOD_META	(1 << 27)
-#define NOCT_TERM_MOD_CTRL	(1 << 26)
-#define NOCT_TERM_MOD_SHIFT	(1 << 25)
-#define NOCT_TERM_KEY_BASE	0xe000
-#define NOCT_TERM_KEY_UP	(NOCT_TERM_KEY_BASE + 0)
-#define NOCT_TERM_KEY_DOWN	(NOCT_TERM_KEY_BASE + 1)
-#define NOCT_TERM_KEY_RIGHT	(NOCT_TERM_KEY_BASE + 2)
-#define NOCT_TERM_KEY_LEFT	(NOCT_TERM_KEY_BASE + 3)
-#define NOCT_TERM_KEY_HOME	(NOCT_TERM_KEY_BASE + 4)
-#define NOCT_TERM_KEY_END	(NOCT_TERM_KEY_BASE + 5)
-#define NOCT_TERM_KEY_PGUP	(NOCT_TERM_KEY_BASE + 6)
-#define NOCT_TERM_KEY_PGDN	(NOCT_TERM_KEY_BASE + 7)
-#define NOCT_TERM_KEY_INSERT	(NOCT_TERM_KEY_BASE + 8)
-#define NOCT_TERM_KEY_DELETE	(NOCT_TERM_KEY_BASE + 9)
-#define NOCT_TERM_KEY_F1	(NOCT_TERM_KEY_BASE + 11)
-
-NOCT_DLL
-bool
-noct_register_api_term_backend(
-	NoctEnv *env,
-	const struct NoctTermBackend *backend,
-	void *context);
-
-NOCT_DLL
-bool
-noct_register_api_process(NoctEnv *env);
-
-/*
  * Custom Allocators
  *  - Override the macros and build a custom library.
  *  - We don't use indirect calls for allocation because it's slow on
  *    Linux due to Spectre mitigation.
  */
-
-/*
- * [For PC-98 BE]
- * The PC-98 Bootstrap Environment supplies these functions from its
- * freestanding C runtime.  Keeping the declarations here lets the
- * selected Noct core compile without pretending that the target is
- * DOS or POSIX.
- */
-#if defined(NOCT_TARGET_PC98BE)
-void *noct_pc98be_malloc(size_t size);
-void *noct_pc98be_calloc(size_t nmemb, size_t size);
-void *noct_pc98be_realloc(void *ptr, size_t size);
-char *noct_pc98be_strdup(const char *s);
-void noct_pc98be_free(void *ptr);
-
-#ifndef noct_malloc
-#define noct_malloc	noct_pc98be_malloc
-#endif
-#ifndef noct_calloc
-#define noct_calloc	noct_pc98be_calloc
-#endif
-#ifndef noct_realloc
-#define noct_realloc	noct_pc98be_realloc
-#endif
-#ifndef noct_strdup
-#define noct_strdup	noct_pc98be_strdup
-#endif
-#ifndef noct_free
-#define noct_free	noct_pc98be_free
-#endif
-
-#endif /* defined(NOCT_TARGET_PC98BE) */
 
 /*
  * Default allocators.

@@ -22,7 +22,7 @@ test -f "$build_dir/libnoctapi.a" || {
 }
 
 "$cc" -I"$root/include" -I"$api" "$root/tests/testcases/beui-test.c" \
-	"$api/beui-core.c" "$api/beui-image.c" -lm \
+	-lm \
 	-o "$build_dir/noct-beui-test"
 "$build_dir/noct-beui-test"
 
@@ -37,13 +37,11 @@ then
 fi
 
 "$cc" -I"$root/include" -I"$api" "$root/tests/testcases/beui-pc98-gdc-test.c" \
-	"$api/beui-pc98-gdc.c" "$api/beui-core.c" "$api/beui-image.c" \
 	-o "$build_dir/noct-beui-pc98-gdc-test"
 "$build_dir/noct-beui-pc98-gdc-test"
 echo 'BeUI PC-98 GDC tests: OK'
 
 "$cc" -I"$root/include" -I"$api" "$root/tests/testcases/beui-pc98-cirrus-test.c" \
-	"$api/beui-pc98-cirrus.c" \
 	-o "$build_dir/noct-beui-pc98-cirrus-test"
 "$build_dir/noct-beui-pc98-cirrus-test"
 echo 'BeUI PC-98 Cirrus tests: OK'

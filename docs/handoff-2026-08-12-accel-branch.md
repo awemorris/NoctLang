@@ -570,9 +570,9 @@ final-HEAD guarantee.
 | GPU IR / GLSL | `src/core/gpu_ir.[ch]`, `gpu_glsl.c`, `hir_gpu.c` |
 | common loop analysis | `hir_parallel.h`, `hir_loop_analyze.c`, `hir_doall.c`, `hir_dosum.c` |
 | managed programs | `accel_program.c`, `hir_opt_accel.c` |
-| common accel runtime | `src/api/accel.c` |
-| OpenGL backend | `src/api/accel_opengl.c` |
-| Vulkan backend | `src/api/accel_vulkan.c` |
+| common accel runtime | `src/accel/accel.c` |
+| OpenGL backend | `src/accel/accel_opengl.c` |
+| Vulkan backend | `src/accel/accel_vulkan.c` |
 | FAST contracts | `src/core/fast.[ch]`, FAST sections in `hir.c` and `runtime.c` |
 | FAST optimization bridge | `hir_opt_abce.c`, small guarded changes in `hir_opt_simd.c` |
 | persistence/AOT | `lir.[ch]`, `runtime.[ch]`, `bcback.c`, `cback.c`, `include/noct/aot.h` |

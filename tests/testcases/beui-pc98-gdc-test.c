@@ -10,7 +10,7 @@
  * checked on any host.
  */
 
-#include "beui-pc98-gdc.h"
+#include "../../src/api/api-beui-pc98.c"
 
 #include <string.h>
 

@@ -9,7 +9,7 @@ case "$build_dir" in
 *) build_dir="$root/$build_dir" ;;
 esac
 cc=${CC:-cc}
-test_bin="$build_dir/noct-api-backend-test"
+test_bin="$build_dir/noct-api-public-test"
 system_libs="-lm"
 case "$(uname -s)" in
 Linux) system_libs="$system_libs -lutil -pthread" ;;
@@ -29,8 +29,10 @@ test -f "$build_dir/libnoctapi.a" || {
 	exit 1
 }
 
+# Exercise only the maintained public registrars.  Target injection backends
+# are deliberately not part of the Noct API.
 # shellcheck disable=SC2086
-"$cc" -I"$root/include" "$root/tests/testcases/api-backend-test.c" \
+"$cc" -I"$root/include" "$root/tests/testcases/api-public-test.c" \
 	"$build_dir/libnoctapi.a" "$build_dir/libnoct.a" \
 	$system_libs -o "$test_bin"
 "$test_bin"

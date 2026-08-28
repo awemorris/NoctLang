@@ -13,7 +13,7 @@
 
 #include <noct/repl.h>
 #if defined(NOCT_USE_BEUI)
-#include <noct/beui.h>
+#include <noct/noct.h>
 #endif
 
 #include <errno.h>

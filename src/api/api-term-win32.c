@@ -8,8 +8,8 @@
 /*
  * API: Term.*  (non-standard API) -- Win32 console backend.
  *
- * Implements the target-neutral NoctTermBackend with the classic
- * Win32 Console API (no VT-mode dependency), so it works on every
+ * Implements Term.* directly with the classic Win32 Console API (no
+ * VT-mode dependency), so it works on every
  * desktop Windows from the NT line onward, including consoles where
  * ENABLE_VIRTUAL_TERMINAL_PROCESSING is unavailable.
  *
@@ -23,7 +23,7 @@
  *  - Input uses ReadConsoleInputW and translates KEY_EVENT records
  *    into the Emacs-style event integers of the POSIX backend:
  *    Alt maps to META, Ctrl to CTRL, arrows and friends to the
- *    NOCT_TERM_KEY_* constants. AltGr (right Alt + left Ctrl) is
+ *    private TERM_KEY_* constants. AltGr (right Alt + left Ctrl) is
  *    plain character input, not Meta.
  *  - The session runs on a private screen buffer, which doubles as
  *    the alternate screen: closing restores the original console
@@ -39,6 +39,35 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+/*
+ * These values are part of the Term.* language API, not the public C API.
+ * Keep the platform implementation self-contained instead of exposing a
+ * backend interface through noct.h.
+ */
+#define TERM_MOD_META	(1 << 27)
+#define TERM_MOD_CTRL	(1 << 26)
+#define TERM_MOD_SHIFT	(1 << 25)
+#define TERM_KEY_BASE	0xe000
+#define TERM_KEY_UP	(TERM_KEY_BASE + 0)
+#define TERM_KEY_DOWN	(TERM_KEY_BASE + 1)
+#define TERM_KEY_RIGHT	(TERM_KEY_BASE + 2)
+#define TERM_KEY_LEFT	(TERM_KEY_BASE + 3)
+#define TERM_KEY_HOME	(TERM_KEY_BASE + 4)
+#define TERM_KEY_END	(TERM_KEY_BASE + 5)
+#define TERM_KEY_PGUP	(TERM_KEY_BASE + 6)
+#define TERM_KEY_PGDN	(TERM_KEY_BASE + 7)
+#define TERM_KEY_INSERT	(TERM_KEY_BASE + 8)
+#define TERM_KEY_DELETE	(TERM_KEY_BASE + 9)
+#define TERM_KEY_F1	(TERM_KEY_BASE + 11)
+
+struct win32_term_style {
+	int foreground;
+	int background;
+	bool bold;
+	bool reverse;
+	bool underline;
+};
 
 #ifndef COMMON_LVB_UNDERSCORE
 #define COMMON_LVB_UNDERSCORE	0x8000
@@ -327,13 +356,11 @@ apply_sgr(
  */
 
 static int
-win32_is_tty(
-	void *context)
+win32_is_tty(void)
 {
 	DWORD mode;
 	HANDLE in, out;
 
-	(void)context;
 	in = GetStdHandle(STD_INPUT_HANDLE);
 	out = GetStdHandle(STD_OUTPUT_HANDLE);
 	if (in == INVALID_HANDLE_VALUE || out == INVALID_HANDLE_VALUE)
@@ -343,21 +370,19 @@ win32_is_tty(
 	return 1;
 }
 
-static void win32_close(void *context);
+static void win32_close(void);
 
 static int
-win32_open(
-	void *context)
+win32_open(void)
 {
 	CONSOLE_SCREEN_BUFFER_INFO info;
 	COORD size;
 	SMALL_RECT window;
 	DWORD mode;
 
-	(void)context;
 	if (term.open)
 		return 1;
-	if (!win32_is_tty(NULL))
+	if (!win32_is_tty())
 		return 0;
 
 	term.input = GetStdHandle(STD_INPUT_HANDLE);
@@ -417,10 +442,8 @@ win32_open(
 }
 
 static void
-win32_close(
-	void *context)
+win32_close(void)
 {
-	(void)context;
 	if (!term.open)
 		return;
 	SetConsoleCtrlHandler(ctrl_handler, FALSE);
@@ -434,14 +457,12 @@ win32_close(
 
 static int
 win32_size(
-	void *context,
 	unsigned *rows,
 	unsigned *columns)
 {
 	CONSOLE_SCREEN_BUFFER_INFO info;
 	HANDLE target;
 
-	(void)context;
 	target = term.open ? term.screen : GetStdHandle(STD_OUTPUT_HANDLE);
 	if (!GetConsoleScreenBufferInfo(target, &info))
 		return 0;
@@ -451,12 +472,10 @@ win32_size(
 }
 
 static int
-win32_resized(
-	void *context)
+win32_resized(void)
 {
 	int v;
 
-	(void)context;
 	v = term.resized ? 1 : 0;
 	term.resized = 0;
 	return v;
@@ -464,13 +483,11 @@ win32_resized(
 
 static int
 win32_move_to(
-	void *context,
 	unsigned row,
 	unsigned column)
 {
 	COORD pos;
 
-	(void)context;
 	if (!term.open)
 		return 0;
 	pos.X = (SHORT)(column - 1);
@@ -481,7 +498,6 @@ win32_move_to(
 
 static int
 win32_write(
-	void *context,
 	const char *utf8,
 	size_t length)
 {
@@ -490,7 +506,6 @@ win32_write(
 	int nparam, acc, has_digit;
 	unsigned char c;
 
-	(void)context;
 	if (!term.open)
 		return 0;
 
@@ -546,14 +561,12 @@ win32_write(
 }
 
 static int
-win32_clear(
-	void *context)
+win32_clear(void)
 {
 	CONSOLE_SCREEN_BUFFER_INFO info;
 	COORD home;
 	DWORD cells, written;
 
-	(void)context;
 	if (!term.open)
 		return 0;
 	if (!GetConsoleScreenBufferInfo(term.screen, &info))
@@ -569,13 +582,11 @@ win32_clear(
 }
 
 static int
-win32_clear_to_eol(
-	void *context)
+win32_clear_to_eol(void)
 {
 	CONSOLE_SCREEN_BUFFER_INFO info;
 	DWORD cells, written;
 
-	(void)context;
 	if (!term.open)
 		return 0;
 	if (!GetConsoleScreenBufferInfo(term.screen, &info))
@@ -590,12 +601,10 @@ win32_clear_to_eol(
 
 static int
 win32_set_style(
-	void *context,
-	const struct NoctTermStyle *style)
+	const struct win32_term_style *style)
 {
 	int c;
 
-	(void)context;
 	term.cur_attr = term.base_attr;
 	term.reverse = style->reverse ? 1 : 0;
 	if (style->bold)
@@ -613,12 +622,10 @@ win32_set_style(
 
 static int
 win32_show_cursor(
-	void *context,
 	int visible)
 {
 	CONSOLE_CURSOR_INFO cursor;
 
-	(void)context;
 	if (!term.open)
 		return 0;
 	if (!GetConsoleCursorInfo(term.screen, &cursor))
@@ -629,11 +636,9 @@ win32_show_cursor(
 }
 
 static int
-win32_flush(
-	void *context)
+win32_flush(void)
 {
 	/* Output is unbuffered: WriteConsoleW takes effect immediately. */
-	(void)context;
 	return 1;
 }
 
@@ -647,19 +652,19 @@ vk_to_special(
 	WORD vk)
 {
 	switch (vk) {
-	case VK_UP:	return NOCT_TERM_KEY_UP;
-	case VK_DOWN:	return NOCT_TERM_KEY_DOWN;
-	case VK_RIGHT:	return NOCT_TERM_KEY_RIGHT;
-	case VK_LEFT:	return NOCT_TERM_KEY_LEFT;
-	case VK_HOME:	return NOCT_TERM_KEY_HOME;
-	case VK_END:	return NOCT_TERM_KEY_END;
-	case VK_PRIOR:	return NOCT_TERM_KEY_PGUP;
-	case VK_NEXT:	return NOCT_TERM_KEY_PGDN;
-	case VK_INSERT:	return NOCT_TERM_KEY_INSERT;
-	case VK_DELETE:	return NOCT_TERM_KEY_DELETE;
+	case VK_UP:	return TERM_KEY_UP;
+	case VK_DOWN:	return TERM_KEY_DOWN;
+	case VK_RIGHT:	return TERM_KEY_RIGHT;
+	case VK_LEFT:	return TERM_KEY_LEFT;
+	case VK_HOME:	return TERM_KEY_HOME;
+	case VK_END:	return TERM_KEY_END;
+	case VK_PRIOR:	return TERM_KEY_PGUP;
+	case VK_NEXT:	return TERM_KEY_PGDN;
+	case VK_INSERT:	return TERM_KEY_INSERT;
+	case VK_DELETE:	return TERM_KEY_DELETE;
 	default:
 		if (vk >= VK_F1 && vk <= VK_F12)
-			return NOCT_TERM_KEY_F1 + (vk - VK_F1);
+			return TERM_KEY_F1 + (vk - VK_F1);
 		return -1;
 	}
 }
@@ -715,16 +720,16 @@ process_key_event(
 	if (special >= 0) {
 		ev = special;
 		if (alt)
-			ev |= NOCT_TERM_MOD_META;
+			ev |= TERM_MOD_META;
 		if (ctrl)
-			ev |= NOCT_TERM_MOD_CTRL;
+			ev |= TERM_MOD_CTRL;
 		if (shift)
-			ev |= NOCT_TERM_MOD_SHIFT;
+			ev |= TERM_MOD_SHIFT;
 	} else if (key->wVirtualKeyCode == VK_BACK) {
 		/* The Backspace key is DEL, like the POSIX backend. */
 		ev = 0x7F;
 		if (alt)
-			ev |= NOCT_TERM_MOD_META;
+			ev |= TERM_MOD_META;
 	} else if (ch == 0) {
 		/* No translated character (e.g. Alt/Ctrl chords the
 		 * console does not cook). Derive from the virtual key. */
@@ -738,9 +743,9 @@ process_key_event(
 			if (c >= 0x20) {
 				ev = (int)c;
 				if (alt)
-					ev |= NOCT_TERM_MOD_META;
+					ev |= TERM_MOD_META;
 				if (ctrl)
-					ev |= NOCT_TERM_MOD_CTRL;
+					ev |= TERM_MOD_CTRL;
 			}
 		}
 	} else if (altgr) {
@@ -754,16 +759,16 @@ process_key_event(
 		} else if (ch == 0x1B) {
 			ev = 0x1B;
 		} else if (ch == 0x00) {
-			ev = NOCT_TERM_MOD_CTRL | 0x20;	/* C-SPC / C-@ */
+			ev = TERM_MOD_CTRL | 0x20;	/* C-SPC / C-@ */
 		} else if (ch == 0x0A) {
-			ev = NOCT_TERM_MOD_CTRL | 'j';
+			ev = TERM_MOD_CTRL | 'j';
 		} else if (ch <= 0x1A) {
-			ev = NOCT_TERM_MOD_CTRL | (int)(ch + 0x60);
+			ev = TERM_MOD_CTRL | (int)(ch + 0x60);
 		} else {
-			ev = NOCT_TERM_MOD_CTRL | (int)(ch + 0x40);
+			ev = TERM_MOD_CTRL | (int)(ch + 0x40);
 		}
 		if (ev >= 0 && alt)
-			ev |= NOCT_TERM_MOD_META;
+			ev |= TERM_MOD_META;
 	} else if (ch >= 0xD800 && ch < 0xDC00) {
 		term.pending_high = (WCHAR)ch;
 		return;
@@ -780,11 +785,11 @@ process_key_event(
 		 * already folded into the character. */
 		ev = (int)ch;
 		if (ch == 0x20 && ctrl)
-			ev |= NOCT_TERM_MOD_CTRL;
+			ev |= TERM_MOD_CTRL;
 		else if (ctrl)
-			ev |= NOCT_TERM_MOD_CTRL;
+			ev |= TERM_MOD_CTRL;
 		if (alt)
-			ev |= NOCT_TERM_MOD_META;
+			ev |= TERM_MOD_META;
 	}
 
 	if (ev < 0)
@@ -824,13 +829,11 @@ drain_input(void)
 
 static int
 win32_read_key(
-	void *context,
 	int timeout_ms)
 {
 	DWORD start, elapsed, wait, wait_ret;
 	int ev;
 
-	(void)context;
 	if (!term.open)
 		return -1;
 
@@ -839,7 +842,7 @@ win32_read_key(
 		{
 			LONG pending_c = InterlockedExchange(&term.ctrl_c_count, 0);
 			while (pending_c-- > 0)
-				queue_push(NOCT_TERM_MOD_CTRL | 'c');
+				queue_push(TERM_MOD_CTRL | 'c');
 		}
 
 		ev = queue_pop();
@@ -881,10 +884,8 @@ win32_read_key(
 }
 
 static int
-win32_pending_input(
-	void *context)
+win32_pending_input(void)
 {
-	(void)context;
 	if (!term.open)
 		return 0;
 	if (term.ctrl_c_count > 0)
@@ -899,28 +900,124 @@ win32_pending_input(
  * Registration
  */
 
-static const struct NoctTermBackend win32_backend = {
-	win32_open,
-	win32_close,
-	win32_is_tty,
-	win32_size,
-	win32_resized,
-	win32_move_to,
-	win32_write,
-	win32_clear,
-	win32_clear_to_eol,
-	win32_set_style,
-	win32_show_cursor,
-	win32_flush,
-	win32_read_key,
-	win32_pending_input
+static bool cfunc_Term_open(NoctEnv *env);
+static bool cfunc_Term_close(NoctEnv *env);
+static bool cfunc_Term_isTTY(NoctEnv *env);
+static bool cfunc_Term_size(NoctEnv *env);
+static bool cfunc_Term_resized(NoctEnv *env);
+static bool cfunc_Term_moveTo(NoctEnv *env);
+static bool cfunc_Term_write(NoctEnv *env);
+static bool cfunc_Term_clear(NoctEnv *env);
+static bool cfunc_Term_clearToEol(NoctEnv *env);
+static bool cfunc_Term_setStyle(NoctEnv *env);
+static bool cfunc_Term_showCursor(NoctEnv *env);
+static bool cfunc_Term_flush(NoctEnv *env);
+static bool cfunc_Term_syncBegin(NoctEnv *env);
+static bool cfunc_Term_syncEnd(NoctEnv *env);
+static bool cfunc_Term_readKey(NoctEnv *env);
+static bool cfunc_Term_pendingInput(NoctEnv *env);
+
+struct term_ffi_item {
+	const char *global_name;
+	const char *field_name;
+	size_t param_count;
+	const char *param[NOCT_ARG_MAX];
+	bool (*cfunc)(NoctEnv *env);
+};
+
+static struct term_ffi_item term_ffi_items[] = {
+	{"Term.open", "open", 0, {NULL}, cfunc_Term_open},
+	{"Term.close", "close", 0, {NULL}, cfunc_Term_close},
+	{"Term.isTTY", "isTTY", 0, {NULL}, cfunc_Term_isTTY},
+	{"Term.size", "size", 0, {NULL}, cfunc_Term_size},
+	{"Term.resized", "resized", 0, {NULL}, cfunc_Term_resized},
+	{"Term.moveTo", "moveTo", 2, {"row", "col"}, cfunc_Term_moveTo},
+	{"Term.write", "write", 1, {"text"}, cfunc_Term_write},
+	{"Term.clear", "clear", 0, {NULL}, cfunc_Term_clear},
+	{"Term.clearToEol", "clearToEol", 0, {NULL}, cfunc_Term_clearToEol},
+	{"Term.setStyle", "setStyle", 1, {"style"}, cfunc_Term_setStyle},
+	{"Term.showCursor", "showCursor", 1, {"visible"}, cfunc_Term_showCursor},
+	{"Term.flush", "flush", 0, {NULL}, cfunc_Term_flush},
+	{"Term.syncBegin", "syncBegin", 0, {NULL}, cfunc_Term_syncBegin},
+	{"Term.syncEnd", "syncEnd", 0, {NULL}, cfunc_Term_syncEnd},
+	{"Term.readKey", "readKey", 1, {"timeoutMs"}, cfunc_Term_readKey},
+	{"Term.pendingInput", "pendingInput", 0, {NULL},
+	 cfunc_Term_pendingInput},
+};
+
+struct term_const {
+	const char *name;
+	int value;
+};
+
+static const struct term_const term_consts[] = {
+	{"META", TERM_MOD_META},
+	{"CTRL", TERM_MOD_CTRL},
+	{"SHIFT", TERM_MOD_SHIFT},
+	{"KEY_UP", TERM_KEY_UP},
+	{"KEY_DOWN", TERM_KEY_DOWN},
+	{"KEY_RIGHT", TERM_KEY_RIGHT},
+	{"KEY_LEFT", TERM_KEY_LEFT},
+	{"KEY_HOME", TERM_KEY_HOME},
+	{"KEY_END", TERM_KEY_END},
+	{"KEY_PGUP", TERM_KEY_PGUP},
+	{"KEY_PGDN", TERM_KEY_PGDN},
+	{"KEY_INSERT", TERM_KEY_INSERT},
+	{"KEY_DELETE", TERM_KEY_DELETE},
+	{"KEY_F1", TERM_KEY_F1},
+	{"KEY_TAB", '\t'},
+	{"KEY_RET", '\r'},
+	{"KEY_ESC", 0x1b},
+	{"KEY_BS", 0x7f},
 };
 
 /* Restore the console; safe to call more than once. */
 static void
 term_restore(void)
 {
-	win32_close(NULL);
+	win32_close();
+}
+
+static bool
+return_int(
+	NoctEnv *env,
+	int value)
+{
+	NoctValue result;
+	bool ok;
+
+	memset(&result, 0, sizeof(result));
+	if (!noct_pin_local(env, 1, &result))
+		return false;
+	ok = noct_set_return_make_int(env, &result, value);
+	(void)noct_unpin_local(env, 1, &result);
+	return ok;
+}
+
+static bool
+get_int_arg(
+	NoctEnv *env,
+	uint32_t index,
+	int *result)
+{
+	NoctValue value;
+	int64_t long_value;
+	int int_value;
+	bool ok;
+
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	ok = noct_get_arg_check_long(env, index, &value, &long_value);
+	if (!ok) {
+		ok = noct_get_arg_check_int(env, index, &value, &int_value);
+		if (ok)
+			long_value = int_value;
+	}
+	if (ok)
+		*result = (int)long_value;
+	(void)noct_unpin_local(env, 1, &value);
+	return ok;
 }
 
 NOCT_DLL
@@ -928,11 +1025,248 @@ bool
 noct_register_api_term(
 	NoctEnv *env)
 {
+	NoctValue term_dict, temporary, function;
+	size_t index;
+	bool ok;
+
 	term.env = env;
-	if (!noct_register_api_term_backend(env, &win32_backend, NULL))
+	memset(&term_dict, 0, sizeof(term_dict));
+	memset(&temporary, 0, sizeof(temporary));
+	memset(&function, 0, sizeof(function));
+	if (!noct_pin_local(env, 3, &term_dict, &temporary, &function))
 		return false;
-	atexit(term_restore);
-	return true;
+	ok = false;
+	if (!noct_make_empty_dict(env, &term_dict) ||
+	    !noct_set_global(env, "Term", &term_dict))
+		goto cleanup;
+	for (index = 0; index < sizeof(term_ffi_items) /
+					 sizeof(term_ffi_items[0]); index++) {
+		struct term_ffi_item *item;
+
+		item = &term_ffi_items[index];
+		if (!noct_register_cfunc(env, item->global_name, item->param_count,
+					 item->param, item->cfunc, NULL) ||
+		    !noct_get_global(env, item->global_name, &function) ||
+		    !noct_set_dict_elem_cstr(env, &term_dict, item->field_name,
+					     &function))
+			goto cleanup;
+	}
+	for (index = 0; index < sizeof(term_consts) / sizeof(term_consts[0]);
+	     index++) {
+		if (!noct_set_dict_elem_make_int(env, &term_dict,
+					 term_consts[index].name, &temporary,
+					 term_consts[index].value))
+			goto cleanup;
+	}
+	if (atexit(term_restore) != 0)
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 3, &term_dict, &temporary, &function);
+	return ok;
+}
+
+static bool
+cfunc_Term_open(
+	NoctEnv *env)
+{
+	return return_int(env, win32_open());
+}
+
+static bool
+cfunc_Term_close(
+	NoctEnv *env)
+{
+	win32_close();
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_Term_isTTY(
+	NoctEnv *env)
+{
+	return return_int(env, win32_is_tty());
+}
+
+static bool
+cfunc_Term_size(
+	NoctEnv *env)
+{
+	NoctValue result, temporary;
+	unsigned rows, columns;
+	bool ok;
+
+	rows = 24;
+	columns = 80;
+	(void)win32_size(&rows, &columns);
+	memset(&result, 0, sizeof(result));
+	memset(&temporary, 0, sizeof(temporary));
+	if (!noct_pin_local(env, 2, &result, &temporary))
+		return false;
+	ok = false;
+	if (!noct_make_empty_dict(env, &result) ||
+	    !noct_set_dict_elem_make_int(env, &result, "rows", &temporary,
+					 (int)rows) ||
+	    !noct_set_dict_elem_make_int(env, &result, "cols", &temporary,
+					 (int)columns) ||
+	    !noct_set_return(env, &result))
+		goto cleanup;
+	ok = true;
+cleanup:
+	(void)noct_unpin_local(env, 2, &result, &temporary);
+	return ok;
+}
+
+static bool
+cfunc_Term_resized(
+	NoctEnv *env)
+{
+	return return_int(env, win32_resized());
+}
+
+static bool
+cfunc_Term_moveTo(
+	NoctEnv *env)
+{
+	int row, column;
+
+	if (!get_int_arg(env, 0, &row) || !get_int_arg(env, 1, &column))
+		return false;
+	return return_int(env, row > 0 && column > 0 ?
+		win32_move_to((unsigned)row, (unsigned)column) : 0);
+}
+
+static bool
+cfunc_Term_write(
+	NoctEnv *env)
+{
+	NoctValue value;
+	const char *text;
+	int result;
+	bool ok;
+
+	memset(&value, 0, sizeof(value));
+	if (!noct_pin_local(env, 1, &value))
+		return false;
+	ok = noct_get_arg_check_string(env, 0, &value, &text);
+	if (!ok) {
+		(void)noct_unpin_local(env, 1, &value);
+		return false;
+	}
+	result = win32_write(text, strlen(text));
+	(void)noct_unpin_local(env, 1, &value);
+	return return_int(env, result);
+}
+
+static bool
+cfunc_Term_clear(
+	NoctEnv *env)
+{
+	return return_int(env, win32_clear());
+}
+
+static bool
+cfunc_Term_clearToEol(
+	NoctEnv *env)
+{
+	return return_int(env, win32_clear_to_eol());
+}
+
+static bool
+cfunc_Term_setStyle(
+	NoctEnv *env)
+{
+	NoctValue style, temporary;
+	struct win32_term_style native;
+	bool has;
+	int value;
+	bool ok;
+
+	native.foreground = -1;
+	native.background = -1;
+	native.bold = false;
+	native.reverse = false;
+	native.underline = false;
+	memset(&style, 0, sizeof(style));
+	memset(&temporary, 0, sizeof(temporary));
+	if (!noct_pin_local(env, 2, &style, &temporary))
+		return false;
+	ok = false;
+	if (!noct_get_arg_check_dict(env, 0, &style))
+		goto cleanup;
+#define READ_STYLE(name, field) \
+	do { \
+		has = false; \
+		if (!noct_check_dict_key_cstr(env, &style, name, &has)) \
+			goto cleanup; \
+		if (has) { \
+			if (!noct_get_dict_elem_check_int(env, &style, name, \
+						       &temporary, &value)) \
+				goto cleanup; \
+			native.field = value; \
+		} \
+	} while (0)
+	READ_STYLE("fg", foreground);
+	READ_STYLE("bg", background);
+	READ_STYLE("bold", bold);
+	READ_STYLE("reverse", reverse);
+	READ_STYLE("underline", underline);
+#undef READ_STYLE
+	ok = return_int(env, win32_set_style(&native));
+cleanup:
+	(void)noct_unpin_local(env, 2, &style, &temporary);
+	return ok;
+}
+
+static bool
+cfunc_Term_showCursor(
+	NoctEnv *env)
+{
+	int visible;
+
+	if (!get_int_arg(env, 0, &visible))
+		return false;
+	return return_int(env, win32_show_cursor(visible != 0));
+}
+
+static bool
+cfunc_Term_flush(
+	NoctEnv *env)
+{
+	return return_int(env, win32_flush());
+}
+
+/* Win32 console writes are already immediate, so synchronization is a no-op. */
+static bool
+cfunc_Term_syncBegin(
+	NoctEnv *env)
+{
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_Term_syncEnd(
+	NoctEnv *env)
+{
+	return return_int(env, 1);
+}
+
+static bool
+cfunc_Term_readKey(
+	NoctEnv *env)
+{
+	int timeout;
+
+	if (!get_int_arg(env, 0, &timeout))
+		return false;
+	return return_int(env, win32_read_key(timeout));
+}
+
+static bool
+cfunc_Term_pendingInput(
+	NoctEnv *env)
+{
+	return return_int(env, win32_pending_input());
 }
 
 #else

@@ -33,7 +33,7 @@ remacs/
   NoctLang/               # git submodule (upstream追従)
   CMakeLists.txt          # noct をサブディレクトリとしてビルド、CLI拡張をリンク
   src/
-    api-term.c            # Term.*   端末抽象 (ANSI/VT100直実装)
+    api-term-ansi.c       # Term.*   端末抽象 (ANSI/VT100直実装)
     api-buffer.c          # Buffer層 Emacsプリミティブ (ギャップバッファ)
     napi.def              # ★API定義表 (単一情報源、下記)
   editor/
@@ -69,7 +69,7 @@ remacs/
 | Buffer.* (api-buffer.c)     Emacsプリミティブ相当            |  C
 |   ギャップバッファ、point/マーカー、文字⇔バイト変換          |
 +--------------------------------------------------------------+
-| Term.* (api-term.c)         端末抽象                          |  C
+| Term.* (api-term-ansi.c)    端末抽象                          |  C
 |   rawモード、キーデコーダ、出力バッファ、リサイズ            |
 +--------------------------------------------------------------+
 | Noct VM (submodule)         GC / JIT / Thread / File          |
@@ -233,7 +233,7 @@ Term.pendingInput()         → 未処理入力があれば1 (再表示スキッ
 オラクル比較する際に値がそのまま一致する (3) `C-x` = `(1<<26)|'x'` の
 ような合成がキーマップ実装側で単純になる。
 
-### 5.4 内部仕様 (api-term.c)
+### 5.4 内部仕様 (api-term-ansi.c)
 
 **エンコーディング前提**: UTF-8端末、metaSendsEscape (ESCプレフィックス)。
 8-bit meta は UTF-8 と多義になるため対応しない。

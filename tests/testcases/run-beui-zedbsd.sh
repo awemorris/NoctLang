@@ -58,29 +58,31 @@ grep -q '"NOCT_ENABLE_API_BEUI_ZEDBSD": "ON"' "$root/CMakePresets.json"
 grep -q 'noct_register_api_beui(env)' "$root/src/cli/cli-run.c"
 grep -q 'noct_register_api_beui(env)' "$root/src/cli/cli-repl.c"
 test "$(grep -c '^bool noct_register_api_beui(NoctEnv \*env);' \
-	"$root/include/noct/beui.h")" -eq 1
+	"$root/include/noct/noct.h")" -eq 1
 if grep -E 'noct_beui_(bind|init|image_|bmp_)|struct noct_beui_|enum noct_beui_' \
-	"$root/include/noct/beui.h" >/dev/null
+	"$root/include/noct/noct.h" >/dev/null
 then
 	echo "private BeUI implementation contract found in public header" >&2
 	exit 1
 fi
-grep -q '^int noct_beui_bind(const struct noct_beui_hal \*hal);' \
-	"$root/src/api/beui-internal.h"
 for source in cli-run.c cli-repl.c; do
-	grep -q '#include <noct/beui.h>' "$root/src/cli/$source"
+	grep -q '#include <noct/noct.h>' "$root/src/cli/$source"
 	if grep -q 'beui-internal.h' "$root/src/cli/$source"; then
 		echo "CLI includes private BeUI contract: $source" >&2
 		exit 1
 	fi
 done
-for source in api-beui-pc98dos.c api-beui-sdl2.c api-beui-zedbsd.c; do
+for source in api-beui-pc98.c api-beui-sdl2.c api-beui-zedbsd.c; do
 	test "$(grep -c '^noct_register_api_beui(NoctEnv \*env)' \
 		"$root/src/api/$source")" -eq 1
 done
 grep -q 'NOCT_BEUI_PLATFORM_COUNT EQUAL 1' "$root/CMakeLists.txt"
 test ! -e "$root/src/api/api-beui.c"
 test ! -e "$root/src/api/api-beui-backend.c"
+test ! -e "$root/src/api/beui-internal.h"
+test ! -e "$root/src/api/beui-core.c"
+test ! -e "$root/src/api/beui-image.c"
+test ! -e "$root/include/noct/beui.h"
 test ! -e "$root/src/api/beui-zedbsd-input.c"
 test ! -e "$root/src/api/beui-zedbsd-input.h"
 obsolete_prefix=noct_register_api_beui_
@@ -88,7 +90,7 @@ obsolete_registrars="${obsolete_prefix}with_hal\|${obsolete_prefix}zedbsd"
 obsolete_registrars="$obsolete_registrars\|${obsolete_prefix}sdl2"
 obsolete_registrars="$obsolete_registrars\|${obsolete_prefix}pc98dos"
 if grep -R "$obsolete_registrars" \
-	"$root/include" "$root/src" "$root/docs" >/dev/null
+	"$root/include/noct/noct.h" "$root/src" "$root/docs" >/dev/null
 then
 	echo "obsolete BeUI registration interface found" >&2
 	exit 1

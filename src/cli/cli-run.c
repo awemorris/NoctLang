@@ -11,7 +11,7 @@
 
 #include <noct/noct.h>
 #if defined(NOCT_USE_BEUI)
-#include <noct/beui.h>
+#include <noct/noct.h>
 #endif
 #include "cli-main.h"
 #if defined(NOCT_USE_ACCEL_DX12) || defined(NOCT_USE_ACCEL_VULKAN) ||          \

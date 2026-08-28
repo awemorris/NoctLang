@@ -18,8 +18,9 @@ The CLI and other callers register it through
 `noct_register_api_beui(env)`.  The backend HAL is private to that platform
 source rather than an embedding API; a target without one of the supported
 platform implementations does not enable BeUI.
-The installed `include/noct/beui.h` exposes only that registrar.  HAL, core,
-and image contracts live in the non-installed `src/api/beui-internal.h`.
+The installed aggregate `include/noct/noct.h` exposes only that registrar.
+Each `src/api/api-beui-<platform>.c` privately owns its HAL, core, image
+decoder, state, and language binding; there is no shared backend interface.
 
 ---
 
@@ -247,7 +248,7 @@ automatically.  Each supported platform source owns its full BeUI language
 binding and backend; multiple platform implementations are not linked into
 one executable.
 
-The PC-98 display drivers (`beui-pc98-gdc.c`, `beui-pc98-cirrus.c`, the
-CGROM glyph source, and the selector that prefers Cirrus over the GDC)
-take their port I/O and framebuffer through function pointers, so the
-same drivers serve a DOS extender and a 32-bit pre-boot environment.
+The single `api-beui-pc98.c` implementation contains the GDC, Core-Graph /
+Cirrus, CGROM glyph, JIS X 0208, image, core, and selector code.  Its private
+drivers take port I/O and framebuffer access through function pointers so the
+implementation remains testable without publishing an internal backend API.
