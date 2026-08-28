@@ -14,7 +14,7 @@ therefore host neutral: coordinates are absolute pixels, colors are
 images are supplied as bytes rather than as paths.
 
 An embedder binds one backend per VM with
-`noct_register_api_beui(env, hal)`; see `include/noct/beui.h` for the
+`noct_register_api_beui_with_hal(env, hal)`; see `include/noct/beui.h` for the
 HAL. A target with no display can register a NULL HAL, and `BeUI.init()`
 then reports failure instead of the module being absent, so scripts can
 degrade rather than fail to load.
@@ -234,9 +234,10 @@ while (BeUI.poll()) {
 
 | Target | Registration | Display |
 |--------|--------------|---------|
-| PC-98 MS-DOS (DOS/4GW) | `noct_register_api_beui_pc98dos(env)` | Core-Graph / Cirrus 640x480x8, falling back to GDC 640x400x4 |
-| SDL2 desktop | `noct_register_api_beui_sdl2(env)` | 640x400, 32-bit RGB window with keyboard, mouse, clock, and queued audio HALs |
-| Any | `noct_register_api_beui(env, hal)` | Whatever the embedder binds |
+| PC-98 MS-DOS (DOS/4GW) | `noct_register_api_beui(env)` | Core-Graph / Cirrus 640x480x8, falling back to GDC 640x400x4 |
+| SDL2 desktop | `noct_register_api_beui(env)` | 640x400, 32-bit RGB window with keyboard, mouse, clock, and queued audio HALs |
+| zedBSD | `noct_register_api_beui(env)` | `/dev/graphics` plus capability-discovered evdev |
+| Custom embedder | `noct_register_api_beui_with_hal(env, hal)` | Whatever the embedder binds |
 
 Configure a desktop build with both `NOCT_ENABLE_API_BEUI=ON` and
 `NOCT_ENABLE_API_BEUI_SDL2=ON`. The `sdl2` CMake preset supplies these

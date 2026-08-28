@@ -259,26 +259,18 @@ const struct noct_beui_image *noct_beui_image_get(int handle);
 int noct_beui_image_destroy(int handle);
 
 /*
- * Register the "BeUI.*" API and the "Key" dictionary against a HAL.
- * (non-standard API)
+ * Register the "BeUI.*" API and the "Key" dictionary using the backend
+ * selected for this target.  (non-standard API)
  */
 NOCT_DLL
-bool noct_register_api_beui(NoctEnv *env, const struct noct_beui_hal *hal);
+bool noct_register_api_beui(NoctEnv *env);
 
 /*
- * Register BeUI backed by the PC-98 MS-DOS backend (GDC display, CGROM
- * glyphs, polled i8253 clock, BIOS key state).  Only built when
- * NOCT_TARGET_PC98DOS is defined.
+ * Embedders that supply their own HAL bypass the target dispatcher through
+ * this explicit entry point.
  */
 NOCT_DLL
-bool noct_register_api_beui_pc98dos(NoctEnv *env);
-
-/* Register BeUI backed by an SDL2 desktop window. */
-NOCT_DLL
-bool noct_register_api_beui_sdl2(NoctEnv *env);
-
-/* Register BeUI backed by zedBSD /dev/graphics and evdev devices. */
-NOCT_DLL
-bool noct_register_api_beui_zedbsd(NoctEnv *env);
+bool noct_register_api_beui_with_hal(NoctEnv *env,
+				     const struct noct_beui_hal *hal);
 
 #endif

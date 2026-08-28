@@ -143,19 +143,7 @@ command_run(int argc, char *argv[])
 	}
 #endif
 #if defined(NOCT_USE_BEUI)
-#if defined(NOCT_TARGET_PC98DOS)
-	if (!noct_register_api_beui_pc98dos(env)) {
-#elif defined(NOCT_USE_BEUI_ZEDBSD)
-	if (!noct_register_api_beui_zedbsd(env)) {
-#elif defined(NOCT_USE_BEUI_SDL2)
-	if (!noct_register_api_beui_sdl2(env)) {
-#else
-	/* A host with no BeUI backend still gets the module, bound to no
-	 * hardware: BeUI.init() reports failure and the rest of the API
-	 * stays loadable, so a graphical script degrades instead of
-	 * failing to resolve BeUI.* at all. */
-	if (!noct_register_api_beui(env, NULL)) {
-#endif
+	if (!noct_register_api_beui(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return 1;
 	}

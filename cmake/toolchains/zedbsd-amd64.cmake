@@ -1,5 +1,15 @@
 # Noct cross build for zedBSD amd64 LP64.
 
+set(ZEDBSD TRUE)
+set(UNIX TRUE)
+set(CMAKE_EXECUTABLE_SUFFIX "")
+set(CMAKE_STATIC_LIBRARY_PREFIX "lib")
+set(CMAKE_STATIC_LIBRARY_SUFFIX ".a")
+set(CMAKE_FIND_LIBRARY_PREFIXES "lib")
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+set(CMAKE_DL_LIBS "")
+set(CMAKE_SHARED_LIBRARY_SUPPORTED FALSE)
+
 if((NOT DEFINED ZEDBSD_SOURCE_DIR OR ZEDBSD_SOURCE_DIR STREQUAL "") AND
    DEFINED ENV{ZEDBSD_SOURCE_DIR} AND
    NOT "$ENV{ZEDBSD_SOURCE_DIR}" STREQUAL "")
@@ -41,8 +51,6 @@ endforeach()
 unset(_NOCT_ZEDBSD_FILE)
 unset(_NOCT_ZEDBSD_REQUIRED_FILES)
 
-list(PREPEND CMAKE_MODULE_PATH
-  "${CMAKE_CURRENT_LIST_DIR}/../modules")
 list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES ZEDBSD_SOURCE_DIR)
 list(REMOVE_DUPLICATES CMAKE_TRY_COMPILE_PLATFORM_VARIABLES)
 
@@ -71,7 +79,7 @@ unset(_NOCT_ZEDBSD_AR CACHE)
 unset(_NOCT_ZEDBSD_RANLIB CACHE)
 
 set(CMAKE_C_FLAGS_INIT
-  "-m64 -march=x86-64 -mno-red-zone -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -fno-common -ffunction-sections -fdata-sections -fno-strict-aliasing -nostdinc -U__linux__ -U__linux -Ulinux -DHAL_ARCH_AMD64 -DZEDBSD_USER_ABI_LP64")
+  "-m64 -march=x86-64 -mno-red-zone -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-builtin -fno-common -ffunction-sections -fdata-sections -fno-strict-aliasing -nostdinc -U__linux__ -U__linux -Ulinux -D__ZEDBSD__ -DHAL_ARCH_AMD64 -DZEDBSD_USER_ABI_LP64")
 set(CMAKE_ASM_FLAGS_INIT "-nostdinc")
 set(CMAKE_C_STANDARD_INCLUDE_DIRECTORIES
   "${ZEDBSD_SOURCE_DIR}/include"

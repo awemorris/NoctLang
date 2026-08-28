@@ -684,7 +684,8 @@ cleanup:
 
 NOCT_DLL
 bool
-noct_register_api_beui(NoctEnv *env, const struct noct_beui_hal *hal)
+noct_register_api_beui_with_hal(NoctEnv *env,
+				const struct noct_beui_hal *hal)
 {
 	NoctValue beui_dict, function;
 	size_t index;

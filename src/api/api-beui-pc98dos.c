@@ -324,7 +324,7 @@ noct_register_api_beui_pc98dos(NoctEnv *env)
 	pc98dos_hal.input.context = NULL;
 	pc98dos_hal.input.is_key_down = input_is_key_down;
 	pc98dos_hal.input.drain = input_drain;
-	return noct_register_api_beui(env, &pc98dos_hal);
+	return noct_register_api_beui_with_hal(env, &pc98dos_hal);
 }
 
 #endif /* NOCT_TARGET_PC98DOS */
