@@ -219,7 +219,10 @@ extern "C" {
 #endif
 
 /* zedBSD */
-#if defined(NOCT_TARGET_ZEDBSD)
+#if defined(__ZEDBSD__)
+#ifndef NOCT_TARGET_ZEDBSD
+#define NOCT_TARGET_ZEDBSD
+#endif
 #ifndef NOCT_TARGET_POSIX
 #define NOCT_TARGET_POSIX
 #endif

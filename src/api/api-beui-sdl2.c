@@ -673,5 +673,5 @@ noct_register_api_beui_sdl2(NoctEnv *env)
 	sdl2_hal.input.context = &sdl2_context;
 	sdl2_hal.input.is_key_down = sdl2_is_key_down;
 	sdl2_hal.input.drain = sdl2_drain_input;
-	return noct_register_api_beui(env, &sdl2_hal);
+	return noct_register_api_beui_with_hal(env, &sdl2_hal);
 }

@@ -42,7 +42,6 @@ fi
 	-I"$root/include" -I"$root/src/api" \
 	-I"$zedbsd_root/include/uapi" \
 	"$root/tests/testcases/beui-zedbsd-input-test.c" \
-	"$root/src/api/beui-zedbsd-input.c" \
 	-o "$output/beui-zedbsd-input-test"
 if test "${NOCT_TEST_SANITIZERS:-1}" != 0; then
 	ASAN_OPTIONS=${ASAN_OPTIONS:-detect_leaks=0}
@@ -54,15 +53,15 @@ fi
 # its public registration function, and the implementation uses evdev rather
 # than the legacy console event/key-state interface.
 grep -q 'option(NOCT_ENABLE_API_BEUI_ZEDBSD' "$root/CMakeLists.txt"
+grep -q 'src/api/api-beui.c' "$root/CMakeLists.txt"
 grep -q 'src/api/api-beui-zedbsd.c' "$root/CMakeLists.txt"
-grep -q 'src/api/beui-zedbsd-input.c' "$root/CMakeLists.txt"
 grep -q '"NOCT_ENABLE_API_BEUI_ZEDBSD": "ON"' "$root/CMakePresets.json"
-grep -q 'NOCT_USE_BEUI_ZEDBSD' "$root/src/cli/cli-run.c"
-grep -q 'NOCT_USE_BEUI_ZEDBSD' "$root/src/cli/cli-repl.c"
-grep -q 'noct_register_api_beui_zedbsd' "$root/include/noct/beui.h"
+grep -q 'noct_register_api_beui(env)' "$root/src/cli/cli-run.c"
+grep -q 'noct_register_api_beui(env)' "$root/src/cli/cli-repl.c"
+test ! -e "$root/src/api/beui-zedbsd-input.c"
+test ! -e "$root/src/api/beui-zedbsd-input.h"
 if grep -E 'ZEDBSD_CONSOLE_(POLL_EVENT|READ_EVENT|KEY_STATE|DRAIN_INPUT)' \
-	"$root/src/api/api-beui-zedbsd.c" \
-	"$root/src/api/beui-zedbsd-input.c" >/dev/null
+	"$root/src/api/api-beui-zedbsd.c" >/dev/null
 then
 	echo "legacy zedBSD console input API found in BeUI backend" >&2
 	exit 1

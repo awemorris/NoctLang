@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Zlib
  */
 
-#include "beui-zedbsd-input.h"
+#define NOCT_BEUI_ZEDBSD_INPUT_TEST 1
+#include "../../src/api/api-beui-zedbsd.c"
 
 #include <stdio.h>
 #include <stdlib.h>

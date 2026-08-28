@@ -401,6 +401,7 @@ endif()
 if(NOCT_ENABLE_API_BEUI)
   list(APPEND NOCT_API_SOURCE src/api/beui-core.c)
   list(APPEND NOCT_API_SOURCE src/api/beui-image.c)
+  list(APPEND NOCT_API_SOURCE src/api/api-beui.c)
   list(APPEND NOCT_API_SOURCE src/api/api-beui-backend.c)
   if(NOCT_ENABLE_API_BEUI_ZEDBSD)
     if(NOT NOCT_TARGET_ZEDBSD)
@@ -439,10 +440,7 @@ if(NOCT_ENABLE_API_BEUI)
     list(APPEND NOCT_API_SOURCE src/api/api-beui-sdl2.c)
   endif()
   if(NOCT_ENABLE_API_BEUI_ZEDBSD)
-    list(APPEND NOCT_API_SOURCE
-      src/api/beui-zedbsd-input.c
-      src/api/api-beui-zedbsd.c
-    )
+    list(APPEND NOCT_API_SOURCE src/api/api-beui-zedbsd.c)
   endif()
 elseif(NOCT_ENABLE_API_BEUI_SDL2 OR NOCT_ENABLE_API_BEUI_ZEDBSD)
   message(FATAL_ERROR
@@ -543,8 +541,6 @@ endif()
 # zedBSD Target
 if(NOCT_TARGET_ZEDBSD)
   list(APPEND NOCT_PUBLIC_CPPFLAGS
-    NOCT_TARGET_ZEDBSD
-    NOCT_TARGET_POSIX
     NOCT_MEMORY_SMALL
     NOCT_FORCE_SOFT_FMAF
   )
