@@ -7,7 +7,7 @@
 #ifndef NOCT_BEUI_PC98_GLYPH_H
 #define NOCT_BEUI_PC98_GLYPH_H
 
-#include <noct/beui.h>
+#include "beui-internal.h"
 #include "beui-pc98-gdc.h"
 
 struct noct_beui_pc98_glyph {

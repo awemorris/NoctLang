@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# BeUI host tests.  The core suite links the built API library; the
-# PC-98 backend suites compile their drivers directly, because those
-# sources only enter the library on a PC-98 target build.
+# BeUI host tests.  Core and PC-98 implementation contracts are private, so
+# their suites compile the owning sources directly.  An SDL2-enabled CLI, when
+# present, exercises the sole public registration path.
 
 set -eu
 
@@ -21,8 +21,8 @@ test -f "$build_dir/libnoctapi.a" || {
 	exit 1
 }
 
-"$cc" -I"$root/include" "$root/tests/testcases/beui-test.c" \
-	"$build_dir/libnoctapi.a" "$build_dir/libnoct.a" -lm \
+"$cc" -I"$root/include" -I"$api" "$root/tests/testcases/beui-test.c" \
+	"$api/beui-core.c" "$api/beui-image.c" -lm \
 	-o "$build_dir/noct-beui-test"
 "$build_dir/noct-beui-test"
 

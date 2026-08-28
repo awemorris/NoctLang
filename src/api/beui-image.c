@@ -12,7 +12,7 @@
  * allocation-free: callers measure first, then supply pixel storage.
  */
 
-#include <noct/beui.h>
+#include "beui-internal.h"
 
 #include <limits.h>
 #include <string.h>

@@ -13,11 +13,13 @@ therefore host neutral: coordinates are absolute pixels, colors are
 `0x00RRGGBB` regardless of the panel's real depth, text is UTF-8, and
 images are supplied as bytes rather than as paths.
 
-An embedder binds one backend per VM with
-`noct_register_api_beui_with_hal(env, hal)`; see `include/noct/beui.h` for the
-HAL. A target with no display can register a NULL HAL, and `BeUI.init()`
-then reports failure instead of the module being absent, so scripts can
-degrade rather than fail to load.
+A configured build selects exactly one complete platform implementation.
+The CLI and other callers register it through
+`noct_register_api_beui(env)`.  The backend HAL is private to that platform
+source rather than an embedding API; a target without one of the supported
+platform implementations does not enable BeUI.
+The installed `include/noct/beui.h` exposes only that registrar.  HAL, core,
+and image contracts live in the non-installed `src/api/beui-internal.h`.
 
 ---
 
@@ -237,11 +239,13 @@ while (BeUI.poll()) {
 | PC-98 MS-DOS (DOS/4GW) | `noct_register_api_beui(env)` | Core-Graph / Cirrus 640x480x8, falling back to GDC 640x400x4 |
 | SDL2 desktop | `noct_register_api_beui(env)` | 640x400, 32-bit RGB window with keyboard, mouse, clock, and queued audio HALs |
 | zedBSD | `noct_register_api_beui(env)` | `/dev/graphics` plus capability-discovered evdev |
-| Custom embedder | `noct_register_api_beui_with_hal(env, hal)` | Whatever the embedder binds |
 
 Configure a desktop build with both `NOCT_ENABLE_API_BEUI=ON` and
 `NOCT_ENABLE_API_BEUI_SDL2=ON`. The `sdl2` CMake preset supplies these
-options and makes the CLI and REPL register the SDL2 HAL automatically.
+options and makes the CLI and REPL register the SDL2 implementation
+automatically.  Each supported platform source owns its full BeUI language
+binding and backend; multiple platform implementations are not linked into
+one executable.
 
 The PC-98 display drivers (`beui-pc98-gdc.c`, `beui-pc98-cirrus.c`, the
 CGROM glyph source, and the selector that prefers Cirrus over the GDC)

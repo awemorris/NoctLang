@@ -10,7 +10,7 @@
  * was promoted to a Noct non-standard API.
  */
 
-#include <noct/beui.h>
+#include "beui-internal.h"
 
 #include <stdint.h>
 #include <stdio.h>

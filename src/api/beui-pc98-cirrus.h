@@ -16,7 +16,7 @@
 #ifndef NOCT_BEUI_PC98_CIRRUS_H
 #define NOCT_BEUI_PC98_CIRRUS_H
 
-#include <noct/beui.h>
+#include "beui-internal.h"
 #include "beui-pc98-gdc.h"
 
 #define NOCT_BEUI_CIRRUS_WIDTH 640U

@@ -12,7 +12,7 @@
 #ifndef NOCT_BEUI_PC98_H
 #define NOCT_BEUI_PC98_H
 
-#include <noct/beui.h>
+#include "beui-internal.h"
 
 #define NOCT_BEUI_GDC_PLANE_BYTES (640U * 400U / 8U)
 

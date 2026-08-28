@@ -9,7 +9,7 @@
  * non-standard API.
  */
 
-#include <noct/beui.h>
+#include "beui-internal.h"
 
 #include <stdlib.h>
 #include <string.h>
