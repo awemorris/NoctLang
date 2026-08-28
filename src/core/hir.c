@@ -4996,6 +4996,65 @@ hir_free(
 	 */
 }
 
+
+
+/*
+ * HIR Optimizer Driver
+ */
+bool
+hir_optimize_func(
+	struct hir_block *func_block,
+	int optimize_level,
+	bool print_simd_info)
+{
+	assert(func_block != NULL);
+	assert(func_block->type == HIR_BLOCK_FUNC);
+
+#if !defined(NOCT_USE_OPTIMIZER)
+	UNUSED_PARAMETER(level);
+	UNUSED_PARAMETER(simd_info);
+
+	return true;
+#else
+	if (level >= 1) {
+		/* Function inlining. */
+		if (!hir_opt_inline_func(func_block))
+			return false;
+
+		/* Typed ops. */
+		if (!hir_opt_typed_func(func_block))
+			return false;
+	}
+
+	if (level >= 2) {
+		/* ABCE. */
+		if (!hir_opt_abce_func(func_block))
+			return false;
+
+		/* SIMD vectorization. */
+		if (!hir_opt_simd_func(func_block, simd_info))
+			return false;
+
+		/* Loop unrolling. */
+		if (!hir_opt_unroll_func(func_block))
+			return false;
+	}
+
+	if (level >= 1) {
+		/* CSE. */
+		if (!hir_opt_cse_func(func_block))
+			return false;
+
+		/* After CSE: the lattice must see CAPTURE home assignments. */
+		if (!hir_opt_typed_func(func_block))
+			return false;
+	}
+
+
+	return true;
+#endif
+}
+
 /*
  * Debug Printer
  */
@@ -5093,84 +5152,4 @@ hir_dump_block_at_level(
 		}
 		block = block->succ;
 	}
-}
-
-
-/*
- * HIR Optimizer Driver
- *
- * The passes themselves live in hir_opt_abce.c / hir_opt_cse.c and
- * are compiled only when NOCT_ENABLE_OPTIMIZER is ON (which defines
- * NOCT_USE_OPTIMIZER).  See docs/design/01-abce.md and
- * docs/design/05-cse.md.
- */
-
-/*
- * Run the HIR optimizer on one function.
- * -O/-O1 runs inline, weak typing and CSE.  -O2 adds ABCE and SIMD;
- * -O3 keeps those passes and permits fused arithmetic during LIR lowering.
- */
-bool
-hir_optimize_func(
-	struct hir_block *func_block,
-	int level,
-	bool simd_info,
-	bool accel_info)
-{
-	assert(func_block != NULL);
-	assert(func_block->type == HIR_BLOCK_FUNC);
-	if (getenv("NOCT_PARALLEL_DEBUG") != NULL &&
-	    func_block->val.func.func_kind != NOCT_FUNC_GPU &&
-	    func_block->val.func.func_kind != NOCT_FUNC_ACCEL &&
-	    !hir_parallel_diagnose_func(func_block, stderr,
-					"parallel-analysis", false))
-		return false;
-	if (func_block->val.func.func_kind == NOCT_FUNC_GPU)
-		return true;
-	if (func_block->val.func.func_kind == NOCT_FUNC_ACCEL) {
-		if (accel_info &&
-		    !hir_parallel_diagnose_func(func_block, stderr,
-					"accel-analysis", true))
-			return false;
-		if (!hir_opt_accel_func(func_block, accel_info))
-			return false;
-		return true;
-	}
-#if defined(NOCT_USE_OPTIMIZER)
-	if (level < 1)
-		return true;
-
-	if (!hir_opt_inline_func(func_block))
-		return false;
-
-	/*
-	 * Seed ABCE/SIMD with function-wide scalar facts.  Conversion
-	 * intrinsics and mixed numeric promotion are useful before loop
-	 * versioning; the final pass below refreshes facts after CSE.
-	 */
-	if (!hir_opt_typed_func(func_block))
-		return false;
-	if (level >= 2) {
-		if (!hir_opt_abce_func(func_block))
-			return false;
-		/* SIMD right after ABCE (it consumes the fast-loop marks). */
-		if (!hir_opt_simd_func(func_block, simd_info))
-			return false;
-		/* SIMD leaves rejected ABCE fast loops marked for scalar unroll. */
-		if (!hir_opt_unroll_func(func_block))
-			return false;
-	}
-	if (!hir_opt_cse_func(func_block))
-		return false;
-	/* After CSE: the lattice must see CAPTURE home assignments. */
-	if (!hir_opt_typed_func(func_block))
-		return false;
-
-	return true;
-#else
-	UNUSED_PARAMETER(level);
-	UNUSED_PARAMETER(simd_info);
-
-	return true;
-#endif
 }

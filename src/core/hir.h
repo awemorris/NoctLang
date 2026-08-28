@@ -615,8 +615,7 @@ hir_dump_block(
 bool
 hir_optimize_func(
 	struct hir_block *func_block,
-	int level,
-	bool simd_info,
-	bool accel_info);
+	int optimize_level,
+	bool print_simd_info);
 
 #endif

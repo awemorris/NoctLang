@@ -295,14 +295,23 @@ rt_release_thread_env(
 	struct rt_env *env)
 {
 	struct rt_vm *vm;
+	struct rt_env *prev;
+
+	assert(env != NULL);
 
 	vm = env->vm;
 
+	/* Unlink. */
 	atomic_spin_lock(&vm->vm_lock);
 	{
-
-		env->free_next = vm->env_free_list;
-		vm->env_free_list = env;
+		if (vm->env == env) {
+			vm->env = env->next;
+		} else {
+			prev = vm->env;
+			while (prev->next != env)
+				prev = prev->next;
+			prev->next = env->next;
+		}
 	}
 	atomic_spin_unlock(&vm->vm_lock);
 }
@@ -321,224 +330,17 @@ rt_register_source(
 	const char *file_name,
 	const char *source_text)
 {
-	struct rt_module *module;
-	char *key;
-	char *logical;
-	bool result;
-
-	key = module_path_key(file_name);
-	if (key == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-	module = rt_find_module(env->vm, key);
-	if (module != NULL) {
-		free(key);
-		if (module->state == RT_MODULE_LOADED)
-			return true;
-		strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
-		env->file_name[sizeof(env->file_name) - 1] = '\0';
-		rt_error(env, module->state == RT_MODULE_LOADING ?
-			 "Circular require involving '%s'." :
-			 "Module '%s' previously failed to load.", file_name);
-		return false;
-	}
-	logical = malloc(strlen(file_name) + 1);
-	if (logical == NULL) {
-		free(key);
-		rt_out_of_memory(env);
-		return false;
-	}
-	memcpy(logical, file_name, strlen(file_name) + 1);
-	module = rt_add_module(env, key, logical, NULL, NULL, false);
-	if (module == NULL) {
-		free(key);
-		free(logical);
-		return false;
-	}
-	result = rt_register_source_internal(env, file_name, source_text, module,
-					     true);
-	/* A failed registration can still have published earlier functions.
-	 * Keep those pointers executable until registration becomes transactional. */
-	if (!rt_commit_jit(env))
-		result = false;
-
-	/*
-	 * Public roots are registrations, not imports: REPL and
-	 * System.registerSource may intentionally reuse their logical filename.
-	 * Keep only recursively resolved dependencies in the de-duplication table.
-	 */
-	rt_remove_module(env->vm, module);
-	return result;
-}
-
-static bool
-rt_register_resolution(struct rt_env *env, const char *name,
-		       struct module_resolution *resolution)
-{
-	struct rt_module *module;
-	bool result;
-
-	if (resolution->is_package) {
-		for (module = env->vm->module_list; module != NULL;
-		     module = module->next) {
-			if (module->is_package && module->package_name != NULL &&
-			    strcmp(module->package_name, resolution->package_name) == 0 &&
-			    strcmp(module->key, resolution->physical) != 0) {
-				module_resolution_cleanup(resolution);
-				rt_error(env, "Package '%s' resolves to a different installed entry.",
-					 name);
-				return false;
-			}
-		}
-	}
-	module = rt_find_module(env->vm, resolution->physical);
-	if (module != NULL) {
-		module_resolution_cleanup(resolution);
-		if (module->state == RT_MODULE_LOADED)
-			return true;
-		rt_error(env, module->state == RT_MODULE_LOADING ?
-			 "Circular require involving '%s'." :
-			 "Module '%s' previously failed to load.", name);
-		return false;
-	}
-	module = rt_add_module(env, resolution->physical, resolution->logical,
-			       resolution->package_name, resolution->package_dir,
-			       resolution->is_package);
-	if (module == NULL) {
-		module_resolution_cleanup(resolution);
-		return false;
-	}
-	resolution->physical = NULL;
-	resolution->logical = NULL;
-	resolution->package_name = NULL;
-	resolution->package_dir = NULL;
-	result = rt_register_source_internal(env, module->logical_name,
-					     resolution->data, module, true);
-	free(resolution->data);
-	if (!rt_commit_jit(env)) {
-		module->state = RT_MODULE_FAILED;
-		result = false;
-	}
-	return result;
-}
-
-#if defined(NOCT_USE_PACKAGE_CACHE)
-static int
-rt_try_package_cache(struct rt_env *env, const char *name,
-		     struct module_resolution *root)
-{
-	struct package_cache_result cache;
-	struct package_cache_node *node;
-	struct rt_module *old_head;
-	struct rt_module *module;
-	bool ok;
-
-	memset(&cache, 0, sizeof(cache));
-	if (!package_cache_prepare(&env->vm->require_path, name, root,
-				   env->vm->config.optimize_level,
-				   env->vm->config.lineinfo, &cache)) {
-		package_cache_cleanup(&cache);
-		return 0;
-	}
-	/* A whole-graph container cannot be overlaid on already registered
-	 * modules without duplicating their public functions. */
-	for (node = cache.node; node != NULL; node = node->next) {
-		if (rt_find_module(env->vm, node->module.physical) != NULL) {
-			package_cache_cleanup(&cache);
-			return 0;
-		}
-	}
-	old_head = env->vm->module_list;
-	for (node = cache.node; node != NULL; node = node->next) {
-		module = rt_add_module(env, node->module.physical,
-				       node->module.logical,
-				       node->module.package_name,
-				       node->module.package_dir,
-				       node->module.is_package);
-		if (module == NULL) {
-			while (env->vm->module_list != old_head)
-				rt_remove_module(env->vm, env->vm->module_list);
-			package_cache_cleanup(&cache);
-			return -1;
-		}
-		node->module.physical = NULL;
-		node->module.logical = NULL;
-		node->module.package_name = NULL;
-		node->module.package_dir = NULL;
-	}
-	env->loading_package_bytecode = true;
-	ok = rt_register_bytecode(env, cache.bytecode_size, cache.bytecode);
-	env->loading_package_bytecode = false;
-	for (module = env->vm->module_list; module != old_head;
-	     module = module->next)
-		module->state = ok ? RT_MODULE_LOADED : RT_MODULE_FAILED;
-	package_cache_cleanup(&cache);
-	return ok ? 1 : -1;
-}
-#endif
-
-bool
-rt_require_module(struct rt_env *env, const char *name)
-{
-	struct module_resolution resolution;
-
-	if (!module_resolve_ex(&env->vm->require_path, name, &resolution)) {
-		rt_error(env, "Cannot resolve required module '%s'.", name);
-		return false;
-	}
-	return rt_register_resolution(env, name, &resolution);
-}
-
-bool
-rt_require_package(struct rt_env *env, const char *name)
-{
-	struct module_resolution resolution;
-#if defined(NOCT_USE_PACKAGE_CACHE)
-	int cache_result;
-#endif
-
-	if (!module_resolve_package(name, &resolution)) {
-		rt_error(env, "Cannot resolve installed package '%s'.", name);
-		return false;
-	}
-#if defined(NOCT_USE_PACKAGE_CACHE)
-	if (rt_find_module(env->vm, resolution.physical) == NULL) {
-		cache_result = rt_try_package_cache(env, name, &resolution);
-		if (cache_result != 0) {
-			module_resolution_cleanup(&resolution);
-			return cache_result > 0;
-		}
-	}
-#endif
-	return rt_register_resolution(env, name, &resolution);
-}
-
-static bool
-rt_register_source_internal(
-	struct rt_env *env,
-	const char *file_name,
-	const char *source_text,
-	struct rt_module *module,
-	bool prepare_fast_prototypes)
-{
+	char init_func_name[256];
 	struct hir_block *hfunc;
 	struct lir_func *lfunc;
-	uint32_t i, func_count;
-	uint32_t require_count;
 	char **require_name;
+	uint32_t i, func_count, require_count;
 	bool is_succeeded;
-	char init_func_name[256];
-	char package_init_func_name[512];
 
 	is_succeeded = false;
 	require_count = 0;
 	require_name = NULL;
 	init_func_name[0] = '\0';
-	package_init_func_name[0] = '\0';
-	if (prepare_fast_prototypes &&
-	    !rt_prepare_fast_prototypes(env, file_name, source_text))
-		goto failed;
 
 	do {
 		/* Do parse and build AST. */
@@ -549,7 +351,7 @@ rt_register_source_internal(
 			break;
 		}
 
-		/* Preserve require names beyond the AST arena lifetime. */
+		/* Preserve require names. */
 		require_count = ast_get_require_count();
 		if (require_count != 0) {
 			require_name = noct_malloc(sizeof(*require_name) * require_count);
@@ -558,6 +360,7 @@ rt_register_source_internal(
 				break;
 			}
 			memset(require_name, 0, sizeof(*require_name) * require_count);
+
 			for (i = 0; i < require_count; i++) {
 				require_name[i] = noct_strdup(ast_get_require_name(i));
 				if (require_name[i] == NULL) {
@@ -576,26 +379,18 @@ rt_register_source_internal(
 			rt_error(env, "%s", hir_get_error_message());
 			break;
 		}
-		if (ast_get_package_init_name() != NULL) {
-			strncpy(package_init_func_name,
-				ast_get_package_init_name(),
-				sizeof(package_init_func_name) - 1);
-			package_init_func_name[sizeof(package_init_func_name) - 1] = '\0';
-		}
 
-		/* Propagate the optimization level to the compiler. */
-		lir_set_optimize_level(env->vm->config.optimize_level);
-		lir_set_lineinfo(env->vm->config.lineinfo);
+		/* Free intermediates. */
+		ast_cleanup();
 
 		/* For each function. */
 		func_count = hir_get_function_count();
 		for (i = 0; i < func_count; i++) {
-			/* Run the HIR optimizer (ABCE; no-op below level 2). */
+			/* Run the HIR optimizer. */
 			hfunc = hir_get_function(i);
 			if (!hir_optimize_func(hfunc,
 					       env->vm->config.optimize_level,
-					       env->vm->config.simd_info,
-					       env->vm->config.accel_info)) {
+					       env->vm->config.simd_info)) {
 				rt_error(env, "%s", hir_get_error_message());
 				break;
 			}
@@ -609,8 +404,9 @@ rt_register_source_internal(
 			}
 
 			/* Make a function object. */
-			if (!rt_register_lir(env, lfunc,
-					     module->is_package ? module : NULL))
+			lir_set_optimize_level(env->vm->config.optimize_level);
+			lir_set_lineinfo(env->vm->config.lineinfo);
+			if (!rt_register_lir(env, lfunc, module->is_package ? module : NULL))
 				break;
 
 			/* Remember a load-time init function. */
@@ -625,110 +421,26 @@ rt_register_source_internal(
 		if (i != func_count)
 			break;
 
+		/* Free intermediates. */
+		hir_cleanup();
+
+		/* JIT-commit. */
+		if (env->vm->config.jit_enable) {
+			if (rt_commit_jit(env))
+				break;
+		}
+
+		/* Auto-execute the load-time init function ($init section). */
+		if (init_func_name[0] != '\0') {
+			struct rt_value init_ret;
+			if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
+				break;
+		}
+
 		is_succeeded = true;
 	} while (0);
 
-	/* Free intermediates. */
-	hir_cleanup();
-	ast_cleanup();
-
-	/* If failed. */
-	if (!is_succeeded)
-		goto failed;
-
-	/* Register current LIR first, then recursively load dependencies. */
-	for (i = 0; i < require_count; i++) {
-		struct module_resolution resolution;
-		struct rt_module *dependency;
-
-		if (!module_resolve_ex(&env->vm->require_path, require_name[i],
-				       &resolution)) {
-			strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
-			env->file_name[sizeof(env->file_name) - 1] = '\0';
-			rt_error(env, "Cannot resolve required module '%s'.",
-				 require_name[i]);
-			goto failed;
-		}
-		dependency = rt_find_module(env->vm, resolution.physical);
-		if (dependency != NULL) {
-			module_resolution_cleanup(&resolution);
-			if (dependency->state == RT_MODULE_LOADING) {
-				strncpy(env->file_name, file_name,
-					sizeof(env->file_name) - 1);
-				env->file_name[sizeof(env->file_name) - 1] = '\0';
-				rt_error(env, "Circular require involving '%s'.",
-					 require_name[i]);
-				goto failed;
-			}
-			if (dependency->state == RT_MODULE_FAILED) {
-				rt_error(env, "Required module '%s' failed to load.",
-					 require_name[i]);
-				goto failed;
-			}
-			continue;
-		}
-#if defined(NOCT_USE_PACKAGE_CACHE)
-		if (resolution.is_package) {
-			int cache_result;
-			cache_result = rt_try_package_cache(
-				env, resolution.package_name, &resolution);
-			if (cache_result != 0) {
-				module_resolution_cleanup(&resolution);
-				if (cache_result < 0)
-					goto failed;
-				continue;
-			}
-		}
-#endif
-		dependency = rt_add_module(env, resolution.physical,
-					   resolution.logical,
-					   resolution.package_name,
-					   resolution.package_dir,
-					   resolution.is_package);
-		if (dependency == NULL) {
-			module_resolution_cleanup(&resolution);
-			goto failed;
-		}
-		resolution.physical = NULL;
-		resolution.logical = NULL;
-		resolution.package_name = NULL;
-		resolution.package_dir = NULL;
-		if (!rt_register_source_internal(env, dependency->logical_name,
-					 resolution.data, dependency, false)) {
-			free(resolution.data);
-			goto failed;
-		}
-		free(resolution.data);
-	}
-
-	/* Auto-execute the load-time init function ($init section). */
-	if (init_func_name[0] != '\0') {
-		struct rt_value init_ret;
-		if (!rt_commit_jit(env) ||
-		    !rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
-			goto failed;
-	}
-	if (package_init_func_name[0] != '\0') {
-		struct rt_value package_ret;
-		if (!rt_commit_jit(env) ||
-		    !rt_call_with_name(env, package_init_func_name, 0, NULL,
-				       &package_ret))
-			goto failed;
-	}
-
-	/* Succeeded. */
-	module->state = RT_MODULE_LOADED;
-	for (i = 0; i < require_count; i++)
-		noct_free(require_name[i]);
-	noct_free(require_name);
-	return true;
-
-failed:
-	module->state = RT_MODULE_FAILED;
-	for (i = 0; i < require_count; i++)
-		noct_free(require_name != NULL ? require_name[i] : NULL);
-	noct_free(require_name);
-	return false;
+	return result;
 }
 
 /* Register a function from LIR. */
@@ -748,33 +460,29 @@ rt_register_lir(
 		return false;
 	}
 	memset(func, 0, sizeof(struct rt_func));
-	func->owner_module = owner_module;
 
 	func->name = noct_strdup(lir->func_name);
 	if (func->name == NULL) {
 		rt_out_of_memory(env);
 		return false;
 	}
+
 	func->param_count = lir->param_count;
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		func->param_type[i] = -1;
 		func->param_packed_type[i] = -1;
 		func->param_restricted[i] = false;
-		func->param_accel_access[i] = ACCEL_ACCESS_NONE;
-		func->param_accel_transport[i] = ACCEL_TRANSPORT_SCALAR;
-		func->param_accel_effect[i] = ACCEL_EFFECT_NONE;
 	}
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_type[i] = lir->param_type[i];
 		func->param_packed_type[i] = lir->param_packed_type[i];
 		func->param_restricted[i] = lir->param_restricted[i];
-		func->param_accel_access[i] = lir->param_accel_access[i];
-		func->param_accel_transport[i] = lir->param_accel_transport[i];
-		func->param_accel_effect[i] = lir->param_accel_effect[i];
 	}
+
 	func->return_type = lir->return_type;
 	func->return_packed_type = lir->return_packed_type;
 	func->return_type_checked = lir->return_type_checked;
+
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_name[i] = noct_strdup(lir->param_name[i]);
 		if (func->param_name[i] == NULL) {
@@ -782,6 +490,7 @@ rt_register_lir(
 			return false;
 		}
 	}
+
 	func->bytecode_size = lir->bytecode_size;
 	if (func->bytecode_size != 0) {
 		func->bytecode = noct_malloc((size_t)lir->bytecode_size);
@@ -791,22 +500,10 @@ rt_register_lir(
 		}
 		memcpy(func->bytecode, lir->bytecode, (size_t)lir->bytecode_size);
 	}
+
 	func->tmpvar_size = lir->tmpvar_size;
 	func->has_vector_ops = lir->has_vector_ops;
-	func->is_accel = lir->is_accel;
-	func->func_kind = lir->func_kind;
-	func->fast_signature = lir->fast_signature;
-	func->accel_kernel = accel_kernel_clone(lir->accel_kernel);
-	if (lir->accel_kernel != NULL && func->accel_kernel == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-	func->accel_program = accel_program_clone(lir->accel_program);
-	if (lir->accel_program != NULL && func->accel_program == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-	func->has_fma_ops = lir->has_fma_ops;
+
 	func->file_name = noct_strdup(lir->file_name);
 	if (func->file_name == NULL) {
 		rt_out_of_memory(env);
@@ -819,22 +516,13 @@ rt_register_lir(
 	if (!rt_set_global(env, func->name, &global))
 		return false;
 
-	/*
-	 * Eager JIT compilation.  Failure is a per-function
-	 * interpreter fallback, not a source-registration failure.
-	 */
 	if (env->vm->config.jit_enable) {
 		if (!jit_build(env, func)) {
-			rt_report_jit_result(func, false, env->error_message);
-			/* A backend may reserve/publish its entry pointer before the
-			   final opcode is accepted.  Never execute a partial function. */
 			func->jit_code = NULL;
 			func->call_count = -1;
-			/* JIT diagnostics must not poison interpreter fallback. */
 			env->error_message[0] = '\0';
 			env->line = 0;
 		} else {
-			rt_report_jit_result(func, true, NULL);
 			env->vm->is_jit_dirty = true;
 		}
 	}
@@ -911,15 +599,17 @@ rt_register_bytecode(
 		if (i != func_count)
 			break;
 
+		if (env->vm->config.jit_enable) {
+			if (rt_commit_jit(env))
+				break;
+		}
+
 		succeeded = true;
 	} while (0);
 
 	if (file_name != NULL)
 		noct_free(file_name);
 
-	if (!succeeded) {
-		if (rt_commit_jit(env))
-			rt_error(env, N_TR("Failed to load bytecode."));
 		return false;
 	}
 
