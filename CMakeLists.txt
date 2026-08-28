@@ -38,12 +38,12 @@ option(NOCT_ENABLE_API            "Enable standard API"                   OFF)
 option(NOCT_ENABLE_API_SYSTEM     "Enable the System standard API"        OFF)
 option(NOCT_ENABLE_API_CONSOLE    "Enable the Console standard API"       OFF)
 option(NOCT_ENABLE_API_FILE       "Enable the File standard API"          OFF)
-option(NOCT_ENABLE_MODEL_WEIGHTS  "Enable immutable NWT1 model weights"   OFF)
 option(NOCT_ENABLE_API_THREAD     "Enable the Thread standard API"        OFF)
 option(NOCT_ENABLE_API_HTTPSERVER "Enable the HttpServer standard API"    OFF)
 option(NOCT_ENABLE_API_TERM       "Enable the Term non-standard API"      OFF)
 option(NOCT_ENABLE_API_BEUI       "Enable the BeUI non-standard API"      OFF)
 option(NOCT_ENABLE_API_PROCESS    "Enable the Process non-standard API"   OFF)
+option(NOCT_ENABLE_API_NWT1       "Enable immutable NWT1 model weights"   OFF)
 
 #
 # Manual target options.
@@ -54,14 +54,11 @@ option(NOCT_TARGET_OPENHARMONY    "Build for OpenHarmony"                 OFF)
 option(NOCT_TARGET_MACOS7         "Build for MacOS 7"                     OFF)
 option(NOCT_TARGET_DOS4G          "Build for DOS4G"                       OFF)
 option(NOCT_TARGET_PC98DOS        "Build for DOS4G PC-98"                 OFF)
+option(NOCT_TARGET_ZEDBSD         "Build for zedBSD"                      OFF)
 
 # Installation options.
 option(NOCT_ENABLE_INSTALL        "Enable installation"                   OFF)
 option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
-
-if(NOCT_TARGET_PC98BE AND NOCT_ENABLE_MULTITHREAD)
-  message(FATAL_ERROR "NOCT_TARGET_PC98BE currently supports only the single-threaded object model")
-endif()
 
 # ---
 
@@ -170,45 +167,38 @@ endif()
 # Determine the base files.
 set(
   NOCT_BASE_SOURCE
-  src/core/lexer.yy.c      # Lexer
-  src/core/parser.tab.c    # Parser
-  src/core/ast.c           # AST construction (called from parser)
-  src/core/module.c        # Source module search path and resolver
-  src/core/fast.c          # __fast function type and shape contracts
-  src/core/hir.c           # HIR (AST->HIR construction)
-  src/core/lir.c           # LIR (HIR->LIR construction)
-  src/core/noct.c          # Public functions
-  src/core/noct-api.c      # Dynamic-library API function table
-  src/core/dynlib.c        # Restricted dynamic-library loader
-  src/core/runtime.c       # Runtime main part
-  src/core/interpreter.c   # Runtime interpreter part
-  src/core/jit.c           # Runtime JIT part
-  src/core/execution.c     # Runtime execution helper part
-  src/core/gc.c            # Runtime GC part
-  src/core/intrinsics.c    # Intrinsics
-  src/accel/accel.c        # Accelerator common runtime and CPU fallback
-  src/core/regex.c         # Regex engine (used by the Regex.* intrinsics)
-  ${FLEX_Lexer_OUTPUTS}
-  ${BISON_Parser_OUTPUT_SOURCE}
+  src/core/ast.c                # AST construction (called from parser)
+  src/core/hir.c                # HIR (AST->HIR construction)
+  src/core/lir.c                # LIR (HIR->LIR construction)
+  src/core/execution.c          # Runtime execution helper part
+  src/core/interpreter.c        # Runtime interpreter part
+  src/core/jit.c                # Runtime JIT part
+  src/core/gc.c                 # Runtime GC part
+  src/core/runtime.c            # Runtime main part
+  src/core/noct.c               # Public functions
+  src/core/intrin/intrinsics.c  # Intrinsics
+  src/core/intrin/regex.c       # Regex engine (used by the Regex.* intrinsics)
 )
 
-set(NOCT_DYNLIB_ENABLED OFF)
-if((WIN32 OR UNIX) AND
-   NOT NOCT_TARGET_UNITY AND NOT NOCT_TARGET_MACOS7 AND
-   NOT NOCT_TARGET_DOS4G AND NOT NOCT_TARGET_PC98DOS AND
-   NOT NOCT_TARGET_PC98BE AND NOT NOCT_TARGET_ZEDBSD)
-  if(WIN32)
-    list(APPEND NOCT_BASE_SOURCE src/core/dynlib-win.c)
-  else()
-    list(APPEND NOCT_BASE_SOURCE src/core/dynlib-posix.c)
-  endif()
-  add_definitions(-DNOCT_USE_DYNLIB=1)
-  set(NOCT_DYNLIB_ENABLED ON)
+# Determine the object-model sources
+if(NOCT_ENABLE_MULTITHREAD)
+  # Multi-threaded.
+  set(
+    NOCT_OBJMODEL_SOURCE
+    src/core/objectmodel-mt.c
+  )
+else()
+  # Single-threaded.
+  set(
+    NOCT_OBJMODEL_SOURCE
+    src/core/objectmodel-st.c
+  )
 endif()
 
-# Determine optimizer files.
+# Determine the optimizer files.
 if(NOCT_ENABLE_OPTIMIZER)
-  list(APPEND NOCT_BASE_SOURCE
+  set(
+    NOCT_OPTIMIZER_SOURCE
     src/core/hir_opt_abce.c     # ABCE pass
     src/core/hir_opt_inline.c   # static inline pass
     src/core/hir_opt_simd.c     # SIMD auto-vectorization
@@ -218,75 +208,8 @@ if(NOCT_ENABLE_OPTIMIZER)
     src/core/hir_opt_loop.c     # loop effect analysis
     src/core/hir_opt_doall.c    # DOALL classification
     src/core/hir_opt_dosum.c    # additive reduction analysis
-) )
-endif()
-
-if(NOCT_ENABLE_ACCEL)
-  set(
-    NOCT_ACCEL_SOURCES
-    src/core/accel_ops.c     # Stable compiler-only raw GPU operation registry
-    src/core/accel_program.c # Owned multi-kernel accelerator descriptors
-    src/core/hir_opt_accel.c # Mandatory accel extraction (all optimization levels)
-    src/core/hir_gpu.c       # Mandatory raw GPU validation/GLSL extraction
-    src/core/gpu_ir.c        # Shared typed GPU kernel IR and validation
-    src/core/gpu_glsl.c      # Deterministic GLSL emission from GPU IR
   )
-
-  if(NOCT_ENABLE_ACCEL_VULKAN)
-    if(NOT (WIN32 OR UNIX) OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
-      message(FATAL_ERROR "NOCT_ENABLE_ACCEL_VULKAN is supported only on desktop Windows/Linux builds")
-    endif()
-    find_package(Vulkan REQUIRED)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
-    list(APPEND NOCT_BASE_SOURCE src/accel/accel_vulkan.c)
-    add_definitions(-DNOCT_USE_ACCEL_VULKAN=1)
-  endif()
-
-  if(NOCT_ENABLE_ACCEL_OPENGL)
-    if(NOT UNIX OR NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE)
-      message(FATAL_ERROR "NOCT_ENABLE_ACCEL_OPENGL currently requires a Unix EGL/OpenGL ES build")
-    endif()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(EGL REQUIRED IMPORTED_TARGET "egl>=1.5")
-    pkg_check_modules(GLESV2 REQUIRED IMPORTED_TARGET "glesv2>=3.1")
-    list(APPEND NOCT_BASE_SOURCE src/accel/accel_opengl.c)
-    add_definitions(-DNOCT_USE_ACCEL_OPENGL=1)
-  endif()
-
-  if(NOCT_ENABLE_ACCEL_DX12)
-    if(NOT WIN32 OR
-       NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
-       NOCT_TARGET_UNITY)
-      message(FATAL_ERROR "NOCT_ENABLE_ACCEL_DX12 requires a desktop Windows target")
-    endif()
-    include(CheckIncludeFile)
-    set(CMAKE_REQUIRED_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/directx-headers/include")
-    set(CMAKE_REQUIRED_DEFINITIONS "-D__REQUIRED_RPCNDR_H_VERSION__=475")
-    check_include_file("directx/d3d12.h" NOCT_HAVE_D3D12_H)
-    unset(CMAKE_REQUIRED_INCLUDES)
-    unset(CMAKE_REQUIRED_DEFINITIONS)
-    if(NOT NOCT_HAVE_D3D12_H)
-      message(FATAL_ERROR "The vendored DirectX 12 headers cannot be compiled by this toolchain")
-    endif()
-    list(APPEND NOCT_BASE_SOURCE src/accel/accel_dx12.c)
-    add_definitions(-DNOCT_USE_ACCEL_DX12=1)
-  endif()
-
 endif()
-
-# Object model backends.  A multithread-capable binary carries both models so
-# each VM can select one at creation time.  Legacy/single-thread targets keep
-# only the compact single-thread implementation.
-set(
-  NOCT_OBJMODEL_SOURCE
-  src/core/objectmodel-st.c
-  src/core/objectmodel-dispatch.c
-)
-if(NOCT_ENABLE_MULTITHREAD)
-  list(APPEND NOCT_OBJMODEL_SOURCE src/core/objectmodel-mt.c)
-endif()
-
 
 # Determine the C backend files.
 if(NOCT_ENABLE_CBACKEND)
@@ -301,10 +224,8 @@ if(NOCT_ENABLE_BCBACKEND)
   set(
     NOCT_BCBE_SOURCE
     src/backend/bcback.c
-    src/core/package-cache.c
-    src/core/sha256.c
   )
-  add_definitions(-DNOCT_USE_PACKAGE_CACHE=1)
+  add_definitions(-DNOCT_USE_PACKAGE_CACHE)
 endif()
 
 # Determine the Emacs Lisp backend files.
@@ -361,6 +282,8 @@ add_library(
   ${NOCT_I18N_SOURCE}
   ${NOCT_REPL_SOURCE}
 )
+
+# Set the shared library version for Linux distributions.
 if(NOCT_ENABLE_SHARED)
   set_target_properties(noct PROPERTIES 
     VERSION 1.0.0 
@@ -378,35 +301,32 @@ endif()
 
 set(NOCT_API_SOURCE)
 
+# System.*
 if(NOCT_ENABLE_API_SYSTEM)
   list(APPEND NOCT_API_SOURCE src/api/api-system.c)
 endif()
 
+# Console.*
 if(NOCT_ENABLE_API_CONSOLE)
   list(APPEND NOCT_API_SOURCE src/api/api-console.c)
 endif()
 
-if(NOCT_ENABLE_MODEL_WEIGHTS AND NOT NOCT_ENABLE_API_FILE)
-  message(FATAL_ERROR "NOCT_ENABLE_MODEL_WEIGHTS requires NOCT_ENABLE_API_FILE=ON")
-endif()
-
+# File.*
 if(NOCT_ENABLE_API_FILE)
   list(APPEND NOCT_API_SOURCE src/api/api-file.c)
-  list(APPEND NOCT_API_SOURCE src/api/api-binary.c)
-  list(APPEND NOCT_API_SOURCE src/core/sha256.c)
-  if(NOCT_ENABLE_MODEL_WEIGHTS)
-    list(APPEND NOCT_API_SOURCE src/api/api-weights.c)
-  endif()
 endif()
 
+# Thread.*
 if(NOCT_ENABLE_API_THREAD AND NOCT_ENABLE_MULTITHREAD)
   list(APPEND NOCT_API_SOURCE src/api/api-thread.c)
 endif()
 
-if(NOCT_ENABLE_API_HTTPSERVER)
-  list(APPEND NOCT_API_SOURCE src/api/api-httpserver.c)
+# Process.*
+if(NOCT_ENABLE_API_PROCESS)
+  list(APPEND NOCT_API_SOURCE src/api/api-process.c)
 endif()
 
+# Term.*
 if(NOCT_ENABLE_API_TERM)
   if(WIN32)
     list(APPEND NOCT_API_SOURCE src/api/api-term-win32.c)
@@ -415,32 +335,18 @@ if(NOCT_ENABLE_API_TERM)
   endif()
 endif()
 
-if(NOCT_ENABLE_API_PROCESS)
-  list(APPEND NOCT_API_SOURCE src/api/api-process.c)
+# HttpServer.*
+if(NOCT_ENABLE_API_HTTPSERVER)
+  list(APPEND NOCT_API_SOURCE src/api/api-httpserver.c)
 endif()
 
+# BeUI.*
 if(NOCT_ENABLE_API_BEUI)
-  set(NOCT_BEUI_PLATFORM_SOURCES)
-
-  if(NOCT_ENABLE_API_BEUI_ZEDBSD)
-    if(NOT NOCT_TARGET_ZEDBSD)
-      message(FATAL_ERROR "NOCT_ENABLE_API_BEUI_ZEDBSD requires NOCT_TARGET_ZEDBSD")
-    endif()
-    if(NOCT_ENABLE_API_BEUI_SDL2)
-      message(FATAL_ERROR
-        "Select only one of the zedBSD and SDL2 BeUI backends")
-    endif()
-  endif()
-
-  if(NOCT_TARGET_PC98DOS)
-    list(APPEND NOCT_BEUI_PLATFORM_SOURCES src/api/api-beui-pc98.c)
-  endif()
-
-  if(NOCT_ENABLE_API_BEUI_SDL2)
-    if(NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS OR NOCT_TARGET_PC98BE OR
-       NOCT_TARGET_UNITY)
-      message(FATAL_ERROR "The SDL2 BeUI backend requires a hosted desktop target")
-    endif()
+  if(NOCT_TARGET_ZEDBSD)
+    list(APPEND NOCT_API_SOURCE src/api/api-beui-zedbsd.c)
+  elseif(NOCT_TARGET_PC98DOS)
+    list(APPEND NOCT_API_SOURCE src/api/api-beui-pc98.c)
+  else()
     find_package(SDL2 CONFIG QUIET)
     if(TARGET SDL2::SDL2)
       set(NOCT_SDL2_TARGET SDL2::SDL2)
@@ -449,34 +355,20 @@ if(NOCT_ENABLE_API_BEUI)
       pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
       set(NOCT_SDL2_TARGET PkgConfig::SDL2)
     endif()
-    list(APPEND NOCT_BEUI_PLATFORM_SOURCES src/api/api-beui-sdl2.c)
+    list(APPEND NOCT_API_SOURCE src/api/api-beui-sdl2.c)
   endif()
-
-  if(NOCT_ENABLE_API_BEUI_ZEDBSD)
-    list(APPEND NOCT_BEUI_PLATFORM_SOURCES src/api/api-beui-zedbsd.c)
-  endif()
-
-  list(LENGTH NOCT_BEUI_PLATFORM_SOURCES NOCT_BEUI_PLATFORM_COUNT)
-  if(NOT NOCT_BEUI_PLATFORM_COUNT EQUAL 1)
-    message(FATAL_ERROR
-      "NOCT_ENABLE_API_BEUI requires exactly one platform backend")
-  endif()
-  list(APPEND NOCT_API_SOURCE ${NOCT_BEUI_PLATFORM_SOURCES})
-elseif(NOCT_ENABLE_API_BEUI_SDL2 OR NOCT_ENABLE_API_BEUI_ZEDBSD)
-  message(FATAL_ERROR
-    "A BeUI backend requires NOCT_ENABLE_API_BEUI")
 endif()
 
-# Add the target "libnoctapi", the standard library.
+# Add the target "libnoctapi".
 if(NOCT_ENABLE_API)
-  if(NOT NOCT_API_SOURCE)
-    message(FATAL_ERROR "NOCT_ENABLE_API requires at least one NOCT_ENABLE_API_* component")
-  endif()
+  # Define the libnoctapi target.
   add_library(
     noctapi
     ${NOCT_LIB_TYPE}
     ${NOCT_API_SOURCE}
   )
+
+  # Set the .so version.
   if(NOCT_ENABLE_SHARED)
     set_target_properties(noctapi PROPERTIES 
       VERSION 1.0.0 
@@ -486,8 +378,8 @@ if(NOCT_ENABLE_API)
       C_VISIBILITY_PRESET hidden
       VISIBILITY_INLINES_HIDDEN ON
     )
-
   endif()
+
 endif()
 
 # ---
@@ -512,30 +404,22 @@ if(NOCT_ENABLE_API)
   )
 endif()
 
-# Multithread Support
-if(NOCT_ENABLE_MULTITHREAD)
-  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_MULTITHREAD)
-  if(NOT WIN32)
-    set(THREADS_PREFER_PTHREAD_FLAG ON)
-    find_package(Threads REQUIRED)
-    target_link_libraries(noct PUBLIC Threads::Threads)
-    if(NOCT_ENABLE_API)
-      target_link_libraries(noctapi PUBLIC Threads::Threads)
-    endif()
-  endif()
-endif()
-
 # If building a shared library.
 if(NOCT_ENABLE_SHARED)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_DLL)
 endif()
 
-# HIR Optimizer
+# Multithread.
+if(NOCT_ENABLE_MULTITHREAD)
+  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_MULTITHREAD)
+endif()
+
+# Optimizer.
 if(NOCT_ENABLE_OPTIMIZER)
   list(APPEND NOCT_PRIVATE_CPPFLAGS NOCT_USE_OPTIMIZER)
 endif()
 
-# JIT Support
+# JIT.
 if(NOCT_ENABLE_JIT)
   # Exclude OpenBSD
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
@@ -543,27 +427,24 @@ if(NOCT_ENABLE_JIT)
   endif()
 endif()
 
-# Translation
+# Translation. (non-gettext, original implementation)
 if(NOCT_ENABLE_I18N)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_TRANSLATION)
 endif()  
 
-# Translation (gettext)
+# Translation. (gettext)
 if(NOCT_ENABLE_I18N_LIBINTL)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_LIBINTL)
 endif()
 
-# OpenHarmony Target
+# OpenHarmony
 if(NOCT_TARGET_OPENHARMONY)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_OPENHARMONY)
 endif()
 
-# zedBSD Target
+# zedBSD
 if(NOCT_TARGET_ZEDBSD)
-  list(APPEND NOCT_PUBLIC_CPPFLAGS
-    NOCT_MEMORY_SMALL
-    NOCT_FORCE_SOFT_FMAF
-  )
+  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_MEMORY_SMALL NOCT_FORCE_SOFT_FMAF)
   set(NOCT_ZEDBSD_COMPILE_OPTIONS
     -nostdinc
     -U__linux__
@@ -786,49 +667,7 @@ if(NOCT_ENABLE_CLI)
   set_target_properties(noctcli PROPERTIES OUTPUT_NAME "noct")
 
   # Define feature macros.
-  if(NOCT_ENABLE_SHARED)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_DLL)
-  endif()
-  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_HTTPSERVER)
-  endif()
-  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_TERM)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_TERM)
-  endif()
-  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_BEUI)
-  endif()
-  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_PROCESS)
-  endif()
-  if(NOCT_ENABLE_JIT)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_JIT)
-  endif()
-  if(NOCT_ENABLE_I18N)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_TRANSLATION)
-  endif()  
-  if(NOCT_ENABLE_I18N_LIBINTL)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_LIBINTL)
-  endif()
-  if(NOCT_ENABLE_CBACKEND)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_CBACKEND)
-  endif()
-  if(NOCT_ENABLE_BCBACKEND)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_BCBACKEND)
-  endif()
-  if(NOCT_ENABLE_ELBACKEND)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_ELBACKEND)
-  endif()
-  if(NOCT_ENABLE_SCMBACKEND)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_SCMBACKEND)
-  endif()
-  if(NOCT_ENABLE_REPL)
-    target_compile_definitions(noctcli PRIVATE NOCT_USE_REPL)
-  endif()
-  if(NOT NOCT_VERSION)
-    set(NOCT_VERSION "1.0-current")
-  endif()
-  target_compile_definitions(noctcli PRIVATE NOCT_VERSION="${NOCT_VERSION}")
+  target_compile_definitions(noctcli PRIVATE ${NOCT_PUBLIC_CPPFLAGS})
 
   # Include include/noct/, src/core/, and src/backend/
   target_include_directories(noctcli PRIVATE
@@ -843,22 +682,6 @@ if(NOCT_ENABLE_CLI)
 
   # Link libnoct and libnoctapi.
   target_link_libraries(noctcli PRIVATE noct noctapi)
-
-  # zedBSD owns its libc, startup objects, linker script, and final static-link
-  # policy.  Keep those integration details outside the canonical Noct tree
-  # while making the CMake executable target the sole produced artifact.
-  if(NOCT_TARGET_ZEDBSD)
-    if(NOT DEFINED ZEDBSD_SOURCE_DIR OR ZEDBSD_SOURCE_DIR STREQUAL "")
-      message(FATAL_ERROR
-        "NOCT_TARGET_ZEDBSD requires ZEDBSD_SOURCE_DIR to name the zedBSD source tree")
-    endif()
-    include("${ZEDBSD_SOURCE_DIR}/userland/packages/lang/noct/zedbsd.cmake")
-    if(NOT COMMAND noct_configure_zedbsd_target)
-      message(FATAL_ERROR
-        "zedBSD integration did not define noct_configure_zedbsd_target")
-    endif()
-    noct_configure_zedbsd_target(noctcli)
-  endif()
 
   # Add -lm on UNIX.
   if(UNIX AND NOT NOCT_TARGET_ZEDBSD)

@@ -414,22 +414,12 @@ struct rt_env {
  */
 struct rt_vm {
 	/* Global symbols. */
+	struct rt_bindglobal *global;
 	uint32_t global_alloc_size;
 	uint32_t global_size;
-	struct rt_bindglobal *global;
 
 	/* Function list. */
 	struct rt_func *func_list;
-
-	/* Source-module resolution and duplicate/cycle state. */
-	struct module_paths require_path;
-	struct rt_module *module_list;
-
-	/* Dynamically loaded library state and native cleanup callbacks. */
-	struct rt_library_state *library_list;
-	struct rt_vm_finalizer *vm_finalizer_list;
-	int library_registration_lock;
-	int library_state_lock;
 
 	/* GC. */
 	struct rt_gc_info gc;
@@ -441,21 +431,16 @@ struct rt_vm {
 	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
 	uint32_t pinned_count;
 
-	/* Is JIT code written and not commited? */
-	bool is_jit_dirty;
-
 	/* Per-VM JIT slabs.  Published pages are never made writable again. */
 	struct jit_slab *jit_slab_head;
 	struct jit_slab *jit_slab_tail;
 	struct jit_slab *jit_slab_current;
 
+	/* Is JIT code written and not commited? */
+	bool is_jit_dirty;
+
 	/* Config. */
 	struct rt_config config;
-	void *accel_runtime;
-	const struct accel_backend_ops *accel_backend[ACCEL_BACKEND_MAX];
-	uint32_t accel_backend_count;
-	const struct accel_backend_ops *selected_accel_backend;
-	struct accel_event accel_event[ACCEL_EVENT_MAX];
 
 	/* GC nest counter. */
 	int gc_in_progress_counter;
@@ -464,6 +449,11 @@ struct rt_vm {
 	int gc_level;
 
 #if defined(NOCT_USE_MULTITHREAD)
+	/*
+	 * VM global lock.
+	 */
+	int vm_lock;
+
 	/*
 	 * Number of in-flight threads.
 	 *  - See objectmodel.c
@@ -488,18 +478,6 @@ struct rt_vm {
 	 * Lock for global variables.
 	 */
 	int global_var_counter;
-
-	/*
-	 * Detached thread env free list.
-	 *  - Envs stay linked in env_list forever; detached ones are
-	 *    additionally chained here (via free_next) for reuse.
-	 */
-	struct rt_env *env_free_list;
-
-	/*
-	 * Spin lock for env_free_list.
-	 */
-	int env_free_lock;
 
 	/*
 	 * Spin lock for the heap allocator and the GC object lists.

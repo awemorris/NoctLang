@@ -35,7 +35,7 @@ struct process_library {
 	char *path;
 	int state;
 	void *handle;
-	NoctLibraryInit init;
+	bool (CDECL *init)(const NoctAPI *api, NoctEnv *env);
 	char error[512];
 	struct process_library *next;
 };
@@ -366,147 +366,159 @@ rt_load_library(
 	bool optional,
 	bool *loaded)
 {
+#if !defined(NOCT_USE_DYNLIB)
+	/*
+	 * For when dynlib is disabled by the build config.
+	 */
 	*loaded = false;
 	if (!dynlib_valid_name(name)) {
 		rt_error(env, N_TR("Invalid native library name \"%s\"."),
 			 name != NULL ? name : "");
 		return false;
 	}
-#if !defined(NOCT_USE_DYNLIB)
 	if (optional)
 		return true;
 	rt_error(env, N_TR("Native library loading is unavailable on this target."));
 	return false;
 #else
-	{
-		char *canonical;
-		char error[512];
-		int resolve_result;
-		struct rt_library_state *state;
-		struct process_library *process;
-		bool init_result;
-		uint64_t relax;
+	/*
+	 * For when dynlib is enabled by the build config.
+	 */
 
-		if (env->library_transaction != NULL) {
-			rt_error(env, N_TR("A native library cannot load another library during noct_library_init()."));
-			return false;
-		}
-		error[0] = '\0';
-		resolve_result = dynlib_resolve(env, name, &canonical, error,
-						 sizeof(error));
-		if (resolve_result == 0) {
-			if (optional)
-				return true;
-			rt_error(env, N_TR("Native library \"%s\" was not found."), name);
-			return false;
-		}
-		if (resolve_result < 0) {
-			rt_error(env, N_TR("Cannot resolve native library \"%s\": %s"),
-				 name, error);
-			return false;
-		}
+	char *canonical;
+	char error[512];
+	int resolve_result;
+	struct rt_library_state *state;
+	struct process_library *process;
+	bool init_result;
+	uint64_t relax;
 
-		relax = CPU_RELAX_BASE_INITIALIZER;
-retry_vm:
-		dynlib_vm_lock(env->vm);
-		for (state = env->vm->library_list; state != NULL;
-		     state = state->next) {
-			if (strcmp(state->path, canonical) == 0)
-				break;
-		}
-		if (state != NULL) {
-			int vm_state = state->state;
-			struct rt_env *loading_env = state->loading_env;
-			snprintf(error, sizeof(error), "%s", state->error);
-			dynlib_vm_unlock(env->vm);
-			if (vm_state == VM_LIBRARY_LOADED) {
-				free(canonical);
-				*loaded = true;
-				return true;
-			}
-			if (vm_state == VM_LIBRARY_LOADING && loading_env != env) {
-				cpu_relax(&relax);
-				goto retry_vm;
-			}
-			free(canonical);
-			if (vm_state == VM_LIBRARY_LOADING)
-				rt_error(env, N_TR("Recursive native library initialization is not supported."));
-			else
-				rt_error(env, N_TR("Native library \"%s\" previously failed: %s"),
-					 name, error);
-			return false;
-		}
-		state = noct_calloc(1, sizeof(*state));
-		if (state == NULL) {
-			dynlib_vm_unlock(env->vm);
-			free(canonical);
-			rt_out_of_memory(env);
-			return false;
-		}
-		state->path = noct_strdup(canonical);
-		if (state->path == NULL) {
-			dynlib_vm_unlock(env->vm);
-			free(canonical);
-			noct_free(state);
-			rt_out_of_memory(env);
-			return false;
-		}
-		state->state = VM_LIBRARY_LOADING;
-		state->loading_env = env;
-		state->next = env->vm->library_list;
-		env->vm->library_list = state;
-		dynlib_vm_unlock(env->vm);
-
-		process = dynlib_get_process_library(canonical, error, sizeof(error));
-		free(canonical);
-		if (process == NULL) {
-			dynlib_vm_lock(env->vm);
-			state->state = VM_LIBRARY_FAILED;
-			state->loading_env = NULL;
-			snprintf(state->error, sizeof(state->error), "%s", error);
-			dynlib_vm_unlock(env->vm);
-			rt_error(env, N_TR("Cannot load native library \"%s\": %s"),
-				 name, error);
-			return false;
-		}
-		if (!rt_library_transaction_begin(env)) {
-			dynlib_vm_lock(env->vm);
-			state->state = VM_LIBRARY_FAILED;
-			state->loading_env = NULL;
-			snprintf(state->error, sizeof(state->error),
-				 "cannot begin registration");
-			dynlib_vm_unlock(env->vm);
-			return false;
-		}
-		init_result = process->init(noct_get_api_table(), env);
-		if (!init_result) {
-			rt_library_transaction_abort(env);
-			dynlib_vm_lock(env->vm);
-			state->state = VM_LIBRARY_FAILED;
-			state->loading_env = NULL;
-			if (env->error_message[0] == '\0')
-				rt_error(env, N_TR("Native library \"%s\" initialization failed."), name);
-			dynlib_copy_error(state->error, sizeof(state->error),
-					  env->error_message);
-			dynlib_vm_unlock(env->vm);
-			return false;
-		}
-		if (!rt_library_transaction_commit(env)) {
-			dynlib_vm_lock(env->vm);
-			state->state = VM_LIBRARY_FAILED;
-			state->loading_env = NULL;
-			dynlib_copy_error(state->error, sizeof(state->error),
-					  env->error_message);
-			dynlib_vm_unlock(env->vm);
-			return false;
-		}
-		dynlib_vm_lock(env->vm);
-		state->state = VM_LIBRARY_LOADED;
-		state->loading_env = NULL;
-		dynlib_vm_unlock(env->vm);
-		*loaded = true;
-		return true;
+	*loaded = false;
+	if (!dynlib_valid_name(name)) {
+		rt_error(env, N_TR("Invalid native library name \"%s\"."),
+			 name != NULL ? name : "");
+		return false;
 	}
+
+	if (env->library_transaction != NULL) {
+		rt_error(env, N_TR("A native library cannot load another library during noct_library_init()."));
+		return false;
+	}
+	error[0] = '\0';
+	resolve_result = dynlib_resolve(env, name, &canonical, error,
+					sizeof(error));
+	if (resolve_result == 0) {
+		if (optional)
+			return true;
+		rt_error(env, N_TR("Native library \"%s\" was not found."), name);
+		return false;
+	}
+	if (resolve_result < 0) {
+		rt_error(env, N_TR("Cannot resolve native library \"%s\": %s"),
+			 name, error);
+		return false;
+	}
+
+	relax = CPU_RELAX_BASE_INITIALIZER;
+retry_vm:
+	dynlib_vm_lock(env->vm);
+	for (state = env->vm->library_list; state != NULL;
+	     state = state->next) {
+		if (strcmp(state->path, canonical) == 0)
+			break;
+	}
+	if (state != NULL) {
+		int vm_state = state->state;
+		struct rt_env *loading_env = state->loading_env;
+		snprintf(error, sizeof(error), "%s", state->error);
+		dynlib_vm_unlock(env->vm);
+		if (vm_state == VM_LIBRARY_LOADED) {
+			free(canonical);
+			*loaded = true;
+			return true;
+		}
+		if (vm_state == VM_LIBRARY_LOADING && loading_env != env) {
+			cpu_relax(&relax);
+			goto retry_vm;
+		}
+		free(canonical);
+		if (vm_state == VM_LIBRARY_LOADING)
+			rt_error(env, N_TR("Recursive native library initialization is not supported."));
+		else
+			rt_error(env, N_TR("Native library \"%s\" previously failed: %s"),
+				 name, error);
+		return false;
+	}
+	state = noct_calloc(1, sizeof(*state));
+	if (state == NULL) {
+		dynlib_vm_unlock(env->vm);
+		free(canonical);
+		rt_out_of_memory(env);
+		return false;
+	}
+	state->path = noct_strdup(canonical);
+	if (state->path == NULL) {
+		dynlib_vm_unlock(env->vm);
+		free(canonical);
+		noct_free(state);
+		rt_out_of_memory(env);
+		return false;
+	}
+	state->state = VM_LIBRARY_LOADING;
+	state->loading_env = env;
+	state->next = env->vm->library_list;
+	env->vm->library_list = state;
+	dynlib_vm_unlock(env->vm);
+
+	process = dynlib_get_process_library(canonical, error, sizeof(error));
+	free(canonical);
+	if (process == NULL) {
+		dynlib_vm_lock(env->vm);
+		state->state = VM_LIBRARY_FAILED;
+		state->loading_env = NULL;
+		snprintf(state->error, sizeof(state->error), "%s", error);
+		dynlib_vm_unlock(env->vm);
+		rt_error(env, N_TR("Cannot load native library \"%s\": %s"),
+			 name, error);
+		return false;
+	}
+	if (!rt_library_transaction_begin(env)) {
+		dynlib_vm_lock(env->vm);
+		state->state = VM_LIBRARY_FAILED;
+		state->loading_env = NULL;
+		snprintf(state->error, sizeof(state->error),
+			 "cannot begin registration");
+		dynlib_vm_unlock(env->vm);
+		return false;
+	}
+	init_result = process->init(noct_get_api_table(), env);
+	if (!init_result) {
+		rt_library_transaction_abort(env);
+		dynlib_vm_lock(env->vm);
+		state->state = VM_LIBRARY_FAILED;
+		state->loading_env = NULL;
+		if (env->error_message[0] == '\0')
+			rt_error(env, N_TR("Native library \"%s\" initialization failed."), name);
+		dynlib_copy_error(state->error, sizeof(state->error),
+				  env->error_message);
+		dynlib_vm_unlock(env->vm);
+		return false;
+	}
+	if (!rt_library_transaction_commit(env)) {
+		dynlib_vm_lock(env->vm);
+		state->state = VM_LIBRARY_FAILED;
+		state->loading_env = NULL;
+		dynlib_copy_error(state->error, sizeof(state->error),
+				  env->error_message);
+		dynlib_vm_unlock(env->vm);
+		return false;
+	}
+	dynlib_vm_lock(env->vm);
+	state->state = VM_LIBRARY_LOADED;
+	state->loading_env = NULL;
+	dynlib_vm_unlock(env->vm);
+	*loaded = true;
+	return true;
 #endif
 }
 
@@ -523,5 +535,8 @@ rt_cleanup_libraries(
 		noct_free(state);
 	}
 	vm->library_list = NULL;
-	/* Process-global handles intentionally remain loaded. */
+
+	/*
+	 * Note: Process-global handles intentionally remain loaded.
+	 */
 }

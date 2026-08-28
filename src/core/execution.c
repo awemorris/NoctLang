@@ -498,14 +498,6 @@ noct_ex_div_helper(
 	src1_val = &env->frame->tmpvar[src1];
 	src2_val = &env->frame->tmpvar[src2];
 
-	/*
-	 * Integer-performed divisions (both operands int/long) error on
-	 * a zero divisor.  Float/double-performed divisions are total:
-	 * they follow IEEE 754 and yield +/-inf or NaN (design 07
-	 * Part 0, D-TOP12).  The FP environment keeps its default
-	 * masked-exception state on every target; the runtime never
-	 * touches MXCSR/FPCR or their equivalents.
-	 */
 	switch (src1_val->type) {
 	case NOCT_VALUE_INT:
 		switch (src2_val->type) {
@@ -516,8 +508,10 @@ noct_ex_div_helper(
 			}
 			if (src2_val->val.i == -1 &&
 			    src1_val->val.i == (-2147483647 - 1)) {
-				/* Wraps: -INT_MIN == INT_MIN; the raw C
-				   division traps (SIGFPE). */
+				/*
+				 * Wraps: -INT_MIN == INT_MIN; the raw C
+				 * division traps (SIGFPE).
+				 */
 				dst_val->type = NOCT_VALUE_INT;
 				dst_val->val.i = src1_val->val.i;
 				break;
@@ -2424,6 +2418,9 @@ noct_ex_call_helper(
 	 * These live on the C stack, and rt_call() crosses a safepoint,
 	 * so without pinning a collection running in another thread
 	 * would move the objects and leave these copies dangling.
+	 *
+	 * XXX: Is this really required? Arguments and result are on
+	 * local variables, and local variables are GC roots.
 	 */
 	memset(&ret, 0, sizeof(ret));
 	for (i = 0; i < arg_count; i++)
@@ -2514,6 +2511,9 @@ noct_ex_thiscall_helper(
 	 * These live on the C stack, and rt_call() crosses a safepoint,
 	 * so without pinning a collection running in another thread
 	 * would move the objects and leave these copies dangling.
+	 *
+	 * XXX: Is this really required? Arguments and result are on
+	 * local variables, and local variables are GC roots.
 	 */
 	memset(&ret, 0, sizeof(ret));
 	for (i = 0; i < call_arg_count; i++)
@@ -2572,12 +2572,12 @@ noct_ex_safepoint_helper(
 }
 
 /*
- * PBASE helper. (ABCE: materialize a packed payload address.)
- *
- * The result is a long value holding the raw payload pointer.  It is
- * only valid until the next safepoint source; the ABCE pass
- * guarantees by construction that no such source exists between the
- * PBASE and its last use.  See docs/design/01-abce.md.
+ * ここから下がコーディング規約を無視しているのでリファクタが必要です。
+ * マクロは使わないでください。
+ */
+
+/*
+ * PBASE helper.
  */
 NOCT_DLL
 bool
@@ -2610,7 +2610,7 @@ noct_ex_pbase_helper(
 }
 
 /*
- * PCHECK helper. (ABCE guard: packed type test, never errors.)
+ * PCHECK helper.
  */
 NOCT_DLL
 bool
@@ -2641,7 +2641,7 @@ noct_ex_pcheck_helper(
 }
 
 /*
- * TYPEIS helper. (ABCE guard: value type test, never errors.)
+ * TYPEIS helper.
  */
 NOCT_DLL
 bool
@@ -2668,7 +2668,7 @@ noct_ex_typeis_helper(
 }
 
 /*
- * PLEN helper. (ABCE guard: packed element count, never errors.)
+ * PLEN helper.
  */
 NOCT_DLL
 bool
@@ -2693,8 +2693,10 @@ noct_ex_plen_helper(
 	return true;
 }
 
+#define ABCE_OFS(v) (((v)->type == NOCT_VALUE_LONG) ? (intptr_t)(v)->val.l : (intptr_t)(v)->val.i)
+
 /*
- * PLOAD8U helper. (ABCE fast body: raw uint8 load, no checks.)
+ * PLOAD8U helper.
  */
 NOCT_DLL
 bool
@@ -2725,7 +2727,7 @@ noct_ex_pload8u_helper(
 }
 
 /*
- * PSTORE8 helper. (ABCE fast body: raw uint8 store, no checks.)
+ * PSTORE8 helper.
  */
 NOCT_DLL
 bool
@@ -2755,12 +2757,8 @@ noct_ex_pstore8_helper(
 }
 
 /*
- * Width-parameterized ABCE load/store helpers.  Offsets are ELEMENT
- * indices; semantics mirror rt_get_packed_elem / rt_set_packed_elem.
+ * PLOAD8S helper.
  */
-
-#define ABCE_OFS(v) (((v)->type == NOCT_VALUE_LONG) ? (intptr_t)(v)->val.l : (intptr_t)(v)->val.i)
-
 NOCT_DLL
 bool
 CDECL
@@ -2779,6 +2777,9 @@ noct_ex_pload8s_helper(
 	return true;
 }
 
+/*
+ * PLOAD16U helper.
+ */
 NOCT_DLL
 bool
 CDECL
@@ -2796,6 +2797,7 @@ noct_ex_pload16u_helper(
 	d->type = NOCT_VALUE_INT;
 	return true;
 }
+
 
 NOCT_DLL
 bool
@@ -3570,379 +3572,3 @@ RT_VALF(noct_ex_vmulf32x4_helper, x.f[k] * y.f[k])
 RT_VALF(noct_ex_vdivf32x4_helper, x.f[k] / y.f[k])
 
 #undef RT_VALF
-
-/*
- * C89 fallback derived from FreeBSD msun s_fmaf.c (also used by musl).
- * Copyright (c) 2005-2011 David Schultz <das@FreeBSD.ORG>
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
- * THE POSSIBILITY OF SUCH DAMAGE.
- *
- * A binary64 value has more than twice binary32's precision.  Computing in
- * double is therefore exact enough except for the binary32 halfway cases;
- * those cases are detected and the low double bit is nudged toward the exact
- * result before the final conversion.  No fenv.h dependency is used because
- * OpenWatcom 1.9 does not provide it; Noct arithmetic uses the default
- * round-to-nearest-even mode.
- */
-#if defined(__WATCOMC__) || defined(NOCT_FORCE_SOFT_FMAF)
-static float
-noct_fmaf32_soft(float x, float y, float z)
-{
-	volatile double xy;
-	volatile double result;
-	double err;
-	union {
-		double f;
-		uint64_t i;
-	} u;
-	int e;
-	int neg;
-
-	xy = (double)x * (double)y;
-	result = xy + (double)z;
-	u.f = result;
-	e = (int)((u.i >> 52) & 0x7ffu);
-	if ((u.i & (uint64_t)0x1fffffffU) != (uint64_t)0x10000000U ||
-	    e == 0x7ff ||
-	    (result - xy == (double)z && result - (double)z == xy))
-		return (float)result;
-
-	neg = (int)(u.i >> 63);
-	if (neg == ((double)z > xy))
-		err = xy - result + (double)z;
-	else
-		err = (double)z - result + xy;
-	if (neg == (err < 0.0))
-		u.i++;
-	else
-		u.i--;
-	return (float)u.f;
-}
-#endif
-
-static float
-noct_fmaf32(float x, float y, float z)
-{
-#if defined(__WATCOMC__) || defined(NOCT_FORCE_SOFT_FMAF)
-	return noct_fmaf32_soft(x, y, z);
-#else
-	return fmaf(x, y, z);
-#endif
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vfmaf32x4_helper(
-	NoctEnv *env,
-	int vd,
-	int va,
-	int packed_vb_vc)
-{
-	union rt_vlanes a;
-	union rt_vlanes b;
-	union rt_vlanes c;
-	union rt_vlanes d;
-	int vb;
-	int vc;
-	int k;
-
-	vb = (packed_vb_vc >> 8) & 0xff;
-	vc = packed_vb_vc & 0xff;
-	memcpy(&a, env->vreg[va], 16);
-	memcpy(&b, env->vreg[vb], 16);
-	memcpy(&c, env->vreg[vc], 16);
-	for (k = 0; k < 4; k++)
-		d.f[k] = noct_fmaf32(a.f[k], b.f[k], c.f[k]);
-	memcpy(env->vreg[vd], &d, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vcvti32f32x4_helper(NoctEnv *env, int vd, int va, int unused)
-{
-	union rt_vlanes x;
-	int k;
-	UNUSED_PARAMETER(unused);
-	memcpy(&x, env->vreg[va], 16);
-	for (k = 0; k < 4; k++)
-		x.f[k] = (float)x.i[k];
-	memcpy(env->vreg[vd], &x, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vcvtf32i32x4_helper(NoctEnv *env, int vd, int va, int unused)
-{
-	union rt_vlanes x;
-	int k;
-	UNUSED_PARAMETER(unused);
-	memcpy(&x, env->vreg[va], 16);
-	for (k = 0; k < 4; k++)
-		x.i[k] = (int32_t)x.f[k];
-	memcpy(env->vreg[vd], &x, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vmins32x4_helper(NoctEnv *env, int vd, int va, int vb)
-{
-	union rt_vlanes a, b, d;
-	int k;
-
-	memcpy(&a, env->vreg[va], 16);
-	memcpy(&b, env->vreg[vb], 16);
-	for (k = 0; k < 4; k++)
-		d.i[k] = a.i[k] < b.i[k] ? a.i[k] : b.i[k];
-	memcpy(env->vreg[vd], &d, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vmaxs32x4_helper(NoctEnv *env, int vd, int va, int vb)
-{
-	union rt_vlanes a, b, d;
-	int k;
-
-	memcpy(&a, env->vreg[va], 16);
-	memcpy(&b, env->vreg[vb], 16);
-	for (k = 0; k < 4; k++)
-		d.i[k] = a.i[k] > b.i[k] ? a.i[k] : b.i[k];
-	memcpy(env->vreg[vd], &d, 16);
-	return true;
-}
-
-/*
- * OR a replicated byte immediate into each 32-bit lane.  The fourth
- * typed-helper operand packs imm8 in bits 8..15 and shift in bits 0..7;
- * this keeps the portable helper ABI at (env, int, int, int).
- */
-NOCT_DLL
-bool
-CDECL
-noct_ex_vori32x4i_helper(
-	NoctEnv *env,
-	int vd,
-	int vs,
-	int packed_imm)
-{
-	union rt_vlanes x;
-	uint32_t value;
-	int shift;
-	int k;
-
-	shift = packed_imm & 0xff;
-	value = (uint32_t)((packed_imm >> 8) & 0xff);
-	value <<= (uint32_t)shift & 31;
-	memcpy(&x, env->vreg[vs], 16);
-	for (k = 0; k < 4; k++)
-		x.u[k] |= value;
-	memcpy(env->vreg[vd], &x, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vcmpi32x4_helper(
-	NoctEnv *env,
-	int vd,
-	int va,
-	int packed_vb_pred)
-{
-	union rt_vlanes a, b, d;
-	int vb = (packed_vb_pred >> 8) & 0xff;
-	int pred = packed_vb_pred & 0xff;
-	int k;
-
-	memcpy(&a, env->vreg[va], 16);
-	memcpy(&b, env->vreg[vb], 16);
-	for (k = 0; k < 4; k++) {
-		bool yes;
-		switch (pred) {
-		case VCMP_EQ: yes = a.i[k] == b.i[k]; break;
-		case VCMP_NE: yes = a.i[k] != b.i[k]; break;
-		case VCMP_LT: yes = a.i[k] <  b.i[k]; break;
-		case VCMP_LE: yes = a.i[k] <= b.i[k]; break;
-		case VCMP_GT: yes = a.i[k] >  b.i[k]; break;
-		case VCMP_GE: yes = a.i[k] >= b.i[k]; break;
-		default: return false;
-		}
-		d.u[k] = yes ? UINT32_MAX : 0;
-	}
-	memcpy(env->vreg[vd], &d, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vcmpf32x4_helper(
-	NoctEnv *env,
-	int vd,
-	int va,
-	int packed_vb_pred)
-{
-	union rt_vlanes a, b, d;
-	int vb = (packed_vb_pred >> 8) & 0xff;
-	int pred = packed_vb_pred & 0xff;
-	int k;
-
-	memcpy(&a, env->vreg[va], 16);
-	memcpy(&b, env->vreg[vb], 16);
-	for (k = 0; k < 4; k++) {
-		bool yes;
-		switch (pred) {
-		case VCMP_EQ: yes = a.f[k] == b.f[k]; break;
-		case VCMP_NE: yes = a.f[k] != b.f[k]; break;
-		case VCMP_LT: yes = a.f[k] <  b.f[k]; break;
-		case VCMP_LE: yes = a.f[k] <= b.f[k]; break;
-		case VCMP_GT: yes = a.f[k] >  b.f[k]; break;
-		case VCMP_GE: yes = a.f[k] >= b.f[k]; break;
-		default: return false;
-		}
-		d.u[k] = yes ? UINT32_MAX : 0;
-	}
-	memcpy(env->vreg[vd], &d, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vselect128_helper(
-	NoctEnv *env,
-	int vd,
-	int vm,
-	int packed_vt_vf)
-{
-	union rt_vlanes m, t, f, d;
-	int vt = (packed_vt_vf >> 8) & 0xff;
-	int vf = packed_vt_vf & 0xff;
-	int k;
-
-	memcpy(&m, env->vreg[vm], 16);
-	memcpy(&t, env->vreg[vt], 16);
-	memcpy(&f, env->vreg[vf], 16);
-	for (k = 0; k < 4; k++)
-		d.u[k] = (m.u[k] & t.u[k]) | (~m.u[k] & f.u[k]);
-	memcpy(env->vreg[vd], &d, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vmaskstorei32x4_helper(
-	NoctEnv *env,
-	int base,
-	int ofs,
-	int packed_vs_vm)
-{
-	struct rt_value *b = &env->frame->tmpvar[base];
-	struct rt_value *o = &env->frame->tmpvar[ofs];
-	union rt_vlanes value, mask;
-	char *p;
-	int vs = (packed_vs_vm >> 8) & 0xff;
-	int vm = packed_vs_vm & 0xff;
-	int k;
-
-	p = (char *)(intptr_t)b->val.l + (int64_t)o->val.i * 4;
-	memcpy(&value, env->vreg[vs], 16);
-	memcpy(&mask, env->vreg[vm], 16);
-	for (k = 0; k < 4; k++) {
-		if (mask.u[k] == UINT32_MAX)
-			memcpy(p + k * 4, &value.u[k], 4);
-	}
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vinductf32x4_helper(
-	NoctEnv *env,
-	int vd,
-	int state,
-	int step)
-{
-	struct rt_value *s = &env->frame->tmpvar[state];
-	struct rt_value *d = &env->frame->tmpvar[step];
-	union rt_vlanes out;
-	float x = s->val.f;
-	float delta = d->val.f;
-	int k;
-
-	for (k = 0; k < 4; k++) {
-		volatile float rounded;
-		out.f[k] = x;
-		rounded = x + delta;
-		x = rounded;
-	}
-	s->val.f = x;
-	memcpy(env->vreg[vd], &out, 16);
-	return true;
-}
-
-NOCT_DLL
-bool
-CDECL
-noct_ex_vgatheri32x4_checked_helper(
-	NoctEnv *env,
-	int vd,
-	int base,
-	int packed_plen_vi)
-{
-	int plen = (packed_plen_vi >> 8) & 0xffff;
-	int vi = packed_plen_vi & 0xff;
-	struct rt_value *b = &env->frame->tmpvar[base];
-	struct rt_value *n = &env->frame->tmpvar[plen];
-	union rt_vlanes index, out;
-	char *p = (char *)(intptr_t)b->val.l;
-	int k;
-
-	memcpy(&index, env->vreg[vi], 16);
-	for (k = 0; k < 4; k++) {
-		int32_t j = index.i[k];
-		if (j < 0) {
-			rt_error(env, N_TR("Subscript is negative."));
-			return false;
-		}
-		if ((uint32_t)j >= (uint32_t)n->val.i) {
-			rt_error(env, N_TR("Array index %ld is out-of-range."),
-				 (long)j);
-			return false;
-		}
-		memcpy(&out.u[k], p + (size_t)(uint32_t)j * 4, 4);
-	}
-	memcpy(env->vreg[vd], &out, 16);
-	return true;
-}

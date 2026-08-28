@@ -39,11 +39,13 @@ noct_set_default_config(
 	config->cpu_affinity           = NULL;
 	config->gpu_enable             = false;
 	config->gpu_name               = NULL;
+
 #if defined(NOCT_USE_JIT)
 	config->jit_code_size          = JIT_CODE_MAX;
 #else
 	config->jit_code_size          = 0;
 #endif
+
 	config->gc_nursery_size        = RT_GC_DEFAULT_NURSERY_SIZE;
 	config->gc_graduate_size       = RT_GC_DEFAULT_GRADUATE_SIZE;
 	config->gc_tenure_size         = RT_GC_DEFAULT_TENURE_SIZE;
@@ -2956,4 +2958,76 @@ noct_set_return_make_string(
 		return false;
 
 	return true;
+}
+
+const NoctAPI *
+noct_get_api_table(void)
+{
+	static const NoctAPI noct_api = {
+		NOCT_API_ABI_VERSION_1,
+
+		(uint32_t)sizeof(NoctAPI),
+
+		NOCT_API_FEATURE_CFUNC_DATA | NOCT_API_FEATURE_VM_FINALIZER,
+
+#define NOCT_API_FIELD(ret, name, args) name,
+
+		NOCT_API_FIELD(void, noct_enter_blocking, (NoctEnv *env))
+NOCT_API_FIELD(void, noct_leave_blocking, (NoctEnv *env))
+NOCT_API_FIELD(bool, noct_register_cfunc, (NoctEnv *env, const char *name, size_t param_count, const char *param_name[], NoctCFunc cfunc, NoctFunc **ret_func))
+NOCT_API_FIELD(bool, noct_register_cfunc_with_data, (NoctEnv *env, const char *name, size_t param_count, const char *param_name[], NoctCFuncWithData cfunc, void *userdata, NoctFunc **ret_func))
+NOCT_API_FIELD(bool, noct_register_vm_finalizer, (NoctEnv *env, NoctVMFinalizer finalizer, void *userdata))
+NOCT_API_FIELD(bool, noct_enter_vm, (NoctEnv *env, const char *func_name, uint32_t arg_count, NoctValue *arg, NoctValue *ret))
+NOCT_API_FIELD(bool, noct_call, (NoctEnv *env, NoctFunc *func, uint32_t arg_count, NoctValue *arg, NoctValue *ret))
+NOCT_API_FIELD(bool, noct_get_error_file, (NoctEnv *env, const char **msg))
+NOCT_API_FIELD(bool, noct_get_error_line, (NoctEnv *env, int *line))
+NOCT_API_FIELD(bool, noct_get_error_message, (NoctEnv *env, const char **msg))
+NOCT_API_FIELD(bool, noct_make_int, (NoctEnv *env, NoctValue *value, int i))
+NOCT_API_FIELD(bool, noct_make_long, (NoctEnv *env, NoctValue *value, int64_t l))
+NOCT_API_FIELD(bool, noct_make_float, (NoctEnv *env, NoctValue *value, float f))
+NOCT_API_FIELD(bool, noct_make_double, (NoctEnv *env, NoctValue *value, double d))
+NOCT_API_FIELD(bool, noct_make_string, (NoctEnv *env, NoctValue *value, const char *s))
+NOCT_API_FIELD(bool, noct_make_empty_array, (NoctEnv *env, NoctValue *value))
+NOCT_API_FIELD(bool, noct_make_empty_dict, (NoctEnv *env, NoctValue *value))
+NOCT_API_FIELD(bool, noct_make_packed, (NoctEnv *env, NoctValue *value, int type, size_t size, size_t elem_size, void *preallocated, void *native_pointer, void (*native_finalizer)(void *native_pointer)))
+NOCT_API_FIELD(bool, noct_get_value_type, (NoctEnv *env, NoctValue *value, int *type))
+NOCT_API_FIELD(bool, noct_get_int, (NoctEnv *env, NoctValue *value, int *i))
+NOCT_API_FIELD(bool, noct_get_long, (NoctEnv *env, NoctValue *value, int64_t *l))
+NOCT_API_FIELD(bool, noct_get_float, (NoctEnv *env, NoctValue *value, float *f))
+NOCT_API_FIELD(bool, noct_get_double, (NoctEnv *env, NoctValue *value, double *d))
+NOCT_API_FIELD(bool, noct_get_string, (NoctEnv *env, NoctValue *value, const char **s))
+NOCT_API_FIELD(bool, noct_get_func, (NoctEnv *env, NoctValue *value, NoctFunc **func))
+NOCT_API_FIELD(bool, noct_get_array_size, (NoctEnv *env, NoctValue *array, size_t *size))
+NOCT_API_FIELD(bool, noct_get_array_elem, (NoctEnv *env, NoctValue *array, size_t index, NoctValue *value))
+NOCT_API_FIELD(bool, noct_set_array_elem, (NoctEnv *env, NoctValue *array, size_t index, NoctValue *value))
+NOCT_API_FIELD(bool, noct_resize_array, (NoctEnv *env, NoctValue *array, size_t size))
+NOCT_API_FIELD(bool, noct_get_dict_size, (NoctEnv *env, NoctValue *dict, size_t *size))
+NOCT_API_FIELD(bool, noct_get_dict_elem, (NoctEnv *env, NoctValue *dict, NoctValue *key, NoctValue *value))
+NOCT_API_FIELD(bool, noct_get_dict_elem_cstr, (NoctEnv *env, NoctValue *dict, const char *key, NoctValue *value))
+NOCT_API_FIELD(bool, noct_set_dict_elem, (NoctEnv *env, NoctValue *dict, NoctValue *key, NoctValue *value))
+NOCT_API_FIELD(bool, noct_set_dict_elem_cstr, (NoctEnv *env, NoctValue *dict, const char *key, NoctValue *value))
+NOCT_API_FIELD(bool, noct_remove_dict_elem, (NoctEnv *env, NoctValue *dict, NoctValue *key))
+NOCT_API_FIELD(bool, noct_get_packed_type, (NoctEnv *env, NoctValue *packed, int *type))
+NOCT_API_FIELD(bool, noct_get_packed_size, (NoctEnv *env, NoctValue *packed, size_t *size))
+NOCT_API_FIELD(bool, noct_get_packed_pointer, (NoctEnv *env, NoctValue *packed, void **pointer))
+NOCT_API_FIELD(bool, noct_get_args, (NoctEnv *env, uint32_t count, ...))
+NOCT_API_FIELD(bool, noct_get_arg, (NoctEnv *env, uint32_t index, NoctValue *arg))
+NOCT_API_FIELD(bool, noct_set_return, (NoctEnv *env, NoctValue *value))
+NOCT_API_FIELD(bool, noct_check_global, (NoctEnv *env, const char *name, bool *has_var))
+NOCT_API_FIELD(bool, noct_get_global, (NoctEnv *env, const char *name, NoctValue *value))
+NOCT_API_FIELD(bool, noct_set_global, (NoctEnv *env, const char *name, NoctValue *value))
+NOCT_API_FIELD(bool, noct_pin_global, (NoctEnv *env, NoctValue *value))
+NOCT_API_FIELD(bool, noct_unpin_global, (NoctEnv *env, NoctValue *value))
+NOCT_API_FIELD(bool, noct_pin_local, (NoctEnv *env, uint32_t count, ...))
+NOCT_API_FIELD(bool, noct_unpin_local, (NoctEnv *env, uint32_t count, ...))
+NOCT_API_FIELD(void, noct_fast_gc, (NoctEnv *env))
+NOCT_API_FIELD(void, noct_full_gc, (NoctEnv *env))
+NOCT_API_FIELD(void, noct_compact_gc, (NoctEnv *env))
+NOCT_API_FIELD(void, noct_error, (NoctEnv *env, const char *format, ...))
+NOCT_API_FIELD(void, noct_out_of_memory, (NoctEnv *env))
+NOCT_API_FIELD(uint32_t, noct_string_hash, (const char *s))
+#undef NOCT_API_FIELD
+};
+
+	return &noct_api;
 }
