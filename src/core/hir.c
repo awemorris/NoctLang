@@ -11,9 +11,11 @@
 
 #include <noct/noct.h>
 #include "hir.h"
+#include "hir_fast_checked.h"
 #include "hir_private.h"
-#include "hir_opt.h"
 #if defined(NOCT_USE_OPTIMIZER)
+#include "hir_opt.h"
+#include "hir_fast_func.h"
 #include "hir_opt_parallel.h"
 #endif
 #include "ast.h"
@@ -91,6 +93,7 @@ static struct arena_info hir_arena;
 
 /* Forward declarations. */
 static bool hir_visit_func(struct ast_func *afunc);
+static bool hir_fast_stmt_list_returns(const struct ast_stmt_list *list);
 static bool hir_visit_stmt_list(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt_list *stmt_list);
 static bool hir_visit_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
 static bool hir_visit_expr_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
@@ -114,11 +117,12 @@ static bool hir_visit_dict_expr(struct hir_expr **hexpr, struct ast_expr *aexpr)
 static bool hir_visit_func_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_new_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_term(struct hir_term **hterm, struct ast_term *aterm);
-static bool hir_check_type_annotation(int line, const char *type_name, int *tag, int *packed_type, bool *restricted);
+static bool hir_build_fast_signature(struct hir_block *hfunc, const struct ast_func *afunc);
+static bool hir_check_type_annotation(int line, const char *type_name, bool allow_shape, int *tag, int *packed_type, bool *restricted);
 static bool hir_visit_param_list(struct hir_block *hfunc, struct ast_func *afunc);
 static bool hir_defer_anon_func(struct ast_expr *aexpr, char **symbol);
 static struct hir_local *hir_find_local(struct hir_block *block, const char *symbol);
-static void hir_set_local_declaration(struct hir_block *block, const char *symbol, int declaration_kind, int declared_type, int declared_scalar_kind, int declared_packed_type, int storage_class, int line, const struct hir_stmt *declaration_stmt, const struct hir_expr *initializer);
+static bool hir_set_local_declaration(struct hir_block *block, const char *symbol, int declaration_kind, int declared_type, const char *declared_type_name, int declared_scalar_kind, int declared_packed_type, int storage_class, int line, const struct hir_stmt *declaration_stmt, const struct hir_expr *initializer);
 static int hir_packed_constructor_type(const struct hir_expr *expr);
 static int hir_declared_scalar_kind(const char *type_name);
 static bool hir_wrap_freeze(struct hir_expr **hexpr, struct hir_expr *inner);
@@ -228,6 +232,7 @@ hir_build(
 		afunc.return_type_name = NULL;
 		afunc.is_static = false;
 		afunc.is_inline = false;
+		afunc.is_fast = false;
 		afunc.stmt_list = hir_anon_func_stmt_list[i];
 		afunc.next = NULL;
 		if (!hir_visit_func(&afunc))
@@ -237,6 +242,10 @@ hir_build(
 		hir_anon_func_param_list[i] = NULL;
 		hir_anon_func_stmt_list[i] = NULL;
 	}
+
+	/* Validate fast contracts and preserve the fully checked path. */
+	if (!hir_fast_checked_module(hir_func_tbl, hir_func_count))
+		return false;
 
 	return true;
 }
@@ -416,6 +425,7 @@ hir_add_local(
 	local->is_let = false;
 	local->declaration_kind = HIR_LOCAL_DECL_UNKNOWN;
 	local->declared_type = -1;
+	local->declared_type_name = NULL;
 	local->declared_scalar_kind = HIR_DECL_SCALAR_UNKNOWN;
 	local->declared_packed_type = -1;
 	local->storage_class = HIR_LOCAL_STORAGE_UNKNOWN;
@@ -518,6 +528,10 @@ hir_optimize_func(
 		/* Typed ops. */
 		if (!hir_opt_typed_func(func_block))
 			return false;
+
+		/* Remove only statically proven fast index checks. */
+		if (!hir_fast_func_pass(func_block))
+			return false;
 	}
 
 	if (optimize_level >= 2) {
@@ -556,6 +570,54 @@ hir_dump_block(
 	struct hir_block *block)
 {
 	hir_dump_block_at_level(block, 0);
+}
+
+/* Test whether every syntactic path in one statement list returns. */
+static bool
+hir_fast_stmt_list_returns(
+	const struct ast_stmt_list *list)
+{
+	const struct ast_stmt *stmt;
+
+	stmt = list != NULL ? list->list : NULL;
+
+	/* Find a return or a complete returning conditional chain. */
+	while (stmt != NULL) {
+		if (stmt->type == AST_STMT_RETURN)
+			return true;
+
+		if (stmt->type == AST_STMT_IF) {
+			const struct ast_stmt *branch = stmt->next;
+			bool all_return = hir_fast_stmt_list_returns(
+				stmt->val.if_.stmt_list);
+			bool has_else = false;
+
+			/* Check every directly following elif and else branch. */
+			while (branch != NULL &&
+			       (branch->type == AST_STMT_ELIF ||
+				branch->type == AST_STMT_ELSE)) {
+				if (branch->type == AST_STMT_ELIF) {
+					all_return = all_return &&
+						hir_fast_stmt_list_returns(
+							branch->val.elif.stmt_list);
+				} else {
+					has_else = true;
+					all_return = all_return &&
+						hir_fast_stmt_list_returns(
+							branch->val.else_.stmt_list);
+				}
+
+				branch = branch->next;
+			}
+
+			if (all_return && has_else)
+				return true;
+		}
+
+		stmt = stmt->next;
+	}
+
+	return false;
 }
 
 static bool
@@ -598,6 +660,7 @@ hir_visit_func(
 		}
 		func_block->val.func.is_static = afunc->is_static;
 		func_block->val.func.is_inline = afunc->is_inline;
+		func_block->val.func.is_fast = afunc->is_fast;
 
 		/* Parse the parameters. */
 		if (!hir_visit_param_list(func_block, afunc))
@@ -613,6 +676,7 @@ hir_visit_func(
 			if (!hir_check_type_annotation(
 				0,
 				afunc->return_type_name,
+				false,
 				&func_block->val.func.return_type,
 				&func_block->val.func.return_packed_type,
 				&return_restricted))
@@ -622,6 +686,19 @@ hir_visit_func(
 				break;
 			}
 		}
+
+		if (afunc->is_fast &&
+		    func_block->val.func.return_type != HIR_TYPE_VOID &&
+		    !hir_fast_stmt_list_returns(afunc->stmt_list)) {
+			hir_fatal(
+				0,
+				N_TR("Every reachable path of a non-void __fast func must return a value."));
+			break;
+		}
+
+		/* Build the exact fast entry contract from source annotations. */
+		if (!hir_build_fast_signature(func_block, afunc))
+			break;
 
 		/* Alloc an end block. */
 		end_block = hir_malloc(sizeof(struct hir_block));
@@ -796,10 +873,12 @@ hir_visit_stmt_list(
 				assert(p_search->val.for_.inner != NULL);
 				(*cur_block)->succ = p_search->val.for_.inner;
 				(*cur_block)->stop = true;
+				(*cur_block)->is_continue_edge = true;
 			} else if (p_search->type == HIR_BLOCK_WHILE) {
 				assert(p_search->val.while_.inner != NULL);
 				(*cur_block)->succ = p_search->val.while_.inner;
 				(*cur_block)->stop = true;
+				(*cur_block)->is_continue_edge = true;
 			}
 			break;
 		case AST_STMT_BREAK:
@@ -821,6 +900,7 @@ hir_visit_stmt_list(
 			/* Continue with the block after the loop. */
 			(*cur_block)->succ = p_search->succ;
 			(*cur_block)->stop = true;
+			(*cur_block)->is_break_edge = true;
 			break;
 		case AST_STMT_RETURN:
 			/* Search a func block.*/
@@ -1075,6 +1155,7 @@ hir_visit_assign_stmt(
 		if (!hir_check_type_annotation(
 			cur_astmt->line,
 			cur_astmt->val.assign.type_name,
+			false,
 			&anno_tag,
 			&anno_packed_type,
 			&anno_restricted)) {
@@ -1138,19 +1219,21 @@ hir_visit_assign_stmt(
 			HIR_LOCAL_STORAGE_SCALAR;
 		declared_scalar_kind =
 			hir_declared_scalar_kind(cur_astmt->val.assign.type_name);
-		hir_set_local_declaration(
+		if (!hir_set_local_declaration(
 			*cur_block,
 			lhs_term->val.symbol,
 			cur_astmt->val.assign.is_let ?
 				HIR_LOCAL_DECL_LET :
 				HIR_LOCAL_DECL_VAR,
 			anno_tag,
+			cur_astmt->val.assign.type_name,
 			declared_scalar_kind,
 			anno_packed_type,
 			storage_class,
 			cur_astmt->line,
 			hstmt,
-			hstmt->rhs);
+			hstmt->rhs))
+			return false;
 
 		/* Add hstmt to the end of the block. */
 		HIR_ADD_TO_LAST(struct hir_stmt, (*cur_block)->val.basic.stmt_list, hstmt);
@@ -1234,12 +1317,13 @@ hir_find_local(
 	return NULL;
 }
 
-static void
+static bool
 hir_set_local_declaration(
 	struct hir_block *block,
 	const char *symbol,
 	int declaration_kind,
 	int declared_type,
+	const char *declared_type_name,
 	int declared_scalar_kind,
 	int declared_packed_type,
 	int storage_class,
@@ -1252,7 +1336,16 @@ hir_set_local_declaration(
 	local = hir_find_local(block, symbol);
 	assert(local != NULL);
 	if (local == NULL)
-		return;
+		return false;
+
+	if (declared_type_name != NULL) {
+		local->declared_type_name = hir_strdup(declared_type_name);
+		if (local->declared_type_name == NULL) {
+			hir_out_of_memory();
+			return false;
+		}
+	}
+
 	local->is_parameter = declaration_kind == HIR_LOCAL_DECL_PARAMETER;
 	local->is_let = declaration_kind == HIR_LOCAL_DECL_LET;
 	local->declaration_kind = declaration_kind;
@@ -1263,6 +1356,8 @@ hir_set_local_declaration(
 	local->declaration_line = line;
 	local->declaration_stmt = declaration_stmt;
 	local->initializer = initializer;
+
+	return true;
 }
 
 /* Return a NOCT_PACKED_* kind for a direct Packed.* constructor. */
@@ -1872,17 +1967,19 @@ hir_visit_for_stmt(
 			}
 			if (!hir_add_local(*cur_block, *fields[k]))
 				return false;
-			hir_set_local_declaration(
+			if (!hir_set_local_declaration(
 				*cur_block,
 				*fields[k],
 				HIR_LOCAL_DECL_LOOP_COUNTER,
 				-1,
+				NULL,
 				HIR_DECL_SCALAR_UNKNOWN,
 				-1,
 				HIR_LOCAL_STORAGE_SCALAR,
 				cur_astmt->line,
 				NULL,
-				NULL);
+				NULL))
+				return false;
 		}
 	}
 
@@ -2419,6 +2516,7 @@ hir_visit_array_expr(
 
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_ARRAY;
+	e->val.array.is_multi_index = aexpr->val.array.is_multi_index;
 
 	/* Count the elements and allocate a table. */
 	count = 0;
@@ -2808,16 +2906,92 @@ hir_resolve_type_name(
 	return false;
 }
 
+/* Build the exact source-level contract for one fast function. */
+static bool
+hir_build_fast_signature(
+	struct hir_block *hfunc,
+	const struct ast_func *afunc)
+{
+	struct fast_signature candidate;
+	struct ast_param *param;
+	const char *param_name[HIR_PARAM_SIZE];
+	const char *param_annotation[HIR_PARAM_SIZE];
+	char message[256];
+	uint32_t i;
+
+	fast_signature_init(&candidate);
+
+	/* Clear the temporary source annotation tables. */
+	for (i = 0; i < HIR_PARAM_SIZE; i++) {
+		param_name[i] = NULL;
+		param_annotation[i] = NULL;
+	}
+
+	param = afunc->param_list != NULL ? afunc->param_list->list : NULL;
+	i = 0;
+
+	/* Pair every source annotation with its resolved HIR parameter. */
+	while (param != NULL && i < hfunc->val.func.param_count) {
+		param_name[i] = hfunc->val.func.param_name[i];
+		param_annotation[i] = param->type_name;
+		param = param->next;
+		i++;
+	}
+
+	if (param != NULL || i != hfunc->val.func.param_count) {
+		hir_fatal(0, N_TR("Invalid function parameter metadata."));
+		return false;
+	}
+
+	if (!fast_signature_build(
+		&candidate,
+		afunc->is_fast,
+		hfunc->val.func.param_count,
+		param_name,
+		param_annotation,
+		hfunc->val.func.param_type,
+		hfunc->val.func.param_packed_type,
+		hfunc->val.func.param_restricted,
+		afunc->return_type_name,
+		hfunc->val.func.return_type,
+		message,
+		sizeof(message))) {
+		hir_fatal(0, message);
+		return false;
+	}
+
+	if (!afunc->is_fast) {
+		fast_signature_free(&candidate);
+		return true;
+	}
+
+	hfunc->val.func.fast_signature = noct_malloc(
+		sizeof(*hfunc->val.func.fast_signature));
+	if (hfunc->val.func.fast_signature == NULL) {
+		fast_signature_free(&candidate);
+		hir_out_of_memory();
+		return false;
+	}
+
+	*hfunc->val.func.fast_signature = candidate;
+
+	return true;
+}
+
 /* Resolve an optional annotation; error on an unknown name. */
 static bool
 hir_check_type_annotation(
 	int line,
 	const char *type_name,
+	bool allow_shape,
 	int *tag,
 	int *packed_type,
 	bool *restricted)
 {
+	char base[64];
 	char msg[256];
+	const char *resolved_name;
+	bool has_shape;
 
 	if (type_name == NULL) {
 		*tag = -1;
@@ -2825,7 +2999,28 @@ hir_check_type_annotation(
 		*restricted = false;
 		return true;
 	}
-	if (!hir_resolve_type_name(type_name, tag, packed_type, restricted)) {
+
+	resolved_name = type_name;
+	has_shape = false;
+	if (strchr(type_name, '(') != NULL) {
+		if (!allow_shape ||
+		    !fast_annotation_base(
+			type_name,
+			base,
+			sizeof(base),
+			&has_shape)) {
+			hir_fatal(line, N_TR("Invalid shaped type annotation."));
+			return false;
+		}
+
+		resolved_name = base;
+	}
+
+	if (!hir_resolve_type_name(
+		resolved_name,
+		tag,
+		packed_type,
+		restricted)) {
 		snprintf(
 			msg,
 			sizeof(msg),
@@ -2896,6 +3091,7 @@ hir_visit_param_list(
 		if (!hir_check_type_annotation(
 			0,
 			annotation,
+			true,
 			&hfunc->val.func.param_type[param_count],
 			&hfunc->val.func.param_packed_type[param_count],
 			&hfunc->val.func.param_restricted[param_count]))
@@ -2911,17 +3107,19 @@ hir_visit_param_list(
 		else
 			storage_class = HIR_LOCAL_STORAGE_SCALAR;
 
-		hir_set_local_declaration(
+		if (!hir_set_local_declaration(
 			hfunc,
 			param->name,
 			HIR_LOCAL_DECL_PARAMETER,
 			hfunc->val.func.param_type[param_count],
+			annotation,
 			declared_scalar_kind,
 			hfunc->val.func.param_packed_type[param_count],
 			storage_class,
 			-1,
 			NULL,
-			NULL);
+			NULL))
+			return false;
 		param_count++;
 
 		param = param->next;
@@ -3039,6 +3237,11 @@ hir_free_block(
 		if (b->val.func.local != NULL) {
 			hir_free_local(b->val.func.local);
 			b->val.func.local = NULL;
+		}
+		if (b->val.func.fast_signature != NULL) {
+			fast_signature_free(b->val.func.fast_signature);
+			noct_free(b->val.func.fast_signature);
+			b->val.func.fast_signature = NULL;
 		}
 		break;
 	case HIR_BLOCK_BASIC:
@@ -3388,6 +3591,7 @@ hir_free_local(
 		hir_free_local(local->next);
 
 	hir_free(local->symbol);
+	hir_free(local->declared_type_name);
 }
 
 /* Set a fatal error message. */

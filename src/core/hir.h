@@ -13,6 +13,7 @@
 #define NOCT_HIR_H
 
 #include <noct/noct.h>
+#include "fast.h"
 
 /* Maximum Parameters and Arguments Size */
 #define HIR_PARAM_SIZE		32
@@ -181,6 +182,12 @@ struct hir_block {
 	/* The terminating edge is an explicit source-level return. */
 	bool is_return_edge;
 
+	/* The terminating edge is an explicit source-level break. */
+	bool is_break_edge;
+
+	/* The terminating edge is an explicit source-level continue. */
+	bool is_continue_edge;
+
 	/* Bytecode address. */
 	uint32_t addr;
 
@@ -231,6 +238,12 @@ struct hir_block {
 
 			/* Is inline? */
 			bool is_inline;
+
+			/* Statically constrained CPU function. */
+			bool is_fast;
+
+			/* Exact entry contract for a fast function. */
+			struct fast_signature *fast_signature;
 
 			/* File name. */
 			char *file_name;
@@ -416,6 +429,9 @@ struct hir_expr {
 
 			/* Element expressions. */
 			struct hir_expr **elem;
+
+			/* Compiler-owned list used by a multi-dimensional subscript. */
+			bool is_multi_index;
 		} array;
 
 		/* Dictionary Literal Expression */
@@ -519,6 +535,7 @@ struct hir_local {
 	/* Optimizer hints */
 	int declaration_kind;
 	int declared_type;
+	char *declared_type_name;
 	int declared_scalar_kind;
 	int declared_packed_type;
 	int storage_class;

@@ -124,14 +124,14 @@ extern int ast_yydebug;
     TOKEN_STATIC = 325,            /* TOKEN_STATIC  */
     TOKEN_INLINE = 326,            /* TOKEN_INLINE  */
     TOKEN_REQUIRE = 327,           /* TOKEN_REQUIRE  */
-    TOKEN_ACCEL = 328,             /* TOKEN_ACCEL  */
-    TOKEN_GPU = 329,               /* TOKEN_GPU  */
-    TOKEN_DUNDER_ACCEL = 330,      /* TOKEN_DUNDER_ACCEL  */
-    TOKEN_DUNDER_GPU = 331,        /* TOKEN_DUNDER_GPU  */
+    TOKEN_RESERVED_328 = 328,      /* TOKEN_RESERVED_328  */
+    TOKEN_RESERVED_329 = 329,      /* TOKEN_RESERVED_329  */
+    TOKEN_RESERVED_330 = 330,      /* TOKEN_RESERVED_330  */
+    TOKEN_RESERVED_331 = 331,      /* TOKEN_RESERVED_331  */
     TOKEN_DUNDER_FAST = 332,       /* TOKEN_DUNDER_FAST  */
-    TOKEN_GPU_LAUNCH_L = 333,      /* TOKEN_GPU_LAUNCH_L  */
-    TOKEN_GPU_LAUNCH_R = 334,      /* TOKEN_GPU_LAUNCH_R  */
-    TOKEN_SHARED = 335,            /* TOKEN_SHARED  */
+    TOKEN_RESERVED_333 = 333,      /* TOKEN_RESERVED_333  */
+    TOKEN_RESERVED_334 = 334,      /* TOKEN_RESERVED_334  */
+    TOKEN_RESERVED_335 = 335,      /* TOKEN_RESERVED_335  */
     TOKEN_NOT = 336,               /* TOKEN_NOT  */
     UNARYMINUS = 337,              /* UNARYMINUS  */
     CALL = 338                     /* CALL  */
@@ -143,7 +143,7 @@ extern int ast_yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 141 "parser.y"
+#line 135 "parser.y"
 
 	int ival;
 	int64_t lval;
@@ -191,7 +191,7 @@ extern YYLTYPE ast_yylloc;
 int ast_yyparse (void *scanner);
 
 /* "%code provides" blocks.  */
-#line 137 "parser.y"
+#line 131 "parser.y"
 
 #define YY_DECL int ast_yylex(void *yyscanner)
 

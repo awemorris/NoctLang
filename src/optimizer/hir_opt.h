@@ -6,7 +6,7 @@
  */
 
 /*
- * Private interfaces for HIR construction and optimizer passes.
+ * Private interfaces for HIR optimizer passes.
  */
 
 #ifndef NOCT_HIR_OPT_H
@@ -14,6 +14,7 @@
 
 #include <noct/noct.h>
 #include "hir.h"
+#include "hir_private.h"
 
 /*
  * Optimizer pass entry points.
@@ -45,15 +46,5 @@ hir_opt_cse_func(
 bool
 hir_opt_typed_func(
 	struct hir_block *func_block);
-
-/*
- * HIR arena and construction services shared by scope handling and passes.
- */
-void *hir_malloc(size_t size);
-char *hir_strdup(const char *s);
-void hir_out_of_memory(void);
-bool hir_add_local(struct hir_block *cur_block, const char *symbol);
-int hir_next_block_id(void);
-extern char *hir_file_name;
 
 #endif

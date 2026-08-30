@@ -12,7 +12,7 @@
 #ifndef NOCT_HIR_PARALLEL_H
 #define NOCT_HIR_PARALLEL_H
 
-#include "hir.h"
+#include "hir_opt_analysis.h"
 
 #include <stdio.h>
 
@@ -88,12 +88,6 @@ enum hir_memory_access_kind {
 	HIR_MEMORY_WRITE
 };
 
-enum hir_affine_kind {
-	HIR_AFFINE_UNKNOWN,
-	HIR_AFFINE_INVARIANT,
-	HIR_AFFINE_COUNTER_OFFSET
-};
-
 enum hir_dependence_kind {
 	HIR_DEP_RAW,
 	HIR_DEP_WAR,
@@ -118,14 +112,6 @@ struct hir_memory_catalog {
 	uint32_t count;
 	bool allow_non_affine_reads;
 	struct hir_memory_object object[HIR_PARALLEL_MAX_OBJECTS];
-};
-
-struct hir_affine_index {
-	int kind;
-	int offset;
-	const char *invariant_symbol;
-	int invariant_sign;
-	const struct hir_expr *expr;
 };
 
 struct hir_memory_access {
@@ -233,17 +219,6 @@ bool
 hir_memory_catalog_build_func(
 	struct hir_block *func,
 	struct hir_memory_catalog *catalog);
-
-bool
-hir_parallel_normalize_index(
-	const struct hir_expr *expr,
-	const char *counter,
-	struct hir_affine_index *index);
-
-bool
-hir_parallel_affine_equal(
-	const struct hir_affine_index *first,
-	const struct hir_affine_index *second);
 
 bool
 hir_loop_analyze(

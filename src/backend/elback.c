@@ -269,6 +269,14 @@ noct_elback_translate(
 
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(i);
+		if (hfunc->val.func.is_fast) {
+			printf(
+				"%s",
+				N_TR("Error: __fast func is not supported by the Emacs Lisp transpiler.\n"));
+			hir_cleanup();
+			ast_cleanup();
+			return false;
+		}
 
 		/* Put a C function. */
 		if (!elback_translate_func(hfunc))

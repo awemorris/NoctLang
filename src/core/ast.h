@@ -112,6 +112,9 @@ struct ast_func {
 	bool is_static;
 	bool is_inline;
 
+	/* Statically constrained CPU function. */
+	bool is_fast;
+
 	/* Statement list */
 	struct ast_stmt_list *stmt_list;
 
@@ -288,6 +291,9 @@ struct ast_expr {
 		struct {
 			/* Element list. */
 			struct ast_arg_list *elem_list;
+
+			/* Compiler-owned list used by a multi-dimensional subscript. */
+			bool is_multi_index;
 		} array;
 
 		/* Dictionary Literal Expression */

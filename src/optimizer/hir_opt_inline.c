@@ -36,6 +36,10 @@ bool
 hir_opt_inline_func(
 	struct hir_block *func_block)
 {
+	/* Keep fast calls checked until guarded inlining is implemented. */
+	if (func_block->val.func.is_fast)
+		return true;
+
 	return inline_rewrite_chain(func_block->val.func.inner, func_block);
 }
 
@@ -207,6 +211,7 @@ inline_clone_expr(
 		return dst;
 	case HIR_EXPR_ARRAY:
 		dst->val.array.elem_count = src->val.array.elem_count;
+		dst->val.array.is_multi_index = src->val.array.is_multi_index;
 		dst->val.array.elem = hir_malloc(
 			sizeof(*dst->val.array.elem) * src->val.array.elem_count);
 		if (dst->val.array.elem == NULL &&
@@ -413,6 +418,8 @@ inline_find_callee(
 		if (!f->val.func.is_static)
 			continue;
 		if (!f->val.func.is_inline)
+			continue;
+		if (f->val.func.is_fast)
 			continue;
 		if (strcmp(f->val.func.name, name) == 0)
 			return f;

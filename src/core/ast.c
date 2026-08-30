@@ -30,6 +30,11 @@
 #define ARENA_SIZE		(512 * 1024)
 #endif
 
+/* Function flags passed by the parser. */
+#define AST_FUNC_STATIC 1
+#define AST_FUNC_INLINE 2
+#define AST_FUNC_FAST   4
+
 /* List operation. */
 #define AST_ADD_TO_LAST(type, list, p)			\
 	do {						\
@@ -53,6 +58,9 @@ struct ast_expr *ast_accept_term_expr(struct ast_term *term);
 struct ast_term *ast_accept_symbol_term(char *symbol);
 struct ast_term *ast_accept_str_term(char *str);
 struct ast_expr *ast_accept_call_expr(struct ast_expr *expr1, struct ast_arg_list *arg_list);
+char *ast_accept_type_extent_int(int64_t value);
+char *ast_accept_type_extent_list(char *list, char *extent);
+char *ast_accept_shaped_type(char *name, char *extents);
 struct ast_stmt *ast_accept_assign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs, bool is_var, bool is_let);
 struct ast_expr *ast_accept_class_expr(struct ast_kv_list *kv_list);
 struct ast_stmt *ast_accept_expr_stmt(int line, struct ast_expr *expr);
@@ -80,9 +88,6 @@ struct ast_static_symbol {
 };
 static struct ast_static_symbol *ast_static_symbols;
 static struct ast_static_symbol *ast_declared_symbols;
-
-#define AST_FUNC_STATIC 1
-#define AST_FUNC_INLINE 2
 
 /*
  * Error position and message. (set by the parser)
@@ -137,6 +142,78 @@ void *ast_malloc(size_t size);
 void *ast_realloc(void *p, size_t size);
 char *ast_strdup(const char *s);
 void ast_free(void *p);
+
+/*
+ * Builds one canonical integer extent spelling.
+ */
+char *
+ast_accept_type_extent_int(
+	int64_t value)
+{
+	char buf[32];
+	char *result;
+
+	snprintf(buf, sizeof(buf), "%" PRId64, value);
+	result = ast_strdup(buf);
+	if (result == NULL)
+		ast_out_of_memory();
+
+	return result;
+}
+
+/*
+ * Appends one extent to a canonical extent list.
+ */
+char *
+ast_accept_type_extent_list(
+	char *list,
+	char *extent)
+{
+	char *result;
+	size_t size;
+
+	size = strlen(list) + strlen(extent) + 2;
+	result = ast_malloc(size);
+	if (result == NULL) {
+		ast_free(list);
+		ast_free(extent);
+		ast_out_of_memory();
+		return NULL;
+	}
+
+	snprintf(result, size, "%s,%s", list, extent);
+	ast_free(list);
+	ast_free(extent);
+
+	return result;
+}
+
+/*
+ * Builds one canonical shaped type annotation.
+ */
+char *
+ast_accept_shaped_type(
+	char *name,
+	char *extents)
+{
+	char *result;
+	size_t size;
+
+	size = strlen(name) + strlen(extents) + 3;
+	result = ast_malloc(size);
+	if (result == NULL) {
+		ast_free(name);
+		ast_free(extents);
+		ast_out_of_memory();
+		return NULL;
+	}
+
+	snprintf(result, size, "%s(%s)", name, extents);
+	ast_free(name);
+	ast_free(extents);
+
+	return result;
+}
 
 /*
  * Build an AST from a script string.
@@ -700,6 +777,7 @@ ast_accept_func(
 	f->return_type_name = return_type_name;
 	f->is_static = (flags & AST_FUNC_STATIC) != 0;
 	f->is_inline = (flags & AST_FUNC_INLINE) != 0;
+	f->is_fast = (flags & AST_FUNC_FAST) != 0;
 	f->stmt_list = stmt_list;
 
 	return f;
@@ -2617,6 +2695,8 @@ ast_copy_expr(
 		}
 		break;
 	case AST_EXPR_ARRAY:
+		dst->val.array.is_multi_index =
+			expr->val.array.is_multi_index;
 		if (expr->val.array.elem_list != NULL) {
 			dst->val.array.elem_list = ast_copy_arg_list(expr->val.array.elem_list);
 			if (dst->val.array.elem_list == NULL)

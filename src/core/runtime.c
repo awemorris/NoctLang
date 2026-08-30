@@ -45,6 +45,12 @@ static void rt_free_func(struct rt_env *rt, struct rt_func *func);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_func(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
+static bool rt_parse_bytecode_u32(const char *text, uint32_t *value);
+static bool rt_parse_bytecode_i64(const char *text, int64_t *value);
+static bool rt_parse_bytecode_int(const char *text, int *value);
+static bool rt_read_bytecode_fast_signature(uint8_t *data, size_t size, uint32_t *pos, struct lir_func *lfunc);
+static bool rt_validate_bytecode_fast_metadata(const struct lir_func *lfunc, bool has_param_types, bool has_return_type);
+static bool rt_check_fast_call(struct rt_env *env, struct rt_func *func, uint32_t arg_count);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_report_jit_result(struct rt_func *func, bool success, const char *reason);
 static void rt_report_jit_lifecycle(const char *operation, bool success);
@@ -243,6 +249,7 @@ rt_free_func(
 	noct_free(func->name);
 	func->name = NULL;
 
+	/* Release every possibly constructed parameter name. */
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		if (func->param_name[i] != NULL) {
 			noct_free(func->param_name[i]);
@@ -251,6 +258,7 @@ rt_free_func(
 	}
 	noct_free(func->file_name);
 	noct_free(func->bytecode);
+	fast_signature_free(&func->fast_signature);
 
 	if (func->jit_code != NULL)
 		func->jit_code = NULL;
@@ -477,25 +485,39 @@ rt_register_lir(
 	struct rt_value global;
 	uint32_t i;
 
-	func = noct_malloc(sizeof(struct rt_func));
+	func = noct_calloc(1, sizeof(struct rt_func));
 	if (func == NULL) {
 		rt_out_of_memory(env);
 		return false;
 	}
-	memset(func, 0, sizeof(struct rt_func));
+
+	fast_signature_init(&func->fast_signature);
+	func->is_fast = lir->is_fast;
+	if (!fast_signature_clone(
+		&func->fast_signature,
+		&lir->fast_signature)) {
+		rt_out_of_memory(env);
+		rt_free_func(env, func);
+		return false;
+	}
 
 	func->name = noct_strdup(lir->func_name);
 	if (func->name == NULL) {
 		rt_out_of_memory(env);
+		rt_free_func(env, func);
 		return false;
 	}
 
 	func->param_count = lir->param_count;
+
+	/* Initialize every parameter contract slot. */
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		func->param_type[i] = -1;
 		func->param_packed_type[i] = -1;
 		func->param_restricted[i] = false;
 	}
+
+	/* Copy the declared parameter contracts. */
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_type[i] = lir->param_type[i];
 		func->param_packed_type[i] = lir->param_packed_type[i];
@@ -506,10 +528,12 @@ rt_register_lir(
 	func->return_packed_type = lir->return_packed_type;
 	func->return_type_checked = lir->return_type_checked;
 
+	/* Copy every parameter name. */
 	for (i = 0; i < lir->param_count; i++) {
 		func->param_name[i] = noct_strdup(lir->param_name[i]);
 		if (func->param_name[i] == NULL) {
 			rt_out_of_memory(env);
+			rt_free_func(env, func);
 			return false;
 		}
 	}
@@ -519,6 +543,7 @@ rt_register_lir(
 		func->bytecode = noct_malloc((size_t)lir->bytecode_size);
 		if (func->bytecode == NULL) {
 			rt_out_of_memory(env);
+			rt_free_func(env, func);
 			return false;
 		}
 		memcpy(func->bytecode, lir->bytecode, (size_t)lir->bytecode_size);
@@ -531,14 +556,17 @@ rt_register_lir(
 	func->file_name = noct_strdup(lir->file_name);
 	if (func->file_name == NULL) {
 		rt_out_of_memory(env);
+		rt_free_func(env, func);
 		return false;
 	}
 
 	/* Insert a global variable. */
 	global.type = NOCT_VALUE_FUNC;
 	global.val.func = func;
-	if (!rt_set_global(env, func->name, &global))
+	if (!rt_set_global(env, func->name, &global)) {
+		rt_free_func(env, func);
 		return false;
+	}
 
 	if (env->vm->config.jit_enable) {
 		if (!jit_build(env, func)) {
@@ -560,6 +588,7 @@ rt_register_lir(
 	return true;
 }
 
+/* Parse a strict unsigned 32-bit decimal from bytecode metadata. */
 static bool
 rt_parse_bytecode_u32(
 	const char *text,
@@ -572,6 +601,8 @@ rt_parse_bytecode_u32(
 		return false;
 
 	result = 0;
+
+	/* Accumulate every decimal digit with an explicit overflow check. */
 	while (*text != '\0') {
 		if (*text < '0' || *text > '9')
 			return false;
@@ -582,6 +613,246 @@ rt_parse_bytecode_u32(
 		text++;
 	}
 	*value = result;
+
+	return true;
+}
+
+/* Parse a strict signed 64-bit decimal from bytecode metadata. */
+static bool
+rt_parse_bytecode_i64(
+	const char *text,
+	int64_t *value)
+{
+	uint64_t result;
+	uint64_t limit;
+	uint64_t digit;
+	bool negative;
+
+	if (text == NULL || text[0] == '\0')
+		return false;
+
+	negative = false;
+	if (*text == '-') {
+		negative = true;
+		text++;
+		if (*text == '\0')
+			return false;
+	}
+
+	limit = (uint64_t)INT64_MAX;
+	if (negative)
+		limit++;
+	result = 0;
+
+	/* Accumulate the magnitude without overflowing its unsigned form. */
+	while (*text != '\0') {
+		if (*text < '0' || *text > '9')
+			return false;
+
+		digit = (uint64_t)(unsigned int)(*text - '0');
+		if (result > (limit - digit) / 10U)
+			return false;
+
+		result = result * 10U + digit;
+		text++;
+	}
+
+	if (!negative) {
+		*value = (int64_t)result;
+	} else if (result == limit) {
+		*value = INT64_MIN;
+	} else {
+		*value = -(int64_t)result;
+	}
+
+	return true;
+}
+
+/* Parse a strict signed native integer from bytecode metadata. */
+static bool
+rt_parse_bytecode_int(
+	const char *text,
+	int *value)
+{
+	int64_t result;
+
+	if (!rt_parse_bytecode_i64(text, &result))
+		return false;
+	if (result < (int64_t)INT_MIN || result > (int64_t)INT_MAX)
+		return false;
+
+	*value = (int)result;
+
+	return true;
+}
+
+/* Read and validate one exact fast signature section. */
+static bool
+rt_read_bytecode_fast_signature(
+	uint8_t *data,
+	size_t size,
+	uint32_t *pos,
+	struct lir_func *lfunc)
+{
+	struct fast_signature *signature;
+	struct fast_param_contract *contract;
+	struct fast_extent *extent;
+	const char *line;
+	uint32_t unsigned_value;
+	int signed_value;
+	int64_t signed_long;
+	uint32_t i;
+	uint32_t axis;
+
+	signature = &lfunc->fast_signature;
+	if (signature->valid ||
+	    signature->param_count != 0 ||
+	    signature->param != NULL)
+		return false;
+
+	line = rt_read_bytecode_line(data, size, pos);
+	if (!rt_parse_bytecode_u32(line, &unsigned_value))
+		return false;
+	if (unsigned_value != NOCT_FAST_SIGNATURE_VERSION)
+		return false;
+	signature->version = unsigned_value;
+
+	line = rt_read_bytecode_line(data, size, pos);
+	if (!rt_parse_bytecode_u32(line, &unsigned_value))
+		return false;
+	if (unsigned_value != 1)
+		return false;
+
+	line = rt_read_bytecode_line(data, size, pos);
+	if (!rt_parse_bytecode_u32(line, &unsigned_value))
+		return false;
+	if (unsigned_value != lfunc->param_count ||
+	    unsigned_value > NOCT_ARG_MAX)
+		return false;
+	signature->param_count = unsigned_value;
+
+	line = rt_read_bytecode_line(data, size, pos);
+	if (!rt_parse_bytecode_int(line, &signature->return_type))
+		return false;
+
+	if (signature->param_count > 0) {
+		signature->param = noct_calloc(
+			(size_t)signature->param_count,
+			sizeof(*signature->param));
+		if (signature->param == NULL)
+			return false;
+	}
+
+	/* Read every parameter contract and its exact-rank extent table. */
+	for (i = 0; i < signature->param_count; i++) {
+		contract = &signature->param[i];
+
+		line = rt_read_bytecode_line(data, size, pos);
+		if (!rt_parse_bytecode_int(line, &contract->value_type))
+			return false;
+
+		line = rt_read_bytecode_line(data, size, pos);
+		if (!rt_parse_bytecode_int(line, &contract->packed_type))
+			return false;
+
+		line = rt_read_bytecode_line(data, size, pos);
+		if (!rt_parse_bytecode_u32(line, &unsigned_value))
+			return false;
+		if (unsigned_value > 1)
+			return false;
+		contract->restricted = unsigned_value != 0;
+
+		line = rt_read_bytecode_line(data, size, pos);
+		if (!rt_parse_bytecode_u32(line, &contract->rank))
+			return false;
+		if (contract->rank > NOCT_FAST_RANK_MAX)
+			return false;
+
+		if (contract->rank > 0) {
+			contract->extent = noct_calloc(
+				(size_t)contract->rank,
+				sizeof(*contract->extent));
+			if (contract->extent == NULL)
+				return false;
+		}
+
+		/* Read every constant or parameter-dependent extent. */
+		for (axis = 0; axis < contract->rank; axis++) {
+			extent = &contract->extent[axis];
+
+			line = rt_read_bytecode_line(data, size, pos);
+			if (!rt_parse_bytecode_int(line, &signed_value))
+				return false;
+			extent->kind = signed_value;
+
+			line = rt_read_bytecode_line(data, size, pos);
+			if (extent->kind == FAST_EXTENT_CONST) {
+				if (!rt_parse_bytecode_i64(line, &signed_long))
+					return false;
+				extent->value.constant = signed_long;
+			} else if (extent->kind == FAST_EXTENT_PARAM) {
+				if (!rt_parse_bytecode_u32(
+					line,
+					&unsigned_value)) {
+					return false;
+				}
+				extent->value.param_index = unsigned_value;
+			} else {
+				return false;
+			}
+		}
+	}
+
+	signature->valid = true;
+	if (!fast_signature_valid(signature))
+		return false;
+
+	return true;
+}
+
+/* Cross-check one fast signature against the ordinary type metadata. */
+static bool
+rt_validate_bytecode_fast_metadata(
+	const struct lir_func *lfunc,
+	bool has_param_types,
+	bool has_return_type)
+{
+	const struct fast_signature *signature;
+	const struct fast_param_contract *contract;
+	uint32_t i;
+
+	signature = &lfunc->fast_signature;
+	if (!lfunc->is_fast)
+		return false;
+	if (!signature->valid)
+		return false;
+	if (!fast_signature_valid(signature))
+		return false;
+	if (signature->param_count != lfunc->param_count)
+		return false;
+	if (lfunc->param_count > 0 && !has_param_types)
+		return false;
+	if (!has_return_type)
+		return false;
+	if (signature->return_type != lfunc->return_type)
+		return false;
+	if (lfunc->return_packed_type != -1)
+		return false;
+	if (lfunc->return_type == NOCT_FAST_RETURN_VOID &&
+	    lfunc->return_type_checked)
+		return false;
+
+	/* Match every ordinary parameter entry to its exact contract. */
+	for (i = 0; i < lfunc->param_count; i++) {
+		contract = &signature->param[i];
+
+		if (contract->value_type != lfunc->param_type[i])
+			return false;
+		if (contract->packed_type != lfunc->param_packed_type[i])
+			return false;
+		if (contract->restricted != lfunc->param_restricted[i])
+			return false;
+	}
 
 	return true;
 }
@@ -693,16 +964,21 @@ rt_register_bytecode_func(
 	char *function_file_name;
 	unsigned int optional_sections;
 	bool optional_succeeded;
+	int metadata_value;
+	uint32_t metadata_flag;
 	enum {
 		BYTECODE_PARAM_TYPES = 1U << 0,
 		BYTECODE_PARAM_PACKED_TYPES = 1U << 1,
 		BYTECODE_PARAM_RESTRICTED = 1U << 2,
 		BYTECODE_RETURN_TYPE = 1U << 3,
 		BYTECODE_VECTOR_OPS = 1U << 4,
-		BYTECODE_FMA_OPS = 1U << 5
+		BYTECODE_FMA_OPS = 1U << 5,
+		BYTECODE_FUNCTION_KIND = 1U << 6,
+		BYTECODE_FAST_SIGNATURE = 1U << 7
 	};
 
 	memset(&lfunc, 0, sizeof(lfunc));
+	fast_signature_init(&lfunc.fast_signature);
 	function_file_name = NULL;
 	lfunc.file_name = file_name;
 	lfunc.return_type = -1;
@@ -798,6 +1074,10 @@ rt_register_bytecode_func(
 				section = BYTECODE_VECTOR_OPS;
 			else if (strcmp(line, "FMA Ops") == 0)
 				section = BYTECODE_FMA_OPS;
+			else if (strcmp(line, "Function Kind") == 0)
+				section = BYTECODE_FUNCTION_KIND;
+			else if (strcmp(line, "Fast Signature") == 0)
+				section = BYTECODE_FAST_SIGNATURE;
 			else {
 				optional_succeeded = false;
 				break;
@@ -811,16 +1091,35 @@ rt_register_bytecode_func(
 			if (section == BYTECODE_PARAM_TYPES ||
 			    section == BYTECODE_PARAM_PACKED_TYPES ||
 			    section == BYTECODE_PARAM_RESTRICTED) {
+				/* Read every ordinary parameter metadata value strictly. */
 				for (i = 0; i < lfunc.param_count; i++) {
 					line = rt_read_bytecode_line(data, size, pos);
 					if (line == NULL)
 						break;
-					if (section == BYTECODE_PARAM_TYPES)
-						lfunc.param_type[i] = atoi(line);
-					else if (section == BYTECODE_PARAM_PACKED_TYPES)
-						lfunc.param_packed_type[i] = atoi(line);
-					else
-						lfunc.param_restricted[i] = atoi(line) != 0;
+
+					if (section == BYTECODE_PARAM_RESTRICTED) {
+						if (!rt_parse_bytecode_u32(
+							line,
+							&metadata_flag)) {
+							break;
+						}
+						if (metadata_flag > 1)
+							break;
+
+						lfunc.param_restricted[i] =
+							metadata_flag != 0;
+					} else {
+						if (!rt_parse_bytecode_int(
+							line,
+							&metadata_value)) {
+							break;
+						}
+
+						if (section == BYTECODE_PARAM_TYPES)
+							lfunc.param_type[i] = metadata_value;
+						else
+							lfunc.param_packed_type[i] = metadata_value;
+					}
 				}
 				if (i != lfunc.param_count) {
 					optional_succeeded = false;
@@ -828,33 +1127,72 @@ rt_register_bytecode_func(
 				}
 			} else if (section == BYTECODE_RETURN_TYPE) {
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL) {
+				if (!rt_parse_bytecode_int(
+					line,
+					&lfunc.return_type)) {
 					optional_succeeded = false;
 					break;
 				}
-				lfunc.return_type = atoi(line);
+
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL) {
+				if (!rt_parse_bytecode_int(
+					line,
+					&lfunc.return_packed_type)) {
 					optional_succeeded = false;
 					break;
 				}
-				lfunc.return_packed_type = atoi(line);
+
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL) {
+				if (!rt_parse_bytecode_u32(
+					line,
+					&metadata_flag)) {
 					optional_succeeded = false;
 					break;
 				}
-				lfunc.return_type_checked = atoi(line) != 0;
-			} else {
+				if (metadata_flag > 1) {
+					optional_succeeded = false;
+					break;
+				}
+
+				lfunc.return_type_checked = metadata_flag != 0;
+			} else if (section == BYTECODE_VECTOR_OPS ||
+				   section == BYTECODE_FMA_OPS) {
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL) {
+				if (!rt_parse_bytecode_u32(line, &metadata_flag)) {
 					optional_succeeded = false;
 					break;
 				}
+				if (metadata_flag > 1) {
+					optional_succeeded = false;
+					break;
+				}
+
 				if (section == BYTECODE_VECTOR_OPS)
-					lfunc.has_vector_ops = atoi(line) != 0;
+					lfunc.has_vector_ops = metadata_flag != 0;
 				else
-					lfunc.has_fma_ops = atoi(line) != 0;
+					lfunc.has_fma_ops = metadata_flag != 0;
+			} else if (section == BYTECODE_FUNCTION_KIND) {
+				uint32_t function_kind;
+
+				line = rt_read_bytecode_line(data, size, pos);
+				if (!rt_parse_bytecode_u32(line, &function_kind)) {
+					optional_succeeded = false;
+					break;
+				}
+				if (function_kind > 1) {
+					optional_succeeded = false;
+					break;
+				}
+				lfunc.is_fast = function_kind == 1;
+			} else {
+				if (!rt_read_bytecode_fast_signature(
+					data,
+					size,
+					pos,
+					&lfunc)) {
+					optional_succeeded = false;
+					break;
+				}
 			}
 
 			line = rt_read_bytecode_line(data, size, pos);
@@ -862,13 +1200,28 @@ rt_register_bytecode_func(
 		if (!optional_succeeded)
 			break;
 
+		if (lfunc.is_fast) {
+			if ((optional_sections & BYTECODE_FAST_SIGNATURE) == 0)
+				break;
+			if (!rt_validate_bytecode_fast_metadata(
+				&lfunc,
+				(optional_sections & BYTECODE_PARAM_TYPES) != 0,
+				(optional_sections & BYTECODE_RETURN_TYPE) != 0)) {
+				break;
+			}
+		} else if ((optional_sections & BYTECODE_FAST_SIGNATURE) != 0) {
+			break;
+		}
+
 		/* "Temporary Size". */
 		if (line == NULL || strcmp(line, "Temporary Size") != 0)
 			break;
 
 		/* Get a local size. */
 		line = rt_read_bytecode_line(data, size, pos);
-		if (!rt_parse_bytecode_u32(line, &lfunc.tmpvar_size) ||
+		if (!rt_parse_bytecode_u32(line, &lfunc.tmpvar_size))
+			break;
+		if (lfunc.tmpvar_size <= lfunc.param_count ||
 		    lfunc.tmpvar_size > LIR_TMPVAR_MAX ||
 		    lfunc.tmpvar_size > RT_TMPVAR_MAX)
 			break;
@@ -915,6 +1268,7 @@ rt_register_bytecode_func(
 		if (lfunc.param_name[i] != NULL)
 			noct_free(lfunc.param_name[i]);
 	}
+	fast_signature_free(&lfunc.fast_signature);
 
 	if (!succeeded) {
 		noct_error(env, N_TR("Failed to load bytecode data."));
@@ -976,6 +1330,8 @@ rt_create_cfunc(
 		return NULL;
 	}
 
+	fast_signature_init(&func->fast_signature);
+
 	func->name = noct_strdup(name);
 	if (func->name == NULL)
 		goto oom;
@@ -999,8 +1355,6 @@ rt_create_cfunc(
 	}
 
 	func->cfunc = cfunc;
-	func->cfunc_with_data = cfunc_with_data;
-	func->cfunc_userdata = userdata;
 	func->tmpvar_size = (uint32_t)param_count + 1;
 	return func;
 
@@ -1156,6 +1510,9 @@ rt_call_with_name(
 	return true;
 }
 
+/*
+ * Call a function.
+ */
 bool
 rt_call(
 	struct rt_env *env,
@@ -1194,14 +1551,20 @@ rt_call(
 	om_safepoint(env);
 #endif
 
+	/* Validate a fast entry only after its arguments are rooted. */
+	if (func->is_fast) {
+		if (!rt_check_fast_call(env, func, arg_count)) {
+			rt_leave_frame(env);
+			return false;
+		}
+	}
+
 	/* Run. */
-	if (func->cfunc != NULL || func->cfunc_with_data != NULL) {
+	if (func->cfunc != NULL) {
 		/*
 		 * Call an intrinsic or an FFI function implemented in C.
 		 */
-		if ((func->cfunc != NULL && !func->cfunc(env)) ||
-		    (func->cfunc_with_data != NULL &&
-		     !func->cfunc_with_data(env, func->cfunc_userdata))) {
+		if (!func->cfunc(env)) {
 			rt_leave_frame(env);
 			return false;
 		}
@@ -1304,6 +1667,178 @@ rt_leave_frame(
 	}
 
 	env->frame = &env->frame_alloc[env->cur_frame_index];
+}
+
+/* Validate an exact fast entry contract against rooted arguments. */
+static bool
+rt_check_fast_call(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t arg_count)
+{
+	const struct fast_signature *signature;
+	const struct fast_param_contract *contract;
+	const struct fast_extent *extent;
+	struct rt_value *arguments;
+	struct rt_value *argument;
+	struct rt_value *extent_argument;
+	struct rt_packed *packed;
+	uint64_t extent_value;
+	size_t element_count;
+	uint32_t i;
+	uint32_t axis;
+
+	assert(env != NULL);
+	assert(env->frame != NULL);
+	assert(func != NULL);
+
+	signature = &func->fast_signature;
+	arguments = env->frame->tmpvar;
+	if (!signature->valid ||
+	    signature->version != NOCT_FAST_SIGNATURE_VERSION ||
+	    signature->param_count != arg_count ||
+	    (arg_count > 0 && signature->param == NULL)) {
+		rt_error(
+			env,
+			N_TR("Invalid __fast function signature for '%s'."),
+			func->name);
+		return false;
+	}
+
+	/* Validate every exact value tag and Packed element kind first. */
+	for (i = 0; i < arg_count; i++) {
+		contract = &signature->param[i];
+		argument = &arguments[i];
+
+		if (argument->type != contract->value_type) {
+			rt_error(
+				env,
+				N_TR("__fast call '%s': argument %u has the wrong primitive type."),
+				func->name,
+				(unsigned int)i + 1);
+			return false;
+		}
+
+		if (contract->value_type != NOCT_VALUE_PACKED)
+			continue;
+
+		packed = argument->val.packed;
+		if (packed == NULL || packed->type != contract->packed_type) {
+			rt_error(
+				env,
+				N_TR("__fast call '%s': argument %u has the wrong packed element type."),
+				func->name,
+				(unsigned int)i + 1);
+			return false;
+		}
+	}
+
+	/* Validate every Packed shape after all scalar tags are known valid. */
+	for (i = 0; i < arg_count; i++) {
+		contract = &signature->param[i];
+		if (contract->value_type != NOCT_VALUE_PACKED)
+			continue;
+
+		if (contract->rank == 0 ||
+		    contract->rank > NOCT_FAST_RANK_MAX ||
+		    contract->extent == NULL) {
+			rt_error(
+				env,
+				N_TR("Invalid __fast function signature for '%s'."),
+				func->name);
+			return false;
+		}
+
+		element_count = 1;
+
+		/* Multiply every positive extent into the exact element count. */
+		for (axis = 0; axis < contract->rank; axis++) {
+			extent = &contract->extent[axis];
+			if (extent->kind == FAST_EXTENT_CONST) {
+				if (extent->value.constant <= 0) {
+					rt_error(
+						env,
+						N_TR("__fast call '%s': shape extents must be positive."),
+						func->name);
+					return false;
+				}
+
+				extent_value = (uint64_t)extent->value.constant;
+			} else if (extent->kind == FAST_EXTENT_PARAM) {
+				if (extent->value.param_index >= arg_count) {
+					rt_error(
+						env,
+						N_TR("Invalid __fast function signature for '%s'."),
+						func->name);
+					return false;
+				}
+
+				extent_argument =
+					&arguments[extent->value.param_index];
+				if (extent_argument->type == NOCT_VALUE_INT) {
+					if (extent_argument->val.i <= 0) {
+						rt_error(
+							env,
+							N_TR("__fast call '%s': shape extents must be positive."),
+							func->name);
+						return false;
+					}
+
+					extent_value =
+						(uint64_t)(uint32_t)
+							extent_argument->val.i;
+				} else if (extent_argument->type ==
+					   NOCT_VALUE_LONG) {
+					if (extent_argument->val.l <= 0) {
+						rt_error(
+							env,
+							N_TR("__fast call '%s': shape extents must be positive."),
+							func->name);
+						return false;
+					}
+
+					extent_value =
+						(uint64_t)extent_argument->val.l;
+				} else {
+					rt_error(
+						env,
+						N_TR("Invalid __fast function signature for '%s'."),
+						func->name);
+					return false;
+				}
+			} else {
+				rt_error(
+					env,
+					N_TR("Invalid __fast function signature for '%s'."),
+					func->name);
+				return false;
+			}
+
+			if (extent_value > (uint64_t)SIZE_MAX ||
+			    element_count >
+				SIZE_MAX / (size_t)extent_value) {
+				rt_error(
+					env,
+					N_TR("__fast call '%s': shape element count overflow."),
+					func->name);
+				return false;
+			}
+
+			element_count *= (size_t)extent_value;
+		}
+
+		packed = arguments[i].val.packed;
+		if (packed->elem_size != element_count) {
+			rt_error(
+				env,
+				N_TR("__fast call '%s': argument %u does not match the exact shape."),
+				func->name,
+				(unsigned int)i + 1);
+			return false;
+		}
+	}
+
+	return true;
 }
 
 /*
@@ -2750,6 +3285,147 @@ rt_expand_global(
 	noct_free(old_tbl);
 	env->vm->global = new_tbl;
 	env->vm->global_alloc_size = new_size;
+
+	return true;
+}
+
+/*
+ * __fast func
+ */
+
+/*
+ * Restores a generated __fast function's caller-side contract.
+ */
+bool
+rt_mark_fast_func(
+	struct rt_func *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value)
+{
+	struct fast_signature candidate;
+	struct fast_param_contract *contract;
+	struct fast_extent *extent;
+	uint32_t extent_count;
+	uint32_t i;
+	uint32_t axis;
+
+	if (func == NULL)
+		return false;
+	if (param_count != func->param_count || param_count > NOCT_ARG_MAX)
+		return false;
+	if (tmpvar_size < param_count + 1 || tmpvar_size > RT_TMPVAR_MAX)
+		return false;
+	if (param_count > 0 &&
+	    (value_type == NULL ||
+	     packed_type == NULL ||
+	     restricted == NULL ||
+	     rank == NULL)) {
+		return false;
+	}
+
+	extent_count = 0;
+
+	/* Validate and total every exact-rank extent table. */
+	for (i = 0; i < param_count; i++) {
+		if (restricted[i] != 0 && restricted[i] != 1)
+			return false;
+		if (rank[i] > NOCT_FAST_RANK_MAX)
+			return false;
+
+		extent_count += rank[i];
+	}
+
+	if (extent_count > 0 &&
+	    (extent_kind == NULL || extent_value == NULL)) {
+		return false;
+	}
+
+	fast_signature_init(&candidate);
+	candidate.valid = true;
+	candidate.param_count = param_count;
+	candidate.return_type = return_type;
+
+	if (param_count > 0) {
+		candidate.param = noct_calloc(
+			(size_t)param_count,
+			sizeof(*candidate.param));
+		if (candidate.param == NULL)
+			return false;
+	}
+
+	extent_count = 0;
+
+	/* Restore every parameter and its sparse exact-rank extent table. */
+	for (i = 0; i < param_count; i++) {
+		contract = &candidate.param[i];
+		contract->value_type = value_type[i];
+		contract->packed_type = packed_type[i];
+		contract->restricted = restricted[i] != 0;
+		contract->rank = rank[i];
+
+		if (rank[i] == 0)
+			continue;
+
+		contract->extent = noct_calloc(
+			(size_t)rank[i],
+			sizeof(*contract->extent));
+		if (contract->extent == NULL) {
+			fast_signature_free(&candidate);
+			return false;
+		}
+
+		/* Decode this parameter's consecutive extent entries. */
+		for (axis = 0; axis < rank[i]; axis++) {
+			extent = &contract->extent[axis];
+			extent->kind = extent_kind[extent_count];
+
+			if (extent->kind == FAST_EXTENT_CONST) {
+				extent->value.constant =
+					extent_value[extent_count];
+			} else if (extent->kind == FAST_EXTENT_PARAM) {
+				if (extent_value[extent_count] < 0 ||
+				    (uint64_t)extent_value[extent_count] >
+					UINT32_MAX) {
+					fast_signature_free(&candidate);
+					return false;
+				}
+
+				extent->value.param_index =
+					(uint32_t)extent_value[extent_count];
+			} else {
+				fast_signature_free(&candidate);
+				return false;
+			}
+
+			extent_count++;
+		}
+	}
+
+	if (!fast_signature_valid(&candidate)) {
+		fast_signature_free(&candidate);
+		return false;
+	}
+
+	fast_signature_free(&func->fast_signature);
+	func->fast_signature = candidate;
+	func->is_fast = true;
+	func->tmpvar_size = tmpvar_size;
+	func->return_type = return_type;
+	func->return_packed_type = -1;
+
+	/* Mirror the contract in the ordinary runtime metadata. */
+	for (i = 0; i < param_count; i++) {
+		func->param_type[i] = value_type[i];
+		func->param_packed_type[i] = packed_type[i];
+		func->param_restricted[i] = restricted[i] != 0;
+	}
 
 	return true;
 }

@@ -27,6 +27,9 @@ void ast_free(void *p);
 
 extern YYLTYPE yylloc;
 
+static void lexer_unescape(char *s);
+static bool lexer_parse_decimal(const char *text, size_t length, int64_t *value);
+
 /*
  * Decode the escape sequences of a string literal in place.
  *
@@ -73,6 +76,35 @@ lexer_unescape(char *s)
 	}
 	*w = '\0';
 }
+
+/* Parse one non-negative decimal literal without signed overflow. */
+static bool
+lexer_parse_decimal(
+	const char *text,
+	size_t length,
+	int64_t *value)
+{
+	uint64_t accumulated;
+	uint64_t limit;
+	uint64_t digit;
+	size_t i;
+
+	accumulated = 0;
+	limit = (uint64_t)INT64_MAX;
+
+	/* Accumulate every decimal digit within the signed-64-bit range. */
+	for (i = 0; i < length; i++) {
+		digit = (uint64_t)(unsigned int)(text[i] - '0');
+		if (accumulated > (limit - digit) / 10U)
+			return false;
+
+		accumulated = accumulated * 10U + digit;
+	}
+
+	*value = (int64_t)accumulated;
+
+	return true;
+}
 %}
 
 %option reentrant
@@ -107,23 +139,38 @@ lexer_unescape(char *s)
 			return TOKEN_FLOAT;
 		}
 [0-9]+[lL]      {
-			ast_yylval.lval = atoll(yytext);
+			int64_t value;
+
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
+			if (!lexer_parse_decimal(
+				yytext,
+				(size_t)yyleng - 1,
+				&value)) {
+				return TOKEN_RESERVED_333;
+			}
+			ast_yylval.lval = value;
 			return TOKEN_LONG;
 		}
-[0-9]*		{
-                        int64_t v = atoll(yytext);
+[0-9]+		{
+			int64_t value;
+
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-                        ast_yylloc.last_column += yyleng;
-                        if (v > INT_MAX) {
-                                ast_yylval.lval = v;
-                                return TOKEN_LONG;
-                        }
-                        ast_yylval.ival = (int)(uint64_t)v;
- 			return TOKEN_INT;
+			ast_yylloc.last_column += yyleng;
+			if (!lexer_parse_decimal(
+				yytext,
+				(size_t)yyleng,
+				&value)) {
+				return TOKEN_RESERVED_333;
+			}
+			if (value > INT_MAX) {
+				ast_yylval.lval = value;
+				return TOKEN_LONG;
+			}
+			ast_yylval.ival = (int)value;
+			return TOKEN_INT;
 		}
 0x[0-9a-fA-F]{1,16}l {
                         ast_yylval.lval = atoll(yytext);
@@ -375,6 +422,12 @@ lexer_unescape(char *s)
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_INLINE;
+		}
+"__fast"	{
+			ast_yylloc.first_line = ast_yylloc.last_line;
+			ast_yylloc.first_column = ast_yylloc.last_column + 1;
+			ast_yylloc.last_column += yyleng;
+			return TOKEN_DUNDER_FAST;
 		}
 "require"	{
 			ast_yylloc.first_line = ast_yylloc.last_line;

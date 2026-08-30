@@ -199,6 +199,7 @@ static bool lir_prepend_tmpvar_types(uint32_t *prefix);
 static bool lir_put_materialize_type(int tmpvar, int type);
 static void lir_fatal(const char *msg, ...);
 static void lir_out_of_memory(void);
+static void lir_free_func_body(struct lir_func *func);
 
 /* Encode a declared type for OP_CHECKTYPE. */
 static int
@@ -266,6 +267,9 @@ lir_build(
 
 	assert(hir_func != NULL);
 	assert(hir_func->type == HIR_BLOCK_FUNC);
+	assert(lir_func != NULL);
+
+	*lir_func = NULL;
 
 	/* Copy the file name. */
 	noct_free(lir_file_name);
@@ -373,17 +377,33 @@ lir_build(
 	}
 
 	/* Make an lir_func. */
-	*lir_func = noct_malloc(sizeof(struct lir_func));
+	*lir_func = noct_calloc(1, sizeof(struct lir_func));
 	if (*lir_func == NULL) {
 		lir_out_of_memory();
 		return false;
+	}
+
+	fast_signature_init(&(*lir_func)->fast_signature);
+	(*lir_func)->is_fast = hir_func->val.func.is_fast;
+	if ((*lir_func)->is_fast) {
+		if (hir_func->val.func.fast_signature == NULL) {
+			lir_fatal(N_TR("Invalid __fast function signature."));
+			goto fail_func;
+		}
+
+		if (!fast_signature_clone(
+			&(*lir_func)->fast_signature,
+			hir_func->val.func.fast_signature)) {
+			lir_out_of_memory();
+			goto fail_func;
+		}
 	}
 
 	/* Copy the function name. */
 	(*lir_func)->func_name = noct_strdup(hir_func->val.func.name);
 	if ((*lir_func)->func_name == NULL) {
 		lir_out_of_memory();
-		return false;
+		goto fail_func;
 	}
 
 	/* Copy the parameter names.  */
@@ -409,7 +429,7 @@ lir_build(
 		(*lir_func)->param_name[i] = noct_strdup(hir_func->val.func.param_name[i]);
 		if ((*lir_func)->param_name[i] == NULL) {
 			lir_out_of_memory();
-			return false;
+			goto fail_func;
 		}
 	}
 
@@ -418,7 +438,7 @@ lir_build(
 		(*lir_func)->bytecode = noct_malloc((size_t)bytecode_top);
 		if ((*lir_func)->bytecode == NULL) {
 			lir_out_of_memory();
-			return false;
+			goto fail_func;
 		}
 		memcpy((*lir_func)->bytecode, bytecode, (size_t)bytecode_top);
 	} else {
@@ -432,7 +452,7 @@ lir_build(
 	(*lir_func)->file_name = noct_strdup(hir_func->val.func.file_name);
 	if ((*lir_func)->file_name == NULL) {
 		lir_out_of_memory();
-		return false;
+		goto fail_func;
 	}
 
 	(*lir_func)->tmpvar_size = tmpvar_count + 1;
@@ -472,6 +492,12 @@ lir_build(
 	}
 
 	return true;
+
+fail_func:
+	lir_free_func_body(*lir_func);
+	*lir_func = NULL;
+
+	return false;
 }
 
 /* Count the number of the local variables in a func. */
@@ -5186,16 +5212,9 @@ patch_block_address(uint32_t prefix)
 void
 lir_cleanup(struct lir_func *func)
 {
-	uint32_t i;
-
 	assert(func != NULL);
 
-	noct_free(func->func_name);
-	for (i = 0; i < func->param_count; i++)
-		noct_free(func->param_name[i]);
-	noct_free(func->file_name);
-	noct_free(func->bytecode);
-	noct_free(func);
+	lir_free_func_body(func);
 	noct_free(lir_file_name);
 	lir_file_name = NULL;
 }
@@ -6288,4 +6307,26 @@ lir_dump(
 		}
 		}
 	}
+}
+
+/* Release an LIR function without changing diagnostic state. */
+static void
+lir_free_func_body(
+	struct lir_func *func)
+{
+	uint32_t i;
+
+	if (func == NULL)
+		return;
+
+	noct_free(func->func_name);
+
+	/* Release every possibly constructed parameter name. */
+	for (i = 0; i < LIR_PARAM_SIZE; i++)
+		noct_free(func->param_name[i]);
+
+	noct_free(func->file_name);
+	noct_free(func->bytecode);
+	fast_signature_free(&func->fast_signature);
+	noct_free(func);
 }

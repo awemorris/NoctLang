@@ -49,7 +49,10 @@ struct c_func {
 	char *name;
 	char *c_name;
 	uint32_t param_count;
+	uint32_t tmpvar_size;
 	char *param_name[CBACK_ARG_MAX];
+	bool is_fast;
+	struct fast_signature fast_signature;
 };
 
 static struct c_func func_table[FUNC_MAX];
@@ -94,9 +97,13 @@ noct_cback_set_simd_info(bool enable)
 static bool cback_translate_func(struct lir_func *func);
 static bool cback_visit_bytecode(struct lir_func *func);
 static char *cback_make_c_name(const char *name);
+static void cback_free_func_entry(struct c_func *func);
+static void cback_cleanup_func_table(void);
 
 static bool cback_visit_op(struct lir_func *func, uint32_t *pc);
 static bool cback_write_aot_init(void);
+static uint32_t cback_fast_extent_count(const struct fast_signature *signature);
+static void cback_write_fast_signature_arrays(const struct fast_signature *signature);
 
 /*
  * Start the C backend.
@@ -105,6 +112,8 @@ bool
 noct_cback_start(
 	const char *fname)
 {
+	cback_cleanup_func_table();
+
 	fp = fopen(fname, "wb");
 	if (fp == NULL) {
 		printf("Failed to open file \"%s\".\n", fname);
@@ -200,12 +209,15 @@ noct_cback_translate(
 bool
 noct_cback_finalize(void)
 {
-	if (!cback_write_aot_init())
+	if (!cback_write_aot_init()) {
+		cback_cleanup_func_table();
 		return false;
+	}
 
 	fclose(fp);
 	fp = NULL;
-	
+	cback_cleanup_func_table();
+
 	return true;
 }
 
@@ -216,45 +228,72 @@ static bool
 cback_translate_func(
 	struct lir_func *func)
 {
+	struct c_func entry;
 	uint32_t i;
-	char *c_name;
 
-	c_name = cback_make_c_name(func->func_name);
-	if (c_name == NULL) {
+	if (func_count >= FUNC_MAX || func->param_count > CBACK_ARG_MAX) {
+		printf("Too many functions or function parameters.\n");
+		return false;
+	}
+
+	memset(&entry, 0, sizeof(entry));
+	fast_signature_init(&entry.fast_signature);
+
+	entry.c_name = cback_make_c_name(func->func_name);
+	if (entry.c_name == NULL) {
 		printf("Out of memory.\n");
 		return false;
 	}
 
 	/* Save a function name. */
-	func_table[func_count].name = strdup(func->func_name);
-	if (func_table[func_count].name == NULL) {
+	entry.name = strdup(func->func_name);
+	if (entry.name == NULL) {
 		printf("Out of memory.\n");
+		cback_free_func_entry(&entry);
 		return false;
 	}
-	func_table[func_count].c_name = c_name;
-	func_table[func_count].param_count = func->param_count;
-	for (i = 0; i < func->param_count; i++) {
-		func_table[func_count].param_name[i] = strdup(func->param_name[i]);
-		if (func_table[func_count].param_name[i] == NULL) {
+
+	entry.param_count = func->param_count;
+	entry.tmpvar_size = func->tmpvar_size;
+	entry.is_fast = func->is_fast;
+	if (entry.is_fast) {
+		if (!fast_signature_clone(
+			&entry.fast_signature,
+			&func->fast_signature)) {
 			printf("Out of memory.\n");
+			cback_free_func_entry(&entry);
 			return false;
 		}
 	}
-	func_count++;
+
+	/* Save every parameter name. */
+	for (i = 0; i < func->param_count; i++) {
+		entry.param_name[i] = strdup(func->param_name[i]);
+		if (entry.param_name[i] == NULL) {
+			printf("Out of memory.\n");
+			cback_free_func_entry(&entry);
+			return false;
+		}
+	}
 
 	/* Put a prologue code. */
-	fprintf(fp, "bool L_%s(struct rt_env *env)\n", c_name);
+	fprintf(fp, "bool L_%s(struct rt_env *env)\n", entry.c_name);
 	fprintf(fp, "{\n");
 
 	/* Visit a bytecode array. */
-	if (!cback_visit_bytecode(func))
+	if (!cback_visit_bytecode(func)) {
+		cback_free_func_entry(&entry);
 		return false;
+	}
 
 	/* Put an epilogue code. */
 	fprintf(fp, "/* epilogue */\n");
 	fprintf(fp, "  L_pc_%d:\n", func->bytecode_size);
 	fprintf(fp, "    return true;\n");
 	fprintf(fp, "}\n\n");
+
+	func_table[func_count] = entry;
+	func_count++;
 
 	return true;
 }
@@ -282,6 +321,37 @@ cback_make_c_name(
 	}
 	encoded[1 + len * 2] = '\0';
 	return encoded;
+}
+
+/* Release one retained translated-function entry. */
+static void
+cback_free_func_entry(
+	struct c_func *func)
+{
+	uint32_t i;
+
+	free(func->name);
+	free(func->c_name);
+
+	/* Release every retained parameter name. */
+	for (i = 0; i < CBACK_ARG_MAX; i++)
+		free(func->param_name[i]);
+
+	fast_signature_free(&func->fast_signature);
+	memset(func, 0, sizeof(*func));
+}
+
+/* Release all retained translated-function entries. */
+static void
+cback_cleanup_func_table(void)
+{
+	uint32_t i;
+
+	/* Release every completed entry. */
+	for (i = 0; i < func_count; i++)
+		cback_free_func_entry(&func_table[i]);
+
+	func_count = 0;
 }
 
 /* Visit a bytecode array. */
@@ -2190,50 +2260,233 @@ cback_visit_op(
 	return true;
 }
 
+/* Count the entries in a signature's sparse extent table. */
+static uint32_t
+cback_fast_extent_count(
+	const struct fast_signature *signature)
+{
+	uint32_t count;
+	uint32_t i;
+
+	count = 0;
+
+	/* Sum each exact parameter rank. */
+	for (i = 0; i < signature->param_count; i++)
+		count += signature->param[i].rank;
+
+	return count;
+}
+
+/* Write the parallel arrays for one generated fast signature. */
+static void
+cback_write_fast_signature_arrays(
+	const struct fast_signature *signature)
+{
+	const struct fast_param_contract *contract;
+	const struct fast_extent *extent;
+	uint32_t extent_count;
+	uint32_t i;
+	uint32_t axis;
+
+	extent_count = cback_fast_extent_count(signature);
+
+	if (signature->param_count > 0) {
+		fprintf(fp, "        const int fast_value_type[%u] = {",
+			(unsigned int)signature->param_count);
+
+		/* Write every exact runtime value tag. */
+		for (i = 0; i < signature->param_count; i++)
+			fprintf(fp, "%d,", signature->param[i].value_type);
+
+		fprintf(fp, "};\n");
+		fprintf(fp, "        const int fast_packed_type[%u] = {",
+			(unsigned int)signature->param_count);
+
+		/* Write every exact Packed element tag. */
+		for (i = 0; i < signature->param_count; i++)
+			fprintf(fp, "%d,", signature->param[i].packed_type);
+
+		fprintf(fp, "};\n");
+		fprintf(fp, "        const int fast_restricted[%u] = {",
+			(unsigned int)signature->param_count);
+
+		/* Preserve every explicit restricted declaration. */
+		for (i = 0; i < signature->param_count; i++) {
+			fprintf(
+				fp,
+				"%d,",
+				signature->param[i].restricted ? 1 : 0);
+		}
+
+		fprintf(fp, "};\n");
+		fprintf(fp, "        const uint32_t fast_rank[%u] = {",
+			(unsigned int)signature->param_count);
+
+		/* Write every parameter rank. */
+		for (i = 0; i < signature->param_count; i++) {
+			fprintf(
+				fp,
+				"%u,",
+				(unsigned int)signature->param[i].rank);
+		}
+
+		fprintf(fp, "};\n");
+	}
+
+	if (extent_count == 0)
+		return;
+
+	fprintf(fp, "        const int fast_extent_kind[%u] = {",
+		(unsigned int)extent_count);
+
+	/* Flatten each exact-rank table in parameter order. */
+	for (i = 0; i < signature->param_count; i++) {
+		contract = &signature->param[i];
+
+		/* Write every meaningful extent for this Packed parameter. */
+		for (axis = 0; axis < contract->rank; axis++)
+			fprintf(fp, "%d,", contract->extent[axis].kind);
+	}
+
+	fprintf(fp, "};\n");
+	fprintf(fp, "        const int64_t fast_extent_value[%u] = {",
+		(unsigned int)extent_count);
+
+	/* Flatten every extent value in the same sparse order. */
+	for (i = 0; i < signature->param_count; i++) {
+		contract = &signature->param[i];
+
+		/* Write constants or referenced parameter indices. */
+		for (axis = 0; axis < contract->rank; axis++) {
+			extent = &contract->extent[axis];
+			if (extent->kind == FAST_EXTENT_PARAM) {
+				fprintf(
+					fp,
+					"%lldLL,",
+					(long long)extent->value.param_index);
+			} else {
+				fprintf(
+					fp,
+					"%lldLL,",
+					(long long)extent->value.constant);
+			}
+		}
+	}
+
+	fprintf(fp, "};\n");
+}
+
+/* Write the function-registration entry point for generated code. */
 static bool
 cback_write_aot_init(void)
 {
-	uint32_t i, j;
+	uint32_t i;
+	uint32_t j;
 	bool has_initializer;
 
 	has_initializer = false;
+
+	/* Find whether generated initialization needs a return slot. */
 	for (i = 0; i < func_count; i++) {
 		if (strncmp(func_table[i].name, "$init.", 6) == 0) {
 			has_initializer = true;
 			break;
 		}
 	}
+
 	fprintf(fp, "bool init_aot_code(NoctEnv *env)\n");
 	fprintf(fp, "{\n");
 	if (has_initializer)
 		fprintf(fp, "    NoctValue init_ret;\n");
+
+	/* Register every translated function and restore fast metadata. */
 	for (i = 0; i < func_count; i++) {
 		fprintf(fp, "    {\n");
+		if (func_table[i].is_fast)
+			fprintf(fp, "        NoctFunc *registered_func;\n");
+
 		if (func_table[i].param_count > 0) {
 			fprintf(fp, "        const char *params[] = {");
-			for (j = 0; j < func_table[i].param_count; j++)
-				fprintf(fp, "\"%s\",", func_table[i].param_name[j]);
+
+			/* Write every source-level parameter name. */
+			for (j = 0; j < func_table[i].param_count; j++) {
+				fprintf(
+					fp,
+					"\"%s\",",
+					func_table[i].param_name[j]);
+			}
+
 			fprintf(fp, "};\n");
 		}
+
+		if (func_table[i].is_fast) {
+			cback_write_fast_signature_arrays(
+				&func_table[i].fast_signature);
+		}
+
 		if (func_table[i].param_count > 0) {
-			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", %d, params, L_%s, NULL))\n",
-				func_table[i].name, func_table[i].param_count,
-				func_table[i].c_name);
+			fprintf(
+				fp,
+				"        if (!noct_register_cfunc(env, \"%s\", %d, params, L_%s, %s))\n",
+				func_table[i].name,
+				func_table[i].param_count,
+				func_table[i].c_name,
+				func_table[i].is_fast ?
+					"&registered_func" : "NULL");
 			fprintf(fp, "            return false;\n");
 		} else {
-			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", 0, NULL, L_%s, NULL))\n",
-				func_table[i].name, func_table[i].c_name);
+			fprintf(
+				fp,
+				"        if (!noct_register_cfunc(env, \"%s\", 0, NULL, L_%s, %s))\n",
+				func_table[i].name,
+				func_table[i].c_name,
+				func_table[i].is_fast ?
+					"&registered_func" : "NULL");
 			fprintf(fp, "            return false;\n");
 		}
+
+		if (func_table[i].is_fast) {
+			const struct fast_signature *signature =
+				&func_table[i].fast_signature;
+			uint32_t extent_count =
+				cback_fast_extent_count(signature);
+
+			fprintf(
+				fp,
+				"        if (!noct_ex_mark_fast_func(registered_func, %u, %d, %u, %s, %s, %s, %s, %s, %s))\n",
+				(unsigned int)func_table[i].tmpvar_size,
+				signature->return_type,
+				(unsigned int)signature->param_count,
+				signature->param_count > 0 ?
+					"fast_value_type" : "NULL",
+				signature->param_count > 0 ?
+					"fast_packed_type" : "NULL",
+				signature->param_count > 0 ?
+					"fast_restricted" : "NULL",
+				signature->param_count > 0 ?
+					"fast_rank" : "NULL",
+				extent_count > 0 ?
+					"fast_extent_kind" : "NULL",
+				extent_count > 0 ?
+					"fast_extent_value" : "NULL");
+			fprintf(fp, "            return false;\n");
+		}
+
 		fprintf(fp, "    }\n");
 	}
+
+	/* Execute every translated load-time initializer. */
 	for (i = 0; i < func_count; i++) {
 		if (strncmp(func_table[i].name, "$init.", 6) != 0)
 			continue;
-		fprintf(fp, "    if (!noct_enter_vm(env, \"%s\", 0, NULL, &init_ret))\n",
+
+		fprintf(
+			fp,
+			"    if (!noct_enter_vm(env, \"%s\", 0, NULL, &init_ret))\n",
 			func_table[i].name);
 		fprintf(fp, "        return false;\n");
 	}
+
 	fprintf(fp, "    return true;\n");
 	fprintf(fp, "}\n");
 	fprintf(fp, "\n");

@@ -15,7 +15,46 @@
 #include <noct/noct.h>
 
 struct ast_stmt_list;
+struct hir_block;
 struct hir_scope_decl;
+
+extern char *hir_file_name;
+
+/*
+ * Allocates memory from the HIR arena.
+ */
+void *
+hir_malloc(
+	size_t size);
+
+/*
+ * Duplicates a string in the HIR arena.
+ */
+char *
+hir_strdup(
+	const char *s);
+
+/*
+ * Reports an out-of-memory error while constructing HIR.
+ */
+void
+hir_out_of_memory(
+	void);
+
+/*
+ * Adds a local variable to a function block.
+ */
+bool
+hir_add_local(
+	struct hir_block *cur_block,
+	const char *symbol);
+
+/*
+ * Allocates a fresh HIR block identifier.
+ */
+int
+hir_next_block_id(
+	void);
 
 /*
  * Start scope processing for one function.

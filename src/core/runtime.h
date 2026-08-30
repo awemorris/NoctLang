@@ -13,6 +13,7 @@
 #define NOCT_RUNTIME_H
 
 #include <noct/noct.h>
+#include "fast.h"
 #include "gc.h"
 
 /*
@@ -189,9 +190,36 @@ struct rt_packed {
 struct rt_func {
 	struct rt_gc_object head;
 
+	/* Functio nname. */
 	char *name;
+
+	/* Parameter count. */
 	size_t param_count;
+
+	/* Parameter names. */
 	char *param_name[NOCT_ARG_MAX];
+
+	/* Function pointer. (if a cfunc) */
+	bool (*cfunc)(struct rt_env *env);
+
+	/* Bytecode for a function. (if not a cfunc) */
+	uint32_t bytecode_size;
+	uint8_t *bytecode;
+	uint32_t tmpvar_size;
+
+	/* JIT-generated code. */
+	bool (CDECL *jit_code)(struct rt_env *env);
+	int call_count;
+
+	/* File name. */
+	char *file_name;
+
+	/* Next. */
+	struct rt_func *next;
+
+	/*
+	 * Parameter Type Annotation Extension
+	 */
 
 	/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
 	int param_type[NOCT_ARG_MAX];
@@ -202,33 +230,34 @@ struct rt_func {
 	/* rpacked* source annotation. */
 	bool param_restricted[NOCT_ARG_MAX];
 
+	/*
+	 * Return Type Annotation Extension
+	 */
+
 	/* Optional declared return type contract. */
 	int return_type;
 	int return_packed_type;
 	bool return_type_checked;
 
-	char *file_name;
+	/*
+	 * "__fast" Function Extension
+	 */
 
-	/* Bytecode for a function. (if not a cfunc) */
-	uint32_t bytecode_size;
-	uint8_t *bytecode;
-	uint32_t tmpvar_size;
+	/* Statically constrained CPU function. */
+	bool is_fast;
+
+	/* Exact entry contract for a fast function. */
+	struct fast_signature fast_signature;
+
+	/*
+	 * SIMD Optimization
+	 */
+
 	/* ABI/prologue metadata: bytecode contains OP_V* instructions. */
 	bool has_vector_ops;
+
 	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
 	bool has_fma_ops;
-
-	/* JIT-generated code. */
-	bool (CDECL *jit_code)(struct rt_env *env);
-	int call_count;
-
-	/* Function pointer. (if a cfunc) */
-	bool (*cfunc)(struct rt_env *env);
-	bool (*cfunc_with_data)(struct rt_env *env, void *userdata);
-	void *cfunc_userdata;
-
-	/* Next. */
-	struct rt_func *next;
 };
 
 /*
@@ -932,6 +961,24 @@ rt_unpin_local(
 bool
 rt_safepoint(
 	struct rt_env *env);
+
+/*
+ * "__fast" Function
+ */
+
+/* Restores a generated __fast function's caller-side contract. */
+bool
+rt_mark_fast_func(
+	struct rt_func *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value);
 
 /*
  * Error Handling

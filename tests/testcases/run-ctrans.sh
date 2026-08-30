@@ -33,10 +33,6 @@ mkdir -p "$work_dir"
 for level in 0 2; do
 	echo "(-O$level)"
 	for tc in "$root"/tests/testcases/ctrans/*.noct; do
-		# Keep the removed __fast fixture out of the maintained matrix.
-		case "$tc" in
-		*/fast-shape.noct) continue ;;
-		esac
 		name=$(basename "$tc" .noct)-O$level
 		echo "$tc"
 
@@ -48,7 +44,17 @@ for level in 0 2; do
 			"$work_dir/$name.c" \
 			"$build_dir/libnoctapi.a" "$build_dir/libnoct.a" -lm \
 			-o "$work_dir/$name"
-		"$work_dir/$name" > "$work_dir/$name.out"
+		case "$tc" in
+		*/fast-shape-mismatch.noct)
+			if "$work_dir/$name" > "$work_dir/$name.out"; then
+				echo "Expected AOT __fast shape check to fail: $tc" >&2
+				exit 1
+			fi
+			;;
+		*)
+			"$work_dir/$name" > "$work_dir/$name.out"
+			;;
+		esac
 		diff "$tc.out" "$work_dir/$name.out"
 	done
 done

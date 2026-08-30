@@ -96,6 +96,9 @@ struct ast_expr *ast_accept_neg_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_not_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_par_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_subscr_expr(struct ast_expr *expr1, struct ast_expr *expr2);
+char *ast_accept_type_extent_int(int64_t value);
+char *ast_accept_type_extent_list(char *list, char *extent);
+char *ast_accept_shaped_type(char *name, char *extents);
 struct ast_expr *ast_accept_dot_expr(struct ast_expr *obj, char *symbol);
 struct ast_expr *ast_accept_call_expr(struct ast_expr *func, struct ast_arg_list *arg_list);
 struct ast_expr *ast_accept_array_expr(struct ast_arg_list *arg_list);
@@ -165,7 +168,7 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_CONTINUE TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND TOKEN_STATIC TOKEN_INLINE TOKEN_REQUIRE
 /* Preserve retired token numbers for compatibility with parser.tab.h. */
 %token TOKEN_RESERVED_328 TOKEN_RESERVED_329
-%token TOKEN_RESERVED_330 TOKEN_RESERVED_331 TOKEN_RESERVED_332
+%token TOKEN_RESERVED_330 TOKEN_RESERVED_331 TOKEN_DUNDER_FAST
 %token TOKEN_RESERVED_333 TOKEN_RESERVED_334
 %token TOKEN_RESERVED_335
 
@@ -203,6 +206,8 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <kv> kv;
 %type <term> term;
 %type <arg_list> arg_list;
+%type <arg_list> multi_index_list;
+%type <sval> type_extent type_extent_list;
 
 /*
  * Operator precedence, lowest to highest, matching C:
@@ -313,6 +318,14 @@ func_prefix	: TOKEN_FUNC
 		{
 			$$ = 3;
 		}
+		| TOKEN_DUNDER_FAST TOKEN_FUNC
+		{
+			$$ = 4;
+		}
+		| TOKEN_STATIC TOKEN_INLINE TOKEN_DUNDER_FAST TOKEN_FUNC
+		{
+			$$ = 7;
+		}
 		;
 func		: func_prefix TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
 		{
@@ -364,9 +377,48 @@ type_name	: TOKEN_SYMBOL
 		{
 			$$ = $1;
 		}
+		| TOKEN_SYMBOL TOKEN_LPAR type_extent_list TOKEN_RPAR
+		{
+			$$ = ast_accept_shaped_type($1, $3);
+			if ($$ == NULL)
+				YYABORT;
+		}
 		| TOKEN_FUNC
 		{
 			$$ = ast_strdup("func");
+		}
+		;
+type_extent	: TOKEN_INT
+		{
+			$$ = ast_accept_type_extent_int($1);
+			if ($$ == NULL)
+				YYABORT;
+		}
+		| TOKEN_LONG
+		{
+			$$ = ast_accept_type_extent_int($1);
+			if ($$ == NULL)
+				YYABORT;
+		}
+		| TOKEN_SYMBOL
+		{
+			$$ = $1;
+		}
+		| TOKEN_RESERVED_333
+		{
+			ast_yyerror(scanner, "Decimal integer literal is too large.");
+			YYABORT;
+		}
+		;
+type_extent_list : type_extent
+		{
+			$$ = $1;
+		}
+		| type_extent_list TOKEN_COMMA type_extent
+		{
+			$$ = ast_accept_type_extent_list($1, $3);
+			if ($$ == NULL)
+				YYABORT;
 		}
 		;
 stmt_list	: /* empty */
@@ -680,6 +732,20 @@ expr		: term
 			$$ = ast_accept_subscr_expr($1, $3);
 			debug("expr: array[subscript]");
 		}
+		| expr TOKEN_LARR multi_index_list TOKEN_RARR
+		{
+			struct ast_expr *index;
+
+			index = ast_accept_array_expr($3);
+			if (index == NULL)
+				YYABORT;
+			index->val.array.is_multi_index = true;
+
+			$$ = ast_accept_subscr_expr($1, index);
+			if ($$ == NULL)
+				YYABORT;
+			debug("expr: array[index, ...]");
+		}
 		| expr TOKEN_OR expr
 		{
 			$$ = ast_accept_or_expr($1, $3);
@@ -869,6 +935,23 @@ arg_list	: expr
 			debug("arg_list: arg_list arg");
 		}
 		;
+multi_index_list : expr TOKEN_COMMA expr
+		{
+			$$ = ast_accept_arg_list(NULL, $1);
+			if ($$ == NULL)
+				YYABORT;
+
+			$$ = ast_accept_arg_list($$, $3);
+			if ($$ == NULL)
+				YYABORT;
+		}
+		| multi_index_list TOKEN_COMMA expr
+		{
+			$$ = ast_accept_arg_list($1, $3);
+			if ($$ == NULL)
+				YYABORT;
+		}
+		;
 kv_list		: kv
 		{
 			$$ = ast_accept_kv_list(NULL, $1);
@@ -932,6 +1015,11 @@ term		: TOKEN_INT
 		{
 			$$ = ast_accept_str_term($1);
 			debug("term: string");
+		}
+		| TOKEN_RESERVED_333
+		{
+			ast_yyerror(scanner, "Decimal integer literal is too large.");
+			YYABORT;
 		}
 		| TOKEN_SYMBOL
 		{

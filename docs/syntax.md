@@ -52,12 +52,14 @@ func main() {
 ## Type Annotations
 
 Parameters and local declarations may carry optimization-oriented type
-annotations.  At optimization level 1 and above, annotated parameters are
-checked at function entry.  An ordinary local annotated as `int`, `long`,
-`float`, or `double` is also checked at its initializer and every reassignment:
-a proven mismatch is a compile error and a value whose type is not known until
-runtime is checked at that assignment.  Optimization level 0 retains the
-language's dynamic behavior and treats these annotations as hints only.
+annotations.  In an ordinary function, annotated parameters are checked at
+function entry at optimization level 1 and above.  An ordinary local annotated
+as `int`, `long`, `float`, or `double` is also checked at its initializer and
+every reassignment: a proven mismatch is a compile error and a value whose type
+is not known until runtime is checked at that assignment.  Optimization level
+0 retains the ordinary function's dynamic behavior and treats these
+annotations as hints only.  The mandatory exact contracts of `__fast func` are
+described separately below.
 
 The checked primitive contract permits `int` where `long` is requested and
 `float` where `double` is requested; the value is canonicalized to the wider
@@ -66,7 +68,7 @@ optimization level 2.
 
 ```
 func copy_words(dst: rpackeduint32, src: rpackeduint32) {
-    // The r prefix supplies a checked non-aliasing optimization hint.
+    // The r prefix declares the caller's non-aliasing guarantee.
 }
 ```
 
@@ -78,9 +80,12 @@ restricted form, for example `rpackeduint8` or `rpackedfloat`.  The existing
 plain `packed` name accepts any packed element type but does not provide an
 element-type or non-aliasing optimization fact.
 
-Restricted annotations do not introduce undefined behavior.  Optimized code
-checks the relevant backing-buffer ranges and uses the scalar path when the
-non-aliasing condition is not satisfied.
+A restricted annotation is a contract supplied by the programmer.  Backing
+storage accessed through a restricted parameter must not overlap storage
+accessed through a different parameter while the call is active.  The runtime
+is not required to compare their objects or backing ranges, and the optimizer
+may use the declaration as a non-aliasing fact without proving it.  Results are
+not specified when the caller violates this contract.
 
 ## Array
 
@@ -845,13 +850,14 @@ values, or VM opcodes; using them outside `__gpu func` is a compile error.
 Raw GPU source and its descriptor survive `.nb` and `.nap` serialization.
 The ANSI C, Emacs Lisp, and Scheme transpilers reject `__gpu func` explicitly;
 use the Noct VM with an enabled accelerator backend.
+
 # `__fast func`
 
 `__fast func` defines a statically constrained CPU function intended for
 automatic optimization and future multicore parallelization.  Every parameter,
-explicit local, and return value must have an explicit primitive type.  The
-allowed primitive types are `int`, `long`, `float`, and `double`; `void` is also
-allowed as a return type.
+explicit local, and return value must have an explicit exact type.  Scalar
+parameters and locals use `int`, `long`, `float`, or `double`; a return may also
+be `void`.
 
 Packed parameters must use an `rpacked*` element type and an exact shape:
 
@@ -874,29 +880,26 @@ row-major order (the last axis is contiguous).  Each axis is checked separately
 on the safe path.
 
 Calls check primitive tags, Packed element kinds, dynamic extent positivity,
-checked shape products, exact element counts, and the `rpacked` restrict
-contract before entering the callee.  Different `rpacked` formal parameters
-must receive different Packed objects.  A validated fast-to-fast direct call
-reuses its caller's established contract and does not repeat the runtime
-preflight; calls from ordinary code and external APIs always perform it.
+checked shape products, and exact element counts before executing the callee.
+These checks apply even in a build that omits the optimizer.  The `rpacked`
+non-aliasing property remains the caller's contract and is not checked at
+runtime.
 
 Inside a fast function, globals, closures, methods, and ordinary functions are
 not available.  Direct calls to other fast functions and the compiler-owned
 `min`, `max`, `abs`, `sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
 `atan2`, `exp`, `ln`, `log2`, `log10`, and numeric conversion intrinsics are
-allowed.  Obvious affine out-of-bounds accesses are compile errors; accesses
-that cannot be proven are retained as checked operations.
+allowed.  Direct or mutual recursion between fast functions is rejected.
 
-Public fast functions in required source modules are resolved from a
-side-effect-free prototype scan.  Scanning records only names and contracts;
-it does not register functions or execute module initializers.  A required
-prototype with a conflicting kind or contract is a compile/link error.
-`static inline __fast func` remains file-local and is not exported.
+`static inline __fast func` is accepted and remains file-local.  At this stage
+it is deliberately not inlined: its calls use the same checked fast-function
+path as other fast calls.
 
-With the optimizer enabled, the exact caller contract supplies Packed element
-kind, element count, and disjointness facts to ABCE/SIMD.  Consequently a
-vectorized fast loop does not need the ordinary Packed type/length or alias
-range guards.  Statically bounded multi-dimensional accesses are flattened to
-their row-major expression before ABCE, so a contiguous final-axis loop can be
-vectorized.  Unknown accesses and optimizer-off builds retain the checked
-scalar path; declaring a function fast never makes an unproved access unsafe.
+At optimization level 0, and in builds that omit the optimizer module, shaped
+accesses use checked row-major indexing.  With the optimizer enabled at level
+1 or above, the fast-function pass shares the ordinary HIR expression and
+interval analyses.  A provably in-range multi-dimensional access may be
+flattened to unchecked row-major arithmetic, while a provably out-of-range
+access is a compile error.  An access that cannot be proven remains checked.
+The optimizer may also supply the exact shape and programmer-declared
+restricted facts to later ABCE and SIMD passes.

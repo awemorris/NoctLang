@@ -176,6 +176,15 @@ noct_scmback_translate(
 
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(i);
+		if (hfunc->val.func.is_fast) {
+			printf(
+				"%s",
+				N_TR("Error: __fast func is not supported by the Scheme transpiler.\n"));
+			hir_cleanup();
+			ast_cleanup();
+			return false;
+		}
+
 		cur_func = hfunc;
 
 		/* Check if it is a main function. */

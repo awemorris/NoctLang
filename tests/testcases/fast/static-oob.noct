@@ -6,5 +6,6 @@ __fast func bad(data: rpackeduint32(100)): void {
 
 func main() {
     var data = Packed.uint32(100);
+    print("entered static-oob main");
     bad(data);
 }

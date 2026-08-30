@@ -164,7 +164,9 @@ set(
   src/core/lexer.yy.c           # Lexer
   src/core/parser.tab.c         # Parser
   src/core/ast.c                # AST construction (called from parser)
+  src/core/fast.c               # __fast function contracts
   src/core/hir.c                # HIR (AST->HIR construction)
+  src/core/hir_fast_checked.c   # Mandatory checked __fast lowering
   src/core/hir_scope.c          # HIR lexical scope handling
   src/core/lir.c                # LIR (HIR->LIR construction)
   src/core/execution.c          # Runtime execution helper part
@@ -196,6 +198,8 @@ endif()
 if(NOCT_ENABLE_OPTIMIZER)
   set(
     NOCT_OPTIMIZER_SOURCE
+    src/optimizer/hir_opt_analysis.c # Common optimizer analysis
+    src/optimizer/hir_fast_func.c    # __fast checked-index optimization
     src/optimizer/hir_opt_abce.c     # ABCE pass
     src/optimizer/hir_opt_inline.c   # static inline pass
     src/optimizer/hir_opt_simd.c     # SIMD auto-vectorization
@@ -396,8 +400,12 @@ target_include_directories(noct PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/api
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common
   ${CMAKE_CURRENT_SOURCE_DIR}/src/intrin
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
 )
+if(NOCT_ENABLE_OPTIMIZER)
+  target_include_directories(noct PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+  )
+endif()
 if(NOCT_ENABLE_API)
   target_include_directories(noctapi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

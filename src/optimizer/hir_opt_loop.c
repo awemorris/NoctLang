@@ -12,7 +12,6 @@
 #include "hir_opt_parallel.h"
 
 #include <assert.h>
-#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,7 +28,6 @@ struct hir_analyze_ctx {
 
 static int hir_packed_width(int kind);
 static const char *hir_term_symbol(const struct hir_expr *expr);
-static bool hir_expr_int(const struct hir_expr *expr, int *value);
 static void hir_mark_unknown(struct hir_analyze_ctx *ctx, int reason);
 static bool hir_collect_expr(struct hir_analyze_ctx *ctx, const struct hir_expr *expr, bool write);
 static bool hir_collect_block(struct hir_analyze_ctx *ctx, struct hir_block *block);
@@ -187,146 +185,6 @@ hir_memory_catalog_build_func(
 		if (!hir_memory_catalog_add(catalog, &object))
 			return false;
 	}
-
-	return true;
-}
-
-/*
- * Normalizes one index expression into an affine form.
- */
-bool
-hir_parallel_normalize_index(
-	const struct hir_expr *expr,
-	const char *counter,
-	struct hir_affine_index *index)
-{
-	const char *symbol;
-	const struct hir_expr *left;
-	const struct hir_expr *right;
-	int constant;
-
-	memset(index, 0, sizeof(*index));
-	index->kind = HIR_AFFINE_UNKNOWN;
-	index->invariant_sign = 1;
-	index->expr = expr;
-
-	/* Remove redundant parentheses from the index expression. */
-	while (expr != NULL && expr->type == HIR_EXPR_PAR)
-		expr = expr->val.unary.expr;
-
-	symbol = hir_term_symbol(expr);
-	if (symbol != NULL) {
-		if (counter != NULL) {
-			if (strcmp(symbol, counter) == 0) {
-				index->kind = HIR_AFFINE_COUNTER_OFFSET;
-				return true;
-			}
-		}
-
-		index->kind = HIR_AFFINE_INVARIANT;
-		index->invariant_symbol = symbol;
-		return true;
-	}
-
-	if (hir_expr_int(expr, &constant)) {
-		index->kind = HIR_AFFINE_INVARIANT;
-		index->offset = constant;
-		return true;
-	}
-
-	if (expr == NULL)
-		return true;
-	if (expr->type != HIR_EXPR_PLUS && expr->type != HIR_EXPR_MINUS)
-		return true;
-
-	left = expr->val.binary.expr[0];
-	right = expr->val.binary.expr[1];
-	symbol = hir_term_symbol(left);
-	if (symbol != NULL && counter != NULL) {
-		if (strcmp(symbol, counter) == 0) {
-			if (hir_expr_int(right, &constant)) {
-				if (expr->type == HIR_EXPR_MINUS &&
-				    constant == INT_MIN) {
-					return true;
-				}
-				if (expr->type == HIR_EXPR_MINUS)
-					constant = -constant;
-
-				index->kind = HIR_AFFINE_COUNTER_OFFSET;
-				index->offset = constant;
-				return true;
-			}
-
-			symbol = hir_term_symbol(right);
-			if (symbol != NULL) {
-				if (strcmp(symbol, counter) != 0) {
-					index->kind = HIR_AFFINE_COUNTER_OFFSET;
-					index->invariant_symbol = symbol;
-					if (expr->type == HIR_EXPR_MINUS)
-						index->invariant_sign = -1;
-					else
-						index->invariant_sign = 1;
-				}
-			}
-
-			return true;
-		}
-	}
-
-	if (expr->type == HIR_EXPR_PLUS) {
-		symbol = hir_term_symbol(right);
-		if (symbol != NULL && counter != NULL) {
-			if (strcmp(symbol, counter) == 0) {
-				if (hir_expr_int(left, &constant)) {
-					index->kind = HIR_AFFINE_COUNTER_OFFSET;
-					index->offset = constant;
-					return true;
-				}
-
-				symbol = hir_term_symbol(left);
-				if (symbol != NULL) {
-					if (strcmp(symbol, counter) != 0) {
-						index->kind =
-							HIR_AFFINE_COUNTER_OFFSET;
-						index->invariant_symbol = symbol;
-						index->invariant_sign = 1;
-					}
-				}
-			}
-		}
-	}
-
-	return true;
-}
-
-/*
- * Compares two normalized affine indices.
- */
-bool
-hir_parallel_affine_equal(
-	const struct hir_affine_index *first,
-	const struct hir_affine_index *second)
-{
-	if (first == NULL)
-		return false;
-	if (second == NULL)
-		return false;
-	if (first->kind != second->kind)
-		return false;
-	if (first->offset != second->offset)
-		return false;
-	if (first->invariant_sign != second->invariant_sign)
-		return false;
-	if (first->invariant_symbol == NULL &&
-	    second->invariant_symbol == NULL) {
-		return true;
-	}
-	if (first->invariant_symbol == NULL)
-		return false;
-	if (second->invariant_symbol == NULL)
-		return false;
-	if (strcmp(first->invariant_symbol, second->invariant_symbol) != 0)
-		return false;
 
 	return true;
 }
@@ -637,25 +495,6 @@ hir_term_symbol(
 	return expr->val.term.term->val.symbol;
 }
 
-static bool
-hir_expr_int(
-	const struct hir_expr *expr,
-	int *value)
-{
-	if (expr == NULL)
-		return false;
-	if (expr->type != HIR_EXPR_TERM)
-		return false;
-	if (expr->val.term.term == NULL)
-		return false;
-	if (expr->val.term.term->type != HIR_TERM_INT)
-		return false;
-
-	*value = expr->val.term.term->val.i;
-
-	return true;
-}
-
 static void
 hir_mark_unknown(
 	struct hir_analyze_ctx *ctx,
@@ -780,7 +619,7 @@ hir_record_access(
 	access->element_kind = object->element_kind;
 	access->line = ctx->line;
 
-	if (!hir_parallel_normalize_index(
+	if (!hir_opt_normalize_index(
 		    index_expr,
 		    ctx->summary->counter_symbol,
 		    &access->index)) {

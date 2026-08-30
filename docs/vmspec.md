@@ -761,13 +761,58 @@ GPU functions is explicitly unsupported.
 | `JMPIFFALSE`        | 0x26   | Jump if false                             |
 | `JMPIFEQ`           | 0x27   | Jump if EQI result is false               |
 | `LINEINFO`          | 0x28   | Annotate line number for debugging        |
+
 # Fast function metadata
 
-Function kind values 0 through 2 retain their existing meaning.  Kind 3 is a
-CPU-executable `__fast func`.  A kind-3 bytecode function must carry a versioned
-`Fast Signature` section containing every formal's runtime value tag, Packed
-element kind, restrict flag, rank, and constant-or-parameter extent descriptors,
-plus the declared return tag.  The current signature version is 1.  Loaders
-reject a fast function with missing metadata, an unknown version, a rank above
-8, or an invalid function kind.  Older non-fast artifacts have no such section
-and remain valid.
+Function kinds are compact: 0 is a normal function and 1 is a CPU-executable
+`__fast func`.  Omitting `Function Kind` retains the legacy meaning of kind 0.
+A fast function writes both of the following sections before `Temporary Size`:
+
+```
+Function Kind
+1
+Fast Signature
+1
+1
+<PARAMETER COUNT>
+<RETURN TYPE>
+<PARAMETER CONTRACTS...>
+```
+
+The first Fast Signature value is the format version; the current version is
+1.  The second value is the valid marker and must also be 1.  The parameter
+count must equal the function's `Parameters` count.  One parameter contract is
+then written for each formal in declaration order:
+
+```
+<VALUE TYPE>
+<PACKED ELEMENT TYPE>
+<RESTRICTED: 0 OR 1>
+<RANK>
+<EXTENT DESCRIPTORS...>
+```
+
+A primitive parameter has rank 0 and no extent descriptors.  A shaped Packed
+parameter has rank 1 through 8 and stores exactly that many descriptors, so the
+signature does not reserve extent slots for primitive parameters or unused
+axes.  Each descriptor is two lines: extent kind 1 followed by a signed
+constant, or extent kind 2 followed by the zero-based index of the `int` or
+`long` parameter that supplies the extent.
+
+The restricted bit records a programmer-supplied non-aliasing contract.  It is
+available to the optimizer but does not request a runtime alias check.  Runtime
+entry still checks primitive value tags, Packed element kinds, positive dynamic
+extents, non-overflowing shape products, and exact Packed element counts.
+
+A fast artifact also writes `Parameter Types` when it has parameters and always
+writes `Return Type`, including return type -2 for `void`.  Its ordinary value
+type, Packed element type, restricted, and return type metadata must agree with
+the Fast Signature exactly.
+
+The loader rejects kind values above 1, a fast function without a Fast
+Signature, a normal function with a Fast Signature, duplicate sections, an
+unknown signature version, a parameter-count mismatch, an invalid rank or
+extent descriptor, and otherwise inconsistent signature data.  Existing
+normal bytecode without either section remains valid.  Fast functions use the
+ordinary VM instruction set; this metadata does not introduce a fast-specific
+opcode.

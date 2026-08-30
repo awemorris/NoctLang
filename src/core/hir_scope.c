@@ -12,7 +12,6 @@
 #include <noct/noct.h>
 #include "hir.h"
 #include "hir_private.h"
-#include "hir_opt.h"
 #include "ast.h"
 
 #include <assert.h>

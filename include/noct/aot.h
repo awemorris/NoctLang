@@ -52,6 +52,30 @@ init_aot_code(
 	NoctEnv *env);
 
 /*
+ * Restore a generated __fast function's caller-side contract.
+ *
+ * tmpvar_size is the generated LIR's full temporary count.  It restores the
+ * frame initialization and GC root-scan boundary used while the AOT function
+ * is running.
+ *
+ * The per-parameter arrays contain param_count entries.  The extent arrays
+ * contain exactly the sum of the rank entries, in parameter order.
+ */
+NOCT_DLL
+bool
+noct_ex_mark_fast_func(
+	NoctFunc *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value);
+
+/*
  * AOT Execution Helpers
  *
  * Some exotic compilers for x86 including Watcom utilize registers to

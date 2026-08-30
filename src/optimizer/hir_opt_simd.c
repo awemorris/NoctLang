@@ -172,6 +172,7 @@ static bool simd_live_chain(struct hir_block *head, const char *sym);
 static struct hir_stmt *simd_inline_temps(struct hir_block *loop);
 static bool simd_is_local(struct simd_ctx *ctx, const char *name);
 static int simd_local_type(struct simd_ctx *ctx, const char *name);
+static int simd_resolve_scalar_symbol(void *data, const char *symbol);
 static int simd_expr_type(struct simd_ctx *ctx, struct hir_expr *e);
 static struct simd_base *simd_find_base(struct simd_ctx *ctx, const char *sym);
 static bool simd_note_const(struct simd_ctx *ctx, uint32_t v, int type);
@@ -253,6 +254,12 @@ hir_opt_simd_func(
 				return false;
 
 			normalized_body->stop = true;
+			normalized_body->is_return_edge =
+				source_body->is_return_edge;
+			normalized_body->is_break_edge =
+				source_body->is_break_edge;
+			normalized_body->is_continue_edge =
+				source_body->is_continue_edge;
 			normalized_body->succ = source_body->succ;
 			normalized_body->val.basic.stmt_list =
 				simd_clone_stmt_list(
@@ -959,6 +966,12 @@ simd_if_convert_body(
 
 	/* Convert each block in the accepted straight-line CFG. */
 	for (b = loop->val.for_.inner; b != NULL;) {
+		if (b->is_return_edge ||
+		    b->is_break_edge ||
+		    b->is_continue_edge) {
+			return NULL;
+		}
+
 		if (b->type == HIR_BLOCK_BASIC) {
 			if (b->val.basic.stmt_list != NULL) {
 				if (!simd_append_stmt_clone(
@@ -988,6 +1001,11 @@ simd_if_convert_body(
 				return NULL;
 			if (ib->type != HIR_BLOCK_BASIC)
 				return NULL;
+			if (ib->is_return_edge ||
+			    ib->is_break_edge ||
+			    ib->is_continue_edge) {
+				return NULL;
+			}
 			if (!ib->stop)
 				return NULL;
 			if (ib->val.basic.stmt_list == NULL)
@@ -1103,6 +1121,8 @@ simd_clone_scalar_chain(
 
 	n->stop = src->stop;
 	n->is_return_edge = src->is_return_edge;
+	n->is_break_edge = src->is_break_edge;
+	n->is_continue_edge = src->is_continue_edge;
 
 	/* Clone the payload owned by this block shape. */
 	switch (src->type) {
@@ -1676,88 +1696,34 @@ simd_local_type(
 	return -1;
 }
 
+/* Resolve a symbol type using the function-wide proven local facts. */
+static int
+simd_resolve_scalar_symbol(
+	void *data,
+	const char *symbol)
+{
+	struct simd_ctx *ctx;
+
+	ctx = data;
+
+	return simd_local_type(ctx, symbol);
+}
+
+/* Return the scalar type used by SIMD eligibility checks. */
 static int
 simd_expr_type(
 	struct simd_ctx *ctx,
 	struct hir_expr *e)
 {
-	int a, b;
+	struct hir_opt_scalar_query query;
 
-	/* Classify the expression's scalar value type. */
-	switch (e->type) {
-	case HIR_EXPR_TERM:
-		if (e->val.term.term->type == HIR_TERM_INT)
-			return NOCT_VALUE_INT;
-		if (e->val.term.term->type == HIR_TERM_FLOAT)
-			return NOCT_VALUE_FLOAT;
-		if (e->val.term.term->type == HIR_TERM_SYMBOL)
-			return simd_local_type(ctx, e->val.term.term->val.symbol);
-		return -1;
-	case HIR_EXPR_PAR:
-		return simd_expr_type(ctx, e->val.unary.expr);
-	case HIR_EXPR_PLOAD32:
-	case HIR_EXPR_PGATHER32:
-		return NOCT_VALUE_INT;
-	case HIR_EXPR_PLOADF32:
-		return NOCT_VALUE_FLOAT;
-	case HIR_EXPR_VINDUCTF32:
-		return NOCT_VALUE_FLOAT;
-	case HIR_EXPR_CALL:
+	query.value_mask = HIR_OPT_SCALAR_ALL;
+	query.arithmetic_mask = HIR_OPT_SCALAR_INT | HIR_OPT_SCALAR_FLOAT;
+	query.data = ctx;
+	query.resolve_symbol = simd_resolve_scalar_symbol;
+	query.resolve_subscript = NULL;
 
-		/* Classify the call by its recognized intrinsic. */
-		switch (hir_get_intrinsic_call(e)) {
-		case HIR_INTRINSIC_INT_FROM:
-			return NOCT_VALUE_INT;
-		case HIR_INTRINSIC_FLOAT_FROM:
-			return NOCT_VALUE_FLOAT;
-		default:
-			return -1;
-		}
-	case HIR_EXPR_SELECT:
-		a = simd_expr_type(ctx, e->val.select.if_true);
-		b = simd_expr_type(ctx, e->val.select.if_false);
-		return a == b ? a : -1;
-	case HIR_EXPR_PLUS:
-	case HIR_EXPR_MINUS:
-	case HIR_EXPR_MUL:
-	case HIR_EXPR_DIV:
-		a = simd_expr_type(ctx, e->val.binary.expr[0]);
-		b = simd_expr_type(ctx, e->val.binary.expr[1]);
-		if (a == NOCT_VALUE_FLOAT ||
-		    b == NOCT_VALUE_FLOAT) {
-			if (a != NOCT_VALUE_INT &&
-			    a != NOCT_VALUE_FLOAT) {
-				return -1;
-			}
-			if (b != NOCT_VALUE_INT &&
-			    b != NOCT_VALUE_FLOAT) {
-				return -1;
-			}
-
-			return NOCT_VALUE_FLOAT;
-		}
-		if (a != NOCT_VALUE_INT)
-			return -1;
-		if (b != NOCT_VALUE_INT)
-			return -1;
-
-		return NOCT_VALUE_INT;
-	case HIR_EXPR_AND:
-	case HIR_EXPR_OR:
-	case HIR_EXPR_XOR:
-	case HIR_EXPR_SHL:
-	case HIR_EXPR_SHR:
-		a = simd_expr_type(ctx, e->val.binary.expr[0]);
-		b = simd_expr_type(ctx, e->val.binary.expr[1]);
-		if (a != NOCT_VALUE_INT)
-			return -1;
-		if (b != NOCT_VALUE_INT)
-			return -1;
-
-		return NOCT_VALUE_INT;
-	default:
-		return -1;
-	}
+	return hir_opt_expr_scalar_type(e, &query);
 }
 
 static struct simd_base *
@@ -1829,7 +1795,7 @@ simd_parse_index(
 
 	memset(out, 0, sizeof(*out));
 
-	if (!hir_parallel_normalize_index(f, ctx->counter, &index))
+	if (!hir_opt_normalize_index(f, ctx->counter, &index))
 		return false;
 	if (index.kind != HIR_AFFINE_COUNTER_OFFSET)
 		return false;
@@ -2429,7 +2395,10 @@ simd_check_body(
 
 	if (body == NULL ||
 	    body->type != HIR_BLOCK_BASIC ||
-	    !body->stop) {
+	    !body->stop ||
+	    body->is_return_edge ||
+	    body->is_break_edge ||
+	    body->is_continue_edge) {
 		SIMD_REJECT("E2 body shape");
 	}
 

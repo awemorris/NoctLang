@@ -32,6 +32,7 @@
  * else.  The LIR generator consumes the proofs at level >= 2.
  */
 
+#include "hir_opt_analysis.h"
 #include "hir_opt.h"
 
 #include <string.h>
@@ -182,16 +183,7 @@ static bool
 tp_is_primitive(
 	int t)
 {
-	if (t == TP_INT)
-		return true;
-	if (t == TP_LONG)
-		return true;
-	if (t == TP_FLOAT)
-		return true;
-	if (t == TP_DOUBLE)
-		return true;
-
-	return false;
+	return hir_opt_scalar_type_is_primitive(t);
 }
 
 /* Match the generic numeric dispatch in execution.c. */
@@ -200,21 +192,7 @@ tp_promote_numeric(
 	int a,
 	int b)
 {
-	if (!tp_is_primitive(a))
-		return TP_UNKNOWN;
-	if (!tp_is_primitive(b))
-		return TP_UNKNOWN;
-	if (a == TP_DOUBLE ||
-	    b == TP_DOUBLE)
-		return TP_DOUBLE;
-	if (a == TP_FLOAT ||
-	    b == TP_FLOAT)
-		return TP_FLOAT;
-	if (a == TP_LONG ||
-	    b == TP_LONG)
-		return TP_LONG;
-
-	return TP_INT;
+	return hir_opt_scalar_type_promote(a, b, HIR_OPT_SCALAR_ALL);
 }
 
 static struct hir_local *

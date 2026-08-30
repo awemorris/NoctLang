@@ -323,7 +323,7 @@ hir_doall_classify_internal(
 			}
 			if (first->index.kind == HIR_AFFINE_COUNTER_OFFSET) {
 				if (second->index.kind == HIR_AFFINE_COUNTER_OFFSET) {
-					if (hir_parallel_affine_equal(
+					if (hir_opt_affine_equal(
 						&first->index,
 						&second->index)) {
 						continue;

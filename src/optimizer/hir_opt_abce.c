@@ -11,6 +11,7 @@
 
 #include <noct/noct.h>
 #include "hir.h"
+#include "hir_opt_analysis.h"
 #include "hir_opt.h"
 
 #include <stdio.h>
@@ -178,6 +179,8 @@ static bool abce_expr_equal(struct hir_expr *a, struct hir_expr *b);
 static bool abce_check_invariant_u(struct abce_ctx *ctx, struct hir_expr *e);
 static bool abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr);
 static bool abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr);
+static int abce_resolve_scalar_symbol(void *data, const char *symbol);
+static int abce_resolve_scalar_subscript(void *data, const struct hir_expr *expr);
 static int abce_expr_type(struct abce_ctx *ctx, struct hir_expr *expr);
 static bool abce_check_stmt(struct abce_ctx *ctx, struct hir_stmt *stmt);
 static bool abce_scan_chain(struct abce_ctx *ctx, struct hir_block *head);
@@ -1170,110 +1173,63 @@ abce_check_expr(
 	}
 }
 
-/* Exact scalar tag required by raw PSTORE lowering. */
+/* Resolve a symbol type using the ABCE loop-local facts. */
+static int
+abce_resolve_scalar_symbol(
+	void *data,
+	const char *symbol)
+{
+	struct abce_ctx *ctx;
+
+	ctx = data;
+
+	return abce_local_type(ctx, symbol);
+}
+
+/* Resolve a Packed subscript result using the ABCE element-type bet. */
+static int
+abce_resolve_scalar_subscript(
+	void *data,
+	const struct hir_expr *expr)
+{
+	struct abce_ctx *ctx;
+	const struct hir_expr *base;
+	int bet;
+
+	ctx = data;
+	base = expr->val.binary.expr[0];
+
+	if (base == NULL)
+		return HIR_OPT_SCALAR_UNKNOWN;
+	if (base->type != HIR_EXPR_TERM)
+		return HIR_OPT_SCALAR_UNKNOWN;
+	if (base->val.term.term == NULL)
+		return HIR_OPT_SCALAR_UNKNOWN;
+	if (base->val.term.term->type != HIR_TERM_SYMBOL)
+		return HIR_OPT_SCALAR_UNKNOWN;
+
+	bet = abce_bet_for_symbol(ctx, base->val.term.term->val.symbol);
+	if (bet == NOCT_PACKED_FLOAT32)
+		return NOCT_VALUE_FLOAT;
+
+	return NOCT_VALUE_INT;
+}
+
+/* Return the exact scalar tag required by raw PSTORE lowering. */
 static int
 abce_expr_type(
 	struct abce_ctx *ctx,
 	struct hir_expr *expr)
 {
-	int a, b;
+	struct hir_opt_scalar_query query;
 
-	/* Determines the exact scalar result tag for the expression. */
-	switch (expr->type) {
-	case HIR_EXPR_TERM:
-		if (expr->val.term.term->type == HIR_TERM_INT)
-			return NOCT_VALUE_INT;
-		if (expr->val.term.term->type == HIR_TERM_FLOAT)
-			return NOCT_VALUE_FLOAT;
-		if (expr->val.term.term->type == HIR_TERM_SYMBOL) {
-			return abce_local_type(
-				ctx,
-				expr->val.term.term->val.symbol);
-		}
+	query.value_mask = HIR_OPT_SCALAR_INT | HIR_OPT_SCALAR_FLOAT;
+	query.arithmetic_mask = HIR_OPT_SCALAR_INT | HIR_OPT_SCALAR_FLOAT;
+	query.data = ctx;
+	query.resolve_symbol = abce_resolve_scalar_symbol;
+	query.resolve_subscript = abce_resolve_scalar_subscript;
 
-		return -1;
-	case HIR_EXPR_PAR:
-		return abce_expr_type(ctx, expr->val.unary.expr);
-	case HIR_EXPR_NEG:
-		a = abce_expr_type(ctx, expr->val.unary.expr);
-		if (a == NOCT_VALUE_INT)
-			return a;
-		if (a == NOCT_VALUE_FLOAT)
-			return a;
-
-		return -1;
-	case HIR_EXPR_PLOAD8U:
-	case HIR_EXPR_PLOAD8S:
-	case HIR_EXPR_PLOAD16U:
-	case HIR_EXPR_PLOAD16S:
-	case HIR_EXPR_PLOAD32:
-		return NOCT_VALUE_INT;
-	case HIR_EXPR_PLOADF32:
-		return NOCT_VALUE_FLOAT;
-	case HIR_EXPR_SUBSCR:
-		if (expr->val.binary.expr[0]->type == HIR_EXPR_TERM &&
-		    expr->val.binary.expr[0]->val.term.term->type ==
-			HIR_TERM_SYMBOL) {
-			int bet;
-
-			bet = abce_bet_for_symbol(
-				ctx,
-				expr->val.binary.expr[0]->val.term.term->val.symbol);
-			if (bet == NOCT_PACKED_FLOAT32)
-				return NOCT_VALUE_FLOAT;
-
-			return NOCT_VALUE_INT;
-		}
-
-		return -1;
-	case HIR_EXPR_CALL:
-
-		/* Maps supported conversion intrinsics to their result tags. */
-		switch (hir_get_intrinsic_call(expr)) {
-		case HIR_INTRINSIC_INT_FROM:
-			return NOCT_VALUE_INT;
-		case HIR_INTRINSIC_FLOAT_FROM:
-			return NOCT_VALUE_FLOAT;
-		default:
-			return -1;
-		}
-	case HIR_EXPR_PLUS:
-	case HIR_EXPR_MINUS:
-	case HIR_EXPR_MUL:
-	case HIR_EXPR_DIV:
-		a = abce_expr_type(ctx, expr->val.binary.expr[0]);
-		b = abce_expr_type(ctx, expr->val.binary.expr[1]);
-		if (a == NOCT_VALUE_FLOAT || b == NOCT_VALUE_FLOAT) {
-			if (a != NOCT_VALUE_INT && a != NOCT_VALUE_FLOAT)
-				return -1;
-			if (b != NOCT_VALUE_INT && b != NOCT_VALUE_FLOAT)
-				return -1;
-
-			return NOCT_VALUE_FLOAT;
-		}
-		if (a != NOCT_VALUE_INT)
-			return -1;
-		if (b != NOCT_VALUE_INT)
-			return -1;
-
-		return NOCT_VALUE_INT;
-	case HIR_EXPR_MOD:
-	case HIR_EXPR_AND:
-	case HIR_EXPR_OR:
-	case HIR_EXPR_XOR:
-	case HIR_EXPR_SHL:
-	case HIR_EXPR_SHR:
-		a = abce_expr_type(ctx, expr->val.binary.expr[0]);
-		b = abce_expr_type(ctx, expr->val.binary.expr[1]);
-		if (a != NOCT_VALUE_INT)
-			return -1;
-		if (b != NOCT_VALUE_INT)
-			return -1;
-
-		return NOCT_VALUE_INT;
-	default:
-		return -1;
-	}
+	return hir_opt_expr_scalar_type(expr, &query);
 }
 
 static bool
@@ -1740,6 +1696,9 @@ abce_clone_blocks(
 			return false;
 
 		n->stop = o->stop;
+		n->is_return_edge = o->is_return_edge;
+		n->is_break_edge = o->is_break_edge;
+		n->is_continue_edge = o->is_continue_edge;
 
 		/* Clones the fields owned by this block kind. */
 		switch (o->type) {

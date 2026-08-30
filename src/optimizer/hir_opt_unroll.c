@@ -385,7 +385,10 @@ unroll_check_body(
 	    ctx->loop->val.for_.is_vector ||
 	    body == NULL ||
 	    body->type != HIR_BLOCK_BASIC ||
-	    !body->stop) {
+	    !body->stop ||
+	    body->is_return_edge ||
+	    body->is_break_edge ||
+	    body->is_continue_edge) {
 		return false;
 	}
 
@@ -952,6 +955,8 @@ unroll_transform(
 	tail_loop->stop = loop->stop;
 	tail_loop->succ = old_succ;
 	tail_loop->is_return_edge = loop->is_return_edge;
+	tail_loop->is_break_edge = loop->is_break_edge;
+	tail_loop->is_continue_edge = loop->is_continue_edge;
 
 	loop->val.for_.stop = bulk_mid;
 	loop->val.for_.inner = bulk_body;
@@ -959,6 +964,8 @@ unroll_transform(
 	loop->val.for_.scalar_unroll = UNROLL_FACTOR;
 	loop->stop = false;
 	loop->is_return_edge = false;
+	loop->is_break_edge = false;
+	loop->is_continue_edge = false;
 	loop->succ = tail_loop;
 
 	return true;
