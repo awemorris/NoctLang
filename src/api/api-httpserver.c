@@ -41,6 +41,11 @@
  *    that serves it may differ.
  */
 
+#if defined(_WIN32) && !defined(_WIN32_WINNT)
+/* WSAPoll is available starting with Windows Vista. */
+#define _WIN32_WINNT	0x0600
+#endif
+
 #include <noct/noct.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +58,7 @@
 #include <ws2tcpip.h>
 typedef SOCKET sock_t;
 typedef int socklen_arg_t;
+typedef WSAPOLLFD sock_pollfd_t;
 #define SOCK_INVALID		INVALID_SOCKET
 #define sock_close		closesocket
 #define sock_poll		WSAPoll
@@ -72,6 +78,7 @@ typedef int socklen_arg_t;
 #include <signal.h>
 typedef int sock_t;
 typedef socklen_t socklen_arg_t;
+typedef struct pollfd sock_pollfd_t;
 #define SOCK_INVALID		(-1)
 #define sock_close		close
 #define sock_poll		poll
@@ -119,7 +126,7 @@ struct poller_obj {
 	size_t entry_alloc;
 
 	/* Persistent pollfd array, rebuilt only when registrations change. */
-	struct pollfd *pfd;
+	sock_pollfd_t *pfd;
 	size_t pfd_alloc;
 	bool pfd_dirty;
 
@@ -460,12 +467,12 @@ poller_sync(
 
 	if (poller->entry_count > poller->pfd_alloc) {
 		size_t new_alloc;
-		struct pollfd *new_pfd;
+		sock_pollfd_t *new_pfd;
 
 		new_alloc = poller->pfd_alloc == 0 ? 16 : poller->pfd_alloc;
 		while (new_alloc < poller->entry_count)
 			new_alloc *= 2;
-		new_pfd = noct_realloc(poller->pfd, new_alloc * sizeof(struct pollfd));
+		new_pfd = noct_realloc(poller->pfd, new_alloc * sizeof(sock_pollfd_t));
 		if (new_pfd == NULL) {
 			noct_out_of_memory(env);
 			return false;

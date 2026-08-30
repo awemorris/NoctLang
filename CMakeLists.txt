@@ -567,6 +567,15 @@ endif()
 # LDFLAGS
 #
 
+if(    NOCT_ENABLE_API
+   AND NOCT_ENABLE_API_THREAD
+   AND NOCT_ENABLE_MULTITHREAD
+   AND NOT WIN32)
+  set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+  find_package(Threads REQUIRED)
+  target_link_libraries(noctapi PUBLIC Threads::Threads)
+endif()
+
 if(    NOT MSVC
    AND NOT CMAKE_C_COMPILER_ID MATCHES "Watcom"
    AND NOT NOCT_TARGET_ZEDBSD)

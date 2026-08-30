@@ -19,7 +19,6 @@
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h>
-#include <inttypes.h>
 
 /* False assertion */
 #define NEVER_COME_HERE		0
