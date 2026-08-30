@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h>
+#include <inttypes.h>
 
 /* False assertion */
 #define NEVER_COME_HERE		0
@@ -333,8 +334,7 @@ lir_build(
 	loc_count = 0;
 
 	/* Typed entry checks are part of -O/-O1 and above. */
-	if (hir_func->val.func.func_kind != NOCT_FUNC_ACCEL &&
-	    lir_optimize_level >= 1) {
+	if (lir_optimize_level >= 1) {
 		uint32_t k;
 		for (k = 0; k < hir_func->val.func.param_count; k++) {
 			int check_type;
@@ -354,26 +354,23 @@ lir_build(
 		}
 	}
 
-	/* GPU-only accel funcs retain only their program descriptor, never a
-	 * bytecode body that could be replayed as a CPU fallback. */
-	if (hir_func->val.func.func_kind != NOCT_FUNC_ACCEL) {
-		cur_block = hir_func->val.func.inner;
-		while (cur_block != NULL) {
-			if (!lir_visit_block(cur_block))
-				return false;
-			if (cur_block->stop) {
-				assert(cur_block->succ->type == HIR_BLOCK_END);
-				cur_block->succ->addr = (uint32_t)bytecode_top;
-				break;
-			}
-			cur_block = cur_block->succ;
+	cur_block = hir_func->val.func.inner;
+	while (cur_block != NULL) {
+		if (!lir_visit_block(cur_block))
+			return false;
+		if (cur_block->stop) {
+			assert(cur_block->succ->type == HIR_BLOCK_END);
+			cur_block->succ->addr = (uint32_t)bytecode_top;
+			break;
 		}
-		{
-			uint32_t prefix;
-			if (!lir_prepend_tmpvar_types(&prefix))
-				return false;
-			patch_block_address(prefix);
-		}
+		cur_block = cur_block->succ;
+	}
+	{
+		uint32_t prefix;
+
+		if (!lir_prepend_tmpvar_types(&prefix))
+			return false;
+		patch_block_address(prefix);
 	}
 
 	/* Make an lir_func. */
@@ -396,9 +393,6 @@ lir_build(
 		(*lir_func)->param_type[i] = -1;
 		(*lir_func)->param_packed_type[i] = -1;
 		(*lir_func)->param_restricted[i] = false;
-		(*lir_func)->param_accel_access[i] = ACCEL_ACCESS_NONE;
-		(*lir_func)->param_accel_transport[i] = ACCEL_TRANSPORT_SCALAR;
-		(*lir_func)->param_accel_effect[i] = ACCEL_EFFECT_NONE;
 	}
 	for (i = 0; i < hir_func->val.func.param_count; i++) {
 		(*lir_func)->param_type[i] = hir_func->val.func.param_type[i];
@@ -406,12 +400,6 @@ lir_build(
 			hir_func->val.func.param_packed_type[i];
 		(*lir_func)->param_restricted[i] =
 			hir_func->val.func.param_restricted[i];
-		(*lir_func)->param_accel_access[i] =
-			hir_func->val.func.param_accel_access[i];
-		(*lir_func)->param_accel_transport[i] =
-			hir_func->val.func.param_accel_transport[i];
-		(*lir_func)->param_accel_effect[i] =
-			hir_func->val.func.param_accel_effect[i];
 	}
 	(*lir_func)->return_type = hir_func->val.func.return_type;
 	(*lir_func)->return_packed_type =
@@ -450,23 +438,6 @@ lir_build(
 
 	(*lir_func)->tmpvar_size = tmpvar_count + 1;
 	(*lir_func)->has_vector_ops = has_vector_ops;
-	(*lir_func)->is_accel = hir_func->val.func.is_accel;
-	(*lir_func)->func_kind = hir_func->val.func.func_kind;
-	(*lir_func)->fast_signature = *hir_func->val.func.fast_signature;
-	(*lir_func)->accel_kernel =
-		accel_kernel_clone(hir_func->val.func.accel_kernel);
-	if (hir_func->val.func.accel_kernel != NULL &&
-	    (*lir_func)->accel_kernel == NULL) {
-		lir_out_of_memory();
-		return false;
-	}
-	(*lir_func)->accel_program =
-		accel_program_clone(hir_func->val.func.accel_program);
-	if (hir_func->val.func.accel_program != NULL &&
-	    (*lir_func)->accel_program == NULL) {
-		lir_out_of_memory();
-		return false;
-	}
 	(*lir_func)->has_fma_ops = has_fma_ops;
 
 #ifdef DEBUG_DUMP_LIR
@@ -5225,8 +5196,6 @@ lir_cleanup(struct lir_func *func)
 		noct_free(func->param_name[i]);
 	noct_free(func->file_name);
 	noct_free(func->bytecode);
-	accel_kernel_free(func->accel_kernel);
-	accel_program_free(func->accel_program);
 	noct_free(func);
 	noct_free(lir_file_name);
 	lir_file_name = NULL;

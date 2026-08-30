@@ -7,10 +7,44 @@
 
 /* Target-neutral DOALL classification. */
 
-#include "hir_parallel.h"
+#include "hir_opt_paralle.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+/* Forward declarations. */
+static const struct hir_memory_object *hir_doall_object(
+	const struct hir_loop_summary *summary, int id);
+static bool hir_doall_disjoint(const struct hir_memory_object *first,
+	const struct hir_memory_object *second);
+static int hir_doall_dep_kind(const struct hir_memory_access *first,
+	const struct hir_memory_access *second, int *distance);
+static int hir_doall_reason_for_kind(int kind);
+static bool hir_doall_record_alias_requirement(
+	struct hir_doall_result *result, int first_object_id,
+	int second_object_id);
+static bool hir_doall_record_dependence(struct hir_doall_result *result,
+	uint32_t first, uint32_t second, int kind, bool distance_known,
+	int distance);
+static bool hir_doall_classify_internal(
+	const struct hir_loop_summary *summary_const,
+	struct hir_doall_result *result, bool check_scalars);
+
+bool
+hir_doall_classify(
+	const struct hir_loop_summary *summary,
+	struct hir_doall_result *result)
+{
+	return hir_doall_classify_internal(summary, result, true);
+}
+
+bool
+hir_doall_classify_memory(
+	const struct hir_loop_summary *summary,
+	struct hir_doall_result *result)
+{
+	return hir_doall_classify_internal(summary, result, false);
+}
 
 static const struct hir_memory_object *
 hir_doall_object(
@@ -272,20 +306,4 @@ hir_doall_classify_internal(
 		result->reason = HIR_PAR_REASON_NONE;
 	}
 	return true;
-}
-
-bool
-hir_doall_classify(
-	const struct hir_loop_summary *summary,
-	struct hir_doall_result *result)
-{
-	return hir_doall_classify_internal(summary, result, true);
-}
-
-bool
-hir_doall_classify_memory(
-	const struct hir_loop_summary *summary,
-	struct hir_doall_result *result)
-{
-	return hir_doall_classify_internal(summary, result, false);
 }

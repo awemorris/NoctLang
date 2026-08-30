@@ -33,6 +33,10 @@ mkdir -p "$work_dir"
 for level in 0 2; do
 	echo "(-O$level)"
 	for tc in "$root"/tests/testcases/ctrans/*.noct; do
+		# Keep the removed __fast fixture out of the maintained matrix.
+		case "$tc" in
+		*/fast-shape.noct) continue ;;
+		esac
 		name=$(basename "$tc" .noct)-O$level
 		echo "$tc"
 

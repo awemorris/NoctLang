@@ -13,7 +13,6 @@
 #define NOCT_AST_H
 
 #include <noct/noct.h>
-#include "accel.h"
 
 /* Statement Type */
 enum ast_stmt_type {
@@ -112,8 +111,6 @@ struct ast_func {
 	/* File-local functions are already mangled at AST construction time. */
 	bool is_static;
 	bool is_inline;
-	bool is_accel;
-	int func_kind;
 
 	/* Statement list */
 	struct ast_stmt_list *stmt_list;
@@ -373,14 +370,6 @@ ast_build(
 	const char *file_name,
 	const char *text);
 
-/* Build the internal aggregate initializer used by a .nap bundle. */
-bool
-ast_build_app_initializer(
-	const char *file_name,
-	const char *func_name,
-	const char *const *init_name,
-	uint32_t init_count);
-
 /*
  * Free an AST.
  */
@@ -399,24 +388,31 @@ ast_get_func_list(void);
 const char *
 ast_get_file_name(void);
 
-/* Resolve a file-local source symbol, or return the original name. */
+/*
+ * Resolve a file-local source symbol, or return the original name.
+ */
 const char *
-ast_resolve_static_symbol(const char *name);
+ast_resolve_static_symbol(
+	const char *name);
 
-/* Get top-level require declarations in source order. */
+/*
+ * Get require count.
+ */
 uint32_t
 ast_get_require_count(void);
 
+/*
+ * Get a require name.
+ */
 const char *
-ast_get_require_name(uint32_t index);
+ast_get_require_name(
+	uint32_t index);
 
-/* Mangled package_init symbol, or NULL for a non-package compilation unit. */
+/*
+ * Mangled package_init symbol, or NULL for a non-package compilation unit.
+ */
 const char *
 ast_get_package_init_name(void);
-
-/* True when a source symbol names a top-level typed accelerator resource. */
-bool
-ast_is_accel_resource_symbol(const char *name);
 
 /*
  * Get the error message.

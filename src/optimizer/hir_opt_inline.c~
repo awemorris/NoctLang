@@ -15,13 +15,37 @@
 
 #define INLINE_DEPTH_MAX 32
 
+/* Forward declarations. */
+static struct hir_term *inline_clone_term(const struct hir_term *src);
+static int inline_param_index(const struct hir_block *callee,
+	const char *name);
+static struct hir_expr *inline_clone_expr(const struct hir_expr *src,
+	const struct hir_block *callee, struct hir_expr *const *arg);
+static bool inline_pure_expr(const struct hir_expr *e);
+static void inline_count_params(const struct hir_expr *e,
+	const struct hir_block *callee, unsigned *count);
+static struct hir_block *inline_find_callee(const char *name);
+static const struct hir_expr *inline_return_expr(
+	const struct hir_block *callee);
+static bool inline_try_call(struct hir_expr **ep,
+	struct hir_block *caller, int depth);
 static bool inline_rewrite_expr(struct hir_expr **ep,
 				struct hir_block *caller, int depth);
+static bool inline_rewrite_chain(struct hir_block *head,
+	struct hir_block *caller);
+
+bool
+hir_opt_inline_func(struct hir_block *func_block)
+{
+	return inline_rewrite_chain(func_block->val.func.inner, func_block);
+}
 
 static struct hir_term *
 inline_clone_term(const struct hir_term *src)
 {
-	struct hir_term *dst = hir_malloc(sizeof(*dst));
+	struct hir_term *dst;
+
+	dst = hir_malloc(sizeof(*dst));
 
 	if (dst == NULL) {
 		hir_out_of_memory();
@@ -251,7 +275,9 @@ inline_find_callee(const char *name)
 	uint32_t i;
 
 	for (i = 0; i < hir_get_function_count(); i++) {
-		struct hir_block *f = hir_get_function(i);
+		struct hir_block *f;
+
+		f = hir_get_function(i);
 		if (f->val.func.is_static && f->val.func.is_inline &&
 		    strcmp(f->val.func.name, name) == 0)
 			return f;
@@ -262,8 +288,10 @@ inline_find_callee(const char *name)
 static const struct hir_expr *
 inline_return_expr(const struct hir_block *callee)
 {
-	const struct hir_block *b = callee->val.func.inner;
+	const struct hir_block *b;
 	const struct hir_stmt *s;
+
+	b = callee->val.func.inner;
 
 	if (b == NULL || b->type != HIR_BLOCK_BASIC || b->stop == false)
 		return NULL;
@@ -279,12 +307,15 @@ inline_return_expr(const struct hir_block *callee)
 static bool
 inline_try_call(struct hir_expr **ep, struct hir_block *caller, int depth)
 {
-	struct hir_expr *e = *ep;
+	struct hir_expr *e;
 	struct hir_block *callee;
 	const struct hir_expr *body;
-	unsigned count[HIR_PARAM_SIZE] = {0};
+	unsigned count[HIR_PARAM_SIZE];
 	uint32_t i;
 	struct hir_expr *replacement;
+
+	e = *ep;
+	memset(count, 0, sizeof(count));
 
 	if (e->type != HIR_EXPR_CALL || e->val.call.func == NULL ||
 	    e->val.call.func->type != HIR_EXPR_TERM ||
@@ -391,10 +422,4 @@ inline_rewrite_chain(struct hir_block *head, struct hir_block *caller)
 		if (b->stop) break;
 	}
 	return true;
-}
-
-bool
-hir_opt_inline_func(struct hir_block *func_block)
-{
-	return inline_rewrite_chain(func_block->val.func.inner, func_block);
 }

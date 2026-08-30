@@ -85,6 +85,108 @@ typedef struct rt_value NoctValue;
 /* A function. */
 typedef struct rt_func NoctFunc;
 
+/* NoctAPI function-table ABI metadata. */
+#define NOCT_API_ABI_VERSION_1	1u
+#define NOCT_API_FEATURE_CFUNC_DATA	((uint64_t)1 << 0)
+#define NOCT_API_FEATURE_VM_FINALIZER	((uint64_t)1 << 1)
+
+struct NoctAPI;
+typedef struct NoctAPI NoctAPI;
+
+/*
+ * Stable append-only NoctAPI function table.
+ * A client must check abi_version and struct_size before using a field.
+ */
+struct NoctAPI {
+	uint32_t abi_version;
+	uint32_t struct_size;
+	uint64_t feature_bits;
+	void (*noct_enter_blocking)(NoctEnv *env);
+	void (*noct_leave_blocking)(NoctEnv *env);
+	bool (*noct_register_cfunc)(NoctEnv *env, const char *name,
+				    size_t param_count,
+				    const char *param_name[],
+				    bool (*cfunc)(NoctEnv *env),
+				    NoctFunc **ret_func);
+	bool (*noct_register_cfunc_with_data)(NoctEnv *env, const char *name,
+					      size_t param_count,
+					      const char *param_name[],
+					      bool (*cfunc)(NoctEnv *env,
+							    void *userdata),
+					      void *userdata,
+					      NoctFunc **ret_func);
+	bool (*noct_register_vm_finalizer)(NoctEnv *env,
+					  void (*finalizer)(void *userdata),
+					  void *userdata);
+	bool (*noct_enter_vm)(NoctEnv *env, const char *func_name,
+			      uint32_t arg_count, NoctValue *arg,
+			      NoctValue *ret);
+	bool (*noct_call)(NoctEnv *env, NoctFunc *func, uint32_t arg_count,
+			  NoctValue *arg, NoctValue *ret);
+	bool (*noct_get_error_file)(NoctEnv *env, const char **msg);
+	bool (*noct_get_error_line)(NoctEnv *env, int *line);
+	bool (*noct_get_error_message)(NoctEnv *env, const char **msg);
+	bool (*noct_make_int)(NoctEnv *env, NoctValue *value, int i);
+	bool (*noct_make_long)(NoctEnv *env, NoctValue *value, int64_t l);
+	bool (*noct_make_float)(NoctEnv *env, NoctValue *value, float f);
+	bool (*noct_make_double)(NoctEnv *env, NoctValue *value, double d);
+	bool (*noct_make_string)(NoctEnv *env, NoctValue *value,
+				 const char *s);
+	bool (*noct_make_empty_array)(NoctEnv *env, NoctValue *value);
+	bool (*noct_make_empty_dict)(NoctEnv *env, NoctValue *value);
+	bool (*noct_make_packed)(NoctEnv *env, NoctValue *value, int type,
+				 size_t size, size_t elem_size,
+				 void *preallocated, void *native_pointer,
+				 void (*native_finalizer)(void *native_pointer));
+	bool (*noct_get_value_type)(NoctEnv *env, NoctValue *value, int *type);
+	bool (*noct_get_int)(NoctEnv *env, NoctValue *value, int *i);
+	bool (*noct_get_long)(NoctEnv *env, NoctValue *value, int64_t *l);
+	bool (*noct_get_float)(NoctEnv *env, NoctValue *value, float *f);
+	bool (*noct_get_double)(NoctEnv *env, NoctValue *value, double *d);
+	bool (*noct_get_string)(NoctEnv *env, NoctValue *value, const char **s);
+	bool (*noct_get_func)(NoctEnv *env, NoctValue *value, NoctFunc **func);
+	bool (*noct_get_array_size)(NoctEnv *env, NoctValue *array,
+				    size_t *size);
+	bool (*noct_get_array_elem)(NoctEnv *env, NoctValue *array,
+				    size_t index, NoctValue *value);
+	bool (*noct_set_array_elem)(NoctEnv *env, NoctValue *array,
+				    size_t index, NoctValue *value);
+	bool (*noct_resize_array)(NoctEnv *env, NoctValue *array, size_t size);
+	bool (*noct_get_dict_size)(NoctEnv *env, NoctValue *dict, size_t *size);
+	bool (*noct_get_dict_elem)(NoctEnv *env, NoctValue *dict,
+				   NoctValue *key, NoctValue *value);
+	bool (*noct_get_dict_elem_cstr)(NoctEnv *env, NoctValue *dict,
+					const char *key, NoctValue *value);
+	bool (*noct_set_dict_elem)(NoctEnv *env, NoctValue *dict,
+				   NoctValue *key, NoctValue *value);
+	bool (*noct_set_dict_elem_cstr)(NoctEnv *env, NoctValue *dict,
+					const char *key, NoctValue *value);
+	bool (*noct_remove_dict_elem)(NoctEnv *env, NoctValue *dict,
+				      NoctValue *key);
+	bool (*noct_get_packed_type)(NoctEnv *env, NoctValue *packed,
+				     int *type);
+	bool (*noct_get_packed_size)(NoctEnv *env, NoctValue *packed,
+				     size_t *size);
+	bool (*noct_get_packed_pointer)(NoctEnv *env, NoctValue *packed,
+					void **pointer);
+	bool (*noct_get_args)(NoctEnv *env, uint32_t count, ...);
+	bool (*noct_get_arg)(NoctEnv *env, uint32_t index, NoctValue *arg);
+	bool (*noct_set_return)(NoctEnv *env, NoctValue *value);
+	bool (*noct_check_global)(NoctEnv *env, const char *name, bool *has_var);
+	bool (*noct_get_global)(NoctEnv *env, const char *name, NoctValue *value);
+	bool (*noct_set_global)(NoctEnv *env, const char *name, NoctValue *value);
+	bool (*noct_pin_global)(NoctEnv *env, NoctValue *value);
+	bool (*noct_unpin_global)(NoctEnv *env, NoctValue *value);
+	bool (*noct_pin_local)(NoctEnv *env, uint32_t count, ...);
+	bool (*noct_unpin_local)(NoctEnv *env, uint32_t count, ...);
+	void (*noct_fast_gc)(NoctEnv *env);
+	void (*noct_full_gc)(NoctEnv *env);
+	void (*noct_compact_gc)(NoctEnv *env);
+	void (*noct_error)(NoctEnv *env, const char *format, ...);
+	void (*noct_out_of_memory)(NoctEnv *env);
+	uint32_t (*noct_string_hash)(const char *s);
+};
+
 /*
  * A value.
  *  - Members are private.
@@ -113,6 +215,9 @@ struct rt_value {
 	} val;
 };
 
+/*
+ * VM config.
+ */
 struct rt_config {
 	/*
 	 * Base
@@ -147,30 +252,6 @@ struct rt_config {
 
 	/* Report successfully vectorized loops. */
 	int simd_info;
-
-#if defined(NOCT_USE_ACCEL)
-	/* Accelerator runtime and stable diagnostics. */
-	int accel_enable;
-	int accel_info;
-	int accel_backend;
-
-	/* Enable GPU automatic parallelization. */
-	int gpu_enable;
-
-	/* Optional exact GPU device name. */
-	const char *gpu_name;
-#endif
-
-#if defined(NOCT_USE_PARALLEL)
-	/* CPU automatic parallelization level; zero disables it. */
-	int auto_parallel;
-
-	/* Requested processing elements; zero selects all logical CPUs. */
-	int cpu_pe;
-
-	/* Optional comma-separated logical CPU IDs. */
-	const char *cpu_affinity;
-#endif
 
 	uint64_t reserved[32];
 };
@@ -210,30 +291,36 @@ noct_destroy_vm(
 	NoctVM *vm);
 
 /*
- * Creates a thread-local environment (=context) for a secondary thread.
+ * Creates a thread-local environment (=context) for another thread.
  *
- * Thread creation is **NOT** a responsibility of Noct runtime.
- * Developers can create a thread, then tie it to a NocvEnv manually
- * by this function.
+ * Must be called from a thread that is currently running VM code. The new
+ * environment is parked until the target thread adopts it.
  */
 #if defined(NOCT_USE_MULTITHREAD)
 NOCT_DLL
 bool
 noct_create_thread_env(
-	NoctEnv *env);
-#endif
+	NoctEnv *prev_env,
+	NoctEnv **new_env);
 
 /*
- * Releases an environment.
- *
- * Thread release is **NOT** a responsibility of Noct runtime.
- * Developers must call this function to release a NoctEnv for a
- * secondary thread.
+ * Adopts an environment in the current thread.
  */
-#if defined(NOCT_USE_MULTITHREAD)
+NOCT_DLL
+void
+noct_attach_thread_env(
+	NoctEnv *env);
+
+/* Releases an environment that was created but never adopted. */
 NOCT_DLL
 void
 noct_release_thread_env(
+	NoctEnv *env);
+
+/* Detaches the current thread's environment for later reuse. */
+NOCT_DLL
+void
+noct_detach_thread_env(
 	NoctEnv *env);
 #endif
 
@@ -267,7 +354,7 @@ noct_register_cfunc(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	NoctCFunc cfunc,
+	bool (*cfunc)(NoctEnv *env),
 	NoctFunc **ret_func);
 
 /* Registers a native function carrying VM-local user data. */
@@ -278,7 +365,7 @@ noct_register_cfunc_with_data(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	NoctCFuncWithData cfunc,
+	bool (*cfunc)(NoctEnv *env, void *userdata),
 	void *userdata,
 	NoctFunc **ret_func);
 
@@ -287,31 +374,8 @@ NOCT_DLL
 bool
 noct_register_vm_finalizer(
 	NoctEnv *env,
-	NoctVMFinalizer finalizer,
+	void (*finalizer)(void *userdata),
 	void *userdata);
-
-/* Loads and initializes a native library for this VM. */
-NOCT_DLL
-bool
-noct_load_library(
-	NoctEnv *env,
-	const char *name,
-	bool optional,
-	bool *loaded);
-
-/* Resolve and register one source module or installed package. */
-NOCT_DLL
-bool
-noct_require_module(
-	NoctEnv *env,
-	const char *name);
-
-/* Resolve and register an installed package, ignoring flat module paths. */
-NOCT_DLL
-bool
-noct_require_package(
-	NoctEnv *env,
-	const char *name);
 
 /*
  * Enters the VM in the current thread and invokes a function by name.

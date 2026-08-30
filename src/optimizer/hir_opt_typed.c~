@@ -50,8 +50,103 @@ struct tp_ctx {
 	bool changed;
 };
 
+static int tp_combine(int cur, int t);
+static bool tp_is_primitive(int t);
+static int tp_promote_numeric(int a, int b);
+static struct hir_local *tp_find_local(struct tp_ctx *ctx,
+	const char *symbol);
+static int tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e,
+	bool in_region);
+static void tp_meet_symbol(struct tp_ctx *ctx, const char *symbol, int t);
+static void tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e,
+	bool in_region);
+static void tp_scan_stmt(struct tp_ctx *ctx, struct hir_stmt *stmt,
+	bool in_region);
 static void tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head,
 			  bool in_region);
+
+bool
+hir_opt_typed_func(struct hir_block *func_block)
+{
+	struct tp_ctx ctx;
+	struct hir_local *local;
+	uint32_t k;
+	int pass;
+
+	assert(func_block != NULL);
+	assert(func_block->type == HIR_BLOCK_FUNC);
+
+	ctx.func = func_block;
+
+	/*
+	 * Seed: TOP everywhere, except checked primitive locals and parameters.
+	 * Ordinary local annotations are enforced for every definition by LIR.
+	 * Parameters -- annotated ones
+	 * start at their annotation tag (CHECKTYPE-backed), the rest
+	 * at UNKNOWN.  Parameters occupy local slots 0..param_count-1.
+	 */
+	local = func_block->val.func.local;
+	while (local != NULL) {
+		local->proven_type = TP_TOP;
+		if (!local->is_parameter && tp_is_primitive(local->declared_type)) {
+			local->proven_type = local->declared_type;
+		} else if (local->index < (int)func_block->val.func.param_count) {
+			int seed = TP_UNKNOWN;
+
+			for (k = 0; k < func_block->val.func.param_count; k++) {
+				if (strcmp(func_block->val.func.param_name[k],
+					   local->symbol) != 0)
+					continue;
+				if (func_block->val.func.param_type[k] == NOCT_VALUE_INT)
+					seed = TP_INT;
+				else if (func_block->val.func.param_type[k] == NOCT_VALUE_LONG)
+					seed = TP_LONG;
+				else if (func_block->val.func.param_type[k] == NOCT_VALUE_FLOAT)
+					seed = TP_FLOAT;
+				else if (func_block->val.func.param_type[k] == NOCT_VALUE_DOUBLE)
+					seed = TP_DOUBLE;
+				break;
+			}
+			local->proven_type = seed;
+		}
+		local = local->next;
+	}
+
+	/*
+	 * Optimistic fixpoint: values only move down the lattice, and
+	 * its height is 2, so this settles quickly; the pass cap is a
+	 * defensive backstop, and on overrun everything degrades to
+	 * UNKNOWN (never the other direction).
+	 */
+	for (pass = 0; pass < 64; pass++) {
+		ctx.changed = false;
+		if (func_block->val.func.inner != NULL)
+			tp_scan_chain(&ctx, func_block->val.func.inner, false);
+		if (!ctx.changed)
+			break;
+	}
+	if (pass == 64) {
+		local = func_block->val.func.local;
+		while (local != NULL) {
+			local->proven_type = TP_UNKNOWN;
+			local = local->next;
+		}
+		return true;
+	}
+
+	/*
+	 * Finalize: TOP = never assigned = always the zero-init value
+	 * (integer 0) -> proven INT.
+	 */
+	local = func_block->val.func.local;
+	while (local != NULL) {
+		if (local->proven_type == TP_TOP)
+			local->proven_type = TP_INT;
+		local = local->next;
+	}
+
+	return true;
+}
 
 /* Meet-into: returns the combined value of cur and incoming t. */
 static int
@@ -122,6 +217,7 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		case HIR_TERM_SYMBOL:
 		{
 			struct hir_local *local;
+
 			local = tp_find_local(ctx, e->val.term.term->val.symbol);
 			if (local == NULL)
 				return TP_UNKNOWN;	/* Global. */
@@ -365,7 +461,9 @@ tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
 			break;
 		case HIR_BLOCK_FOR:
 		{
-			bool region = in_region || b->val.for_.typed_int_region;
+			bool region;
+
+			region = in_region || b->val.for_.typed_int_region;
 			if (b->val.for_.is_ranged) {
 				tp_apply_captures(ctx, b->val.for_.start, in_region);
 				tp_apply_captures(ctx, b->val.for_.stop, in_region);
@@ -401,86 +499,4 @@ tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
 			break;
 		b = b->succ;
 	}
-}
-
-bool
-hir_opt_typed_func(struct hir_block *func_block)
-{
-	struct tp_ctx ctx;
-	struct hir_local *local;
-	uint32_t k;
-	int pass;
-
-	assert(func_block != NULL);
-	assert(func_block->type == HIR_BLOCK_FUNC);
-
-	ctx.func = func_block;
-
-	/*
-	 * Seed: TOP everywhere, except checked primitive locals and parameters.
-	 * Ordinary local annotations are enforced for every definition by LIR.
-	 * Parameters -- annotated ones
-	 * start at their annotation tag (CHECKTYPE-backed), the rest
-	 * at UNKNOWN.  Parameters occupy local slots 0..param_count-1.
-	 */
-	local = func_block->val.func.local;
-	while (local != NULL) {
-		local->proven_type = TP_TOP;
-		if (!local->is_parameter && tp_is_primitive(local->declared_type)) {
-			local->proven_type = local->declared_type;
-		} else if (local->index < (int)func_block->val.func.param_count) {
-			int seed = TP_UNKNOWN;
-			for (k = 0; k < func_block->val.func.param_count; k++) {
-				if (strcmp(func_block->val.func.param_name[k],
-					   local->symbol) != 0)
-					continue;
-				if (func_block->val.func.param_type[k] == NOCT_VALUE_INT)
-					seed = TP_INT;
-				else if (func_block->val.func.param_type[k] == NOCT_VALUE_LONG)
-					seed = TP_LONG;
-				else if (func_block->val.func.param_type[k] == NOCT_VALUE_FLOAT)
-					seed = TP_FLOAT;
-				else if (func_block->val.func.param_type[k] == NOCT_VALUE_DOUBLE)
-					seed = TP_DOUBLE;
-				break;
-			}
-			local->proven_type = seed;
-		}
-		local = local->next;
-	}
-
-	/*
-	 * Optimistic fixpoint: values only move down the lattice, and
-	 * its height is 2, so this settles quickly; the pass cap is a
-	 * defensive backstop, and on overrun everything degrades to
-	 * UNKNOWN (never the other direction).
-	 */
-	for (pass = 0; pass < 64; pass++) {
-		ctx.changed = false;
-		if (func_block->val.func.inner != NULL)
-			tp_scan_chain(&ctx, func_block->val.func.inner, false);
-		if (!ctx.changed)
-			break;
-	}
-	if (pass == 64) {
-		local = func_block->val.func.local;
-		while (local != NULL) {
-			local->proven_type = TP_UNKNOWN;
-			local = local->next;
-		}
-		return true;
-	}
-
-	/*
-	 * Finalize: TOP = never assigned = always the zero-init value
-	 * (integer 0) -> proven INT.
-	 */
-	local = func_block->val.func.local;
-	while (local != NULL) {
-		if (local->proven_type == TP_TOP)
-			local->proven_type = TP_INT;
-		local = local->next;
-	}
-
-	return true;
 }

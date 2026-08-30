@@ -13,10 +13,7 @@
 #define NOCT_RUNTIME_H
 
 #include <noct/noct.h>
-#include "accel.h"
-#include "fast.h"
 #include "gc.h"
-#include "module.h"
 
 /*
  * Maximum number of the stack depth.
@@ -48,10 +45,7 @@ struct rt_dict;
 struct rt_packed;
 struct rt_func;
 struct rt_bindglobal;
-struct rt_module;
-struct rt_library_transaction;
 struct rt_vm_finalizer;
-struct rt_library_state;
 struct jit_slab;
 
 /*
@@ -179,10 +173,6 @@ struct rt_packed {
 	/* Packed type. */
 	int packed_typed;
 
-	/* True for storage created by a typed Accel resource constructor. */
-	bool is_accel_resource;
-	void *accel_backend_data;
-
 	/* Buffer pointer. */
 	void *packed_buffer;
 
@@ -211,9 +201,6 @@ struct rt_func {
 
 	/* rpacked* source annotation. */
 	bool param_restricted[NOCT_ARG_MAX];
-	int param_accel_access[NOCT_ARG_MAX];
-	int param_accel_transport[NOCT_ARG_MAX];
-	unsigned int param_accel_effect[NOCT_ARG_MAX];
 
 	/* Optional declared return type contract. */
 	int return_type;
@@ -228,11 +215,6 @@ struct rt_func {
 	uint32_t tmpvar_size;
 	/* ABI/prologue metadata: bytecode contains OP_V* instructions. */
 	bool has_vector_ops;
-	bool is_accel;
-	int func_kind;
-	struct fast_signature fast_signature;
-	struct accel_kernel *accel_kernel;
-	struct accel_program *accel_program;
 	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
 	bool has_fma_ops;
 
@@ -241,27 +223,12 @@ struct rt_func {
 	int call_count;
 
 	/* Function pointer. (if a cfunc) */
-	NoctCFunc cfunc;
-	NoctCFuncWithData cfunc_with_data;
+	bool (*cfunc)(struct rt_env *env);
+	bool (*cfunc_with_data)(struct rt_env *env, void *userdata);
 	void *cfunc_userdata;
-	bool cfunc_variadic;
-
-	/* Owning package entry, used for package-local native lookup. */
-	struct rt_module *owner_module;
 
 	/* Next. */
 	struct rt_func *next;
-};
-
-/* Source module retained for require de-duplication and package ownership. */
-struct rt_module {
-	char *key;
-	char *logical_name;
-	char *package_name;
-	char *package_dir;
-	bool is_package;
-	int state;
-	struct rt_module *next;
 };
 
 /*
@@ -360,10 +327,6 @@ struct rt_env {
 	 */
 	char error_message[1024];
 
-	/* Non-NULL only while noct_library_init() is staging registrations. */
-	struct rt_library_transaction *library_transaction;
-	bool loading_package_bytecode;
-
 	/*
 	 * Env linked list.
 	 */
@@ -420,6 +383,9 @@ struct rt_vm {
 
 	/* Function list. */
 	struct rt_func *func_list;
+
+	/* VM-owned native finalizers. */
+	struct rt_vm_finalizer *vm_finalizer_list;
 
 	/* GC. */
 	struct rt_gc_info gc;
@@ -479,6 +445,10 @@ struct rt_vm {
 	 */
 	int global_var_counter;
 
+	/* Detached thread environments available for reuse. */
+	struct rt_env *env_free_list;
+	int env_free_lock;
+
 	/*
 	 * Spin lock for the heap allocator and the GC object lists.
 	 *  - Guards the nursery arena, the tenure freelist, and the
@@ -505,23 +475,6 @@ rt_create_vm(
 bool
 rt_destroy_vm(
 	struct rt_vm *vm);
-
-/* Append a colon-separated source-module search path. */
-bool
-rt_add_require_path(
-	struct rt_vm *vm,
-	const char *path_list);
-
-/* Resolve and register a source module or installed package. */
-bool
-rt_require_module(
-	struct rt_env *env,
-	const char *name);
-
-bool
-rt_require_package(
-	struct rt_env *env,
-	const char *name);
 
 /* Create an environment for another thread. (Call while in-flight.) */
 bool
@@ -569,7 +522,7 @@ rt_register_cfunc(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	NoctCFunc cfunc,
+	bool (*cfunc)(struct rt_env *env),
 	struct rt_func **ret_func);
 
 /* Register a native function carrying VM-local data. */
@@ -579,7 +532,7 @@ rt_register_cfunc_with_data(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	NoctCFuncWithData cfunc,
+	bool (*cfunc)(struct rt_env *env, void *userdata),
 	void *userdata,
 	struct rt_func **ret_func);
 
@@ -587,13 +540,8 @@ rt_register_cfunc_with_data(
 bool
 rt_register_vm_finalizer(
 	struct rt_env *env,
-	NoctVMFinalizer finalizer,
+	void (*finalizer)(void *userdata),
 	void *userdata);
-
-/* Transaction used by the dynamic-library loader. */
-bool rt_library_transaction_begin(struct rt_env *env);
-bool rt_library_transaction_commit(struct rt_env *env);
-void rt_library_transaction_abort(struct rt_env *env);
 
 /*
  * Call

@@ -13,9 +13,6 @@
 
 /* Forward declaration. */
 static bool compile_source(const char *file_name);
-static bool compile_app(int argc, char *argv[], int first);
-static const char *compile_require_path[64];
-static uint32_t compile_require_path_count;
 
 /*
  * The top level function for the compile mode.
@@ -30,20 +27,9 @@ command_compile(
 	int optimize_level;
 	bool lineinfo;
 	enum cli_optimize_level_result optimize_result;
-	bool app = false;
-	compile_require_path_count = 0;
 
 	/* Optional compiler diagnostics/settings before input files. */
 	while (first < argc) {
-		if (strcmp(argv[first], "--app") == 0) {
-			if (app) {
-				printf("--app may be specified only once.\n");
-				return 1;
-			}
-			app = true;
-			first++;
-			continue;
-		}
 		optimize_result = parse_optimize_level_option(
 			argv[first], &optimize_level, &lineinfo);
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
@@ -61,28 +47,12 @@ command_compile(
 			first++;
 			continue;
 		}
-		if (strncmp(argv[first], "--path=", 7) == 0) {
-			if (argv[first][7] == '\0' ||
-			    compile_require_path_count ==
-			    (uint32_t)(sizeof(compile_require_path) /
-				       sizeof(compile_require_path[0]))) {
-				printf("Invalid --path option.\n");
-				return 1;
-			}
-			compile_require_path[compile_require_path_count++] =
-				argv[first] + 7;
-			first++;
-			continue;
-		}
 		break;
 	}
 	if (argc <= first) {
 		show_usage();
 		return 1;
 	}
-	if (app)
-		return compile_app(argc, argv, first) ? 0 : 1;
-
 	/* For each argument file. */
 	for (i = first; i < argc; i++) {
 		/* Compile a source to bytecode. */
@@ -91,77 +61,6 @@ command_compile(
 	}
 
 	return 0;
-}
-
-static bool
-compile_app(int argc, char *argv[], int first)
-{
-	const char *output;
-	int i;
-
-	if (argc - first < 2) {
-		printf("--app requires an output .nap file and at least one input .noct file.\n");
-		return false;
-	}
-	output = argv[first];
-	if (!noct_bcback_app_start(output)) {
-		printf("Invalid Noct App output path: %s\n", output);
-		return false;
-	}
-	{
-		uint32_t path_index;
-		for (path_index = 0; path_index < compile_require_path_count;
-		     path_index++) {
-			if (!noct_bcback_app_add_require_path(
-				    compile_require_path[path_index])) {
-				printf("Invalid or out-of-memory --path option.\n");
-				noct_bcback_app_abort();
-				return false;
-			}
-		}
-	}
-	/* Collect all public __fast contracts before compiling any body.  This
-	 * makes direct calls independent of explicit input order and scans require
-	 * dependencies without executing their initializers. */
-	for (i = first + 1; i < argc; i++) {
-		char *source_data;
-		size_t source_length;
-		if (strcmp(output, argv[i]) == 0) {
-			printf("Noct App output and input paths must differ.\n");
-			noct_bcback_app_abort();
-			return false;
-		}
-		if (!load_file_content(argv[i], &source_data, &source_length)) {
-			noct_bcback_app_abort();
-			return false;
-		}
-		if (!noct_bcback_app_scan_source(argv[i], source_data)) {
-			free(source_data);
-			noct_bcback_app_abort();
-			return false;
-		}
-		free(source_data);
-	}
-	for (i = first + 1; i < argc; i++) {
-		char *source_data;
-		size_t source_length;
-		if (strcmp(output, argv[i]) == 0) {
-			printf("Noct App output and input paths must differ.\n");
-			noct_bcback_app_abort();
-			return false;
-		}
-		if (!load_file_content(argv[i], &source_data, &source_length)) {
-			noct_bcback_app_abort();
-			return false;
-		}
-		if (!noct_bcback_app_add_source(argv[i], source_data)) {
-			free(source_data);
-			noct_bcback_app_abort();
-			return false;
-		}
-		free(source_data);
-	}
-	return noct_bcback_app_finalize();
 }
 
 /* Compile a source file. */

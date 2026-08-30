@@ -5,7 +5,9 @@
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-/* Target-neutral HIR loop analysis and parallel classification. */
+/*
+ * Target-neutral HIR loop analysis and parallel classification.
+ */
 
 #ifndef NOCT_HIR_PARALLEL_H
 #define NOCT_HIR_PARALLEL_H
@@ -61,12 +63,6 @@ enum hir_parallel_class {
 	HIR_PAR_CLASS_DOSUM,
 	HIR_PAR_CLASS_DEPENDENT,
 	HIR_PAR_CLASS_UNKNOWN
-};
-
-enum hir_gpu_lowering_status {
-	HIR_GPU_LOWERING_UNCHECKED,
-	HIR_GPU_LOWERING_LOWERABLE,
-	HIR_GPU_LOWERING_UNSUPPORTED
 };
 
 enum hir_range_status {
@@ -175,8 +171,6 @@ struct hir_loop_summary {
 	int analysis_reason;
 	int parallel_class;
 	int parallel_reason;
-	int gpu_lowering_status;
-	int gpu_lowering_reason;
 	int range_status;
 	int range_reason;
 	bool has_nested_loop;
@@ -221,41 +215,27 @@ struct hir_dosum_result {
 	int line;
 };
 
-void hir_memory_catalog_init(struct hir_memory_catalog *catalog);
-bool hir_memory_catalog_add(struct hir_memory_catalog *catalog,
-			    const struct hir_memory_object *object);
-const struct hir_memory_object *
-hir_memory_catalog_find(const struct hir_memory_catalog *catalog,
-			const char *symbol);
-bool hir_memory_catalog_build_accel(struct hir_block *func,
-				    struct hir_memory_catalog *catalog);
-bool hir_memory_catalog_build_func(struct hir_block *func,
-				   struct hir_memory_catalog *catalog);
+void
+hir_memory_catalog_init(
+	struct hir_memory_catalog *catalog);
 
-bool hir_parallel_normalize_index(const struct hir_expr *expr,
-				  const char *counter,
-				  struct hir_affine_index *index);
-bool hir_parallel_affine_equal(const struct hir_affine_index *first,
-				       const struct hir_affine_index *second);
+bool
+hir_memory_catalog_add(
+	struct hir_memory_catalog *catalog, const struct hir_memory_object *object);
 
-bool hir_loop_analyze(struct hir_block *func,
-		      struct hir_block *loop,
-		      const struct hir_memory_catalog *catalog,
-		      struct hir_loop_summary **summary);
+const struct hir_memory_object *hir_memory_catalog_find(const struct hir_memory_catalog *catalog, const char *symbol);
+bool hir_memory_catalog_build_func(struct hir_block *func, struct hir_memory_catalog *catalog);
+bool hir_parallel_normalize_index(const struct hir_expr *expr, const char *counter, struct hir_affine_index *index);
+bool hir_parallel_affine_equal(const struct hir_affine_index *first, const struct hir_affine_index *second);
+bool hir_loop_analyze(struct hir_block *func, struct hir_block *loop, const struct hir_memory_catalog *catalog, struct hir_loop_summary **summary);
 void hir_loop_summary_free(struct hir_loop_summary *summary);
-void hir_loop_summary_dump(FILE *fp, const struct hir_loop_summary *summary,
-			   const char *prefix);
+void hir_loop_summary_dump(FILE *fp, const struct hir_loop_summary *summary, const char *prefix);
 const char *hir_parallel_reason_string(int reason);
-
-bool hir_doall_classify(const struct hir_loop_summary *summary,
-			struct hir_doall_result *result);
-bool hir_doall_classify_memory(const struct hir_loop_summary *summary,
-			       struct hir_doall_result *result);
-bool hir_dosum_classify(const struct hir_loop_summary *summary,
-			struct hir_dosum_result *result);
+bool hir_doall_classify(const struct hir_loop_summary *summary, struct hir_doall_result *result);
+bool hir_doall_classify_memory(const struct hir_loop_summary *summary, struct hir_doall_result *result);
+bool hir_dosum_classify(const struct hir_loop_summary *summary, struct hir_dosum_result *result);
 
 /* Developer-only diagnostics.  This never changes compilation semantics. */
-bool hir_parallel_diagnose_func(struct hir_block *func, FILE *fp,
-				const char *prefix, bool accel_catalog);
+bool hir_parallel_diagnose_func(struct hir_block *func, FILE *fp, const char *prefix);
 
 #endif

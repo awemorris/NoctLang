@@ -61,7 +61,7 @@ create_vm(NoctVM **vm, NoctEnv **env)
 
 	noct_set_default_config(&config);
 	config.optimize_level = 0;
-	config.lineinfo = false;
+	config.line_info = false;
 	config.jit_code_size = 4096;
 	return noct_create_vm(vm, env, &config);
 }

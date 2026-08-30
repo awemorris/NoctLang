@@ -10,8 +10,6 @@
  */
 
 #include <noct/noct.h>
-#define OM_BACKEND_SYMBOL(name) om_st_##name
-#include "objectmodel-symbols.h"
 #include "objectmodel.h"
 #include "runtime.h"
 #include "gc.h"

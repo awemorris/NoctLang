@@ -33,16 +33,39 @@
 /* Forward declaration */
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
-static INLINE void jit_arm64_invalidate_packed_load(
-	struct jit_context *ctx, int tmp);
-static INLINE bool jit_arm64_gpr_get(struct jit_context *ctx, int tmp,
-	unsigned pin_mask, uint32_t *reg);
-static INLINE bool jit_arm64_gpr_dest(struct jit_context *ctx, int tmp,
-	unsigned pin_mask, uint32_t *reg);
-static INLINE bool jit_arm64_gpr_mov(struct jit_context *ctx,
-	uint32_t dst, uint32_t src);
+static bool jit_put_ldr_imm(struct jit_context *ctx, uint32_t rd,
+	uint32_t rs, uint32_t imm);
+static bool jit_put_str_imm(struct jit_context *ctx, uint32_t rs,
+	uint32_t rd, uint32_t imm);
+static bool jit_put_add(struct jit_context *ctx, uint32_t rd,
+	uint32_t ra, uint32_t rb);
+static bool jit_put_add_imm(struct jit_context *ctx, uint32_t rd,
+	uint32_t rs, uint32_t imm);
+#if 0
+static bool jit_put_lsl4(struct jit_context *ctx, uint32_t rd,
+	uint32_t rs);
+#endif
+static bool jit_put_cmp_imm(struct jit_context *ctx, uint32_t rs,
+	uint32_t imm);
+static bool jit_put_cmp_w3_imm(struct jit_context *ctx, uint32_t imm);
+static bool jit_put_cmp_w3_w4(struct jit_context *ctx);
+static uint16_t jit_arm64_read_u16(const uint8_t *p);
+static bool jit_arm64_packed_cursor(struct jit_context *ctx, int base,
+	int ofs, int scale, uint32_t *base_reg, int *cursor,
+	int32_t *byte_disp);
+static bool jit_arm64_put_packed_access_disp(struct jit_context *ctx,
+	bool store, int scale, bool is_signed, uint32_t rt, uint32_t rn,
+	int32_t byte_disp);
+static void jit_arm64_gpr_reset(struct jit_context *ctx);
+static int jit_arm64_gpr_limit(void);
+static bool jit_arm64_gpr_spill(struct jit_context *ctx, int slot);
+static bool jit_arm64_gpr_alloc(struct jit_context *ctx, int tmp,
+	unsigned pin_mask, bool load, uint32_t *reg);
+static bool jit_arm64_gpr_rebind(struct jit_context *ctx, int dst,
+	int src, uint32_t *reg);
 static bool jit_arm64_gpr_flush(struct jit_context *ctx);
 static bool jit_arm64_gpr_flush_required(struct jit_context *ctx);
+static bool jit_arm64_scan_vector_bases(struct jit_context *ctx);
 
 /*
  * Generate a JIT-compiled code for a function.
@@ -53,9 +76,11 @@ jit_build(
           struct rt_func *func)
 {
 	/* Advanced SIMD is part of the AArch64 application-profile ABI. */
-	JIT_BUILD_STANDARD(env, func,
-			   JIT_SIMD_CAP_NEON | JIT_SIMD_CAP_FMAF32X4,
-			   "arm64");
+	return jit_build_standard(env, func,
+                                  JIT_SIMD_CAP_NEON | JIT_SIMD_CAP_FMAF32X4,
+                                  "arm64",
+                                  jit_visit_bytecode,
+                                  jit_patch_branch);
 }
 
 /*
@@ -569,6 +594,41 @@ jit_put_ret(
                 EXCEPTION_IF_EQUAL();                                                                  \
         }
 
+static INLINE void
+jit_arm64_invalidate_packed_load(struct jit_context *ctx, int tmp)
+{
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		if (ctx->gpr_load_tmp[i] == tmp)
+			ctx->gpr_load_tmp[i] = -1;
+	}
+}
+
+static INLINE bool
+jit_arm64_gpr_get(struct jit_context *ctx, int tmp,
+			  unsigned pin_mask, uint32_t *reg)
+{
+	return jit_arm64_gpr_alloc(ctx, tmp, pin_mask, true, reg);
+}
+
+static INLINE bool
+jit_arm64_gpr_dest(struct jit_context *ctx, int tmp,
+			   unsigned pin_mask, uint32_t *reg)
+{
+	ctx->gpr_remat_valid[tmp] = 0;
+	return jit_arm64_gpr_alloc(ctx, tmp, pin_mask, false, reg);
+}
+
+static INLINE bool
+jit_arm64_gpr_mov(struct jit_context *ctx, uint32_t dst, uint32_t src)
+{
+	if (dst == src)
+		return true;
+	/* mov wD,wS == orr wD,wzr,wS */
+	return jit_put_word(ctx, 0x2a0003e0u | (src << 16) | dst);
+}
+
 /*
  * Bytecode visitors
  */
@@ -672,6 +732,7 @@ jit_visit_assign_op(
 	if (ctx->tmp_fixed_type != NULL && ctx->tmp_fixed_type[src] >= 0 &&
 	    !ctx->tmp_frame_tag_known[src]) {
 		int src_ofs = src * (int)sizeof(struct rt_value);
+
 		ASM {
 			MOVZ(REG_X2, IMM16(ctx->tmp_fixed_type[src]), LSL_0);
 			MOVZ(REG_X3, IMM16(src_ofs), LSL_0);
@@ -712,7 +773,6 @@ jit_visit_iconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint32_t val;
 	bool write_tag;
 
@@ -740,7 +800,6 @@ jit_visit_iconst_op(
 		return true;
 	}
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_INT);
         dst *= (int)sizeof(struct rt_value);
@@ -764,8 +823,6 @@ jit_visit_iconst_op(
                 MOVK            (REG_X3, IMM16((val >> 16) & 0xffff), LSL_16);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
-	UNUSED_PARAMETER(dst_tmp);
-
         return true;
 }
 
@@ -775,14 +832,12 @@ jit_visit_liconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint64_t val;
 	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_LONG);
         dst *= (int)sizeof(struct rt_value);
@@ -808,8 +863,6 @@ jit_visit_liconst_op(
                 MOVK            (REG_X3, IMM16((val >> 48) & 0xffff), LSL_48);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
-	UNUSED_PARAMETER(dst_tmp);
-
         return true;
 }
 
@@ -819,14 +872,12 @@ jit_visit_fconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint32_t val;
 	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_FLOAT);
         dst *= (int)sizeof(struct rt_value);
@@ -850,8 +901,6 @@ jit_visit_fconst_op(
                 MOVK            (REG_X3, IMM16((val >> 16) & 0xffff), LSL_16);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
-	UNUSED_PARAMETER(dst_tmp);
-
         return true;
 }
 
@@ -861,14 +910,12 @@ jit_visit_lfconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint64_t val;
 	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_DOUBLE);
         dst *= (int)sizeof(struct rt_value);
@@ -894,8 +941,6 @@ jit_visit_lfconst_op(
                 MOVK            (REG_X3, IMM16((val >> 48) & 0xffff), LSL_48);
                 STR_IMM         (REG_X3, REG_X2, IMM9(8));
         }
-	UNUSED_PARAMETER(dst_tmp);
-
         return true;
 }
 
@@ -1125,10 +1170,11 @@ jit_arm64_packed_cursor(struct jit_context *ctx, int base, int ofs,
 	int root;
 	int32_t element_disp;
 
+	UNUSED_PARAMETER(ofs);
+
 	if (!ctx->packed_loop_hint_active ||
 	    !jit_ploop_current_access_disp(ctx, &element_disp))
 		return false;
-	UNUSED_PARAMETER(ofs);
 	if (element_disp < INT32_MIN / scale ||
 	    element_disp > INT32_MAX / scale)
 		return false;
@@ -1211,17 +1257,6 @@ jit_arm64_put_packed_access_disp(struct jit_context *ctx, bool store,
 }
 
 static INLINE void
-jit_arm64_invalidate_packed_load(struct jit_context *ctx, int tmp)
-{
-	int i;
-
-	for (i = 0; i < 3; i++) {
-		if (ctx->gpr_load_tmp[i] == tmp)
-			ctx->gpr_load_tmp[i] = -1;
-	}
-}
-
-static INLINE void
 jit_arm64_invalidate_all_packed_loads(struct jit_context *ctx)
 {
 	int i;
@@ -1234,6 +1269,7 @@ static INLINE bool
 jit_arm64_gpr_is_cached(struct jit_context *ctx, int tmp)
 {
 	int i;
+
 	for (i = 0; i < 3; i++)
 		if (ctx->gpr_load_tmp[i] == tmp) return true;
 	return false;
@@ -1350,10 +1386,13 @@ jit_arm64_gpr_alloc(struct jit_context *ctx, int tmp,
 		farthest = 0;
 		slot = -1;
 		for (i = 0; i < ctx->gpr_reg_limit; i++) {
-			int candidate = i;
+			int candidate;
 			int held;
 			int j;
-			bool is_cached = false;
+			bool is_cached;
+
+			candidate = i;
+			is_cached = false;
 			if ((pin_mask & (1u << candidate)) != 0)
 				continue;
 			held = ctx->gpr_reg_tmp[candidate];
@@ -1385,36 +1424,14 @@ jit_arm64_gpr_alloc(struct jit_context *ctx, int tmp,
 	return true;
 }
 
-static INLINE bool
-jit_arm64_gpr_get(struct jit_context *ctx, int tmp,
-			  unsigned pin_mask, uint32_t *reg)
-{
-	return jit_arm64_gpr_alloc(ctx, tmp, pin_mask, true, reg);
-}
-
-static INLINE bool
-jit_arm64_gpr_dest(struct jit_context *ctx, int tmp,
-			   unsigned pin_mask, uint32_t *reg)
-{
-	ctx->gpr_remat_valid[tmp] = 0;
-	return jit_arm64_gpr_alloc(ctx, tmp, pin_mask, false, reg);
-}
-
-static INLINE bool
-jit_arm64_gpr_mov(struct jit_context *ctx, uint32_t dst, uint32_t src)
-{
-	if (dst == src)
-		return true;
-	/* mov wD,wS == orr wD,wzr,wS */
-	return jit_put_word(ctx, 0x2a0003e0u | (src << 16) | dst);
-}
-
 static bool
 jit_arm64_gpr_rebind(struct jit_context *ctx, int dst, int src,
 			 uint32_t *reg)
 {
-	int slot = ctx->gpr_tmp_reg[src];
+	int slot;
 	int old;
+
+	slot = ctx->gpr_tmp_reg[src];
 	if (slot < 0)
 		return false;
 	old = ctx->gpr_tmp_reg[dst];
@@ -1447,8 +1464,10 @@ jit_arm64_gpr_flush(struct jit_context *ctx)
 static bool
 jit_arm64_gpr_flush_required(struct jit_context *ctx)
 {
-	bool active = ctx->packed_loop_hint_active;
+	bool active;
 	bool ok;
+
+	active = ctx->packed_loop_hint_active;
 	ctx->packed_loop_hint_active = false;
 	ok = jit_arm64_gpr_flush(ctx);
 	ctx->packed_loop_hint_active = active;
@@ -1669,6 +1688,7 @@ jit_visit_vindex_hint_op(
 	if (ctx->vector_hint_active) {
 		int base0_ofs = ctx->vector_base_tmp[0] *
 			(int)sizeof(struct rt_value);
+
 		ASM {
 			LDR_W_IMM(REG_X21, REG_X1,
 				    (uint32_t)(remaining_ofs + 8));
@@ -1677,6 +1697,7 @@ jit_visit_vindex_hint_op(
 		if (ctx->vector_base_tmp[1] >= 0) {
 			int base1_ofs = ctx->vector_base_tmp[1] *
 				(int)sizeof(struct rt_value);
+
 			ASM { LDR_IMM(REG_X20, REG_X1, IMM9(base1_ofs + 8)); }
 		}
 	}
@@ -1723,8 +1744,11 @@ jit_visit_subjnz_op(
 
 			for (slot = 0; slot < 3 &&
 			     ctx->packed_loop_base_tmp[slot] >= 0; slot++) {
-				uint32_t reg = jit_arm64_packed_base_reg(slot);
-				uint32_t amount = (uint32_t)
+				uint32_t reg;
+				uint32_t amount;
+
+				reg = jit_arm64_packed_base_reg(slot);
+				amount = (uint32_t)
 					(4 * ctx->packed_loop_base_scale[slot]);
 				if (!jit_put_word(ctx, 0x91000000u |
 						 (amount << 10) |
@@ -1791,6 +1815,7 @@ jit_visit_subjnz_op(
 			(int)sizeof(struct rt_value);
 		int stop_ofs = ctx->vector_hint_stop_tmp *
 			(int)sizeof(struct rt_value);
+
 		ASM {
 			LDR_W_IMM(REG_X2, REG_X1, (uint32_t)(stop_ofs + 8));
 			STR_W_IMM(REG_X2, REG_X1, (uint32_t)(index_ofs + 8));
@@ -1801,6 +1826,7 @@ jit_visit_subjnz_op(
 			(int)sizeof(struct rt_value);
 		int stop_ofs = ctx->packed_loop_stop_tmp *
 			(int)sizeof(struct rt_value);
+
 		ASM {
 			MOVZ(REG_X2, IMM16(0), LSL_0);
 			STR_W_IMM(REG_X2, REG_X1, (uint32_t)(value_ofs + 8));
@@ -1874,6 +1900,7 @@ jit_visit_vfmaf32x4_op(
 	CONSUME_IMM8(src3);
 	if ((ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0) {
 		int packed_src2_src3 = (src2 << 8) | src3;
+
 		src2 = packed_src2_src3;
 		ASM_BINARY_OP(ex_vfmaf32x4_helper);
 		return true;
@@ -1910,17 +1937,18 @@ jit_visit_vfmaf32x4_op(
 }
 
 static INLINE bool
-jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
+jit_visit_vcmpi32x4_op(struct jit_context *ctx)
 {
 	int dst, src1, src2, pred;
 	int vd, vn, vm;
 	uint32_t base;
-	bool invert = false;
-	bool swap = false;
-	bool (CDECL *helper)(NoctEnv *, int, int, int);
+	bool invert;
+	bool swap;
 
-	CONSUME_IMM8(dst); CONSUME_IMM8(src1);
-	CONSUME_IMM8(src2); CONSUME_IMM8(pred);
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(src2);
+	CONSUME_IMM8(pred);
 	if (dst < 0 || dst >= 16 || src1 < 0 || src1 >= 16 ||
 	    src2 < 0 || src2 >= 16 || pred < 0 ||
 	    pred >= VCMP_PREDICATE_COUNT) {
@@ -1929,31 +1957,87 @@ jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
 	}
 	if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
 		src2 = (src2 << 8) | pred;
-		helper = is_float ? ex_vcmpf32x4_helper :
-				    ex_vcmpi32x4_helper;
-		ASM_BINARY_OP(helper);
+		ASM_BINARY_OP(ex_vcmpi32x4_helper);
 		return true;
 	}
 	vd = dst < 8 ? dst : dst + 8;
 	vn = src1 < 8 ? src1 : src1 + 8;
 	vm = src2 < 8 ? src2 : src2 + 8;
+	invert = false;
+	swap = false;
 	if (pred == VCMP_NE) {
-		base = is_float ? 0x4e20e400u : 0x6ea08c00u;
+		base = 0x6ea08c00u;
 		invert = true;
 	} else if (pred == VCMP_EQ) {
-		base = is_float ? 0x4e20e400u : 0x6ea08c00u;
+		base = 0x6ea08c00u;
 	} else {
 		if (pred == VCMP_LT || pred == VCMP_LE)
 			swap = true;
-		if (is_float)
-			base = (pred == VCMP_LE || pred == VCMP_GE) ?
-				0x6e20e400u : 0x6ea0e400u;
-		else
-			base = (pred == VCMP_LE || pred == VCMP_GE) ?
-				0x4ea03c00u : 0x4ea03400u;
+		base = (pred == VCMP_LE || pred == VCMP_GE) ?
+			0x4ea03c00u : 0x4ea03400u;
 	}
 	if (swap) {
-		int tmp = vn; vn = vm; vm = tmp;
+		int tmp = vn;
+
+		vn = vm;
+		vm = tmp;
+	}
+	if (!jit_put_word(ctx, base | ((uint32_t)vm << 16) |
+				 ((uint32_t)vn << 5) | 31u))
+		return false;
+	if (invert && !jit_put_word(ctx, 0x6e205800u | (31u << 5) | 31u))
+		return false;
+	if (vd != 31 && !jit_put_word(ctx, 0x4ea01c00u | (31u << 16) |
+					     (31u << 5) | (uint32_t)vd))
+		return false;
+	return true;
+}
+
+static INLINE bool
+jit_visit_vcmpf32x4_op(struct jit_context *ctx)
+{
+	int dst, src1, src2, pred;
+	int vd, vn, vm;
+	uint32_t base;
+	bool invert;
+	bool swap;
+
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(src2);
+	CONSUME_IMM8(pred);
+	if (dst < 0 || dst >= 16 || src1 < 0 || src1 >= 16 ||
+	    src2 < 0 || src2 >= 16 || pred < 0 ||
+	    pred >= VCMP_PREDICATE_COUNT) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+		src2 = (src2 << 8) | pred;
+		ASM_BINARY_OP(ex_vcmpf32x4_helper);
+		return true;
+	}
+	vd = dst < 8 ? dst : dst + 8;
+	vn = src1 < 8 ? src1 : src1 + 8;
+	vm = src2 < 8 ? src2 : src2 + 8;
+	invert = false;
+	swap = false;
+	if (pred == VCMP_NE) {
+		base = 0x4e20e400u;
+		invert = true;
+	} else if (pred == VCMP_EQ) {
+		base = 0x4e20e400u;
+	} else {
+		if (pred == VCMP_LT || pred == VCMP_LE)
+			swap = true;
+		base = (pred == VCMP_LE || pred == VCMP_GE) ?
+			0x6e20e400u : 0x6ea0e400u;
+	}
+	if (swap) {
+		int tmp = vn;
+
+		vn = vm;
+		vm = tmp;
 	}
 	if (!jit_put_word(ctx, base | ((uint32_t)vm << 16) |
 				 ((uint32_t)vn << 5) | 31u))
@@ -2030,7 +2114,9 @@ jit_visit_vmaskstorei32x4_op(struct jit_context *ctx)
 		ADD(REG_X2, REG_X2, REG_X3);
 	}
 	for (lane = 0; lane < 4; lane++) {
-		uint32_t imm5 = ((uint32_t)lane << 3) | 4u;
+		uint32_t imm5;
+
+		imm5 = ((uint32_t)lane << 3) | 4u;
 		/* umov w3, vMask.s[lane]; cbz w3, after lane store */
 		if (!jit_put_word(ctx, 0x0e003c00u | (imm5 << 16) |
 					 ((uint32_t)vm << 5) | 3u) ||
@@ -2047,6 +2133,7 @@ static INLINE bool
 jit_visit_vinductf32x4_op(struct jit_context *ctx)
 {
 	int dst, src1, src2;
+
 	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1); CONSUME_TMPVAR(src2);
 	if (dst < 0 || dst >= 16) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
@@ -2060,6 +2147,7 @@ static INLINE bool
 jit_visit_vgatheri32x4_checked_op(struct jit_context *ctx)
 {
 	int dst, src1, plen, vi, src2;
+
 	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1);
 	CONSUME_TMPVAR(plen); CONSUME_IMM8(vi);
 	if (dst < 0 || dst >= 16 || vi < 0 || vi >= 16) {
@@ -3226,108 +3314,6 @@ jit_visit_typeis_op(
         return true;
 }
 
-static bool
-jit_arm64_try_packed_load(struct jit_context *ctx, int dst, int base,
-			  int ofs, int scale, bool is_signed,
-			  bool *handled)
-{
-	uint32_t base_reg;
-	uint32_t reg;
-	uint32_t cached_reg;
-	int cursor;
-	int dst_ofs;
-	int cached_tmp;
-	int opcode_key;
-	int32_t byte_disp;
-
-	*handled = jit_arm64_packed_cursor(ctx, base, ofs, scale,
-					   &base_reg, &cursor, &byte_disp);
-	if (!*handled)
-		return true;
-	UNUSED_PARAMETER(cursor);
-	jit_ploop_remove_index_alias(ctx, dst);
-	jit_ploop_remove_base_alias(ctx, dst);
-	if (ctx->gpr_cache_active) {
-		opcode_key = scale * 2 + (is_signed ? 1 : 0);
-		cached_tmp = ctx->gpr_load_tmp[cursor];
-		if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
-			cached_tmp = -1;
-		if (cached_tmp >= 0 &&
-		    ctx->gpr_load_opcode[cursor] == opcode_key &&
-		    ctx->gpr_load_disp[cursor] == byte_disp &&
-		    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
-			if (!jit_arm64_gpr_get(ctx, cached_tmp, 0, &cached_reg))
-				return false;
-			if (jit_ploop_next_use_lpc(ctx, cached_tmp, ctx->lpc) ==
-			    UINT32_MAX) {
-				if (!jit_arm64_gpr_rebind(ctx, dst, cached_tmp, &reg))
-					return false;
-			} else if (!jit_arm64_gpr_dest(ctx, dst,
-					1u << (cached_reg - REG_X23), &reg) ||
-				   !jit_arm64_gpr_mov(ctx, reg, cached_reg)) {
-				return false;
-			}
-		} else {
-			if (!jit_arm64_gpr_dest(ctx, dst, 0, &reg) ||
-			    !jit_arm64_put_packed_access_disp(ctx, false, scale,
-				is_signed, reg, base_reg, byte_disp))
-				return false;
-		}
-		ctx->gpr_tmp_dirty[dst] = 1;
-		ctx->gpr_range_valid[dst] = scale < 4 ? 1 : 0;
-		if (scale == 1) {
-			ctx->gpr_range_min[dst] = is_signed ? -128 : 0;
-			ctx->gpr_range_max[dst] = is_signed ? 127 : 255;
-		} else if (scale == 2) {
-			ctx->gpr_range_min[dst] = is_signed ? -32768 : 0;
-			ctx->gpr_range_max[dst] = is_signed ? 32767 : 65535;
-		}
-		ctx->gpr_load_tmp[cursor] = dst;
-		ctx->gpr_load_opcode[cursor] = opcode_key;
-		ctx->gpr_load_disp[cursor] = byte_disp;
-		return true;
-	}
-	if (!jit_arm64_put_packed_access_disp(ctx, false, scale, is_signed,
-					     REG_X3, base_reg, byte_disp))
-		return false;
-	dst_ofs = dst * (int)sizeof(struct rt_value);
-	ASM {
-		MOVZ(REG_X4, IMM16(NOCT_VALUE_INT), LSL_0);
-		STR_IMM(REG_X4, REG_X1, IMM9(dst_ofs));
-		STR_IMM(REG_X3, REG_X1, IMM9(dst_ofs + 8));
-	}
-	return true;
-}
-
-static bool
-jit_arm64_try_packed_store(struct jit_context *ctx, int base, int ofs,
-			   int src, int scale, bool *handled)
-{
-	uint32_t base_reg;
-	uint32_t reg;
-	int cursor;
-	int src_ofs;
-	int32_t byte_disp;
-
-	*handled = jit_arm64_packed_cursor(ctx, base, ofs, scale,
-					   &base_reg, &cursor, &byte_disp);
-	if (!*handled)
-		return true;
-	UNUSED_PARAMETER(cursor);
-	if (ctx->gpr_cache_active) {
-		if (!jit_arm64_gpr_get(ctx, src, 0, &reg) ||
-		    !jit_arm64_put_packed_access_disp(ctx, true, scale, false,
-					      reg, base_reg, byte_disp))
-			return false;
-		ctx->gpr_load_tmp[cursor] = -1;
-		return true;
-	}
-	src_ofs = src * (int)sizeof(struct rt_value);
-	ASM { LDR_W_IMM(REG_X4, REG_X1, (uint32_t)(src_ofs + 8)); }
-	return jit_arm64_put_packed_access_disp(ctx, true, scale, false,
-						REG_X4, base_reg, byte_disp);
-}
-
 /* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code, arm64.) */
 static INLINE bool
 jit_visit_pload8u_op(
@@ -3336,16 +3322,77 @@ jit_visit_pload8u_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        uint32_t cached_reg;
+        int cursor;
+        int dst_ofs;
+        int cached_tmp;
+        int opcode_key;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_arm64_try_packed_load(ctx, dst, base, ofs, 1, false,
-					&handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 1,
+                                    &base_reg, &cursor, &byte_disp)) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+                if (ctx->gpr_cache_active) {
+                        opcode_key = 2;
+                        cached_tmp = ctx->gpr_load_tmp[cursor];
+                        if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+                                cached_tmp = -1;
+                        if (cached_tmp >= 0 &&
+                            ctx->gpr_load_opcode[cursor] == opcode_key &&
+                            ctx->gpr_load_disp[cursor] == byte_disp &&
+                            ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+                                if (!jit_arm64_gpr_get(ctx, cached_tmp, 0,
+                                                       &cached_reg))
+                                        return false;
+                                if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+                                                          ctx->lpc) ==
+                                    UINT32_MAX) {
+                                        if (!jit_arm64_gpr_rebind(ctx, dst,
+                                                                  cached_tmp,
+                                                                  &reg))
+                                                return false;
+                                } else if (!jit_arm64_gpr_dest(
+                                                   ctx, dst,
+                                                   1u << (cached_reg - REG_X23),
+                                                   &reg) ||
+                                           !jit_arm64_gpr_mov(ctx, reg,
+                                                              cached_reg)) {
+                                        return false;
+                                }
+                        } else {
+                                if (!jit_arm64_gpr_dest(ctx, dst, 0, &reg) ||
+                                    !jit_arm64_put_packed_access_disp(
+                                             ctx, false, 1, false, reg,
+                                             base_reg, byte_disp))
+                                        return false;
+                        }
+                        ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 1;
+                ctx->gpr_range_min[dst] = 0;
+                ctx->gpr_range_max[dst] = 255;
+                        ctx->gpr_load_tmp[cursor] = dst;
+                        ctx->gpr_load_opcode[cursor] = opcode_key;
+                        ctx->gpr_load_disp[cursor] = byte_disp;
+                        return true;
+                }
+                if (!jit_arm64_put_packed_access_disp(ctx, false, 1,
+                                                      false, REG_X3,
+                                                      base_reg, byte_disp))
+                        return false;
+                dst_ofs = dst * (int)sizeof(struct rt_value);
+                ASM {
+                        MOVZ(REG_X4, IMM16(NOCT_VALUE_INT), LSL_0);
+                        STR_IMM(REG_X4, REG_X1, IMM9(dst_ofs));
+                        STR_IMM(REG_X3, REG_X1, IMM9(dst_ofs + 8));
+                }
+                return true;
+        }
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3379,15 +3426,35 @@ jit_visit_pstore8_op(
         int base;
         int ofs;
         int src;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        int cursor;
+        int src_ofs;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
-	if (!jit_arm64_try_packed_store(ctx, base, ofs, src, 1, &handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 1,
+                                    &base_reg, &cursor, &byte_disp)) {
+                if (ctx->gpr_cache_active) {
+                        if (!jit_arm64_gpr_get(ctx, src, 0, &reg) ||
+                            !jit_arm64_put_packed_access_disp(
+                                     ctx, true, 1, false, reg, base_reg,
+                                     byte_disp))
+                                return false;
+                        ctx->gpr_load_tmp[cursor] = -1;
+                        return true;
+                }
+                src_ofs = src * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_W_IMM(REG_X4, REG_X1,
+                                  (uint32_t)(src_ofs + 8));
+                }
+                return jit_arm64_put_packed_access_disp(
+                                ctx, true, 1, false, REG_X4, base_reg,
+                                byte_disp);
+        }
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -3413,19 +3480,18 @@ jit_visit_checktype_op(
 {
         int dst;
         int src;
+        int flags;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM8(src);
 
 	/* if (!ex_checktype_helper(env, slot, type)) return false; */
 	ASM_UNARY_OP(ex_checktype_helper);
-	{
-		int flags = src & (TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
-		src &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
+	flags = src & (TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
+	src &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
 	if (ctx->tmp_fixed_type != NULL &&
 	    flags == 0 && ctx->tmp_fixed_type[dst] == src)
-		ctx->tmp_frame_tag_known[dst] = 1;
-	}
+	ctx->tmp_frame_tag_known[dst] = 1;
 
 	return true;
 }
@@ -3466,16 +3532,77 @@ jit_visit_pload8s_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        uint32_t cached_reg;
+        int cursor;
+        int dst_ofs;
+        int cached_tmp;
+        int opcode_key;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_arm64_try_packed_load(ctx, dst, base, ofs, 1, true,
-					&handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 1,
+                                    &base_reg, &cursor, &byte_disp)) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+                if (ctx->gpr_cache_active) {
+                        opcode_key = 3;
+                        cached_tmp = ctx->gpr_load_tmp[cursor];
+                        if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+                                cached_tmp = -1;
+                        if (cached_tmp >= 0 &&
+                            ctx->gpr_load_opcode[cursor] == opcode_key &&
+                            ctx->gpr_load_disp[cursor] == byte_disp &&
+                            ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+                                if (!jit_arm64_gpr_get(ctx, cached_tmp, 0,
+                                                       &cached_reg))
+                                        return false;
+                                if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+                                                          ctx->lpc) ==
+                                    UINT32_MAX) {
+                                        if (!jit_arm64_gpr_rebind(ctx, dst,
+                                                                  cached_tmp,
+                                                                  &reg))
+                                                return false;
+                                } else if (!jit_arm64_gpr_dest(
+                                                   ctx, dst,
+                                                   1u << (cached_reg - REG_X23),
+                                                   &reg) ||
+                                           !jit_arm64_gpr_mov(ctx, reg,
+                                                              cached_reg)) {
+                                        return false;
+                                }
+                        } else {
+                                if (!jit_arm64_gpr_dest(ctx, dst, 0, &reg) ||
+                                    !jit_arm64_put_packed_access_disp(
+                                             ctx, false, 1, true, reg,
+                                             base_reg, byte_disp))
+                                        return false;
+                        }
+                        ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 1;
+                ctx->gpr_range_min[dst] = -128;
+                ctx->gpr_range_max[dst] = 127;
+                        ctx->gpr_load_tmp[cursor] = dst;
+                        ctx->gpr_load_opcode[cursor] = opcode_key;
+                        ctx->gpr_load_disp[cursor] = byte_disp;
+                        return true;
+                }
+                if (!jit_arm64_put_packed_access_disp(ctx, false, 1,
+                                                      true, REG_X3,
+                                                      base_reg, byte_disp))
+                        return false;
+                dst_ofs = dst * (int)sizeof(struct rt_value);
+                ASM {
+                        MOVZ(REG_X4, IMM16(NOCT_VALUE_INT), LSL_0);
+                        STR_IMM(REG_X4, REG_X1, IMM9(dst_ofs));
+                        STR_IMM(REG_X3, REG_X1, IMM9(dst_ofs + 8));
+                }
+                return true;
+        }
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3509,16 +3636,77 @@ jit_visit_pload16u_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        uint32_t cached_reg;
+        int cursor;
+        int dst_ofs;
+        int cached_tmp;
+        int opcode_key;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_arm64_try_packed_load(ctx, dst, base, ofs, 2, false,
-					&handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 2,
+                                    &base_reg, &cursor, &byte_disp)) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+                if (ctx->gpr_cache_active) {
+                        opcode_key = 4;
+                        cached_tmp = ctx->gpr_load_tmp[cursor];
+                        if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+                                cached_tmp = -1;
+                        if (cached_tmp >= 0 &&
+                            ctx->gpr_load_opcode[cursor] == opcode_key &&
+                            ctx->gpr_load_disp[cursor] == byte_disp &&
+                            ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+                                if (!jit_arm64_gpr_get(ctx, cached_tmp, 0,
+                                                       &cached_reg))
+                                        return false;
+                                if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+                                                          ctx->lpc) ==
+                                    UINT32_MAX) {
+                                        if (!jit_arm64_gpr_rebind(ctx, dst,
+                                                                  cached_tmp,
+                                                                  &reg))
+                                                return false;
+                                } else if (!jit_arm64_gpr_dest(
+                                                   ctx, dst,
+                                                   1u << (cached_reg - REG_X23),
+                                                   &reg) ||
+                                           !jit_arm64_gpr_mov(ctx, reg,
+                                                              cached_reg)) {
+                                        return false;
+                                }
+                        } else {
+                                if (!jit_arm64_gpr_dest(ctx, dst, 0, &reg) ||
+                                    !jit_arm64_put_packed_access_disp(
+                                             ctx, false, 2, false, reg,
+                                             base_reg, byte_disp))
+                                        return false;
+                        }
+                        ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 1;
+                ctx->gpr_range_min[dst] = 0;
+                ctx->gpr_range_max[dst] = 65535;
+                        ctx->gpr_load_tmp[cursor] = dst;
+                        ctx->gpr_load_opcode[cursor] = opcode_key;
+                        ctx->gpr_load_disp[cursor] = byte_disp;
+                        return true;
+                }
+                if (!jit_arm64_put_packed_access_disp(ctx, false, 2,
+                                                      false, REG_X3,
+                                                      base_reg, byte_disp))
+                        return false;
+                dst_ofs = dst * (int)sizeof(struct rt_value);
+                ASM {
+                        MOVZ(REG_X4, IMM16(NOCT_VALUE_INT), LSL_0);
+                        STR_IMM(REG_X4, REG_X1, IMM9(dst_ofs));
+                        STR_IMM(REG_X3, REG_X1, IMM9(dst_ofs + 8));
+                }
+                return true;
+        }
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3553,16 +3741,77 @@ jit_visit_pload16s_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        uint32_t cached_reg;
+        int cursor;
+        int dst_ofs;
+        int cached_tmp;
+        int opcode_key;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_arm64_try_packed_load(ctx, dst, base, ofs, 2, true,
-					&handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 2,
+                                    &base_reg, &cursor, &byte_disp)) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+                if (ctx->gpr_cache_active) {
+                        opcode_key = 5;
+                        cached_tmp = ctx->gpr_load_tmp[cursor];
+                        if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+                                cached_tmp = -1;
+                        if (cached_tmp >= 0 &&
+                            ctx->gpr_load_opcode[cursor] == opcode_key &&
+                            ctx->gpr_load_disp[cursor] == byte_disp &&
+                            ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+                                if (!jit_arm64_gpr_get(ctx, cached_tmp, 0,
+                                                       &cached_reg))
+                                        return false;
+                                if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+                                                          ctx->lpc) ==
+                                    UINT32_MAX) {
+                                        if (!jit_arm64_gpr_rebind(ctx, dst,
+                                                                  cached_tmp,
+                                                                  &reg))
+                                                return false;
+                                } else if (!jit_arm64_gpr_dest(
+                                                   ctx, dst,
+                                                   1u << (cached_reg - REG_X23),
+                                                   &reg) ||
+                                           !jit_arm64_gpr_mov(ctx, reg,
+                                                              cached_reg)) {
+                                        return false;
+                                }
+                        } else {
+                                if (!jit_arm64_gpr_dest(ctx, dst, 0, &reg) ||
+                                    !jit_arm64_put_packed_access_disp(
+                                             ctx, false, 2, true, reg,
+                                             base_reg, byte_disp))
+                                        return false;
+                        }
+                        ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 1;
+                ctx->gpr_range_min[dst] = -32768;
+                ctx->gpr_range_max[dst] = 32767;
+                        ctx->gpr_load_tmp[cursor] = dst;
+                        ctx->gpr_load_opcode[cursor] = opcode_key;
+                        ctx->gpr_load_disp[cursor] = byte_disp;
+                        return true;
+                }
+                if (!jit_arm64_put_packed_access_disp(ctx, false, 2,
+                                                      true, REG_X3,
+                                                      base_reg, byte_disp))
+                        return false;
+                dst_ofs = dst * (int)sizeof(struct rt_value);
+                ASM {
+                        MOVZ(REG_X4, IMM16(NOCT_VALUE_INT), LSL_0);
+                        STR_IMM(REG_X4, REG_X1, IMM9(dst_ofs));
+                        STR_IMM(REG_X3, REG_X1, IMM9(dst_ofs + 8));
+                }
+                return true;
+        }
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3597,16 +3846,75 @@ jit_visit_pload32_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        uint32_t cached_reg;
+        int cursor;
+        int dst_ofs;
+        int cached_tmp;
+        int opcode_key;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_arm64_try_packed_load(ctx, dst, base, ofs, 4, false,
-					&handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 4,
+                                    &base_reg, &cursor, &byte_disp)) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+                if (ctx->gpr_cache_active) {
+                        opcode_key = 8;
+                        cached_tmp = ctx->gpr_load_tmp[cursor];
+                        if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+                                cached_tmp = -1;
+                        if (cached_tmp >= 0 &&
+                            ctx->gpr_load_opcode[cursor] == opcode_key &&
+                            ctx->gpr_load_disp[cursor] == byte_disp &&
+                            ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+                                if (!jit_arm64_gpr_get(ctx, cached_tmp, 0,
+                                                       &cached_reg))
+                                        return false;
+                                if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+                                                          ctx->lpc) ==
+                                    UINT32_MAX) {
+                                        if (!jit_arm64_gpr_rebind(ctx, dst,
+                                                                  cached_tmp,
+                                                                  &reg))
+                                                return false;
+                                } else if (!jit_arm64_gpr_dest(
+                                                   ctx, dst,
+                                                   1u << (cached_reg - REG_X23),
+                                                   &reg) ||
+                                           !jit_arm64_gpr_mov(ctx, reg,
+                                                              cached_reg)) {
+                                        return false;
+                                }
+                        } else {
+                                if (!jit_arm64_gpr_dest(ctx, dst, 0, &reg) ||
+                                    !jit_arm64_put_packed_access_disp(
+                                             ctx, false, 4, false, reg,
+                                             base_reg, byte_disp))
+                                        return false;
+                        }
+                        ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                        ctx->gpr_load_tmp[cursor] = dst;
+                        ctx->gpr_load_opcode[cursor] = opcode_key;
+                        ctx->gpr_load_disp[cursor] = byte_disp;
+                        return true;
+                }
+                if (!jit_arm64_put_packed_access_disp(ctx, false, 4,
+                                                      false, REG_X3,
+                                                      base_reg, byte_disp))
+                        return false;
+                dst_ofs = dst * (int)sizeof(struct rt_value);
+                ASM {
+                        MOVZ(REG_X4, IMM16(NOCT_VALUE_INT), LSL_0);
+                        STR_IMM(REG_X4, REG_X1, IMM9(dst_ofs));
+                        STR_IMM(REG_X3, REG_X1, IMM9(dst_ofs + 8));
+                }
+                return true;
+        }
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3679,15 +3987,35 @@ jit_visit_pstore16_op(
         int base;
         int ofs;
         int src;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        int cursor;
+        int src_ofs;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
-	if (!jit_arm64_try_packed_store(ctx, base, ofs, src, 2, &handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 2,
+                                    &base_reg, &cursor, &byte_disp)) {
+                if (ctx->gpr_cache_active) {
+                        if (!jit_arm64_gpr_get(ctx, src, 0, &reg) ||
+                            !jit_arm64_put_packed_access_disp(
+                                     ctx, true, 2, false, reg, base_reg,
+                                     byte_disp))
+                                return false;
+                        ctx->gpr_load_tmp[cursor] = -1;
+                        return true;
+                }
+                src_ofs = src * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_W_IMM(REG_X4, REG_X1,
+                                  (uint32_t)(src_ofs + 8));
+                }
+                return jit_arm64_put_packed_access_disp(
+                                ctx, true, 2, false, REG_X4, base_reg,
+                                byte_disp);
+        }
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -3715,15 +4043,35 @@ jit_visit_pstore32_op(
         int base;
         int ofs;
         int src;
-	bool handled;
+        uint32_t base_reg;
+        uint32_t reg;
+        int cursor;
+        int src_ofs;
+        int32_t byte_disp;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
-	if (!jit_arm64_try_packed_store(ctx, base, ofs, src, 4, &handled))
-		return false;
-	if (handled)
-		return true;
+        if (jit_arm64_packed_cursor(ctx, base, ofs, 4,
+                                    &base_reg, &cursor, &byte_disp)) {
+                if (ctx->gpr_cache_active) {
+                        if (!jit_arm64_gpr_get(ctx, src, 0, &reg) ||
+                            !jit_arm64_put_packed_access_disp(
+                                     ctx, true, 4, false, reg, base_reg,
+                                     byte_disp))
+                                return false;
+                        ctx->gpr_load_tmp[cursor] = -1;
+                        return true;
+                }
+                src_ofs = src * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_W_IMM(REG_X4, REG_X1,
+                                  (uint32_t)(src_ofs + 8));
+                }
+                return jit_arm64_put_packed_access_disp(
+                                ctx, true, 4, false, REG_X4, base_reg,
+                                byte_disp);
+        }
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -3835,9 +4183,10 @@ jit_visit_pstoref32_op(
 static INLINE void
 jit_arm64_patch_local_branch(uint8_t *code, uint8_t *target, bool cbz_w3)
 {
-	intptr_t words = (target - code) / 4;
+	intptr_t words;
 	uint32_t insn;
 
+	words = (target - code) / 4;
 	if (cbz_w3)
 		insn = 0x34000003u | (((uint32_t)words & 0x7ffffu) << 5);
 	else
@@ -3845,472 +4194,1872 @@ jit_arm64_patch_local_branch(uint8_t *code, uint8_t *target, bool cbz_w3)
 	memcpy(code, &insn, sizeof(insn));
 }
 
-/* AArch64 SDIV has the desired INT_MIN/-1 wrap result but silently returns
- * zero for a zero divisor.  Route only zero to the checked helper. */
+/* Visit an OP_IADD instruction. */
 static INLINE bool
-jit_visit_checked_idiv_op(
-	struct jit_context *ctx,
-	int op,
-	int dst,
-	int src1,
-	int src2)
-{
-	int dst_ofs = dst * (int)sizeof(struct rt_value);
-	int src1_ofs = src1 * (int)sizeof(struct rt_value);
-	int src2_ofs = src2 * (int)sizeof(struct rt_value);
-	uint8_t *zero_branch;
-	uint8_t *done_branch;
-	uint8_t *target;
-
-	ASM {
-		LDR_W_IMM(REG_X2, REG_X1, (uint32_t)(src1_ofs + 8));
-		LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(src2_ofs + 8));
-	}
-	/* cbz w3,cold -- patched after the inline path is emitted. */
-	zero_branch = (uint8_t *)ctx->code;
-	if (!jit_put_word(ctx, 0x34000003u))
-		return false;
-	if (op == OP_IDIV_CHECKED) {
-		if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) |
-				  (2u << 5) | 2u))
-			return false;
-	} else {
-		/* sdiv w4,w2,w3; msub w2,w4,w3,w2 */
-		if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) |
-				  (2u << 5) | 4u) ||
-		    !jit_put_word(ctx, 0x1b008000 | (3u << 16) |
-				  (2u << 10) | (4u << 5) | 2u))
-			return false;
-	}
-	ASM { TYPED_STORE(REG_X2, dst_ofs, NOCT_VALUE_INT, true); }
-	done_branch = (uint8_t *)ctx->code;
-	if (!jit_put_word(ctx, 0x14000000u))
-		return false;
-
-	target = (uint8_t *)ctx->code;
-	jit_arm64_patch_local_branch(zero_branch, target, true);
-	if (op == OP_IDIV_CHECKED) {
-		ASM_BINARY_OP(ex_idiv_helper);
-	} else {
-		ASM_BINARY_OP(ex_imod_helper);
-	}
-	target = (uint8_t *)ctx->code;
-	jit_arm64_patch_local_branch(done_branch, target, false);
-	return true;
-}
-
-static bool
-jit_arm64_try_gpr_typed(struct jit_context *ctx, int op, int dst,
-			int src1, int src2, bool *handled)
-{
-	uint32_t r1;
-	uint32_t r2;
-	uint32_t rd;
-	uint32_t insn;
-	unsigned pins;
-	bool v1;
-	bool v2;
-	int32_t min1;
-	int32_t max1;
-	int32_t min2;
-	int32_t max2;
-	int64_t lo;
-	int64_t hi;
-
-	*handled = false;
-	if (!ctx->gpr_cache_active || ctx->gpr_reg_limit == 1)
-		return true;
-	v1 = ctx->gpr_range_valid[src1] != 0;
-	min1 = v1 ? ctx->gpr_range_min[src1] : 0;
-	max1 = v1 ? ctx->gpr_range_max[src1] : 0;
-	v2 = op == OP_ISHL || op == OP_ISHR ? false :
-		ctx->gpr_range_valid[src2] != 0;
-	min2 = v2 ? ctx->gpr_range_min[src2] : 0;
-	max2 = v2 ? ctx->gpr_range_max[src2] : 0;
-
-	if (op == OP_IDIV || op == OP_IMOD ||
-	    op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
-		bool proven;
-
-		proven = op == OP_IDIV || op == OP_IMOD ||
-			(v2 && (min2 > 0 || max2 < -1));
-		if (!proven)
-			return true;
-		if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
-			return false;
-		pins = 1u << (r1 - REG_X23);
-		if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
-			return false;
-		pins |= 1u << (r2 - REG_X23);
-		if (!jit_arm64_gpr_is_cached(ctx, src1) &&
-		    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
-		    UINT32_MAX) {
-			if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
-				return false;
-		} else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
-			   jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
-			   UINT32_MAX) {
-			if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
-				return false;
-		} else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
-			return false;
-		}
-		if (op == OP_IDIV || op == OP_IDIV_CHECKED) {
-			if (!jit_put_word(ctx, 0x1ac00c00u | (r2 << 16) |
-					 (r1 << 5) | rd))
-				return false;
-		} else {
-			if (!jit_put_word(ctx, 0x1ac00c00u | (r2 << 16) |
-					 (r1 << 5) | REG_X4) ||
-			    !jit_put_word(ctx, 0x1b008000u | (r2 << 16) |
-					 (r1 << 10) | (REG_X4 << 5) | rd))
-				return false;
-		}
-		ctx->gpr_tmp_dirty[dst] = 1;
-		ctx->gpr_range_valid[dst] = 0;
-		if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED)
-			ctx->gpr_proven_divisions++;
-		jit_arm64_invalidate_all_packed_loads(ctx);
-		*handled = true;
-		return true;
-	}
-
-	if (op != OP_IADD && op != OP_ISUB && op != OP_IMUL &&
-	    op != OP_IAND && op != OP_IOR && op != OP_IXOR &&
-	    op != OP_ISHL && op != OP_ISHR &&
-	    op != OP_ILT && op != OP_ILTE &&
-	    op != OP_IGT && op != OP_IGTE)
-		return true;
-	if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
-		return false;
-	pins = 1u << (r1 - REG_X23);
-	if (op == OP_ISHL || op == OP_ISHR) {
-		uint32_t sh;
-
-		if (!jit_arm64_gpr_is_cached(ctx, src1) &&
-		    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
-		    UINT32_MAX) {
-			if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
-				return false;
-		} else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
-			return false;
-		}
-		sh = (uint32_t)(src2 & 31);
-		if (sh == 0) {
-			if (!jit_arm64_gpr_mov(ctx, rd, r1))
-				return false;
-		} else if (op == OP_ISHL) {
-			if (!jit_put_word(ctx, 0x53000000u |
-					 (((32u - sh) & 31u) << 16) |
-					 ((31u - sh) << 10) | (r1 << 5) | rd))
-				return false;
-		} else if (!jit_put_word(ctx, 0x53000000u | (sh << 16) |
-					    (31u << 10) | (r1 << 5) | rd)) {
-			return false;
-		}
-	} else {
-		if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
-			return false;
-		pins |= 1u << (r2 - REG_X23);
-		if (!jit_arm64_gpr_is_cached(ctx, src1) &&
-		    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
-		    UINT32_MAX) {
-			if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
-				return false;
-		} else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
-			   jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
-			   UINT32_MAX) {
-			if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
-				return false;
-		} else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
-			return false;
-		}
-		if (op == OP_ILT || op == OP_ILTE ||
-		    op == OP_IGT || op == OP_IGTE) {
-			uint32_t cond;
-
-			if (!jit_put_word(ctx, 0x6b00001fu | (r2 << 16) |
-					 (r1 << 5)))
-				return false;
-			cond = op == OP_ILT ? TYPED_COND_LT :
-				op == OP_ILTE ? TYPED_COND_LE :
-				op == OP_IGT ? TYPED_COND_GT : TYPED_COND_GE;
-			if (!jit_put_word(ctx, 0x1a9f07e0u |
-					 ((cond ^ 1u) << 12) | rd))
-				return false;
-		} else {
-			insn = op == OP_IADD ? 0x0b000000u :
-				op == OP_ISUB ? 0x4b000000u :
-				op == OP_IAND ? 0x0a000000u :
-				op == OP_IOR ? 0x2a000000u :
-				op == OP_IXOR ? 0x4a000000u : 0x1b007c00u;
-			if (!jit_put_word(ctx, insn | (r2 << 16) |
-					 (r1 << 5) | rd))
-				return false;
-		}
-	}
-	ctx->gpr_tmp_dirty[dst] = 1;
-	ctx->gpr_range_valid[dst] = 0;
-	if (op == OP_IAND && v1 && min1 == max1 && min1 >= 0) {
-		ctx->gpr_range_valid[dst] = 1;
-		ctx->gpr_range_min[dst] = 0;
-		ctx->gpr_range_max[dst] = min1;
-	} else if (op == OP_IAND && v2 && min2 == max2 && min2 >= 0) {
-		ctx->gpr_range_valid[dst] = 1;
-		ctx->gpr_range_min[dst] = 0;
-		ctx->gpr_range_max[dst] = min2;
-	} else if (op == OP_IADD && v1 && v2) {
-		lo = (int64_t)min1 + min2;
-		hi = (int64_t)max1 + max2;
-		if (lo >= INT32_MIN && hi <= INT32_MAX) {
-			ctx->gpr_range_valid[dst] = 1;
-			ctx->gpr_range_min[dst] = (int32_t)lo;
-			ctx->gpr_range_max[dst] = (int32_t)hi;
-		}
-	} else if (op == OP_ISUB && v1 && v2) {
-		lo = (int64_t)min1 - max2;
-		hi = (int64_t)max1 - min2;
-		if (lo >= INT32_MIN && hi <= INT32_MAX) {
-			ctx->gpr_range_valid[dst] = 1;
-			ctx->gpr_range_min[dst] = (int32_t)lo;
-			ctx->gpr_range_max[dst] = (int32_t)hi;
-		}
-	}
-	jit_arm64_invalidate_packed_load(ctx, dst);
-	*handled = true;
-	return true;
-}
-
-/* Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic; inline.) */
-static INLINE bool
-jit_visit_typed_op(
-        struct jit_context *ctx,
-        int op)
+jit_visit_iadd_op(
+        struct jit_context *ctx)
 {
         int dst;
         int src1;
         int src2;
-	int dst_tmp;
-	int result_type;
-	bool write_tag;
-	bool handled;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src1);
-        if (op == OP_ISHL || op == OP_ISHR) {
-                /* The shift count is an imm8, not a tmpvar. */
-                CONSUME_IMM8(src2);
-        } else {
-                CONSUME_TMPVAR(src2);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
         }
-	if (jit_ploop_current_elided(ctx, 7))
-		return true;
-	if (ctx->packed_loop_hint_active) {
-		jit_ploop_remove_index_alias(ctx, dst);
-		jit_ploop_remove_base_alias(ctx, dst);
-	}
-	if (!jit_arm64_try_gpr_typed(ctx, op, dst, src1, src2, &handled))
-		return false;
-	if (handled)
-		return true;
-	if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
-		return false;
-	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
-		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
-	}
-	dst_tmp = dst;
-	result_type = (op == OP_FADD || op == OP_FSUB ||
-		       op == OP_FMUL || op == OP_FDIV) ?
-		      NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
-	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
-						     result_type);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+                bool v1;
+                bool v2;
+                int32_t min1;
+                int32_t max1;
+                int32_t min2;
+                int32_t max2;
+                int64_t lo;
+                int64_t hi;
+
+                v1 = ctx->gpr_range_valid[src1] != 0;
+                min1 = v1 ? ctx->gpr_range_min[src1] : 0;
+                max1 = v1 ? ctx->gpr_range_max[src1] : 0;
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x0b000000u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                if (v1 && v2) {
+                        lo = (int64_t)min1 + min2;
+                        hi = (int64_t)max1 + max2;
+                        if (lo >= INT32_MIN && hi <= INT32_MAX) {
+                                ctx->gpr_range_valid[dst] = 1;
+                                ctx->gpr_range_min[dst] = (int32_t)lo;
+                                ctx->gpr_range_max[dst] = (int32_t)hi;
+                        }
+                }
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
 
         dst *= (int)sizeof(struct rt_value);
         src1 *= (int)sizeof(struct rt_value);
-        if (op != OP_ISHL && op != OP_ISHR)
-                src2 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
 
-        switch (op) {
-        case OP_IADD:
-        case OP_ISUB:
-        case OP_IMUL:
-        case OP_IAND:
-        case OP_IOR:
-        case OP_IXOR:
-        case OP_IDIV:
-        case OP_IMOD:
-        case OP_ILT:
-        case OP_ILTE:
-        case OP_IGT:
-        case OP_IGTE:
-                ASM {
-                        /* x1 = &env->frame->tmpvar[0] */
-                        /* w2 = src1 value, w3 = src2 value */
-                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
-                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
-                }
-                switch (op) {
-                case OP_IADD:
-                        /* add w2, w2, w3 */
-                        if (!jit_put_word(ctx, 0x0b000000 | (3u << 16) | (2u << 5) | 2u))
-                                return false;
-                        break;
-                case OP_ISUB:
-                        /* sub w2, w2, w3 */
-                        if (!jit_put_word(ctx, 0x4b000000 | (3u << 16) | (2u << 5) | 2u))
-                                return false;
-                        break;
-                case OP_IMUL:
-                        /* mul w2, w2, w3 (madd w2, w2, w3, wzr) */
-                        if (!jit_put_word(ctx, 0x1b007c00 | (3u << 16) | (2u << 5) | 2u))
-                                return false;
-                        break;
-                case OP_IAND:
-                        /* and w2, w2, w3 */
-                        if (!jit_put_word(ctx, 0x0a000000 | (3u << 16) | (2u << 5) | 2u))
-                                return false;
-                        break;
-                case OP_IOR:
-                        /* orr w2, w2, w3 */
-                        if (!jit_put_word(ctx, 0x2a000000 | (3u << 16) | (2u << 5) | 2u))
-                                return false;
-                        break;
-                case OP_IXOR:
-                        /* eor w2, w2, w3 */
-                        if (!jit_put_word(ctx, 0x4a000000 | (3u << 16) | (2u << 5) | 2u))
-                                return false;
-                        break;
-                case OP_IDIV:
-                        /* sdiv w2, w2, w3 (AArch64: no trap; /0 = 0) */
-                        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) | (2u << 5) | 2u))
-                                return false;
-                        break;
-                case OP_IMOD:
-                        /* sdiv w4, w2, w3; msub w2, w4, w3, w2 */
-                        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) | (2u << 5) | 4u))
-                                return false;
-                        if (!jit_put_word(ctx, 0x1b008000 | (3u << 16) | (2u << 10) | (4u << 5) | 2u))
-                                return false;
-                        break;
-                default:
-                        /* cmp w2, w3 (subs wzr, w2, w3) */
-                        if (!jit_put_word(ctx, 0x6b000000 | (3u << 16) | (2u << 5) | 31u))
-                                return false;
-                        switch (op) {
-                        case OP_ILT:  TYPED_CSET_W(2, TYPED_COND_LT); break;
-                        case OP_ILTE: TYPED_CSET_W(2, TYPED_COND_LE); break;
-                        case OP_IGT:  TYPED_CSET_W(2, TYPED_COND_GT); break;
-                        default:      TYPED_CSET_W(2, TYPED_COND_GE); break;
-                        }
-                        break;
-                }
-                ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        case OP_ISHL:
-        case OP_ISHR:
-                /* src2 is the shift-count immediate (0..31). */
-                ASM {
-                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
-                }
-                if ((src2 & 31) != 0) {
-                        uint32_t sh = (uint32_t)(src2 & 31);
-                        if (op == OP_ISHL) {
-                                /* lsl w2, w2, #sh (ubfm w2, w2, #(32-sh)&31, #(31-sh)) */
-                                if (!jit_put_word(ctx, 0x53000000 |
-                                                  (((32u - sh) & 31u) << 16) |
-                                                  ((31u - sh) << 10) |
-                                                  (2u << 5) | 2u))
-                                        return false;
-                        } else {
-                                /* lsr w2, w2, #sh (LOGICAL; ubfm w2, w2, #sh, #31) */
-                                if (!jit_put_word(ctx, 0x53000000 |
-                                                  (sh << 16) |
-                                                  (31u << 10) |
-                                                  (2u << 5) | 2u))
-                                        return false;
-                        }
-                }
-                ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        case OP_FADD:
-        case OP_FSUB:
-        case OP_FMUL:
-        case OP_FDIV:
-                ASM {
-                        /* s0 = src1 float bits, s1 = src2 float bits */
-                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
-                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
-                }
-                /* fmov s0, w2; fmov s1, w3 */
-                if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
-                        return false;
-                if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
-                        return false;
-                switch (op) {
-                case OP_FADD:
-                        /* fadd s0, s0, s1 */
-                        if (!jit_put_word(ctx, 0x1e202800 | (1u << 16) | (0u << 5) | 0u))
-                                return false;
-                        break;
-                case OP_FSUB:
-                        /* fsub s0, s0, s1 */
-                        if (!jit_put_word(ctx, 0x1e203800 | (1u << 16) | (0u << 5) | 0u))
-                                return false;
-                        break;
-                case OP_FMUL:
-                        /* fmul s0, s0, s1 */
-                        if (!jit_put_word(ctx, 0x1e200800 | (1u << 16) | (0u << 5) | 0u))
-                                return false;
-                        break;
-                default:
-                        /* fdiv s0, s0, s1 (IEEE-total; 07 Part 0) */
-                        if (!jit_put_word(ctx, 0x1e201800 | (1u << 16) | (0u << 5) | 0u))
-                                return false;
-                        break;
-                }
-                /* fmov w2, s0 */
-                if (!jit_put_word(ctx, 0x1e260000 | (0u << 5) | 2u))
-                        return false;
-                ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT, write_tag);
-                }
-                break;
-        case OP_FLT:
-        case OP_FLTE:
-        case OP_FGT:
-        case OP_FGTE:
-                ASM {
-                        LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
-                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
-                }
-                /* fmov s0, w2; fmov s1, w3 */
-                if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
-                        return false;
-                if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
-                        return false;
-                /* fcmp s0, s1 */
-                if (!jit_put_word(ctx, 0x1e202000 | (1u << 16) | (0u << 5)))
-                        return false;
-                switch (op) {
-                case OP_FLT:  TYPED_CSET_W(2, TYPED_COND_MI); break;
-                case OP_FLTE: TYPED_CSET_W(2, TYPED_COND_LS); break;
-                case OP_FGT:  TYPED_CSET_W(2, TYPED_COND_GT); break;
-                default:      TYPED_CSET_W(2, TYPED_COND_GE); break;
-                }
-                ASM {
-                        TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        default:
-                assert(NEVER_COME_HERE);
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* add w2, w2, w3 */
+        if (!jit_put_word(ctx, 0x0b000000 | (3u << 16) | (2u << 5) | 2u))
                 return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
         }
         return true;
 }
+
+/* Visit an OP_ISUB instruction. */
+static INLINE bool
+jit_visit_isub_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+                bool v1;
+                bool v2;
+                int32_t min1;
+                int32_t max1;
+                int32_t min2;
+                int32_t max2;
+                int64_t lo;
+                int64_t hi;
+
+                v1 = ctx->gpr_range_valid[src1] != 0;
+                min1 = v1 ? ctx->gpr_range_min[src1] : 0;
+                max1 = v1 ? ctx->gpr_range_max[src1] : 0;
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x4b000000u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                if (v1 && v2) {
+                        lo = (int64_t)min1 - max2;
+                        hi = (int64_t)max1 - min2;
+                        if (lo >= INT32_MIN && hi <= INT32_MAX) {
+                                ctx->gpr_range_valid[dst] = 1;
+                                ctx->gpr_range_min[dst] = (int32_t)lo;
+                                ctx->gpr_range_max[dst] = (int32_t)hi;
+                        }
+                }
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* sub w2, w2, w3 */
+        if (!jit_put_word(ctx, 0x4b000000 | (3u << 16) | (2u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IMUL instruction. */
+static INLINE bool
+jit_visit_imul_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x1b007c00u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* mul w2, w2, w3 (madd w2, w2, w3, wzr) */
+        if (!jit_put_word(ctx, 0x1b007c00 | (3u << 16) | (2u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IDIV instruction. */
+static INLINE bool
+jit_visit_idiv_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x1ac00c00u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_all_packed_loads(ctx);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* sdiv w2, w2, w3 (AArch64: no trap; /0 = 0) */
+        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) | (2u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IMOD instruction. */
+static INLINE bool
+jit_visit_imod_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x1ac00c00u | (r2 << 16) |
+                                         (r1 << 5) | REG_X4) ||
+                    !jit_put_word(ctx, 0x1b008000u | (r2 << 16) |
+                                         (r1 << 10) | (REG_X4 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_all_packed_loads(ctx);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* sdiv w4, w2, w3; msub w2, w4, w3, w2 */
+        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) | (2u << 5) | 4u))
+                return false;
+        if (!jit_put_word(ctx, 0x1b008000 | (3u << 16) | (2u << 10) | (4u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IAND instruction. */
+static INLINE bool
+jit_visit_iand_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+                bool v1;
+                bool v2;
+                int32_t min1;
+                int32_t max1;
+                int32_t min2;
+                int32_t max2;
+
+                v1 = ctx->gpr_range_valid[src1] != 0;
+                min1 = v1 ? ctx->gpr_range_min[src1] : 0;
+                max1 = v1 ? ctx->gpr_range_max[src1] : 0;
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x0a000000u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                if (v1 && min1 == max1 && min1 >= 0) {
+                        ctx->gpr_range_valid[dst] = 1;
+                        ctx->gpr_range_min[dst] = 0;
+                        ctx->gpr_range_max[dst] = min1;
+                } else if (v2 && min2 == max2 && min2 >= 0) {
+                        ctx->gpr_range_valid[dst] = 1;
+                        ctx->gpr_range_min[dst] = 0;
+                        ctx->gpr_range_max[dst] = min2;
+                }
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* and w2, w2, w3 */
+        if (!jit_put_word(ctx, 0x0a000000 | (3u << 16) | (2u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IOR instruction. */
+static INLINE bool
+jit_visit_ior_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x2a000000u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* orr w2, w2, w3 */
+        if (!jit_put_word(ctx, 0x2a000000 | (3u << 16) | (2u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IXOR instruction. */
+static INLINE bool
+jit_visit_ixor_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x4a000000u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* eor w2, w2, w3 */
+        if (!jit_put_word(ctx, 0x4a000000 | (3u << 16) | (2u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ISHL instruction. */
+static INLINE bool
+jit_visit_ishl_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t rd;
+                uint32_t sh;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                sh = (uint32_t)(src2 & 31);
+                if (sh == 0) {
+                        if (!jit_arm64_gpr_mov(ctx, rd, r1))
+                                return false;
+                } else if (!jit_put_word(ctx, 0x53000000u |
+                                                   (((32u - sh) & 31u) << 16) |
+                                                   ((31u - sh) << 10) |
+                                                   (r1 << 5) | rd)) {
+                        return false;
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* src2 is the shift-count immediate (0..31). */
+        ASM {
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+        }
+        if ((src2 & 31) != 0) {
+                uint32_t sh;
+
+                sh = (uint32_t)(src2 & 31);
+                /* lsl w2, w2, #sh (ubfm w2, w2, #(32-sh)&31, #(31-sh)) */
+                if (!jit_put_word(ctx, 0x53000000 |
+                                  (((32u - sh) & 31u) << 16) |
+                                  ((31u - sh) << 10) |
+                                  (2u << 5) | 2u))
+                        return false;
+        }
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ISHR instruction. */
+static INLINE bool
+jit_visit_ishr_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t rd;
+                uint32_t sh;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                sh = (uint32_t)(src2 & 31);
+                if (sh == 0) {
+                        if (!jit_arm64_gpr_mov(ctx, rd, r1))
+                                return false;
+                } else if (!jit_put_word(ctx, 0x53000000u |
+                                                   (sh << 16) |
+                                                   (31u << 10) |
+                                                   (r1 << 5) | rd)) {
+                        return false;
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* src2 is the shift-count immediate (0..31). */
+        ASM {
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+        }
+        if ((src2 & 31) != 0) {
+                uint32_t sh;
+
+                sh = (uint32_t)(src2 & 31);
+                /* lsr w2, w2, #sh (LOGICAL; ubfm w2, w2, #sh, #31) */
+                if (!jit_put_word(ctx, 0x53000000 |
+                                  (sh << 16) |
+                                  (31u << 10) |
+                                  (2u << 5) | 2u))
+                        return false;
+        }
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ILT instruction. */
+static INLINE bool
+jit_visit_ilt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x6b00001fu | (r2 << 16) |
+                                         (r1 << 5)))
+                        return false;
+                if (!jit_put_word(ctx, 0x1a9f07e0u |
+                                         ((TYPED_COND_LT ^ 1u) << 12) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* cmp w2, w3 (subs wzr, w2, w3) */
+        if (!jit_put_word(ctx, 0x6b000000 | (3u << 16) | (2u << 5) | 31u))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_LT);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ILTE instruction. */
+static INLINE bool
+jit_visit_ilte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x6b00001fu | (r2 << 16) |
+                                         (r1 << 5)))
+                        return false;
+                if (!jit_put_word(ctx, 0x1a9f07e0u |
+                                         ((TYPED_COND_LE ^ 1u) << 12) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* cmp w2, w3 (subs wzr, w2, w3) */
+        if (!jit_put_word(ctx, 0x6b000000 | (3u << 16) | (2u << 5) | 31u))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_LE);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IGT instruction. */
+static INLINE bool
+jit_visit_igt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x6b00001fu | (r2 << 16) |
+                                         (r1 << 5)))
+                        return false;
+                if (!jit_put_word(ctx, 0x1a9f07e0u |
+                                         ((TYPED_COND_GT ^ 1u) << 12) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* cmp w2, w3 (subs wzr, w2, w3) */
+        if (!jit_put_word(ctx, 0x6b000000 | (3u << 16) | (2u << 5) | 31u))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_GT);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IGTE instruction. */
+static INLINE bool
+jit_visit_igte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x6b00001fu | (r2 << 16) |
+                                         (r1 << 5)))
+                        return false;
+                if (!jit_put_word(ctx, 0x1a9f07e0u |
+                                         ((TYPED_COND_GE ^ 1u) << 12) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_arm64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                /* w2 = src1 value, w3 = src2 value */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* cmp w2, w3 (subs wzr, w2, w3) */
+        if (!jit_put_word(ctx, 0x6b000000 | (3u << 16) | (2u << 5) | 31u))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_GE);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FADD instruction. */
+static INLINE bool
+jit_visit_fadd_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s0 = src1 float bits, s1 = src2 float bits */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fadd s0, s0, s1 */
+        if (!jit_put_word(ctx, 0x1e202800 | (1u << 16) | (0u << 5) | 0u))
+                return false;
+        /* fmov w2, s0 */
+        if (!jit_put_word(ctx, 0x1e260000 | (0u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FSUB instruction. */
+static INLINE bool
+jit_visit_fsub_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s0 = src1 float bits, s1 = src2 float bits */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fsub s0, s0, s1 */
+        if (!jit_put_word(ctx, 0x1e203800 | (1u << 16) | (0u << 5) | 0u))
+                return false;
+        /* fmov w2, s0 */
+        if (!jit_put_word(ctx, 0x1e260000 | (0u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FMUL instruction. */
+static INLINE bool
+jit_visit_fmul_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s0 = src1 float bits, s1 = src2 float bits */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fmul s0, s0, s1 */
+        if (!jit_put_word(ctx, 0x1e200800 | (1u << 16) | (0u << 5) | 0u))
+                return false;
+        /* fmov w2, s0 */
+        if (!jit_put_word(ctx, 0x1e260000 | (0u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FDIV instruction. */
+static INLINE bool
+jit_visit_fdiv_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* s0 = src1 float bits, s1 = src2 float bits */
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fdiv s0, s0, s1 (IEEE-total; 07 Part 0) */
+        if (!jit_put_word(ctx, 0x1e201800 | (1u << 16) | (0u << 5) | 0u))
+                return false;
+        /* fmov w2, s0 */
+        if (!jit_put_word(ctx, 0x1e260000 | (0u << 5) | 2u))
+                return false;
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_FLOAT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FLT instruction. */
+static INLINE bool
+jit_visit_flt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fcmp s0, s1 */
+        if (!jit_put_word(ctx, 0x1e202000 | (1u << 16) | (0u << 5)))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_MI);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FLTE instruction. */
+static INLINE bool
+jit_visit_flte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fcmp s0, s1 */
+        if (!jit_put_word(ctx, 0x1e202000 | (1u << 16) | (0u << 5)))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_LS);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FGT instruction. */
+static INLINE bool
+jit_visit_fgt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fcmp s0, s1 */
+        if (!jit_put_word(ctx, 0x1e202000 | (1u << 16) | (0u << 5)))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_GT);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FGTE instruction. */
+static INLINE bool
+jit_visit_fgte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                LDR_W_IMM       (REG_X2, REG_X1, (uint32_t)(src1 + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src2 + 8));
+        }
+        /* fmov s0, w2; fmov s1, w3 */
+        if (!jit_put_word(ctx, 0x1e270000 | (2u << 5) | 0u))
+                return false;
+        if (!jit_put_word(ctx, 0x1e270000 | (3u << 5) | 1u))
+                return false;
+        /* fcmp s0, s1 */
+        if (!jit_put_word(ctx, 0x1e202000 | (1u << 16) | (0u << 5)))
+                return false;
+        TYPED_CSET_W(2, TYPED_COND_GE);
+        ASM {
+                TYPED_STORE(REG_X2, dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IDIV_CHECKED instruction. */
+static INLINE bool
+jit_visit_idiv_checked_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_ofs;
+        int src1_ofs;
+        int src2_ofs;
+        uint8_t *zero_branch;
+        uint8_t *done_branch;
+        uint8_t *target;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1 &&
+            ctx->gpr_range_valid[src2] != 0 &&
+            (ctx->gpr_range_min[src2] > 0 ||
+             ctx->gpr_range_max[src2] < -1)) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x1ac00c00u | (r2 << 16) |
+                                         (r1 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                ctx->gpr_proven_divisions++;
+                jit_arm64_invalidate_all_packed_loads(ctx);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+        dst_ofs = dst * (int)sizeof(struct rt_value);
+        src1_ofs = src1 * (int)sizeof(struct rt_value);
+        src2_ofs = src2 * (int)sizeof(struct rt_value);
+        ASM {
+                LDR_W_IMM(REG_X2, REG_X1, (uint32_t)(src1_ofs + 8));
+                LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(src2_ofs + 8));
+        }
+        /* cbz w3,cold -- patched after the inline path is emitted. */
+        zero_branch = (uint8_t *)ctx->code;
+        if (!jit_put_word(ctx, 0x34000003u))
+                return false;
+        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) |
+                          (2u << 5) | 2u))
+                return false;
+        ASM { TYPED_STORE(REG_X2, dst_ofs, NOCT_VALUE_INT, true); }
+        done_branch = (uint8_t *)ctx->code;
+        if (!jit_put_word(ctx, 0x14000000u))
+                return false;
+
+        target = (uint8_t *)ctx->code;
+        jit_arm64_patch_local_branch(zero_branch, target, true);
+        ASM_BINARY_OP(ex_idiv_helper);
+        target = (uint8_t *)ctx->code;
+        jit_arm64_patch_local_branch(done_branch, target, false);
+        return true;
+}
+
+/* Visit an OP_IMOD_CHECKED instruction. */
+static INLINE bool
+jit_visit_imod_checked_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_ofs;
+        int src1_ofs;
+        int src2_ofs;
+        uint8_t *zero_branch;
+        uint8_t *done_branch;
+        uint8_t *target;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active) {
+                jit_ploop_remove_index_alias(ctx, dst);
+                jit_ploop_remove_base_alias(ctx, dst);
+        }
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1 &&
+            ctx->gpr_range_valid[src2] != 0 &&
+            (ctx->gpr_range_min[src2] > 0 ||
+             ctx->gpr_range_max[src2] < -1)) {
+                uint32_t r1;
+                uint32_t r2;
+                uint32_t rd;
+                unsigned pins;
+
+                if (!jit_arm64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - REG_X23);
+                if (!jit_arm64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - REG_X23);
+                if (!jit_arm64_gpr_is_cached(ctx, src1) &&
+                    jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                    UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_is_cached(ctx, src2) &&
+                           jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_arm64_gpr_rebind(ctx, dst, src2, &rd))
+                                return false;
+                } else if (!jit_arm64_gpr_dest(ctx, dst, pins, &rd)) {
+                        return false;
+                }
+                if (!jit_put_word(ctx, 0x1ac00c00u | (r2 << 16) |
+                                         (r1 << 5) | REG_X4) ||
+                    !jit_put_word(ctx, 0x1b008000u | (r2 << 16) |
+                                         (r1 << 10) | (REG_X4 << 5) | rd))
+                        return false;
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                ctx->gpr_proven_divisions++;
+                jit_arm64_invalidate_all_packed_loads(ctx);
+                return true;
+        }
+        if (ctx->gpr_cache_active && !jit_arm64_gpr_flush_required(ctx))
+                return false;
+        dst_ofs = dst * (int)sizeof(struct rt_value);
+        src1_ofs = src1 * (int)sizeof(struct rt_value);
+        src2_ofs = src2 * (int)sizeof(struct rt_value);
+        ASM {
+                LDR_W_IMM(REG_X2, REG_X1, (uint32_t)(src1_ofs + 8));
+                LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(src2_ofs + 8));
+        }
+        /* cbz w3,cold -- patched after the inline path is emitted. */
+        zero_branch = (uint8_t *)ctx->code;
+        if (!jit_put_word(ctx, 0x34000003u))
+                return false;
+        /* sdiv w4,w2,w3; msub w2,w4,w3,w2 */
+        if (!jit_put_word(ctx, 0x1ac00c00 | (3u << 16) |
+                          (2u << 5) | 4u) ||
+            !jit_put_word(ctx, 0x1b008000 | (3u << 16) |
+                          (2u << 10) | (4u << 5) | 2u))
+                return false;
+        ASM { TYPED_STORE(REG_X2, dst_ofs, NOCT_VALUE_INT, true); }
+        done_branch = (uint8_t *)ctx->code;
+        if (!jit_put_word(ctx, 0x14000000u))
+                return false;
+
+        target = (uint8_t *)ctx->code;
+        jit_arm64_patch_local_branch(zero_branch, target, true);
+        ASM_BINARY_OP(ex_imod_helper);
+        target = (uint8_t *)ctx->code;
+        jit_arm64_patch_local_branch(done_branch, target, false);
+        return true;
+}
+
 
 /*
  * 128-bit SIMD ops (docs/design/06-simd.md): inline NEON, arm64.
@@ -4322,18 +6071,6 @@ jit_visit_typed_op(
  * two-address copy dance and no vd==vb hazard at all.
  */
 
-static bool
-jit_put_scalar_vreg_base(struct jit_context *ctx, uint32_t rd)
-{
-        uint32_t ofs = (uint32_t)offsetof(struct rt_env, vreg);
-
-        if (!jit_put_movz(ctx, rd, ofs & 0xffff, LSL_0) ||
-            !jit_put_movk(ctx, rd, (ofs >> 16) & 0xffff, LSL_16) ||
-            !jit_put_add(ctx, rd, REG_X0, rd))
-                return false;
-        return true;
-}
-
 static INLINE int
 jit_arm64_vreg(int logical)
 {
@@ -4342,26 +6079,36 @@ jit_arm64_vreg(int logical)
 	return logical < 8 ? logical : logical + 8;
 }
 
-/* Direct scalar lowering used by the forced-scalar capability tier. */
+/* Visit vector instructions with NEON or direct scalar lowering. */
+/* Visit an OP_VLOADI32X4 instruction. */
 static INLINE bool
-jit_visit_vector_scalar_op(
-        struct jit_context *ctx,
-        int op,
-        int dst,
-        int src1,
-        int src2)
+jit_visit_vloadi32x4_op(
+        struct jit_context *ctx)
 {
-        int lane;
+        int vd;
+        int base_tmp;
+        int ofs_tmp;
+        int va;
+        uint32_t op_lpc;
+        int cursor_id;
+        int base;
+        int ofs;
 
-        if (!jit_put_scalar_vreg_base(ctx, REG_X5))
-                return false;
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
 
-        switch (op) {
-        case OP_VLOADI32X4:
-        case OP_VLOADF32X4:
-        {
-                int base = src1 * (int)sizeof(struct rt_value);
-                int ofs = src2 * (int)sizeof(struct rt_value);
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+                int base;
+                int ofs;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
                 ASM {
                         LDR_IMM(REG_X2, REG_X1, IMM9(base + 8));
                         LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(ofs + 8));
@@ -4371,15 +6118,82 @@ jit_visit_vector_scalar_op(
                 for (lane = 0; lane < 4; lane++) {
                         LDR_W_IMM(REG_X3, REG_X2, (uint32_t)lane * 4);
                         STR_W_IMM(REG_X3, REG_X5,
-                                  (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                                  (uint32_t)vd * 16 + (uint32_t)lane * 4);
                 }
                 return true;
         }
-        case OP_VSTOREI32X4:
-        case OP_VSTOREF32X4:
-        {
-                int base = dst * (int)sizeof(struct rt_value);
-                int ofs = src1 * (int)sizeof(struct rt_value);
+        va = jit_arm64_vreg(vd);
+        if (va < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+        op_lpc = ctx->pc_entry[ctx->pc_entry_count - 1].lpc;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor_id = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor_id = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor_id = 1;
+        }
+        if (cursor_id >= 0) {
+                uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
+
+                if (ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
+                        /* ldr qA, [xCursor], #16 */
+                        if (!jit_put_word(ctx, 0x3cc10400u |
+                                         (rn << 5) | (uint32_t)va))
+                                return false;
+                } else if (!jit_put_word(ctx, 0x3dc00000u |
+                                         (rn << 5) | (uint32_t)va)) {
+                        return false;
+                }
+                return true;
+        }
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                LSL_IMM         (REG_X3, REG_X3, 2);
+                ADD             (REG_X2, REG_X2, REG_X3);
+        }
+        /* ldr qA, [x2] */
+        if (!jit_put_word(ctx, 0x3dc00000 | (2u << 5) | (uint32_t)va))
+                return false;
+        return true;
+}
+
+/* Visit an OP_VSTOREI32X4 instruction. */
+static INLINE bool
+jit_visit_vstorei32x4_op(
+        struct jit_context *ctx)
+{
+        int base_tmp;
+        int ofs_tmp;
+        int vs;
+        int vc;
+        uint32_t op_lpc;
+        int cursor_id;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
+        CONSUME_IMM8(vs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+                int base;
+                int ofs;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
                 ASM {
                         LDR_IMM(REG_X2, REG_X1, IMM9(base + 8));
                         LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(ofs + 8));
@@ -4388,478 +6202,1347 @@ jit_visit_vector_scalar_op(
                 }
                 for (lane = 0; lane < 4; lane++) {
                         LDR_W_IMM(REG_X3, REG_X5,
-                                  (uint32_t)src2 * 16 + (uint32_t)lane * 4);
+                                  (uint32_t)vs * 16 + (uint32_t)lane * 4);
                         STR_W_IMM(REG_X3, REG_X2, (uint32_t)lane * 4);
                 }
                 return true;
         }
-        case OP_VSPLATI32:
-        case OP_VSPLATF32:
-        {
-                int src = src1 * (int)sizeof(struct rt_value);
+        vc = jit_arm64_vreg(vs);
+        if (vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+        op_lpc = ctx->pc_entry[ctx->pc_entry_count - 1].lpc;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor_id = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor_id = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor_id = 1;
+        }
+        if (cursor_id >= 0 &&
+            ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
+                uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
+
+                /* str qC, [xCursor], #16 */
+                if (!jit_put_word(ctx, 0x3c810400u |
+                                 (rn << 5) | (uint32_t)vc))
+                        return false;
+                return true;
+        }
+        ASM {
+                LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                LSL_IMM         (REG_X3, REG_X3, 2);
+                ADD             (REG_X2, REG_X2, REG_X3);
+        }
+        /* str qC, [x2] */
+        if (!jit_put_word(ctx, 0x3d800000 | (2u << 5) | (uint32_t)vc))
+                return false;
+        return true;
+}
+
+/* Visit an OP_VSPLATI32 instruction. */
+static INLINE bool
+jit_visit_vsplati32_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int src_tmp;
+        int va;
+        int src;
+
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(src_tmp);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+                int src;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                src = src_tmp * (int)sizeof(struct rt_value);
                 LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(src + 8));
                 for (lane = 0; lane < 4; lane++)
                         STR_W_IMM(REG_X3, REG_X5,
-                                  (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                                  (uint32_t)vd * 16 + (uint32_t)lane * 4);
                 return true;
         }
-        case OP_VGETLANEI32:
-        case OP_VGETLANEF32:
-        {
-                int d = dst * (int)sizeof(struct rt_value);
+        va = jit_arm64_vreg(vd);
+        if (va < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        src = src_tmp * (int)sizeof(struct rt_value);
+        ASM {
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src + 8));
+        }
+        /* dup vA.4s, w3 */
+        if (!jit_put_word(ctx, 0x4e040c00 | (3u << 5) | (uint32_t)va))
+                return false;
+        return true;
+}
+
+/* Visit an OP_VGETLANEI32 instruction. */
+static INLINE bool
+jit_visit_vgetlanei32_op(
+        struct jit_context *ctx)
+{
+        int dst_tmp;
+        int vs;
+        int lane_index;
+        int vb;
+        int dst;
+
+        CONSUME_TMPVAR(dst_tmp);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(lane_index);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int d;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                d = dst_tmp * (int)sizeof(struct rt_value);
                 LDR_W_IMM(REG_X3, REG_X5,
-                          (uint32_t)src1 * 16 + (uint32_t)src2 * 4);
+                          (uint32_t)vs * 16 + (uint32_t)lane_index * 4);
                 ASM {
                         MOVZ(REG_X4,
-                             IMM16(op == OP_VGETLANEF32 ?
-                                   NOCT_VALUE_FLOAT : NOCT_VALUE_INT),
+                             IMM16(NOCT_VALUE_INT),
                              LSL_0);
                         STR_IMM(REG_X4, REG_X1, IMM9(d));
                         STR_IMM(REG_X3, REG_X1, IMM9(d + 8));
                 }
                 return true;
         }
-        case OP_VMOV128:
+        vb = jit_arm64_vreg(vs);
+        if (vb < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        dst = dst_tmp * (int)sizeof(struct rt_value);
+        /* umov w3, vB.s[lane_index] (imm5 = (lane << 3) | 4) */
+        if (!jit_put_word(ctx, 0x0e003c00 |
+                          ((((uint32_t)lane_index << 3) | 4u) << 16) |
+                          ((uint32_t)vb << 5) | 3u))
+                return false;
+        ASM {
+                /* Tag + full-union value store (w3 is
+                   zero-extended into x3 by umov). */
+                MOVZ            (REG_X4,
+                                  IMM16(NOCT_VALUE_INT),
+                                  LSL_0);
+                STR_IMM         (REG_X4, REG_X1, IMM9(dst));
+                STR_IMM         (REG_X3, REG_X1, IMM9(dst + 8));
+        }
+        return true;
+}
+
+/* Visit an OP_VMOV128 instruction. */
+static INLINE bool
+jit_visit_vmov128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int va, vb;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
                 for (lane = 0; lane < 4; lane++) {
                         LDR_W_IMM(REG_X3, REG_X5,
-                                  (uint32_t)src1 * 16 + (uint32_t)lane * 4);
+                                  (uint32_t)vs * 16 + (uint32_t)lane * 4);
                         STR_W_IMM(REG_X3, REG_X5,
-                                  (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                                  (uint32_t)vd * 16 + (uint32_t)lane * 4);
                 }
                 return true;
-	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
-		for (lane = 0; lane < 4; lane++) {
-			uint32_t s = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
-			uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
-			if (op == OP_VCVTI32F32X4) {
-				LDR_W_IMM(REG_X3, REG_X5, s);
-				if (!jit_put_word(ctx, 0x1e220000 | (3u << 5)) ||
-				    !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
-						      (REG_X5 << 5)))
-					return false;
-			} else {
-				if (!jit_put_word(ctx, 0xbd400000 | ((s / 4) << 10) |
-						      (REG_X5 << 5)) ||
-				    !jit_put_word(ctx, 0x1e380003))
-					return false;
-				STR_W_IMM(REG_X3, REG_X5, d);
-			}
-		}
-		return true;
-        case OP_VADDI32X4:
-        case OP_VSUBI32X4:
-        case OP_VMULI32X4:
-        case OP_VAND128:
-        case OP_VOR128:
-        case OP_VXOR128:
-	case OP_VMINS32X4:
-	case OP_VMAXS32X4:
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(vs);
+        if (va < 0 || vb < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        if (va != vb) {
+                /* mov vA.16b, vB.16b (orr vA, vB, vB) */
+                if (!jit_put_word(ctx, 0x4ea01c00 |
+                                  ((uint32_t)vb << 16) |
+                                  ((uint32_t)vb << 5) | (uint32_t)va))
+                        return false;
+        }
+
+        return true;
+}
+
+/* Visit an OP_VADDI32X4 instruction. */
+static INLINE bool
+jit_visit_vaddi32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
                 for (lane = 0; lane < 4; lane++) {
-                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
-                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
-                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
                         LDR_W_IMM(REG_X3, REG_X5, a);
                         LDR_W_IMM(REG_X4, REG_X5, b);
-			if (op == OP_VMINS32X4 || op == OP_VMAXS32X4) {
-				/* cmp w3,w4; csel w3,w3,w4,le/ge */
-				if (!jit_put_word(ctx, 0x6b04007f) ||
-				    !jit_put_word(ctx, 0x1a800000 | (4u << 16) |
-					((uint32_t)(op == OP_VMINS32X4 ? 0xd : 0xa)
-					 << 12) | (3u << 5) | 3u))
-					return false;
-				STR_W_IMM(REG_X3, REG_X5, d);
-				continue;
-			}
-                        switch (op) {
-                        case OP_VADDI32X4:
-                                if (!jit_put_word(ctx, 0x0b000000 | (4u << 16) |
-                                                  (3u << 5) | 3u)) return false;
-                                break;
-                        case OP_VSUBI32X4:
-                                if (!jit_put_word(ctx, 0x4b000000 | (4u << 16) |
-                                                  (3u << 5) | 3u)) return false;
-                                break;
-                        case OP_VMULI32X4:
-                                if (!jit_put_word(ctx, 0x1b007c00 | (4u << 16) |
-                                                  (3u << 5) | 3u)) return false;
-                                break;
-                        case OP_VAND128:
-                                if (!jit_put_word(ctx, 0x0a000000 | (4u << 16) |
-                                                  (3u << 5) | 3u)) return false;
-                                break;
-                        case OP_VOR128:
-                                if (!jit_put_word(ctx, 0x2a000000 | (4u << 16) |
-                                                  (3u << 5) | 3u)) return false;
-                                break;
-                        default:
-                                if (!jit_put_word(ctx, 0x4a000000 | (4u << 16) |
-                                                  (3u << 5) | 3u)) return false;
-                                break;
-                        }
+
+                        if (!jit_put_word(ctx, 0x0b000000 | (4u << 16) |
+                                          (3u << 5) | 3u)) return false;
                         STR_W_IMM(REG_X3, REG_X5, d);
                 }
                 return true;
-        case OP_VSHLI32X4:
-        case OP_VSHRI32X4:
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* add vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x4ea08400 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSUBI32X4 instruction. */
+static INLINE bool
+jit_visit_vsubi32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
                 for (lane = 0; lane < 4; lane++) {
-                        uint32_t s = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
-                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+
+                        if (!jit_put_word(ctx, 0x4b000000 | (4u << 16) |
+                                          (3u << 5) | 3u)) return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* sub vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x6ea08400 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VMULI32X4 instruction. */
+static INLINE bool
+jit_visit_vmuli32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+
+                        if (!jit_put_word(ctx, 0x1b007c00 | (4u << 16) |
+                                          (3u << 5) | 3u)) return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* mul vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x4ea09c00 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VAND128 instruction. */
+static INLINE bool
+jit_visit_vand128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+
+                        if (!jit_put_word(ctx, 0x0a000000 | (4u << 16) |
+                                          (3u << 5) | 3u)) return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* and vA.16b, vB.16b, vC.16b */
+        if (!jit_put_word(ctx, 0x4e201c00 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VOR128 instruction. */
+static INLINE bool
+jit_visit_vor128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+
+                        if (!jit_put_word(ctx, 0x2a000000 | (4u << 16) |
+                                          (3u << 5) | 3u)) return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* orr vA.16b, vB.16b, vC.16b */
+        if (!jit_put_word(ctx, 0x4ea01c00 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VXOR128 instruction. */
+static INLINE bool
+jit_visit_vxor128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+
+                        if (!jit_put_word(ctx, 0x4a000000 | (4u << 16) |
+                                          (3u << 5) | 3u)) return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* eor vA.16b, vB.16b, vC.16b */
+        if (!jit_put_word(ctx, 0x6e201c00 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSHLI32X4 instruction. */
+static INLINE bool
+jit_visit_vshli32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int shift;
+        int va, vb;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(shift);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s;
+                        uint32_t d;
                         uint32_t word;
+
+                        s = (uint32_t)vs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
                         LDR_W_IMM(REG_X3, REG_X5, s);
-                        if (op == OP_VSHLI32X4)
-                                word = 0x53000000 |
-                                       (((32u - (uint32_t)src2) & 31u) << 16) |
-                                       ((31u - (uint32_t)src2) << 10) |
+                        word = 0x53000000 |
+                                       (((32u - (uint32_t)shift) & 31u) << 16) |
+                                       ((31u - (uint32_t)shift) << 10) |
                                        (3u << 5) | 3u;
-                        else
-                                word = 0x53000000 | ((uint32_t)src2 << 16) |
+                        if (!jit_put_word(ctx, word))
+                                return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(vs);
+        if (va < 0 || vb < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* shl vA.4s, vB.4s, #shift (immh:immb = 32 + shift) */
+        if (!jit_put_word(ctx, 0x4f005400 |
+                          ((32u + (uint32_t)shift) << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSHRI32X4 instruction. */
+static INLINE bool
+jit_visit_vshri32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int shift;
+        int va, vb;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(shift);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s;
+                        uint32_t d;
+                        uint32_t word;
+
+                        s = (uint32_t)vs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, s);
+                        word = 0x53000000 | ((uint32_t)shift << 16) |
                                        (31u << 10) | (3u << 5) | 3u;
                         if (!jit_put_word(ctx, word))
                                 return false;
                         STR_W_IMM(REG_X3, REG_X5, d);
                 }
                 return true;
-        case OP_VADDF32X4:
-        case OP_VSUBF32X4:
-        case OP_VMULF32X4:
-        case OP_VDIVF32X4:
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(vs);
+        if (va < 0 || vb < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* ushr vA.4s, vB.4s, #shift (LOGICAL; immh:immb = 64 - shift;
+           the LIR layer never emits shift == 0) */
+        if (!jit_put_word(ctx, 0x6f000400 |
+                          ((64u - (uint32_t)shift) << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VLOADF32X4 instruction. */
+static INLINE bool
+jit_visit_vloadf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int base_tmp;
+        int ofs_tmp;
+        int va;
+        uint32_t op_lpc;
+        int cursor_id;
+        int base;
+        int ofs;
+
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+                int base;
+                int ofs;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_IMM(REG_X2, REG_X1, IMM9(base + 8));
+                        LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                        LSL_IMM(REG_X3, REG_X3, 2);
+                        ADD(REG_X2, REG_X2, REG_X3);
+                }
                 for (lane = 0; lane < 4; lane++) {
-                        uint32_t a = (uint32_t)src1 * 16 + (uint32_t)lane * 4;
-                        uint32_t b = (uint32_t)src2 * 16 + (uint32_t)lane * 4;
-                        uint32_t d = (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X2, (uint32_t)lane * 4);
+                        STR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)vd * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        if (va < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+        op_lpc = ctx->pc_entry[ctx->pc_entry_count - 1].lpc;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor_id = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor_id = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor_id = 1;
+        }
+        if (cursor_id >= 0) {
+                uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
+
+                if (ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
+                        /* ldr qA, [xCursor], #16 */
+                        if (!jit_put_word(ctx, 0x3cc10400u |
+                                         (rn << 5) | (uint32_t)va))
+                                return false;
+                } else if (!jit_put_word(ctx, 0x3dc00000u |
+                                         (rn << 5) | (uint32_t)va)) {
+                        return false;
+                }
+                return true;
+        }
+        ASM {
+                /* x1 = &env->frame->tmpvar[0] */
+                LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                LSL_IMM         (REG_X3, REG_X3, 2);
+                ADD             (REG_X2, REG_X2, REG_X3);
+        }
+        /* ldr qA, [x2] */
+        if (!jit_put_word(ctx, 0x3dc00000 | (2u << 5) | (uint32_t)va))
+                return false;
+        return true;
+}
+
+/* Visit an OP_VSTOREF32X4 instruction. */
+static INLINE bool
+jit_visit_vstoref32x4_op(
+        struct jit_context *ctx)
+{
+        int base_tmp;
+        int ofs_tmp;
+        int vs;
+        int vc;
+        uint32_t op_lpc;
+        int cursor_id;
+        int base;
+        int ofs;
+
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
+        CONSUME_IMM8(vs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+                int base;
+                int ofs;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
+                ASM {
+                        LDR_IMM(REG_X2, REG_X1, IMM9(base + 8));
+                        LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                        LSL_IMM(REG_X3, REG_X3, 2);
+                        ADD(REG_X2, REG_X2, REG_X3);
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        LDR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)vs * 16 + (uint32_t)lane * 4);
+                        STR_W_IMM(REG_X3, REG_X2, (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        vc = jit_arm64_vreg(vs);
+        if (vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+        op_lpc = ctx->pc_entry[ctx->pc_entry_count - 1].lpc;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor_id = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor_id = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor_id = 1;
+        }
+        if (cursor_id >= 0 &&
+            ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
+                uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
+
+                /* str qC, [xCursor], #16 */
+                if (!jit_put_word(ctx, 0x3c810400u |
+                                 (rn << 5) | (uint32_t)vc))
+                        return false;
+                return true;
+        }
+        ASM {
+                LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
+                LSL_IMM         (REG_X3, REG_X3, 2);
+                ADD             (REG_X2, REG_X2, REG_X3);
+        }
+        /* str qC, [x2] */
+        if (!jit_put_word(ctx, 0x3d800000 | (2u << 5) | (uint32_t)vc))
+                return false;
+        return true;
+}
+
+/* Visit an OP_VSPLATF32 instruction. */
+static INLINE bool
+jit_visit_vsplatf32_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int src_tmp;
+        int va;
+        int src;
+
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(src_tmp);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+                int src;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                src = src_tmp * (int)sizeof(struct rt_value);
+                LDR_W_IMM(REG_X3, REG_X1, (uint32_t)(src + 8));
+                for (lane = 0; lane < 4; lane++)
+                        STR_W_IMM(REG_X3, REG_X5,
+                                  (uint32_t)vd * 16 + (uint32_t)lane * 4);
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        if (va < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        src = src_tmp * (int)sizeof(struct rt_value);
+        ASM {
+                LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src + 8));
+        }
+        /* dup vA.4s, w3 */
+        if (!jit_put_word(ctx, 0x4e040c00 | (3u << 5) | (uint32_t)va))
+                return false;
+        return true;
+}
+
+/* Visit an OP_VGETLANEF32 instruction. */
+static INLINE bool
+jit_visit_vgetlanef32_op(
+        struct jit_context *ctx)
+{
+        int dst_tmp;
+        int vs;
+        int lane_index;
+        int vb;
+        int dst;
+
+        CONSUME_TMPVAR(dst_tmp);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(lane_index);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int d;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                d = dst_tmp * (int)sizeof(struct rt_value);
+                LDR_W_IMM(REG_X3, REG_X5,
+                          (uint32_t)vs * 16 + (uint32_t)lane_index * 4);
+                ASM {
+                        MOVZ(REG_X4,
+                             IMM16(NOCT_VALUE_FLOAT),
+                             LSL_0);
+                        STR_IMM(REG_X4, REG_X1, IMM9(d));
+                        STR_IMM(REG_X3, REG_X1, IMM9(d + 8));
+                }
+                return true;
+        }
+        vb = jit_arm64_vreg(vs);
+        if (vb < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        dst = dst_tmp * (int)sizeof(struct rt_value);
+        /* umov w3, vB.s[lane_index] (imm5 = (lane << 3) | 4) */
+        if (!jit_put_word(ctx, 0x0e003c00 |
+                          ((((uint32_t)lane_index << 3) | 4u) << 16) |
+                          ((uint32_t)vb << 5) | 3u))
+                return false;
+        ASM {
+                /* Tag + full-union value store (w3 is
+                   zero-extended into x3 by umov). */
+                MOVZ            (REG_X4,
+                                  IMM16(NOCT_VALUE_FLOAT),
+                                  LSL_0);
+                STR_IMM         (REG_X4, REG_X1, IMM9(dst));
+                STR_IMM         (REG_X3, REG_X1, IMM9(dst + 8));
+        }
+        return true;
+}
+
+/* Visit an OP_VADDF32X4 instruction. */
+static INLINE bool
+jit_visit_vaddf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
                         uint32_t base;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
                         /* ldr s0,[x5,#a]; ldr s1,[x5,#b] */
                         if (!jit_put_word(ctx, 0xbd400000 | ((a / 4) << 10) |
                                                   (REG_X5 << 5)) ||
                             !jit_put_word(ctx, 0xbd400001 | ((b / 4) << 10) |
                                                   (REG_X5 << 5)))
                                 return false;
-                        switch (op) {
-                        case OP_VADDF32X4: base = 0x1e202800; break;
-                        case OP_VSUBF32X4: base = 0x1e203800; break;
-                        case OP_VMULF32X4: base = 0x1e200800; break;
-                        default:           base = 0x1e201800; break;
-                        }
+                        base = 0x1e202800;
                         if (!jit_put_word(ctx, base | (1u << 16)) ||
                             !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
                                                   (REG_X5 << 5)))
                                 return false;
                 }
                 return true;
-        default:
-                assert(NEVER_COME_HERE);
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
                 return false;
         }
-}
 
-/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
-static INLINE bool
-jit_visit_vector_op(
-        struct jit_context *ctx,
-        int op)
-{
-        int a;
-        int b;
-        int c;
-	int va, vb, vc;
-	uint32_t op_lpc;
-	int cursor_id;
-
-        /* Decode (shapes vary per op; see bytecode.h). */
-        switch (op) {
-        case OP_VLOADI32X4:
-        case OP_VLOADF32X4:
-                CONSUME_IMM8(a);
-                CONSUME_TMPVAR(b);
-                CONSUME_TMPVAR(c);
-                break;
-        case OP_VSTOREI32X4:
-        case OP_VSTOREF32X4:
-                CONSUME_TMPVAR(a);
-                CONSUME_TMPVAR(b);
-                CONSUME_IMM8(c);
-                break;
-        case OP_VSPLATI32:
-        case OP_VSPLATF32:
-                CONSUME_IMM8(a);
-                CONSUME_TMPVAR(b);
-                c = 0;
-                break;
-        case OP_VGETLANEI32:
-        case OP_VGETLANEF32:
-                CONSUME_TMPVAR(a);
-                CONSUME_IMM8(b);
-                CONSUME_IMM8(c);
-                break;
-        case OP_VMOV128:
-	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
-                CONSUME_IMM8(a);
-                CONSUME_IMM8(b);
-                c = 0;
-                break;
-        default:
-                CONSUME_IMM8(a);
-                CONSUME_IMM8(b);
-                CONSUME_IMM8(c);
-                break;
-        }
-
-        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
-                return jit_visit_vector_scalar_op(ctx, op, a, b, c);
-        }
-	va = vb = vc = 0;
-	switch (op) {
-	case OP_VLOADI32X4:
-	case OP_VLOADF32X4:
-	case OP_VSPLATI32:
-	case OP_VSPLATF32:
-		va = jit_arm64_vreg(a);
-		break;
-	case OP_VSTOREI32X4:
-	case OP_VSTOREF32X4:
-		vc = jit_arm64_vreg(c);
-		break;
-	case OP_VGETLANEI32:
-	case OP_VGETLANEF32:
-		vb = jit_arm64_vreg(b);
-		break;
-	case OP_VMOV128:
-	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
-	case OP_VSHLI32X4:
-	case OP_VSHRI32X4:
-		va = jit_arm64_vreg(a);
-		vb = jit_arm64_vreg(b);
-		break;
-	default:
-		va = jit_arm64_vreg(a);
-		vb = jit_arm64_vreg(b);
-		vc = jit_arm64_vreg(c);
-		break;
-	}
-	if (va < 0 || vb < 0 || vc < 0) {
-		rt_error(ctx->env, BROKEN_BYTECODE);
-		return false;
-	}
-	op_lpc = ctx->pc_entry[ctx->pc_entry_count - 1].lpc;
-
-        switch (op) {
-        case OP_VLOADI32X4:
-        case OP_VLOADF32X4:
-        {
-                int base = b * (int)sizeof(struct rt_value);
-                int ofs = c * (int)sizeof(struct rt_value);
-		cursor_id = -1;
-		if (ctx->vector_hint_active) {
-			if (ctx->vector_base_tmp[0] == b) cursor_id = 0;
-			else if (ctx->vector_base_tmp[1] == b) cursor_id = 1;
-		}
-		if (cursor_id >= 0) {
-			uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
-			if (ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
-				/* ldr qA, [xCursor], #16 */
-				if (!jit_put_word(ctx, 0x3cc10400u |
-						 (rn << 5) | (uint32_t)va))
-					return false;
-			} else if (!jit_put_word(ctx, 0x3dc00000u |
-						 (rn << 5) | (uint32_t)va)) {
-				return false;
-			}
-			break;
-		}
-                ASM {
-                        /* x1 = &env->frame->tmpvar[0] */
-                        LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
-                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
-                        LSL_IMM         (REG_X3, REG_X3, 2);
-                        ADD             (REG_X2, REG_X2, REG_X3);
-                }
-                /* ldr qA, [x2] */
-		if (!jit_put_word(ctx, 0x3dc00000 | (2u << 5) | (uint32_t)va))
-                        return false;
-                break;
-        }
-        case OP_VSTOREI32X4:
-        case OP_VSTOREF32X4:
-        {
-                int base = a * (int)sizeof(struct rt_value);
-                int ofs = b * (int)sizeof(struct rt_value);
-		cursor_id = -1;
-		if (ctx->vector_hint_active) {
-			if (ctx->vector_base_tmp[0] == a) cursor_id = 0;
-			else if (ctx->vector_base_tmp[1] == a) cursor_id = 1;
-		}
-		if (cursor_id >= 0 &&
-		    ctx->vector_base_last_lpc[cursor_id] == op_lpc) {
-			uint32_t rn = cursor_id == 0 ? REG_X19 : REG_X20;
-			/* str qC, [xCursor], #16 */
-			if (!jit_put_word(ctx, 0x3c810400u |
-					 (rn << 5) | (uint32_t)vc))
-				return false;
-			break;
-		}
-                ASM {
-                        LDR_IMM         (REG_X2, REG_X1, IMM9(base + 8));
-                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(ofs + 8));
-                        LSL_IMM         (REG_X3, REG_X3, 2);
-                        ADD             (REG_X2, REG_X2, REG_X3);
-                }
-                /* str qC, [x2] */
-		if (!jit_put_word(ctx, 0x3d800000 | (2u << 5) | (uint32_t)vc))
-                        return false;
-                break;
-        }
-        case OP_VSPLATI32:
-        case OP_VSPLATF32:
-        {
-                int src = b * (int)sizeof(struct rt_value);
-                ASM {
-                        LDR_W_IMM       (REG_X3, REG_X1, (uint32_t)(src + 8));
-                }
-                /* dup vA.4s, w3 */
-		if (!jit_put_word(ctx, 0x4e040c00 | (3u << 5) | (uint32_t)va))
-                        return false;
-                break;
-        }
-        case OP_VGETLANEI32:
-        case OP_VGETLANEF32:
-        {
-                int dst = a * (int)sizeof(struct rt_value);
-                /* umov w3, vB.s[c] (imm5 = (lane << 3) | 4) */
-                if (!jit_put_word(ctx, 0x0e003c00 |
-                                  ((((uint32_t)c << 3) | 4u) << 16) |
-				  ((uint32_t)vb << 5) | 3u))
-                        return false;
-                ASM {
-                        /* Tag + full-union value store (w3 is
-                           zero-extended into x3 by umov). */
-			MOVZ            (REG_X4,
-					  IMM16(op == OP_VGETLANEF32 ?
-						NOCT_VALUE_FLOAT : NOCT_VALUE_INT),
-					  LSL_0);
-                        STR_IMM         (REG_X4, REG_X1, IMM9(dst));
-                        STR_IMM         (REG_X3, REG_X1, IMM9(dst + 8));
-                }
-                break;
-        }
-        case OP_VMOV128:
-                if (va != vb) {
-                        /* mov vA.16b, vB.16b (orr vA, vB, vB) */
-                        if (!jit_put_word(ctx, 0x4ea01c00 |
-					  ((uint32_t)vb << 16) |
-					  ((uint32_t)vb << 5) | (uint32_t)va))
-                                return false;
-                }
-                break;
-	case OP_VCVTI32F32X4:
-		if (!jit_put_word(ctx, 0x4e21d800 |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-	case OP_VCVTF32I32X4:
-		if (!jit_put_word(ctx, 0x4ea1b800 |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-        case OP_VADDI32X4:
-                /* add vA.4s, vB.4s, vC.4s */
-                if (!jit_put_word(ctx, 0x4ea08400 | ((uint32_t)vc << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-        case OP_VSUBI32X4:
-                /* sub vA.4s, vB.4s, vC.4s */
-                if (!jit_put_word(ctx, 0x6ea08400 | ((uint32_t)vc << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-	case OP_VMINS32X4:
-		/* smin vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x4ea06c00 | ((uint32_t)vc << 16) |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-	case OP_VMAXS32X4:
-		/* smax vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x4ea06400 | ((uint32_t)vc << 16) |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-        case OP_VMULI32X4:
-                /* mul vA.4s, vB.4s, vC.4s */
-                if (!jit_put_word(ctx, 0x4ea09c00 | ((uint32_t)vc << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-        case OP_VAND128:
-                /* and vA.16b, vB.16b, vC.16b */
-                if (!jit_put_word(ctx, 0x4e201c00 | ((uint32_t)vc << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-        case OP_VOR128:
-                /* orr vA.16b, vB.16b, vC.16b */
-                if (!jit_put_word(ctx, 0x4ea01c00 | ((uint32_t)vc << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-        case OP_VXOR128:
-                /* eor vA.16b, vB.16b, vC.16b */
-                if (!jit_put_word(ctx, 0x6e201c00 | ((uint32_t)vc << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-        case OP_VSHLI32X4:
-                /* shl vA.4s, vB.4s, #c (immh:immb = 32 + c) */
-                if (!jit_put_word(ctx, 0x4f005400 |
-                                  ((32u + (uint32_t)c) << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-        case OP_VSHRI32X4:
-                /* ushr vA.4s, vB.4s, #c (LOGICAL; immh:immb = 64 - c;
-                   the LIR layer never emits c == 0) */
-                if (!jit_put_word(ctx, 0x6f000400 |
-                                  ((64u - (uint32_t)c) << 16) |
-                                  ((uint32_t)vb << 5) | (uint32_t)va))
-                        return false;
-                break;
-	case OP_VADDF32X4:
-		/* fadd vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x4e20d400 | ((uint32_t)vc << 16) |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-	case OP_VSUBF32X4:
-		/* fsub vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x4ea0d400 | ((uint32_t)vc << 16) |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-	case OP_VMULF32X4:
-		/* fmul vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x6e20dc00 | ((uint32_t)vc << 16) |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-	case OP_VDIVF32X4:
-		/* fdiv vA.4s, vB.4s, vC.4s */
-		if (!jit_put_word(ctx, 0x6e20fc00 | ((uint32_t)vc << 16) |
-				  ((uint32_t)vb << 5) | (uint32_t)va))
-			return false;
-		break;
-        default:
-                assert(NEVER_COME_HERE);
+        /* fadd vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x4e20d400 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
                 return false;
-        }
 
         return true;
 }
 
+/* Visit an OP_VSUBF32X4 instruction. */
+static INLINE bool
+jit_visit_vsubf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+                        uint32_t base;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        /* ldr s0,[x5,#a]; ldr s1,[x5,#b] */
+                        if (!jit_put_word(ctx, 0xbd400000 | ((a / 4) << 10) |
+                                                  (REG_X5 << 5)) ||
+                            !jit_put_word(ctx, 0xbd400001 | ((b / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                        base = 0x1e203800;
+                        if (!jit_put_word(ctx, base | (1u << 16)) ||
+                            !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* fsub vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x4ea0d400 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VMULF32X4 instruction. */
+static INLINE bool
+jit_visit_vmulf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+                        uint32_t base;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        /* ldr s0,[x5,#a]; ldr s1,[x5,#b] */
+                        if (!jit_put_word(ctx, 0xbd400000 | ((a / 4) << 10) |
+                                                  (REG_X5 << 5)) ||
+                            !jit_put_word(ctx, 0xbd400001 | ((b / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                        base = 0x1e200800;
+                        if (!jit_put_word(ctx, base | (1u << 16)) ||
+                            !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* fmul vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x6e20dc00 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VDIVF32X4 instruction. */
+static INLINE bool
+jit_visit_vdivf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+                        uint32_t base;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        /* ldr s0,[x5,#a]; ldr s1,[x5,#b] */
+                        if (!jit_put_word(ctx, 0xbd400000 | ((a / 4) << 10) |
+                                                  (REG_X5 << 5)) ||
+                            !jit_put_word(ctx, 0xbd400001 | ((b / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                        base = 0x1e201800;
+                        if (!jit_put_word(ctx, base | (1u << 16)) ||
+                            !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
+                                                  (REG_X5 << 5)))
+                                return false;
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* fdiv vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x6e20fc00 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VCVTI32F32X4 instruction. */
+static INLINE bool
+jit_visit_vcvti32f32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int va, vb;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s;
+                        uint32_t d;
+
+                        s = (uint32_t)vs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, s);
+                        if (!jit_put_word(ctx, 0x1e220000 | (3u << 5)) ||
+                            !jit_put_word(ctx, 0xbd000000 | ((d / 4) << 10) |
+                                              (REG_X5 << 5)))
+                                return false;
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(vs);
+        if (va < 0 || vb < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        if (!jit_put_word(ctx, 0x4e21d800 |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VCVTF32I32X4 instruction. */
+static INLINE bool
+jit_visit_vcvtf32i32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int va, vb;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s;
+                        uint32_t d;
+
+                        s = (uint32_t)vs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        if (!jit_put_word(ctx, 0xbd400000 | ((s / 4) << 10) |
+                                              (REG_X5 << 5)) ||
+                            !jit_put_word(ctx, 0x1e380003))
+                                return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(vs);
+        if (va < 0 || vb < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        if (!jit_put_word(ctx, 0x4ea1b800 |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VMINS32X4 instruction. */
+static INLINE bool
+jit_visit_vmins32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+                        /* cmp w3,w4; csel w3,w3,w4,le/ge */
+                        if (!jit_put_word(ctx, 0x6b04007f) ||
+                            !jit_put_word(ctx, 0x1a800000 | (4u << 16) |
+                                ((uint32_t)(0xd)
+                                 << 12) | (3u << 5) | 3u))
+                                return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* smin vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x4ea06c00 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VMAXS32X4 instruction. */
+static INLINE bool
+jit_visit_vmaxs32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int va, vb, vc;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_NEON) == 0) {
+                int lane;
+
+                MOVZ(REG_X5, IMM16((uint32_t)offsetof(struct rt_env, vreg) & 0xffff), LSL_0);
+                MOVK(REG_X5, IMM16(((uint32_t)offsetof(struct rt_env, vreg) >> 16) & 0xffff), LSL_16);
+                ADD(REG_X5, REG_X0, REG_X5);
+
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        LDR_W_IMM(REG_X3, REG_X5, a);
+                        LDR_W_IMM(REG_X4, REG_X5, b);
+                        /* cmp w3,w4; csel w3,w3,w4,le/ge */
+                        if (!jit_put_word(ctx, 0x6b04007f) ||
+                            !jit_put_word(ctx, 0x1a800000 | (4u << 16) |
+                                ((uint32_t)(0xa)
+                                 << 12) | (3u << 5) | 3u))
+                                return false;
+                        STR_W_IMM(REG_X3, REG_X5, d);
+                }
+                return true;
+        }
+        va = jit_arm64_vreg(vd);
+        vb = jit_arm64_vreg(lhs);
+        vc = jit_arm64_vreg(rhs);
+        if (va < 0 || vb < 0 || vc < 0) {
+                rt_error(ctx->env, BROKEN_BYTECODE);
+                return false;
+        }
+
+        /* smax vA.4s, vB.4s, vC.4s */
+        if (!jit_put_word(ctx, 0x4ea06400 | ((uint32_t)vc << 16) |
+                          ((uint32_t)vb << 5) | (uint32_t)va))
+                return false;
+
+        return true;
+}
+
+
 /* Visit a bytecode of a function. */
-bool
+static bool
 jit_visit_bytecode(
         struct jit_context *ctx)
 {
@@ -5210,11 +7893,11 @@ jit_visit_bytecode(
 				return false;
 			break;
 		case OP_VCMPI32X4:
-			if (!jit_visit_vcmp_op(ctx, false))
+			if (!jit_visit_vcmpi32x4_op(ctx))
 				return false;
 			break;
 		case OP_VCMPF32X4:
-			if (!jit_visit_vcmp_op(ctx, true))
+			if (!jit_visit_vcmpf32x4_op(ctx))
 				return false;
 			break;
 		case OP_VSELECT128:
@@ -5232,58 +7915,199 @@ jit_visit_bytecode(
 			if (!jit_visit_vgatheri32x4_checked_op(ctx)) return false;
 			break;
                 case OP_IADD:
+                        if (!jit_visit_iadd_op(ctx))
+                                return false;
+                        break;
                 case OP_ISUB:
+                        if (!jit_visit_isub_op(ctx))
+                                return false;
+                        break;
                 case OP_IMUL:
+                        if (!jit_visit_imul_op(ctx))
+                                return false;
+                        break;
                 case OP_IDIV:
+                        if (!jit_visit_idiv_op(ctx))
+                                return false;
+                        break;
                 case OP_IMOD:
+                        if (!jit_visit_imod_op(ctx))
+                                return false;
+                        break;
                 case OP_IAND:
+                        if (!jit_visit_iand_op(ctx))
+                                return false;
+                        break;
                 case OP_IOR:
+                        if (!jit_visit_ior_op(ctx))
+                                return false;
+                        break;
                 case OP_IXOR:
+                        if (!jit_visit_ixor_op(ctx))
+                                return false;
+                        break;
                 case OP_ISHL:
+                        if (!jit_visit_ishl_op(ctx))
+                                return false;
+                        break;
                 case OP_ISHR:
+                        if (!jit_visit_ishr_op(ctx))
+                                return false;
+                        break;
                 case OP_ILT:
+                        if (!jit_visit_ilt_op(ctx))
+                                return false;
+                        break;
                 case OP_ILTE:
+                        if (!jit_visit_ilte_op(ctx))
+                                return false;
+                        break;
                 case OP_IGT:
+                        if (!jit_visit_igt_op(ctx))
+                                return false;
+                        break;
                 case OP_IGTE:
+                        if (!jit_visit_igte_op(ctx))
+                                return false;
+                        break;
                 case OP_FADD:
+                        if (!jit_visit_fadd_op(ctx))
+                                return false;
+                        break;
                 case OP_FSUB:
+                        if (!jit_visit_fsub_op(ctx))
+                                return false;
+                        break;
                 case OP_FMUL:
+                        if (!jit_visit_fmul_op(ctx))
+                                return false;
+                        break;
                 case OP_FDIV:
+                        if (!jit_visit_fdiv_op(ctx))
+                                return false;
+                        break;
                 case OP_FLT:
+                        if (!jit_visit_flt_op(ctx))
+                                return false;
+                        break;
                 case OP_FLTE:
+                        if (!jit_visit_flte_op(ctx))
+                                return false;
+                        break;
                 case OP_FGT:
+                        if (!jit_visit_fgt_op(ctx))
+                                return false;
+                        break;
                 case OP_FGTE:
+                        if (!jit_visit_fgte_op(ctx))
+                                return false;
+                        break;
                 case OP_IDIV_CHECKED:
+                        if (!jit_visit_idiv_checked_op(ctx))
+                                return false;
+                        break;
                 case OP_IMOD_CHECKED:
-                        if (!jit_visit_typed_op(ctx, opcode))
+                        if (!jit_visit_imod_checked_op(ctx))
                                 return false;
                         break;
                 case OP_VLOADI32X4:
+                        if (!jit_visit_vloadi32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSTOREI32X4:
+                        if (!jit_visit_vstorei32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSPLATI32:
+                        if (!jit_visit_vsplati32_op(ctx))
+                                return false;
+                        break;
                 case OP_VGETLANEI32:
+                        if (!jit_visit_vgetlanei32_op(ctx))
+                                return false;
+                        break;
                 case OP_VMOV128:
+                        if (!jit_visit_vmov128_op(ctx))
+                                return false;
+                        break;
                 case OP_VADDI32X4:
+                        if (!jit_visit_vaddi32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSUBI32X4:
+                        if (!jit_visit_vsubi32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VMULI32X4:
+                        if (!jit_visit_vmuli32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VAND128:
+                        if (!jit_visit_vand128_op(ctx))
+                                return false;
+                        break;
                 case OP_VOR128:
+                        if (!jit_visit_vor128_op(ctx))
+                                return false;
+                        break;
                 case OP_VXOR128:
+                        if (!jit_visit_vxor128_op(ctx))
+                                return false;
+                        break;
                 case OP_VSHLI32X4:
+                        if (!jit_visit_vshli32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSHRI32X4:
+                        if (!jit_visit_vshri32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VLOADF32X4:
+                        if (!jit_visit_vloadf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSTOREF32X4:
+                        if (!jit_visit_vstoref32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSPLATF32:
+                        if (!jit_visit_vsplatf32_op(ctx))
+                                return false;
+                        break;
                 case OP_VGETLANEF32:
+                        if (!jit_visit_vgetlanef32_op(ctx))
+                                return false;
+                        break;
                 case OP_VADDF32X4:
+                        if (!jit_visit_vaddf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSUBF32X4:
+                        if (!jit_visit_vsubf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VMULF32X4:
+                        if (!jit_visit_vmulf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VDIVF32X4:
-		case OP_VCVTI32F32X4:
-		case OP_VCVTF32I32X4:
-		case OP_VMINS32X4:
-		case OP_VMAXS32X4:
-                        if (!jit_visit_vector_op(ctx, opcode))
+                        if (!jit_visit_vdivf32x4_op(ctx))
+                                return false;
+                        break;
+                case OP_VCVTI32F32X4:
+                        if (!jit_visit_vcvti32f32x4_op(ctx))
+                                return false;
+                        break;
+                case OP_VCVTF32I32X4:
+                        if (!jit_visit_vcvtf32i32x4_op(ctx))
+                                return false;
+                        break;
+                case OP_VMINS32X4:
+                        if (!jit_visit_vmins32x4_op(ctx))
+                                return false;
+                        break;
+                case OP_VMAXS32X4:
+                        if (!jit_visit_vmaxs32x4_op(ctx))
                                 return false;
                         break;
 		default:

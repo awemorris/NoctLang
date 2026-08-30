@@ -36,12 +36,3 @@ test -f "$build_dir/libnoctapi.a" || {
 	"$build_dir/libnoctapi.a" "$build_dir/libnoct.a" \
 	$system_libs -o "$test_bin"
 "$test_bin"
-
-if grep -q '^NOCT_ENABLE_MULTITHREAD:BOOL=ON$' "$build_dir/CMakeCache.txt"; then
-	model_test="$build_dir/noct-objectmodel-runtime-test"
-	# shellcheck disable=SC2086
-	"$cc" -I"$root/include" \
-		"$root/tests/testcases/objectmodel-runtime-test.c" \
-		"$build_dir/libnoct.a" $system_libs -o "$model_test"
-	"$model_test"
-fi

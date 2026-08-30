@@ -828,6 +828,7 @@ rt_visit_call_op(
         GET_TMPVAR(&dst_tmpvar);
         GET_TMPVAR(&func_tmpvar);
         GET_U8(&arg_count);
+
         for (i = 0; i < arg_count; i++) {
                 GET_TMPVAR(&arg_tmpvar);
                 arg[i] = arg_tmpvar;
@@ -860,13 +861,20 @@ rt_visit_thiscall_op(
 	GET_TMPVAR(&obj_tmpvar);
 	GET_TMPVAR(&func_tmpvar);
         GET_U8(&arg_count);
+
         for (i = 0; i < arg_count; i++) {
                 GET_TMPVAR(&arg_tmpvar);
                 arg[i] = arg_tmpvar;
         }
 
-	if (!ex_thiscall_helper(env, dst_tmpvar, obj_tmpvar, NULL, 0,
-				(uint32_t)func_tmpvar, arg_count, arg))
+	if (!ex_thiscall_helper(env,
+                                dst_tmpvar,
+                                obj_tmpvar,
+                                NULL,
+                                0,
+				(uint32_t)func_tmpvar,
+                                arg_count,
+                                arg))
                 return false;
 
         return true;
@@ -898,40 +906,40 @@ rt_visit_jmpiftrue_op(
         struct rt_func *func,
         uint32_t *pc)
 {
+        struct rt_value *v;
         int src;
         uint32_t target;
+        bool truthy;
 
         DEBUG_TRACE(*pc, "JMPIFTRUE");
 
         GET_TMPVAR(&src);
         GET_ADDR(&target);
 
+        v = &env->frame->tmpvar[src];
+
         /* Evaluate the condition: a zero of any numeric type is false. */
-        {
-                struct rt_value *v = &env->frame->tmpvar[src];
-                bool truthy;
-
-                switch (v->type) {
-                case NOCT_VALUE_INT:    truthy = v->val.i != 0;     break;
-                case NOCT_VALUE_LONG:   truthy = v->val.l != 0;     break;
-                case NOCT_VALUE_FLOAT:  truthy = v->val.f != 0.0f;  break;
-                case NOCT_VALUE_DOUBLE: truthy = v->val.lf != 0.0;  break;
-                default:
-                        /*
-                         * Not a broken instruction -- a value of a type
-                         * a condition does not accept. Saying
-                         * "Broken bytecode" here sent readers looking
-                         * for a codegen fault instead of at their own
-                         * "if (someString)".
-                         */
-                        rt_error(env, N_TR("Condition is not a number."));
-                        return false;
-                }
-
-                /* Jump. */
-                if (truthy)
-                        *pc = target;
+        switch (v->type) {
+        case NOCT_VALUE_INT:
+                truthy = v->val.i != 0;
+                break;
+        case NOCT_VALUE_LONG:
+                truthy = v->val.l != 0;
+                break;
+        case NOCT_VALUE_FLOAT:
+                truthy = v->val.f != 0.0f;
+                break;
+        case NOCT_VALUE_DOUBLE:
+                truthy = v->val.lf != 0.0;
+                break;
+        default:
+                rt_error(env, N_TR("Condition is not a number."));
+                return false;
         }
+
+        /* Jump. */
+        if (truthy)
+                *pc = target;
 
         return true;
 }
@@ -943,40 +951,40 @@ rt_visit_jmpiffalse_op(
         struct rt_func *func,
         uint32_t *pc)
 {
+        struct rt_value *v;
         int src;
         uint32_t target;
+        bool truthy;
 
         DEBUG_TRACE(*pc, "JMPIFFALSE");
 
         GET_TMPVAR(&src);
         GET_ADDR(&target);
 
+        v = &env->frame->tmpvar[src];
+
         /* Evaluate the condition: a zero of any numeric type is false. */
-        {
-                struct rt_value *v = &env->frame->tmpvar[src];
-                bool truthy;
-
-                switch (v->type) {
-                case NOCT_VALUE_INT:    truthy = v->val.i != 0;     break;
-                case NOCT_VALUE_LONG:   truthy = v->val.l != 0;     break;
-                case NOCT_VALUE_FLOAT:  truthy = v->val.f != 0.0f;  break;
-                case NOCT_VALUE_DOUBLE: truthy = v->val.lf != 0.0;  break;
-                default:
-                        /*
-                         * Not a broken instruction -- a value of a type
-                         * a condition does not accept. Saying
-                         * "Broken bytecode" here sent readers looking
-                         * for a codegen fault instead of at their own
-                         * "if (someString)".
-                         */
-                        rt_error(env, N_TR("Condition is not a number."));
-                        return false;
-                }
-
-                /* Jump. */
-                if (!truthy)
-                        *pc = target;
+        switch (v->type) {
+        case NOCT_VALUE_INT:
+                truthy = v->val.i != 0;
+                break;
+        case NOCT_VALUE_LONG:
+                truthy = v->val.l != 0;
+                break;
+        case NOCT_VALUE_FLOAT:
+                truthy = v->val.f != 0.0f;
+                break;
+        case NOCT_VALUE_DOUBLE:
+                truthy = v->val.lf != 0.0;
+                break;
+        default:
+                rt_error(env, N_TR("Condition is not a number."));
+                return false;
         }
+
+        /* Jump. */
+        if (!truthy)
+                *pc = target;
 
         return true;
 }
@@ -1009,12 +1017,13 @@ rt_visit_pbase_op(
 	int src;
 	int base_id;
 
+	UNUSED_PARAMETER(base_id);
+
 	DEBUG_TRACE(*pc, "PBASE");
 
 	GET_TMPVAR(&dst);
 	GET_TMPVAR(&src);
 	GET_U8(&base_id);
-	UNUSED_PARAMETER(base_id);
 
 	return ex_pbase_helper(env, dst, src);
 }
@@ -1045,8 +1054,10 @@ rt_visit_pcheck_op(
         GET_TMPVAR(&dst);
         GET_TMPVAR(&src);
         GET_U8(&type);
+
         if (!ex_pcheck_helper(env, (int)dst, (int)src, (int)type))
                 return false;
+
         return true;
 }
 
@@ -1064,8 +1075,10 @@ rt_visit_typeis_op(
         GET_TMPVAR(&dst);
         GET_TMPVAR(&src);
         GET_U8(&type);
+
         if (!ex_typeis_helper(env, (int)dst, (int)src, (int)type))
                 return false;
+
         return true;
 }
 
@@ -1207,6 +1220,7 @@ rt_visit_pstoref32_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "PSTOREF32");
+
         BINARY_OP(ex_pstoref32_helper);
 }
 
@@ -1223,192 +1237,820 @@ rt_visit_checktype_op(
 
         GET_TMPVAR(&slot);
         GET_U8(&type);
+
         if (!ex_checktype_helper(env, (int)slot, (int)type))
                 return false;
+
         return true;
 }
 
-/*
- * Typed arithmetic ops (docs/design/07-typed-ops.md): dispatch-free
- * helper calls.  The table is indexed by (opcode - OP_IADD); the
- * opcode block in bytecode.h is contiguous by contract.
- */
-typedef bool (CDECL *rt_typed_helper_t)(NoctEnv *env, int dst, int src1, int src2);
-
-static const rt_typed_helper_t rt_typed_op_helper[] = {
-        ex_iadd_helper,         /* OP_IADD */
-        ex_isub_helper,         /* OP_ISUB */
-        ex_imul_helper,         /* OP_IMUL */
-        ex_idiv_helper,         /* OP_IDIV */
-        ex_imod_helper,         /* OP_IMOD */
-        ex_iand_helper,         /* OP_IAND */
-        ex_ior_helper,          /* OP_IOR  */
-        ex_ixor_helper,         /* OP_IXOR */
-        ex_ishl_helper,         /* OP_ISHL */
-        ex_ishr_helper,         /* OP_ISHR */
-        ex_ilt_helper,          /* OP_ILT  */
-        ex_ilte_helper,         /* OP_ILTE */
-        ex_igt_helper,          /* OP_IGT  */
-        ex_igte_helper,         /* OP_IGTE */
-        ex_fadd_helper,         /* OP_FADD */
-        ex_fsub_helper,         /* OP_FSUB */
-        ex_fmul_helper,         /* OP_FMUL */
-        ex_fdiv_helper,         /* OP_FDIV */
-        ex_flt_helper,          /* OP_FLT  */
-        ex_flte_helper,         /* OP_FLTE */
-        ex_fgt_helper,          /* OP_FGT  */
-        ex_fgte_helper          /* OP_FGTE */
-};
-
-/* Visit an OP_IADD..OP_FGTE instruction. */
+/* Visit an OP_IADD instruction. */
 static INLINE bool
-rt_visit_typed_op(
+rt_visit_iadd_op(
         struct rt_env *env,
         struct rt_func *func,
-        uint32_t *pc,
-        int op)
+        uint32_t *pc)
 {
-        rt_typed_helper_t helper;
-
-        DEBUG_TRACE(*pc, "TYPED");
-
-        helper = rt_typed_op_helper[op - OP_IADD];
-
-        /* ISHL/ISHR carry the shift count as an imm8, not a tmpvar
-           (a count would fail the tmpvar frame-size validation). */
-        if (op == OP_ISHL || op == OP_ISHR) {
-                int dst, src1, imm;
-                GET_TMPVAR(&dst);
-                GET_TMPVAR(&src1);
-                GET_U8(&imm);
-                if (!helper(env, dst, src1, imm))
-                        return false;
-                return true;
-        }
-
-        /* Braced so the macro's declarations open a fresh block
-           (strict C89: no declaration after statement). */
-        {
-                BINARY_OP(helper);
-        }
+        DEBUG_TRACE(*pc, "IADD");
+        BINARY_OP(ex_iadd_helper);
 }
 
-/* Checked typed integer division lives outside OP_IADD..OP_FGTE so it
- * cannot use that range's table index. */
+/* Visit an OP_ISUB instruction. */
 static INLINE bool
-rt_visit_checked_idiv_op(
+rt_visit_isub_op(
         struct rt_env *env,
         struct rt_func *func,
-        uint32_t *pc,
-        int op)
+        uint32_t *pc)
 {
-        rt_typed_helper_t helper;
-
-        DEBUG_TRACE(*pc, "TYPED_DIV_CHECKED");
-        helper = op == OP_IDIV_CHECKED ? ex_idiv_helper : ex_imod_helper;
-        {
-                BINARY_OP(helper);
-        }
+        DEBUG_TRACE(*pc, "ISUB");
+        BINARY_OP(ex_isub_helper);
 }
 
-/*
- * 128-bit SIMD ops (docs/design/06-simd.md): lane-wise C emulation
- * helpers.  Table indexed by (opcode - OP_VLOADI32X4).  Operand
- * shapes vary per op (u16 tmpvars vs raw imm8 vreg/lane/count), so
- * the decode below switches on the opcode class.
- */
-static const rt_typed_helper_t rt_vector_op_helper[] = {
-        ex_vloadi32x4_helper,   /* OP_VLOADI32X4  */
-        ex_vstorei32x4_helper,  /* OP_VSTOREI32X4 */
-        ex_vsplati32_helper,    /* OP_VSPLATI32   */
-        ex_vgetlanei32_helper,  /* OP_VGETLANEI32 */
-        ex_vmov128_helper,      /* OP_VMOV128     */
-        ex_vaddi32x4_helper,    /* OP_VADDI32X4   */
-        ex_vsubi32x4_helper,    /* OP_VSUBI32X4   */
-        ex_vmuli32x4_helper,    /* OP_VMULI32X4   */
-        ex_vand128_helper,      /* OP_VAND128     */
-        ex_vor128_helper,       /* OP_VOR128      */
-        ex_vxor128_helper,      /* OP_VXOR128     */
-        ex_vshli32x4_helper,    /* OP_VSHLI32X4   */
-        ex_vshri32x4_helper,    /* OP_VSHRI32X4   */
-        ex_vloadf32x4_helper,   /* OP_VLOADF32X4  */
-        ex_vstoref32x4_helper,  /* OP_VSTOREF32X4 */
-        ex_vsplatf32_helper,    /* OP_VSPLATF32   */
-        ex_vgetlanef32_helper,  /* OP_VGETLANEF32 */
-        ex_vaddf32x4_helper,    /* OP_VADDF32X4   */
-        ex_vsubf32x4_helper,    /* OP_VSUBF32X4   */
-        ex_vmulf32x4_helper,    /* OP_VMULF32X4   */
-        ex_vdivf32x4_helper,    /* OP_VDIVF32X4   */
-        ex_vcvti32f32x4_helper, /* OP_VCVTI32F32X4 */
-        ex_vcvtf32i32x4_helper  /* OP_VCVTF32I32X4 */
-};
-
-/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
+/* Visit an OP_IMUL instruction. */
 static INLINE bool
-rt_visit_vector_op(
+rt_visit_imul_op(
         struct rt_env *env,
         struct rt_func *func,
-        uint32_t *pc,
-        int op)
+        uint32_t *pc)
 {
-        rt_typed_helper_t helper;
-        int a, b, c;
+        DEBUG_TRACE(*pc, "IMUL");
+        BINARY_OP(ex_imul_helper);
+}
 
-        DEBUG_TRACE(*pc, "VECTOR");
+/* Visit an OP_IDIV instruction. */
+static INLINE bool
+rt_visit_idiv_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IDIV");
+        BINARY_OP(ex_idiv_helper);
+}
 
-        helper = rt_vector_op_helper[op - OP_VLOADI32X4];
+/* Visit an OP_IMOD instruction. */
+static INLINE bool
+rt_visit_imod_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IMOD");
+        BINARY_OP(ex_imod_helper);
+}
 
-        switch (op) {
-        case OP_VLOADI32X4:
-        case OP_VLOADF32X4:
-                /* vd(imm8), base(u16), ofs(u16) */
-                GET_U8(&a);
-                GET_TMPVAR(&b);
-                GET_TMPVAR(&c);
-                break;
-        case OP_VSTOREI32X4:
-        case OP_VSTOREF32X4:
-                /* base(u16), ofs(u16), vs(imm8) */
-                GET_TMPVAR(&a);
-                GET_TMPVAR(&b);
-                GET_U8(&c);
-                break;
-        case OP_VSPLATI32:
-        case OP_VSPLATF32:
-                /* vd(imm8), src(u16) */
-                GET_U8(&a);
-                GET_TMPVAR(&b);
-                c = 0;
-                break;
-        case OP_VGETLANEI32:
-        case OP_VGETLANEF32:
-                /* dst(u16), vs(imm8), lane(imm8) */
-                GET_TMPVAR(&a);
-                GET_U8(&b);
-                GET_U8(&c);
-                break;
-        case OP_VMOV128:
-	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
-                /* vd(imm8), vs(imm8) */
-                GET_U8(&a);
-                GET_U8(&b);
-                c = 0;
-                break;
-        default:
-                /* ALU/shift: vd, va, vb-or-count (imm8 x3) */
-                GET_U8(&a);
-                GET_U8(&b);
-                GET_U8(&c);
-                break;
-        }
+/* Visit an OP_IAND instruction. */
+static INLINE bool
+rt_visit_iand_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IAND");
+        BINARY_OP(ex_iand_helper);
+}
 
-        if (!helper(env, a, b, c))
+/* Visit an OP_IOR instruction. */
+static INLINE bool
+rt_visit_ior_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IOR");
+        BINARY_OP(ex_ior_helper);
+}
+
+/* Visit an OP_IXOR instruction. */
+static INLINE bool
+rt_visit_ixor_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IXOR");
+        BINARY_OP(ex_ixor_helper);
+}
+
+/* Visit an OP_ISHL instruction. */
+static INLINE bool
+rt_visit_ishl_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst;
+        int src;
+        int imm;
+
+        DEBUG_TRACE(*pc, "ISHL");
+
+        GET_TMPVAR(&dst);
+        GET_TMPVAR(&src);
+        GET_U8(&imm);
+
+        if (!ex_ishl_helper(env, dst, src, imm))
                 return false;
+
         return true;
 }
 
-/* Consume the vector-loop allocation declaration.  It is a hint only. */
+/* Visit an OP_ISHR instruction. */
+static INLINE bool
+rt_visit_ishr_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst;
+        int src;
+        int imm;
+
+        DEBUG_TRACE(*pc, "ISHR");
+
+        GET_TMPVAR(&dst);
+        GET_TMPVAR(&src);
+        GET_U8(&imm);
+
+        if (!ex_ishr_helper(env, dst, src, imm))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_ILT instruction. */
+static INLINE bool
+rt_visit_ilt_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "ILT");
+        BINARY_OP(ex_ilt_helper);
+}
+
+/* Visit an OP_ILTE instruction. */
+static INLINE bool
+rt_visit_ilte_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "ILTE");
+        BINARY_OP(ex_ilte_helper);
+}
+
+/* Visit an OP_IGT instruction. */
+static INLINE bool
+rt_visit_igt_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IGT");
+        BINARY_OP(ex_igt_helper);
+}
+
+/* Visit an OP_IGTE instruction. */
+static INLINE bool
+rt_visit_igte_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IGTE");
+        BINARY_OP(ex_igte_helper);
+}
+
+/* Visit an OP_FADD instruction. */
+static INLINE bool
+rt_visit_fadd_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FADD");
+        BINARY_OP(ex_fadd_helper);
+}
+
+/* Visit an OP_FSUB instruction. */
+static INLINE bool
+rt_visit_fsub_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FSUB");
+        BINARY_OP(ex_fsub_helper);
+}
+
+/* Visit an OP_FMUL instruction. */
+static INLINE bool
+rt_visit_fmul_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FMUL");
+        BINARY_OP(ex_fmul_helper);
+}
+
+/* Visit an OP_FDIV instruction. */
+static INLINE bool
+rt_visit_fdiv_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FDIV");
+        BINARY_OP(ex_fdiv_helper);
+}
+
+/* Visit an OP_FLT instruction. */
+static INLINE bool
+rt_visit_flt_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FLT");
+        BINARY_OP(ex_flt_helper);
+}
+
+/* Visit an OP_FLTE instruction. */
+static INLINE bool
+rt_visit_flte_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FLTE");
+        BINARY_OP(ex_flte_helper);
+}
+
+/* Visit an OP_FGT instruction. */
+static INLINE bool
+rt_visit_fgt_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FGT");
+        BINARY_OP(ex_fgt_helper);
+}
+
+/* Visit an OP_FGTE instruction. */
+static INLINE bool
+rt_visit_fgte_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "FGTE");
+        BINARY_OP(ex_fgte_helper);
+}
+
+/* Visit an OP_IDIV_CHECKED instruction. */
+static INLINE bool
+rt_visit_idiv_checked_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IDIV_CHECKED");
+        BINARY_OP(ex_idiv_helper);
+}
+
+/* Visit an OP_IMOD_CHECKED instruction. */
+static INLINE bool
+rt_visit_imod_checked_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        DEBUG_TRACE(*pc, "IMOD_CHECKED");
+        BINARY_OP(ex_imod_helper);
+}
+
+/* Visit an OP_VLOADI32X4 instruction. */
+static INLINE bool
+rt_visit_vloadi32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int base;
+        int ofs;
+
+        DEBUG_TRACE(*pc, "VLOADI32X4");
+
+        GET_U8(&vd);
+        GET_TMPVAR(&base);
+        GET_TMPVAR(&ofs);
+
+        if (!ex_vloadi32x4_helper(env, vd, base, ofs))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSTOREI32X4 instruction. */
+static INLINE bool
+rt_visit_vstorei32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int base;
+        int ofs;
+        int vs;
+
+        DEBUG_TRACE(*pc, "VSTOREI32X4");
+
+        GET_TMPVAR(&base);
+        GET_TMPVAR(&ofs);
+        GET_U8(&vs);
+
+        if (!ex_vstorei32x4_helper(env, base, ofs, vs))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSPLATI32 instruction. */
+static INLINE bool
+rt_visit_vsplati32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int src;
+
+        DEBUG_TRACE(*pc, "VSPLATI32");
+
+        GET_U8(&vd);
+        GET_TMPVAR(&src);
+
+        if (!ex_vsplati32_helper(env, vd, src, 0))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VGETLANEI32 instruction. */
+static INLINE bool
+rt_visit_vgetlanei32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst;
+        int vs;
+        int lane;
+
+        DEBUG_TRACE(*pc, "VGETLANEI32");
+
+        GET_TMPVAR(&dst);
+        GET_U8(&vs);
+        GET_U8(&lane);
+
+        if (!ex_vgetlanei32_helper(env, dst, vs, lane))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VMOV128 instruction. */
+static INLINE bool
+rt_visit_vmov128_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int vs;
+
+        DEBUG_TRACE(*pc, "VMOV128");
+
+        GET_U8(&vd);
+        GET_U8(&vs);
+
+        if (!ex_vmov128_helper(env, vd, vs, 0))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VADDI32X4 instruction. */
+static INLINE bool
+rt_visit_vaddi32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VADDI32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vaddi32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSUBI32X4 instruction. */
+static INLINE bool
+rt_visit_vsubi32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VSUBI32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vsubi32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VMULI32X4 instruction. */
+static INLINE bool
+rt_visit_vmuli32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VMULI32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vmuli32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VAND128 instruction. */
+static INLINE bool
+rt_visit_vand128_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VAND128");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vand128_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VOR128 instruction. */
+static INLINE bool
+rt_visit_vor128_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VOR128");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vor128_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VXOR128 instruction. */
+static INLINE bool
+rt_visit_vxor128_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VXOR128");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vxor128_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSHLI32X4 instruction. */
+static INLINE bool
+rt_visit_vshli32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int count;
+
+        DEBUG_TRACE(*pc, "VSHLI32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&count);
+
+        if (!ex_vshli32x4_helper(env, vd, va, count))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSHRI32X4 instruction. */
+static INLINE bool
+rt_visit_vshri32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int count;
+
+        DEBUG_TRACE(*pc, "VSHRI32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&count);
+
+        if (!ex_vshri32x4_helper(env, vd, va, count))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VLOADF32X4 instruction. */
+static INLINE bool
+rt_visit_vloadf32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int base;
+        int ofs;
+
+        DEBUG_TRACE(*pc, "VLOADF32X4");
+
+        GET_U8(&vd);
+        GET_TMPVAR(&base);
+        GET_TMPVAR(&ofs);
+
+        if (!ex_vloadf32x4_helper(env, vd, base, ofs))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSTOREF32X4 instruction. */
+static INLINE bool
+rt_visit_vstoref32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int base;
+        int ofs;
+        int vs;
+
+        DEBUG_TRACE(*pc, "VSTOREF32X4");
+
+        GET_TMPVAR(&base);
+        GET_TMPVAR(&ofs);
+        GET_U8(&vs);
+
+        if (!ex_vstoref32x4_helper(env, base, ofs, vs))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSPLATF32 instruction. */
+static INLINE bool
+rt_visit_vsplatf32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int src;
+
+        DEBUG_TRACE(*pc, "VSPLATF32");
+
+        GET_U8(&vd);
+        GET_TMPVAR(&src);
+
+        if (!ex_vsplatf32_helper(env, vd, src, 0))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VGETLANEF32 instruction. */
+static INLINE bool
+rt_visit_vgetlanef32_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int dst;
+        int vs;
+        int lane;
+
+        DEBUG_TRACE(*pc, "VGETLANEF32");
+
+        GET_TMPVAR(&dst);
+        GET_U8(&vs);
+        GET_U8(&lane);
+
+        if (!ex_vgetlanef32_helper(env, dst, vs, lane))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VADDF32X4 instruction. */
+static INLINE bool
+rt_visit_vaddf32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VADDF32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vaddf32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VSUBF32X4 instruction. */
+static INLINE bool
+rt_visit_vsubf32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VSUBF32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vsubf32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VMULF32X4 instruction. */
+static INLINE bool
+rt_visit_vmulf32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VMULF32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vmulf32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VDIVF32X4 instruction. */
+static INLINE bool
+rt_visit_vdivf32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int va;
+        int vb;
+
+        DEBUG_TRACE(*pc, "VDIVF32X4");
+
+        GET_U8(&vd);
+        GET_U8(&va);
+        GET_U8(&vb);
+
+        if (!ex_vdivf32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VCVTI32F32X4 instruction. */
+static INLINE bool
+rt_visit_vcvti32f32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int vs;
+
+        DEBUG_TRACE(*pc, "VCVTI32F32X4");
+
+        GET_U8(&vd);
+        GET_U8(&vs);
+
+        if (!ex_vcvti32f32x4_helper(env, vd, vs, 0))
+                return false;
+
+        return true;
+}
+
+/* Visit an OP_VCVTF32I32X4 instruction. */
+static INLINE bool
+rt_visit_vcvtf32i32x4_op(
+        struct rt_env *env,
+        struct rt_func *func,
+        uint32_t *pc)
+{
+        int vd;
+        int vs;
+
+        DEBUG_TRACE(*pc, "VCVTF32I32X4");
+
+        GET_U8(&vd);
+        GET_U8(&vs);
+
+        if (!ex_vcvtf32i32x4_helper(env, vd, vs, 0))
+                return false;
+
+        return true;
+}
+
 static INLINE bool
 rt_visit_vindex_hint_op(
 	struct rt_env *env,
@@ -1419,22 +2061,23 @@ rt_visit_vindex_hint_op(
 	int index_id, lanes, flags;
 
 	UNUSED_PARAMETER(env);
-	GET_TMPVAR(&index_tmp);
-	GET_TMPVAR(&stop_tmp);
-	GET_TMPVAR(&remaining_tmp);
-	GET_U8(&index_id);
-	GET_U8(&lanes);
-	GET_U8(&flags);
 	UNUSED_PARAMETER(index_tmp);
 	UNUSED_PARAMETER(stop_tmp);
 	UNUSED_PARAMETER(remaining_tmp);
 	UNUSED_PARAMETER(index_id);
 	UNUSED_PARAMETER(lanes);
 	UNUSED_PARAMETER(flags);
+
+	GET_TMPVAR(&index_tmp);
+	GET_TMPVAR(&stop_tmp);
+	GET_TMPVAR(&remaining_tmp);
+	GET_U8(&index_id);
+	GET_U8(&lanes);
+	GET_U8(&flags);
+
 	return true;
 }
 
-/* Consume the scalar Packed-loop allocation declaration.  It is a hint. */
 static INLINE bool
 rt_visit_ploop_hint_op(
 	struct rt_env *env,
@@ -1445,21 +2088,21 @@ rt_visit_ploop_hint_op(
 	int lanes, flags;
 
 	UNUSED_PARAMETER(env);
-	GET_TMPVAR(&index_tmp);
-	GET_TMPVAR(&stop_tmp);
-	GET_TMPVAR(&remaining_tmp);
-	GET_U8(&lanes);
-	GET_U8(&flags);
 	UNUSED_PARAMETER(index_tmp);
 	UNUSED_PARAMETER(stop_tmp);
 	UNUSED_PARAMETER(remaining_tmp);
 	UNUSED_PARAMETER(lanes);
 	UNUSED_PARAMETER(flags);
+
+	GET_TMPVAR(&index_tmp);
+	GET_TMPVAR(&stop_tmp);
+	GET_TMPVAR(&remaining_tmp);
+	GET_U8(&lanes);
+	GET_U8(&flags);
+
 	return true;
 }
 
-/* Fixed-type declaration is optimizer metadata; the interpreter remains
- * memory-canonical and only validates/consumes it. */
 static INLINE bool
 rt_visit_tmpvar_type_op(
 	struct rt_env *env,
@@ -1469,22 +2112,23 @@ rt_visit_tmpvar_type_op(
 	int tmp;
 	int type;
 
+	UNUSED_PARAMETER(tmp);
+
 	GET_TMPVAR(&tmp);
 	GET_U8(&type);
-	UNUSED_PARAMETER(tmp);
+
 	type &= ~TMPVAR_TYPE_COMPILER_TEMP;
+
 	if (type != TMPVAR_TYPE_DYNAMIC &&
 	    type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
 	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
+
 	return true;
 }
 
-/* Commit a deferred primitive tag before a dynamic observation boundary.
- * The interpreter always stores canonical values, so consuming and validating
- * the operands is sufficient. */
 static INLINE bool
 rt_visit_materialize_type_op(
 	struct rt_env *env,
@@ -1494,18 +2138,22 @@ rt_visit_materialize_type_op(
 	int tmp;
 	int type;
 
+	UNUSED_PARAMETER(tmp);
+
 	GET_TMPVAR(&tmp);
 	GET_U8(&type);
-	UNUSED_PARAMETER(tmp);
-	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
-	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
+
+	if (type != NOCT_VALUE_INT &&
+            type != NOCT_VALUE_LONG &&
+	    type != NOCT_VALUE_FLOAT &&
+            type != NOCT_VALUE_DOUBLE) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
+
 	return true;
 }
 
-/* Semantic fallback for the fused vector-loop latch. */
 static INLINE bool
 rt_visit_subjnz_op(
 	struct rt_env *env,
@@ -1519,18 +2167,24 @@ rt_visit_subjnz_op(
 	GET_TMPVAR(&value);
 	GET_U8(&decrement);
 	GET_U32(&target);
+
 	if (target >= func->bytecode_size) {
 		rt_error(env, "Broken bytecode.");
 		return false;
 	}
+
 	v = &env->frame->tmpvar[value];
+
 	if (v->type != NOCT_VALUE_INT) {
 		rt_error(env, "SUBJNZ operand is not an integer.");
 		return false;
 	}
+
 	v->val.i -= decrement;
+
 	if (v->val.i != 0)
 		*pc = target;
+
 	return true;
 }
 
@@ -1543,10 +2197,12 @@ rt_visit_vori32x4i_op(
 	int vd, vs, imm, shift;
 
 	UNUSED_PARAMETER(func);
+
 	GET_U8(&vd);
 	GET_U8(&vs);
 	GET_U8(&imm);
 	GET_U8(&shift);
+
 	return ex_vori32x4i_helper(env, vd, vs, (imm << 8) | shift);
 }
 
@@ -1559,54 +2215,120 @@ rt_visit_vfmaf32x4_op(
 	int vd, va, vb, vc;
 
 	UNUSED_PARAMETER(func);
+
 	GET_U8(&vd);
 	GET_U8(&va);
 	GET_U8(&vb);
 	GET_U8(&vc);
+
 	return ex_vfmaf32x4_helper(env, vd, va, (vb << 8) | vc);
 }
 
 static INLINE bool
-rt_visit_vcmp_op(struct rt_env *env, struct rt_func *func, uint32_t *pc,
-		 bool is_float)
+rt_visit_vcmpi32x4_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
 {
-	int vd, va, vb, pred;
-	GET_U8(&vd); GET_U8(&va); GET_U8(&vb); GET_U8(&pred);
+	int vd;
+	int va;
+	int vb;
+	int pred;
+
+	GET_U8(&vd);
+	GET_U8(&va);
+	GET_U8(&vb);
+	GET_U8(&pred);
+
 	if (vd >= 16 || va >= 16 || vb >= 16 || pred >= VCMP_PREDICATE_COUNT) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
-	return is_float ?
-		ex_vcmpf32x4_helper(env, vd, va, (vb << 8) | pred) :
-		ex_vcmpi32x4_helper(env, vd, va, (vb << 8) | pred);
+
+	return ex_vcmpi32x4_helper(env, vd, va, (vb << 8) | pred);
+}
+
+static INLINE bool
+rt_visit_vcmpf32x4_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int vd;
+	int va;
+	int vb;
+	int pred;
+
+	GET_U8(&vd);
+	GET_U8(&va);
+	GET_U8(&vb);
+	GET_U8(&pred);
+
+	if (vd >= 16 || va >= 16 || vb >= 16 || pred >= VCMP_PREDICATE_COUNT) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	return ex_vcmpf32x4_helper(env, vd, va, (vb << 8) | pred);
 }
 
 static INLINE bool
 rt_visit_vselect128_op(struct rt_env *env, struct rt_func *func, uint32_t *pc)
 {
 	int vd, vm, vt, vf;
+
 	GET_U8(&vd); GET_U8(&vm); GET_U8(&vt); GET_U8(&vf);
+
 	if (vd >= 16 || vm >= 16 || vt >= 16 || vf >= 16) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
+
 	return ex_vselect128_helper(env, vd, vm, (vt << 8) | vf);
 }
 
 static INLINE bool
-rt_visit_vminmaxs32x4_op(struct rt_env *env, struct rt_func *func,
-			 uint32_t *pc, bool is_max)
+rt_visit_vmins32x4_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
 {
-	int vd, va, vb;
+	int vd;
+	int va;
+	int vb;
 
-	UNUSED_PARAMETER(func);
-	GET_U8(&vd); GET_U8(&va); GET_U8(&vb);
+	GET_U8(&vd);
+	GET_U8(&va);
+	GET_U8(&vb);
+
 	if (vd >= 16 || va >= 16 || vb >= 16) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
-	return is_max ? ex_vmaxs32x4_helper(env, vd, va, vb) :
-			ex_vmins32x4_helper(env, vd, va, vb);
+
+	return ex_vmins32x4_helper(env, vd, va, vb);
+}
+
+static INLINE bool
+rt_visit_vmaxs32x4_op(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t *pc)
+{
+	int vd;
+	int va;
+	int vb;
+
+	GET_U8(&vd);
+	GET_U8(&va);
+	GET_U8(&vb);
+
+	if (vd >= 16 || va >= 16 || vb >= 16) {
+		rt_error(env, BROKEN_BYTECODE);
+		return false;
+	}
+
+	return ex_vmaxs32x4_helper(env, vd, va, vb);
 }
 
 static INLINE bool
@@ -1614,11 +2336,17 @@ rt_visit_vmaskstorei32x4_op(struct rt_env *env, struct rt_func *func,
 			    uint32_t *pc)
 {
 	int base, ofs, vs, vm;
-	GET_TMPVAR(&base); GET_TMPVAR(&ofs); GET_U8(&vs); GET_U8(&vm);
+
+	GET_TMPVAR(&base);
+        GET_TMPVAR(&ofs);
+        GET_U8(&vs);
+        GET_U8(&vm);
+
 	if (vs >= 16 || vm >= 16) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
+
 	return ex_vmaskstorei32x4_helper(env, base, ofs, (vs << 8) | vm);
 }
 
@@ -1627,11 +2355,14 @@ rt_visit_vinductf32x4_op(struct rt_env *env, struct rt_func *func,
 			 uint32_t *pc)
 {
 	int vd, state, step;
+
 	GET_U8(&vd); GET_TMPVAR(&state); GET_TMPVAR(&step);
+
 	if (vd >= 16) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
+
 	return ex_vinductf32x4_helper(env, vd, state, step);
 }
 
@@ -1640,13 +2371,18 @@ rt_visit_vgatheri32x4_checked_op(struct rt_env *env, struct rt_func *func,
 				 uint32_t *pc)
 {
 	int vd, base, plen, vi;
-	GET_U8(&vd); GET_TMPVAR(&base); GET_TMPVAR(&plen); GET_U8(&vi);
+
+	GET_U8(&vd);
+        GET_TMPVAR(&base);
+        GET_TMPVAR(&plen);
+        GET_U8(&vi);
+
 	if (vd >= 16 || vi >= 16) {
 		rt_error(env, BROKEN_BYTECODE);
 		return false;
 	}
-	return ex_vgatheri32x4_checked_helper(env, vd, base,
-					       (plen << 8) | vi);
+
+	return ex_vgatheri32x4_checked_helper(env, vd, base, (plen << 8) | vi);
 }
 
 /* Visit an instruction. */
@@ -1917,59 +2653,191 @@ rt_visit_op(
                         return false;
                 break;
         case OP_IADD:
+                if (!rt_visit_iadd_op(env, func, pc))
+                        return false;
+                break;
         case OP_ISUB:
+                if (!rt_visit_isub_op(env, func, pc))
+                        return false;
+                break;
         case OP_IMUL:
+                if (!rt_visit_imul_op(env, func, pc))
+                        return false;
+                break;
         case OP_IDIV:
+                if (!rt_visit_idiv_op(env, func, pc))
+                        return false;
+                break;
         case OP_IMOD:
+                if (!rt_visit_imod_op(env, func, pc))
+                        return false;
+                break;
         case OP_IAND:
+                if (!rt_visit_iand_op(env, func, pc))
+                        return false;
+                break;
         case OP_IOR:
+                if (!rt_visit_ior_op(env, func, pc))
+                        return false;
+                break;
         case OP_IXOR:
+                if (!rt_visit_ixor_op(env, func, pc))
+                        return false;
+                break;
         case OP_ISHL:
+                if (!rt_visit_ishl_op(env, func, pc))
+                        return false;
+                break;
         case OP_ISHR:
+                if (!rt_visit_ishr_op(env, func, pc))
+                        return false;
+                break;
         case OP_ILT:
+                if (!rt_visit_ilt_op(env, func, pc))
+                        return false;
+                break;
         case OP_ILTE:
+                if (!rt_visit_ilte_op(env, func, pc))
+                        return false;
+                break;
         case OP_IGT:
+                if (!rt_visit_igt_op(env, func, pc))
+                        return false;
+                break;
         case OP_IGTE:
+                if (!rt_visit_igte_op(env, func, pc))
+                        return false;
+                break;
         case OP_FADD:
+                if (!rt_visit_fadd_op(env, func, pc))
+                        return false;
+                break;
         case OP_FSUB:
+                if (!rt_visit_fsub_op(env, func, pc))
+                        return false;
+                break;
         case OP_FMUL:
+                if (!rt_visit_fmul_op(env, func, pc))
+                        return false;
+                break;
         case OP_FDIV:
+                if (!rt_visit_fdiv_op(env, func, pc))
+                        return false;
+                break;
         case OP_FLT:
+                if (!rt_visit_flt_op(env, func, pc))
+                        return false;
+                break;
         case OP_FLTE:
+                if (!rt_visit_flte_op(env, func, pc))
+                        return false;
+                break;
         case OP_FGT:
+                if (!rt_visit_fgt_op(env, func, pc))
+                        return false;
+                break;
         case OP_FGTE:
-                if (!rt_visit_typed_op(env, func, pc, op))
+                if (!rt_visit_fgte_op(env, func, pc))
                         return false;
                 break;
         case OP_IDIV_CHECKED:
+                if (!rt_visit_idiv_checked_op(env, func, pc))
+                        return false;
+                break;
         case OP_IMOD_CHECKED:
-                if (!rt_visit_checked_idiv_op(env, func, pc, op))
+                if (!rt_visit_imod_checked_op(env, func, pc))
                         return false;
                 break;
         case OP_VLOADI32X4:
+                if (!rt_visit_vloadi32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSTOREI32X4:
+                if (!rt_visit_vstorei32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSPLATI32:
+                if (!rt_visit_vsplati32_op(env, func, pc))
+                        return false;
+                break;
         case OP_VGETLANEI32:
+                if (!rt_visit_vgetlanei32_op(env, func, pc))
+                        return false;
+                break;
         case OP_VMOV128:
+                if (!rt_visit_vmov128_op(env, func, pc))
+                        return false;
+                break;
         case OP_VADDI32X4:
+                if (!rt_visit_vaddi32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSUBI32X4:
+                if (!rt_visit_vsubi32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VMULI32X4:
+                if (!rt_visit_vmuli32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VAND128:
+                if (!rt_visit_vand128_op(env, func, pc))
+                        return false;
+                break;
         case OP_VOR128:
+                if (!rt_visit_vor128_op(env, func, pc))
+                        return false;
+                break;
         case OP_VXOR128:
+                if (!rt_visit_vxor128_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSHLI32X4:
+                if (!rt_visit_vshli32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSHRI32X4:
+                if (!rt_visit_vshri32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VLOADF32X4:
+                if (!rt_visit_vloadf32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSTOREF32X4:
+                if (!rt_visit_vstoref32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSPLATF32:
+                if (!rt_visit_vsplatf32_op(env, func, pc))
+                        return false;
+                break;
         case OP_VGETLANEF32:
+                if (!rt_visit_vgetlanef32_op(env, func, pc))
+                        return false;
+                break;
         case OP_VADDF32X4:
+                if (!rt_visit_vaddf32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VSUBF32X4:
+                if (!rt_visit_vsubf32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VMULF32X4:
+                if (!rt_visit_vmulf32x4_op(env, func, pc))
+                        return false;
+                break;
         case OP_VDIVF32X4:
+                if (!rt_visit_vdivf32x4_op(env, func, pc))
+                        return false;
+                break;
 	case OP_VCVTI32F32X4:
+                if (!rt_visit_vcvti32f32x4_op(env, func, pc))
+                        return false;
+                break;
 	case OP_VCVTF32I32X4:
-                if (!rt_visit_vector_op(env, func, pc, op))
+                if (!rt_visit_vcvtf32i32x4_op(env, func, pc))
                         return false;
                 break;
 	case OP_VINDEX_HINT:
@@ -2001,11 +2869,11 @@ rt_visit_op(
 			return false;
 		break;
 	case OP_VCMPI32X4:
-		if (!rt_visit_vcmp_op(env, func, pc, false))
+		if (!rt_visit_vcmpi32x4_op(env, func, pc))
 			return false;
 		break;
 	case OP_VCMPF32X4:
-		if (!rt_visit_vcmp_op(env, func, pc, true))
+		if (!rt_visit_vcmpf32x4_op(env, func, pc))
 			return false;
 		break;
 	case OP_VSELECT128:
@@ -2025,9 +2893,11 @@ rt_visit_op(
 			return false;
 		break;
 	case OP_VMINS32X4:
+		if (!rt_visit_vmins32x4_op(env, func, pc))
+			return false;
+		break;
 	case OP_VMAXS32X4:
-		if (!rt_visit_vminmaxs32x4_op(env, func, pc,
-					       op == OP_VMAXS32X4))
+		if (!rt_visit_vmaxs32x4_op(env, func, pc))
 			return false;
 		break;
         default:

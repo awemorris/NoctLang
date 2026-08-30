@@ -64,7 +64,6 @@ static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
 static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
 static bool cfunc_FileUtil_makeDirectoryExclusive(NoctEnv *env);
 
-bool noct_register_api_binary(NoctEnv *env);
 #if defined(NOCT_USE_MODEL_WEIGHTS)
 bool noct_register_api_weights(NoctEnv *env);
 #endif
@@ -271,8 +270,6 @@ noct_register_api_file(NoctEnv *env)
 					     ffi_items[i].field_name, &funcval))
 			return false;
 	}
-	if (!noct_register_api_binary(env))
-		return false;
 #if defined(NOCT_USE_MODEL_WEIGHTS)
 	if (!noct_register_api_weights(env))
 		return false;

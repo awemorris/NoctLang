@@ -40,27 +40,30 @@
  * Region Size Defaults
  */
 #if defined(NOCT_MEMORY_SMALL)
+/* Small configuration for DOS */
 #define RT_GC_DEFAULT_NURSERY_SIZE		(256 * 1024)
 #define RT_GC_DEFAULT_GRADUATE_SIZE		(64 * 1024)
 #define RT_GC_DEFAULT_TENURE_SIZE		(1 * 1024 * 1024)
 #elif defined(NOCT_TARGET_WASM)
+/* Mediam configuration for Wasm */
 #define RT_GC_DEFAULT_NURSERY_SIZE		(2 * 1024 * 1024)
 #define RT_GC_DEFAULT_GRADUATE_SIZE		(256 * 1024)
 #define RT_GC_DEFAULT_TENURE_SIZE		(64 * 1024 * 1024)
 #else
+/* Normal configuration for POSIX */
 #define RT_GC_DEFAULT_NURSERY_SIZE		(2 * 1024 * 1024)
 #define RT_GC_DEFAULT_GRADUATE_SIZE		(256 * 1024)
 #define RT_GC_DEFAULT_TENURE_SIZE		(256 * 1024 * 1024)
 #endif
 
 /*
- * Large Object Promotion Threshold - A new object that has a size
+ * Large Object Promotion Threshold: A new object that has a size
  * beyond this value will be allocated directly in the tenure region.
  */
 #define RT_GC_DEFAULT_LOP_THRESHOLD		(32 * 1024)
 
 /*
- * Survivor Promotion Threshold - A graduate object that survived the
+ * Survivor Promotion Threshold: A graduate object that survived the
  * young GC beyond this value will be promoted to the tenure region.
  */
 #define RT_GC_DEFAULT_PROMOTION_THRESHOLD	(2)
@@ -102,6 +105,11 @@ enum gt_gc_level {
 #define RT_GC_FREELIST_SIZE_MASK	(~(size_t)1)
 
 /*
+ * Tenure bin count.
+ */
+#define RT_GC_TENURE_BIN_COUNT	24
+
+/*
  * Garbage Collector state structure that is embedded to struct rt_vm.
  */
 struct rt_gc_info {
@@ -122,28 +130,8 @@ struct rt_gc_info {
 		char *end;
 	} tenure_freelist;
 
-	/*
-	 * Tenure allocation state: a bump frontier plus size-class bins
-	 * of free blocks.
-	 *
-	 * The allocator used to scan the whole heap first-fit on every
-	 * call -- O(blocks) per allocation, O(n^2) for a burst of n.
-	 * A rolling cursor does not fix it: the workload allocates two
-	 * block sizes (dictionaries and strings), the small ones reuse
-	 * holes near the bottom and drag the cursor back, and every
-	 * large allocation then re-walks the heap. So there is no scan
-	 * at all now: a freed block is pushed onto the bin of its size
-	 * class (the next pointer lives in the block's dead body), an
-	 * allocation pops a bin or bumps the frontier, and the linear
-	 * header chain -- which compaction still walks -- is maintained
-	 * as before.
-	 *
-	 * tenure_frontier is the zero sentinel header past the last
-	 * block. Compaction rebuilds both: bins are re-filled and the
-	 * frontier re-found by one walk over the compacted heap.
-	 */
+	/* Tenure allocation state. */
 	char *tenure_frontier;
-#define RT_GC_TENURE_BIN_COUNT	24
 	char *tenure_bins[RT_GC_TENURE_BIN_COUNT];
 
 	/* Linked list of objects in the nursery generation. */
@@ -164,31 +152,12 @@ struct rt_gc_info {
 	void **compact_before;
 	void **compact_after;
 
-	/*
-	 * Explicit traversal worklist.
-	 *
-	 * Both heap walks (the young copy and the old mark) used to
-	 * descend the object graph by C recursion, one stack frame per
-	 * edge. The depth of the graph is program data -- a Lisp list is
-	 * a cons chain, so a 500-element constant is 500 levels deep --
-	 * and deep data overflowed the C stack inside the collector.
-	 * The walks now run on this worklist instead; it lives here
-	 * rather than on the stack so the buffer, grown once, is reused
-	 * by every collection. Entries are slots (the address of the
-	 * reference), because the young copy rewrites the reference it
-	 * came through, not just the object.
-	 */
+	/* Explicit traversal worklist. */
 	struct rt_gc_object ***work;
 	size_t work_cap;
 	size_t work_top;
 
-	/*
-	 * Objects promoted to the tenure region during the current young
-	 * collection. Their cross-generation scan (does the promoted
-	 * object point at young data? then remember it) must run after
-	 * their children have been evacuated, which in a worklist walk
-	 * means after the drain; they are parked here until then.
-	 */
+	/* Objects promoted to tenure region during the current young collection. */
 	struct rt_gc_object **promoted;
 	size_t promoted_cap;
 	size_t promoted_top;
@@ -215,8 +184,8 @@ struct rt_gc_object {
 	size_t size;
 
 	/*
-	 * Intrusive doubly-linked list for the corresponding
-	 * region's list (nursery, graduate, or tenure).
+	 * Intrusive doubly-linked list for the corresponding region's
+	 * list (nursery, graduate, or tenure).
 	 */
 	struct rt_gc_object *prev;
 	struct rt_gc_object *next;
@@ -228,7 +197,10 @@ struct rt_gc_object {
 	struct rt_gc_object *rem_next; 
 	bool rem_flg;
 
-	/* Mark bit used in mark-and-sweep GC for the tenure generation. */
+	/*
+	 * Mark bit used in mark-and-sweep GC for the tenure
+	 * generation.
+	 */
 	bool is_marked;
 
 	/* Promotion count. */

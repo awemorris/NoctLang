@@ -10,7 +10,7 @@
 #include "ast.h"
 #include "hir.h"
 #include "hir_opt.h"
-#include "hir_parallel.h"
+#include "hir_opt_paralle.h"
 #include "gpu_ir.h"
 
 #include <assert.h>
@@ -59,17 +59,30 @@ static bool accel_is_counter(struct accel_emit *ctx, struct hir_expr *expr);
 static bool accel_index_offset(struct accel_emit *ctx, struct hir_expr *expr,
 			      int *offset);
 static void accel_record_range(struct accel_emit *ctx, int param, int offset);
+static bool accel_emit_term(struct accel_emit *ctx, struct hir_term *term,
+	int expected_type);
+static const char *accel_binary_op(int type);
 static const char *accel_glsl_type(int packed_type);
 static bool accel_emit_expr(struct accel_emit *ctx, struct hir_expr *expr,
 			    int expected_type);
 static bool accel_emit_stmt(struct accel_emit *ctx, struct hir_stmt *stmt,
 			    int indent);
+static bool accel_is_condition(struct hir_expr *expr);
+static bool accel_expr_uses_counter(struct accel_emit *ctx,
+	struct hir_expr *expr);
+static bool accel_int_literal(struct hir_expr *expr, int *value);
+static int accel_condition_min_index(struct accel_emit *ctx,
+	struct hir_expr *expr);
+static bool accel_emit_if_chain(struct accel_emit *ctx,
+	struct hir_block *block, int packed_type, int indent,
+	int *statement_count);
 static bool accel_emit_blocks(struct accel_emit *ctx, struct hir_block *block,
 			      int packed_type, int indent,
 			      int *statement_count);
 static bool accel_emit_body(struct accel_emit *ctx, int indent);
 static bool accel_build_shader(struct accel_emit *ctx,
 			       struct accel_kernel *kernel, bool hlsl);
+static int accel_element_width(int packed_type);
 static bool accel_store_hlsl(struct accel_kernel *kernel,
 			     const char *source, size_t source_size);
 static bool accel_build_program(struct hir_block *func,
@@ -80,10 +93,194 @@ static bool accel_is_local_buffer_prologue(struct hir_block *func,
 					   struct hir_stmt *stmt);
 static bool accel_is_reduction_decl_tail(struct hir_block *func,
 					 struct hir_stmt *stmt);
+static struct accel_kernel *accel_build_doall_kernel(
+	struct hir_block *func, struct hir_block *loop, const char *name);
 static int accel_try_build_dosum(struct hir_block *func, bool accel_info);
 static int accel_try_build_dosum_at(struct hir_block *func, bool accel_info,
 				    uint32_t target_index,
 				    bool reuse_program);
+
+bool
+hir_opt_accel_func(
+	struct hir_block *func_block,
+	bool accel_info)
+{
+	struct accel_kernel *kernel[ACCEL_PROGRAM_MAX_KERNELS];
+	struct hir_block *loop[ACCEL_PROGRAM_MAX_KERNELS];
+	struct hir_block *block;
+	struct accel_emit ctx;
+	const char *kind;
+	char kernel_name[256];
+	char ir_error[128];
+	uint32_t loop_count;
+	uint32_t k;
+	uint32_t i;
+	bool shape_ok;
+
+	assert(func_block != NULL);
+	assert(func_block->type == HIR_BLOCK_FUNC);
+
+	if (!func_block->val.func.is_accel)
+		return true;
+	{
+		int dosum_status;
+
+		dosum_status = accel_try_build_dosum(func_block, accel_info);
+		if (dosum_status > 0)
+			return true;
+		if (dosum_status < 0) {
+			hir_set_error(func_block->line,
+				      "Out of memory or invalid descriptor while lowering DOSUM.");
+			return false;
+		}
+	}
+	memset(kernel, 0, sizeof(kernel));
+	loop_count = 0;
+	shape_ok = true;
+	block = func_block->val.func.inner;
+	while (block != NULL) {
+		if (block->type == HIR_BLOCK_FOR) {
+			if (loop_count >= ACCEL_PROGRAM_MAX_KERNELS) {
+				shape_ok = false;
+				break;
+			}
+			loop[loop_count++] = block;
+		} else if (block->type == HIR_BLOCK_BASIC &&
+			   block->val.basic.stmt_list != NULL &&
+			   !accel_is_local_buffer_prologue(
+				   func_block, block->val.basic.stmt_list)) {
+			shape_ok = false;
+			break;
+		}
+		if (block->stop)
+			break;
+		block = block->succ;
+	}
+	if (loop_count == 0)
+		shape_ok = false;
+	if (!shape_ok)
+		loop_count = 1;
+	for (k = 0; k < loop_count; k++) {
+		kernel[k] = noct_calloc(1, sizeof(*kernel[k]));
+		if (kernel[k] == NULL)
+			goto failed;
+		kernel[k]->output_param = -1;
+		kernel[k]->dispatch_param = -1;
+		kernel[k]->param_count = func_block->val.func.param_count;
+		if (loop_count > 1)
+			snprintf(kernel_name, sizeof(kernel_name), "%s$doall%u",
+				 func_block->val.func.name, (unsigned int)k);
+		else
+			snprintf(kernel_name, sizeof(kernel_name), "%s",
+				 func_block->val.func.name);
+		kernel[k]->name = noct_strdup(kernel_name);
+		kernel[k]->source_name = noct_strdup(func_block->val.func.file_name);
+		if (kernel[k]->name == NULL || kernel[k]->source_name == NULL)
+			goto failed;
+		memset(&ctx, 0, sizeof(ctx));
+		ctx.func = func_block;
+		ctx.kernel = kernel[k];
+		if (!shape_ok) {
+			ctx.reason = ACCEL_REJECT_LOOP_SHAPE;
+		} else {
+			ctx.loop = loop[k];
+			(void)accel_build_shader(&ctx, kernel[k], false);
+		}
+		if (ctx.reason == ACCEL_REJECT_NONE) {
+			kernel[k]->eligible = true;
+			kernel[k]->source_line = ctx.loop->line;
+			if (!gpu_ir_finalize_kernel(kernel[k], ctx.text, ctx.size,
+						    ir_error, sizeof(ir_error)))
+				goto failed;
+			memset(&ctx, 0, sizeof(ctx));
+			ctx.func = func_block;
+			ctx.loop = loop[k];
+			ctx.kernel = kernel[k];
+			kernel[k]->param_count = func_block->val.func.param_count;
+			kernel[k]->output_param = -1;
+			kernel[k]->dispatch_param = -1;
+			memset(kernel[k]->param_effect, 0,
+			       sizeof(kernel[k]->param_effect));
+			memset(kernel[k]->param_range, 0,
+			       sizeof(kernel[k]->param_range));
+			if (!accel_build_shader(&ctx, kernel[k], true) ||
+			    !accel_store_hlsl(kernel[k], ctx.text, ctx.size))
+				goto failed;
+		} else {
+			kernel[k]->eligible = false;
+			kernel[k]->rejection_reason = ctx.reason;
+			shape_ok = false;
+			loop_count = k + 1;
+			break;
+		}
+	}
+	if (!shape_ok) {
+		int reject_line;
+		int reject_reason;
+		char reject_message[256];
+
+		reject_line = kernel[loop_count - 1] != NULL ?
+			kernel[loop_count - 1]->source_line : func_block->line;
+		reject_reason = kernel[loop_count - 1] != NULL ?
+			kernel[loop_count - 1]->rejection_reason :
+			ACCEL_REJECT_LOOP_SHAPE;
+		snprintf(reject_message, sizeof(reject_message),
+			 "GPU-only __accel func '%s' cannot be lowered: %s.",
+			 func_block->val.func.name,
+			 accel_reason_name(reject_reason));
+		hir_set_error(reject_line, reject_message);
+		if (accel_info)
+			fprintf(stderr, "ACCEL: %s:%d: rejected (%s)\n",
+				func_block->val.func.file_name, reject_line,
+				accel_reason_name(reject_reason));
+		goto failed;
+	}
+	func_block->val.func.accel_kernel = kernel[0];
+	if (!accel_build_program(func_block, kernel, loop, loop_count)) {
+		hir_set_error(func_block->line,
+			      "Failed to build GPU-only accelerator program descriptor.");
+		goto failed_owned;
+	}
+	if (accel_info) {
+		for (k = 0; k < loop_count; k++) {
+			if (kernel[k]->eligible) {
+				int kind_param;
+
+				kind_param = kernel[k]->output_param;
+				if (kind_param < 0) {
+					for (i = 0; i < kernel[k]->param_count; i++)
+						if (kernel[k]->param_transport[i] != ACCEL_TRANSPORT_SCALAR) {
+							kind_param = (int)i;
+							break;
+						}
+				}
+				kind = kind_param >= 0 ?
+					accel_glsl_type(kernel[k]->param_packed_type[kind_param]) : "unknown";
+				fprintf(stderr, "ACCEL: %s:%d: accelerator kernel generated (%s32, 1D)\n",
+					kernel[k]->source_name, kernel[k]->source_line,
+					strcmp(kind, "float") == 0 ? "float" : kind);
+				fprintf(stderr, "ACCEL: %s:%d: DOALL %s; strategy %s\n",
+					kernel[k]->source_name, kernel[k]->source_line,
+					"yes", "parallel block=64");
+			}
+		}
+	}
+	if (getenv("NOCT_ACCEL_DEBUG") != NULL) {
+		for (k = 0; k < loop_count; k++)
+			if (kernel[k]->eligible)
+				fprintf(stderr, "%s", kernel[k]->glsl);
+	}
+	for (k = 1; k < loop_count; k++)
+		accel_kernel_free(kernel[k]);
+	return true;
+
+failed_owned:
+	func_block->val.func.accel_kernel = NULL;
+failed:
+	for (k = 0; k < ACCEL_PROGRAM_MAX_KERNELS; k++)
+		accel_kernel_free(kernel[k]);
+	return false;
+}
 
 static const char *
 accel_reason_name(
@@ -243,6 +440,7 @@ accel_record_range(struct accel_emit *ctx, int param, int offset)
 {
 	struct accel_param_range *range;
 	int64_t min_offset;
+
 	range = &ctx->kernel->param_range[param];
 	min_offset = offset < 0 ? 0 : offset;
 	if (!range->has_access) {
@@ -786,6 +984,7 @@ accel_build_shader(
 	struct hir_loop_summary *summary;
 	struct hir_doall_result doall;
 	struct hir_local *local;
+
 	ctx->hlsl = hlsl;
 	kernel->descriptor_version = 3;
 	kernel->func_kind = NOCT_FUNC_ACCEL;
@@ -1221,6 +1420,7 @@ accel_build_program(
 		defined = false;
 		for (k = 0; k < kernel_count; k++) {
 			unsigned int effect;
+
 			effect = outer_kernel[k]->param_effect[param_index];
 			if (effect == ACCEL_EFFECT_NONE)
 				continue;
@@ -1617,6 +1817,7 @@ accel_try_build_dosum_at(
 		goto failed;
 	for (i = 0; i < scratch_param; i++) {
 		const char *pt;
+
 		if (map_kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR)
 			continue;
 		pt = accel_glsl_type(map_kernel->param_packed_type[i]);
@@ -1661,6 +1862,7 @@ accel_try_build_dosum_at(
 		goto failed;
 	for (i = 0; i < scratch_param; i++) {
 		const char *pt;
+
 		if (map_kernel->param_transport[i] == ACCEL_TRANSPORT_SCALAR)
 			continue;
 		pt = accel_glsl_type(map_kernel->param_packed_type[i]);
@@ -1855,6 +2057,7 @@ accel_try_build_dosum_at(
 			expr_count++;
 		} else {
 			struct accel_buffer_desc *bd;
+
 			bd = &program->buffer[buffer_count];
 			buffer_map[i] = (int)buffer_count;
 			bd->id = (int)buffer_count;
@@ -1934,6 +2137,7 @@ accel_try_build_dosum_at(
 	expr_count++;
 	for (i = 0; i < 2; i++) {
 		struct accel_buffer_desc *bd;
+
 		bd = &program->buffer[buffer_count];
 		bd->id = (int)buffer_count;
 		snprintf(name, sizeof(name), "$dosum%u_scratch%u",
@@ -2067,183 +2271,4 @@ accel_try_build_dosum(
 			return target_index == 0 ? 0 : 1;
 	}
 	return -1;
-}
-
-bool
-hir_opt_accel_func(
-	struct hir_block *func_block,
-	bool accel_info)
-{
-	struct accel_kernel *kernel[ACCEL_PROGRAM_MAX_KERNELS];
-	struct hir_block *loop[ACCEL_PROGRAM_MAX_KERNELS];
-	struct hir_block *block;
-	struct accel_emit ctx;
-	const char *kind;
-	char kernel_name[256];
-	char ir_error[128];
-	uint32_t loop_count;
-	uint32_t k;
-	uint32_t i;
-	bool shape_ok;
-
-	assert(func_block != NULL);
-	assert(func_block->type == HIR_BLOCK_FUNC);
-	if (!func_block->val.func.is_accel)
-		return true;
-	{
-		int dosum_status;
-		dosum_status = accel_try_build_dosum(func_block, accel_info);
-		if (dosum_status > 0)
-			return true;
-		if (dosum_status < 0) {
-			hir_set_error(func_block->line,
-				      "Out of memory or invalid descriptor while lowering DOSUM.");
-			return false;
-		}
-	}
-	memset(kernel, 0, sizeof(kernel));
-	loop_count = 0;
-	shape_ok = true;
-	block = func_block->val.func.inner;
-	while (block != NULL) {
-		if (block->type == HIR_BLOCK_FOR) {
-			if (loop_count >= ACCEL_PROGRAM_MAX_KERNELS) {
-				shape_ok = false;
-				break;
-			}
-			loop[loop_count++] = block;
-		} else if (block->type == HIR_BLOCK_BASIC &&
-			   block->val.basic.stmt_list != NULL &&
-			   !accel_is_local_buffer_prologue(
-				   func_block, block->val.basic.stmt_list)) {
-			shape_ok = false;
-			break;
-		}
-		if (block->stop)
-			break;
-		block = block->succ;
-	}
-	if (loop_count == 0)
-		shape_ok = false;
-	if (!shape_ok)
-		loop_count = 1;
-	for (k = 0; k < loop_count; k++) {
-		kernel[k] = noct_calloc(1, sizeof(*kernel[k]));
-		if (kernel[k] == NULL)
-			goto failed;
-		kernel[k]->output_param = -1;
-		kernel[k]->dispatch_param = -1;
-		kernel[k]->param_count = func_block->val.func.param_count;
-		if (loop_count > 1)
-			snprintf(kernel_name, sizeof(kernel_name), "%s$doall%u",
-				 func_block->val.func.name, (unsigned int)k);
-		else
-			snprintf(kernel_name, sizeof(kernel_name), "%s",
-				 func_block->val.func.name);
-		kernel[k]->name = noct_strdup(kernel_name);
-		kernel[k]->source_name = noct_strdup(func_block->val.func.file_name);
-		if (kernel[k]->name == NULL || kernel[k]->source_name == NULL)
-			goto failed;
-		memset(&ctx, 0, sizeof(ctx));
-		ctx.func = func_block;
-		ctx.kernel = kernel[k];
-		if (!shape_ok) {
-			ctx.reason = ACCEL_REJECT_LOOP_SHAPE;
-		} else {
-			ctx.loop = loop[k];
-			(void)accel_build_shader(&ctx, kernel[k], false);
-		}
-		if (ctx.reason == ACCEL_REJECT_NONE) {
-			kernel[k]->eligible = true;
-			kernel[k]->source_line = ctx.loop->line;
-			if (!gpu_ir_finalize_kernel(kernel[k], ctx.text, ctx.size,
-						    ir_error, sizeof(ir_error)))
-				goto failed;
-			memset(&ctx, 0, sizeof(ctx));
-			ctx.func = func_block;
-			ctx.loop = loop[k];
-			ctx.kernel = kernel[k];
-			kernel[k]->param_count = func_block->val.func.param_count;
-			kernel[k]->output_param = -1;
-			kernel[k]->dispatch_param = -1;
-			memset(kernel[k]->param_effect, 0,
-			       sizeof(kernel[k]->param_effect));
-			memset(kernel[k]->param_range, 0,
-			       sizeof(kernel[k]->param_range));
-			if (!accel_build_shader(&ctx, kernel[k], true) ||
-			    !accel_store_hlsl(kernel[k], ctx.text, ctx.size))
-				goto failed;
-		} else {
-			kernel[k]->eligible = false;
-			kernel[k]->rejection_reason = ctx.reason;
-			shape_ok = false;
-			loop_count = k + 1;
-			break;
-		}
-	}
-	if (!shape_ok) {
-		int reject_line;
-		int reject_reason;
-		char reject_message[256];
-
-		reject_line = kernel[loop_count - 1] != NULL ?
-			kernel[loop_count - 1]->source_line : func_block->line;
-		reject_reason = kernel[loop_count - 1] != NULL ?
-			kernel[loop_count - 1]->rejection_reason :
-			ACCEL_REJECT_LOOP_SHAPE;
-		snprintf(reject_message, sizeof(reject_message),
-			 "GPU-only __accel func '%s' cannot be lowered: %s.",
-			 func_block->val.func.name,
-			 accel_reason_name(reject_reason));
-		hir_set_error(reject_line, reject_message);
-		if (accel_info)
-			fprintf(stderr, "ACCEL: %s:%d: rejected (%s)\n",
-				func_block->val.func.file_name, reject_line,
-				accel_reason_name(reject_reason));
-		goto failed;
-	}
-	func_block->val.func.accel_kernel = kernel[0];
-	if (!accel_build_program(func_block, kernel, loop, loop_count)) {
-		hir_set_error(func_block->line,
-			      "Failed to build GPU-only accelerator program descriptor.");
-		goto failed_owned;
-	}
-	if (accel_info) {
-		for (k = 0; k < loop_count; k++) {
-		if (kernel[k]->eligible) {
-			int kind_param;
-			kind_param = kernel[k]->output_param;
-			if (kind_param < 0) {
-				for (i = 0; i < kernel[k]->param_count; i++)
-					if (kernel[k]->param_transport[i] != ACCEL_TRANSPORT_SCALAR) {
-						kind_param = (int)i;
-						break;
-					}
-			}
-			kind = kind_param >= 0 ?
-				accel_glsl_type(kernel[k]->param_packed_type[kind_param]) : "unknown";
-			fprintf(stderr, "ACCEL: %s:%d: accelerator kernel generated (%s32, 1D)\n",
-				kernel[k]->source_name, kernel[k]->source_line,
-				strcmp(kind, "float") == 0 ? "float" : kind);
-			fprintf(stderr, "ACCEL: %s:%d: DOALL %s; strategy %s\n",
-				kernel[k]->source_name, kernel[k]->source_line,
-				"yes", "parallel block=64");
-		}
-		}
-	}
-	if (getenv("NOCT_ACCEL_DEBUG") != NULL) {
-		for (k = 0; k < loop_count; k++)
-			if (kernel[k]->eligible)
-				fprintf(stderr, "%s", kernel[k]->glsl);
-	}
-	for (k = 1; k < loop_count; k++)
-		accel_kernel_free(kernel[k]);
-	return true;
-
-failed_owned:
-	func_block->val.func.accel_kernel = NULL;
-failed:
-	for (k = 0; k < ACCEL_PROGRAM_MAX_KERNELS; k++)
-		accel_kernel_free(kernel[k]);
-	return false;
 }

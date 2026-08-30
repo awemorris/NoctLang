@@ -13,53 +13,57 @@
 #define NOCT_LIR_H
 
 #include <noct/noct.h>
-#include "accel.h"
-#include "fast.h"
 
 #define LIR_PARAM_SIZE		32
-
-/*
- * Frame size limit: locals + expression temps per function.  Shared
- * with the HIR optimizer (hir_opt_cse.c budgets its $cseN home locals
- * against this so a program that compiles at level 0 always compiles
- * at level 2).
- */
 #define LIR_TMPVAR_MAX		128
 
 struct hir_block;
 
 struct lir_func {
+	/* Size of tmpvar. */
+	uint32_t tmpvar_size;
+
+	/* Size of bytecode array. */
+	uint32_t bytecode_size;
+
+	/* Bytecode array. */
+	uint8_t *bytecode;
+
+	/* Source file name. */
 	char *file_name;
+
+	/* Function name. */
 	char *func_name;
+
+	/* Parameter count. */
 	uint32_t param_count;
+
+	/* Parameter names. */
 	char *param_name[LIR_PARAM_SIZE];
 
-	/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
+	/* Parameter type annotation. */
 	int param_type[LIR_PARAM_SIZE];
-	/* NOCT_PACKED_* element kind, or -1 = not typed packed. */
+
+	/* Pckaed parameter type annotation. */
 	int param_packed_type[LIR_PARAM_SIZE];
-	/* rpacked* source annotation. */
+
+	/* Restricted Packed parameter type annotation. */
 	bool param_restricted[LIR_PARAM_SIZE];
-	int param_accel_access[LIR_PARAM_SIZE];
-	int param_accel_transport[LIR_PARAM_SIZE];
-	unsigned int param_accel_effect[LIR_PARAM_SIZE];
-	/* Optional declared return tag and packed element kind. */
+
+	/* Return type annotation. */
 	int return_type;
+
+	/* Packed return type annotation. */
 	int return_packed_type;
+
 	/* The bytecode enforces the declared return type on every edge. */
 	bool return_type_checked;
-	/* Bytecode contains at least one OP_V* instruction. */
+
+	/* The bytecode contains at least one vector operation. */
 	bool has_vector_ops;
-	bool is_accel;
-	int func_kind;
-	struct fast_signature fast_signature;
-	struct accel_kernel *accel_kernel;
-	struct accel_program *accel_program;
-	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
+
+	/* The bytecode contains a fused multiply-add operation. */
 	bool has_fma_ops;
-	uint32_t tmpvar_size;
-	uint32_t bytecode_size;
-	uint8_t *bytecode;
 };
 
 /*
@@ -96,16 +100,22 @@ const char *
 lir_get_error_message(void);
 
 /*
+ * Set the optimization level.
+ */
+void
+lir_set_optimize_level(int level);
+
+/*
+ * Enable or disable lineinfo ops.
+ */
+void
+lir_set_lineinfo(bool enable);
+
+/*
  * Dump LIR.
  */
 void
 lir_dump(
 	struct lir_func *func);
-
-void
-lir_set_optimize_level(int level);
-
-void
-lir_set_lineinfo(bool enable);
 
 #endif

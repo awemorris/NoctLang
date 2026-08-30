@@ -13,13 +13,16 @@
 #define NOCT_HIR_H
 
 #include <noct/noct.h>
-#include "accel.h"
-#include "fast.h"
 
-/* Compiler-only return annotation; it is not a runtime NoctValue tag. */
+/* Maximum Parameters and Arguments Size */
+#define HIR_PARAM_SIZE		32
+
+/* Compiler-only return annotation, not a rt_value tag. */
 #define HIR_TYPE_VOID (-2)
 
-/* HIR Block Type */
+/*
+ * HIR Block Type
+ */
 enum hir_block_type {
 	HIR_BLOCK_FUNC,
 	HIR_BLOCK_BASIC,
@@ -29,8 +32,11 @@ enum hir_block_type {
 	HIR_BLOCK_END,
 };
 
-/* HIR Expression Type */
+/*
+ * HIR Expression Type
+ */
 enum hir_expr_type {
+	/* Base */
 	HIR_EXPR_TERM,
 	HIR_EXPR_LT,
 	HIR_EXPR_LTE,
@@ -61,11 +67,7 @@ enum hir_expr_type {
 	HIR_EXPR_DICT,
 	HIR_EXPR_NEW,
 
-	/*
-	 * ABCE (docs/design/01-abce.md).  These are created only by the
-	 * HIR optimizer (hir_optimize_func); the parser never produces
-	 * them, so the elback/scmback source backends never see them.
-	 */
+	/* ABCE */
 	HIR_EXPR_PBASE,		/* unary:  packed local -> payload address (long) */
 	HIR_EXPR_PLEN,		/* unary:  packed local -> element count (int)    */
 	HIR_EXPR_PCHECK,	/* binary: value, elemtype const -> 0/1           */
@@ -86,27 +88,16 @@ enum hir_expr_type {
 	HIR_EXPR_PGATHER32,	/* optimizer-only: checked base[index lanes]      */
 	HIR_EXPR_VINDUCTF32,	/* optimizer-only: exact four-step f32 induction  */
 
-	/*
-	 * CSE (docs/design/05-cse.md).  Created only by the HIR
-	 * optimizer (hir_opt_cse.c); the parser never produces it, so
-	 * the elback/scmback source backends never see it.  Evaluates
-	 * the inner expression, stores the result into the home local
-	 * variable, and yields the value.
-	 */
+	/* CSE */
 	HIR_EXPR_CAPTURE,	/* unary + home local symbol                      */
 
-	/* SIMD if-conversion: evaluate cond ? if_true : if_false. */
-	HIR_EXPR_SELECT,
+	/* SIMD */
+	HIR_EXPR_SELECT,	/* if conversion                                  */
 };
 
-/* Calls which the runtime guarantees cannot be rebound. */
-enum hir_intrinsic_id {
-	HIR_INTRINSIC_NONE,
-	HIR_INTRINSIC_INT_FROM,
-	HIR_INTRINSIC_FLOAT_FROM,
-};
-
-/* HIR Term Type */
+/*
+ * HIR Term Type
+ */
 enum hir_term_type {
 	HIR_TERM_SYMBOL,
 	HIR_TERM_INT,
@@ -118,16 +109,15 @@ enum hir_term_type {
 	HIR_TERM_EMPTY_DICT,
 };
 
-/* Maximum Parameters and Arguments Size */
-#define HIR_PARAM_SIZE		32
+/*
+ * Intrinsics ID
+ */
+enum hir_intrinsic_id {
+	HIR_INTRINSIC_NONE,
+	HIR_INTRINSIC_INT_FROM,
+	HIR_INTRINSIC_FLOAT_FROM,
+};
 
-/* Forward Declaration */
-struct hir_cfg_node;
-struct hir_stmt;
-struct hir_expr;
-struct hir_term;
-struct hir_local;
-struct ast_func;
 
 /* Source-level storage retained for target-neutral parallel analysis. */
 enum hir_local_storage {
@@ -137,6 +127,9 @@ enum hir_local_storage {
 	HIR_LOCAL_STORAGE_REDUCTION
 };
 
+/*
+ * Local Decl Type
+ */
 enum hir_local_declaration_kind {
 	HIR_LOCAL_DECL_UNKNOWN = -1,
 	HIR_LOCAL_DECL_PARAMETER,
@@ -146,7 +139,9 @@ enum hir_local_declaration_kind {
 	HIR_LOCAL_DECL_SYNTHETIC
 };
 
-/* Exact scalar spelling needed where NOCT_VALUE_INT is too coarse. */
+/*
+ * Scalar Kind
+ */
 enum hir_declared_scalar_kind {
 	HIR_DECL_SCALAR_UNKNOWN = -1,
 	HIR_DECL_SCALAR_INT32,
@@ -155,7 +150,18 @@ enum hir_declared_scalar_kind {
 	HIR_DECL_SCALAR_OTHER
 };
 
-/* HIR Block */
+/*
+ * Forward Declaration
+ */
+struct ast_func;
+struct hir_stmt;
+struct hir_expr;
+struct hir_term;
+struct hir_local;
+
+/*
+ * HIR Block
+ */
 struct hir_block {
 	/* Block Type */
 	int type;
@@ -163,10 +169,10 @@ struct hir_block {
 	/* Line number. */
 	int line;
 
-	/* Parent Block (NULL on FIR_BLOCK_FUNC) */
+	/* Parent Block (NULL if HIR_BLOCK_FUNC) */
 	struct hir_block *parent;
 
-	/* Successor Block (NULL on HIR_BLOCK_END) */
+	/* Successor Block (NULL if HIR_BLOCK_END) */
 	struct hir_block *succ;
 
 	/* Is a tail of siblings? */
@@ -181,8 +187,8 @@ struct hir_block {
 	/*
 	 * Bytecode address a "continue" jumps to. (loop blocks only)
 	 *
-	 * For a ranged for loop this is the loop-variable incrementer;
-	 * for a for-each or a while loop it is the loop head, because
+	 * For a ranged for loop, this is the loop-variable incrementer.
+	 * For a for-each or a while loop, it is the loop head, because
 	 * those advance their cursor before running the body.
 	 */
 	uint32_t cont_addr;
@@ -198,31 +204,33 @@ struct hir_block {
 			uint32_t param_count;
 			char *param_name[HIR_PARAM_SIZE];
 
-			/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
+			/*
+			 * Parameter type annotation:
+			 *  - NOCT_VALUE_* tag per param, or -1 = unannotated.
+			 */
 			int param_type[HIR_PARAM_SIZE];
 
-			/* NOCT_PACKED_* element kind, or -1 = not typed packed. */
+			/*
+			 * Packed parameter type annotation:
+			 *  - NOCT_PACKED_* element kind, or -1 = not typed packed.
+			 */
 			int param_packed_type[HIR_PARAM_SIZE];
 
-			/* rpacked* source annotation. */
+			/*
+			 * Restrict packed parameter type annotation:
+			 *  - rpacked* source annotation.
+			 */
 			bool param_restricted[HIR_PARAM_SIZE];
-			int param_accel_access[HIR_PARAM_SIZE];
-			int param_accel_transport[HIR_PARAM_SIZE];
-			unsigned int param_accel_effect[HIR_PARAM_SIZE];
 
-			/* Optional declared return tag and packed element kind. */
+			/* Return type. */
 			int return_type;
 			int return_packed_type;
+
+			/* Is static? */
 			bool is_static;
+
+			/* Is inline? */
 			bool is_inline;
-			bool is_accel;
-			int func_kind;
-			/* Only function blocks need this large contract.  Keeping it
-			 * inline in the block union made every basic/if/loop block more
-			 * than 5 KiB. */
-			struct fast_signature *fast_signature;
-			struct accel_kernel *accel_kernel;
-			struct accel_program *accel_program;
 
 			/* File name. */
 			char *file_name;
@@ -278,32 +286,28 @@ struct hir_block {
 			/* For code generation. */
 			uint32_t inc_addr;
 
-			/*
-			 * Optimizer-only (docs/design/07-typed-ops.md,
-			 * set by hir_opt_abce.c on the versioned fast
-			 * loop): every local/param read in this subtree
-			 * is guard-proven int AND stays int (no 64-bit
-			 * loads in the body).  The parser leaves this
-			 * false (blocks are zero-initialized).  It must
-			 * NEVER be set on a block reachable when the
-			 * ABCE guard $g is false.
-			 */
+			/* Optimizer: typed int region. */
 			bool typed_int_region;
 
-			/*
-			 * Optimizer-only (docs/design/06-simd.md).
-			 * abce_fast: set by hir_opt_abce.c on the
-			 * versioned fast loop; consumed (and cleared)
-			 * by hir_opt_simd.c.  is_vector: this FOR is a
-			 * 4-lane strip loop -- lir.c lowers its body
-			 * through the vector visitor, and CSE must
-			 * skip the subtree.
-			 */
+			/* Optimizer: ABCE-ed fast loop. */
 			bool abce_fast;
+
+			/* Optimizer: vectorized loop. */
 			bool is_vector;
-			/* 0: ordinary loop, 1: scalar Packed loop, 4: SIMD strip. */
+
+			/*
+			 * Optimizer: vectorization result unit
+			 *  - 0: ordinary loop
+			 *  - 1: scalar Packed loop
+			 *  - 4: SIMD strip.
+			 */
 			uint8_t packed_lanes;
-			/* 0/1: ordinary scalar body, 4: four sequential scalar lanes. */
+
+			/*
+			 * Optimizer: unrolling result unit
+			 *  - 0/1: ordinary scalar body
+			 *  - 4: four sequential scalar lanes.
+			 */
 			uint8_t scalar_unroll;
 		} for_;
 
@@ -338,7 +342,11 @@ struct hir_stmt {
 	/* RHS */
 	struct hir_expr *rhs;
 
-	/* True only for a source-level `return;` assignment to $return. */
+	/*
+	 * True only for a source-level `return;` assignment to $return.
+	 *
+	 * XXX: what is this for?
+	 */
 	bool is_bare_return;
 
 	/* Next item. */
@@ -430,7 +438,7 @@ struct hir_expr {
 			struct hir_expr *init;
 		} new_;
 
-		/* Capture Expression (optimizer-only; CSE) */
+		/* Capture Expression (optimizer-only: CSE) */
 		struct {
 			/* Captured expression. */
 			struct hir_expr *expr;
@@ -439,21 +447,21 @@ struct hir_expr {
 			char *symbol;
 		} capture;
 
-		/* Select Expression (optimizer-only; SIMD predication) */
+		/* Select Expression (optimizer-only: SIMD predication) */
 		struct {
 			struct hir_expr *cond;
 			struct hir_expr *if_true;
 			struct hir_expr *if_false;
 		} select;
 
-		/* Masked packed store LHS (optimizer-only; SIMD). */
+		/* Masked packed store LHS (optimizer-only: SIMD). */
 		struct {
 			struct hir_expr *base;
 			struct hir_expr *offset;
 			struct hir_expr *mask;
 		} mask_store;
 
-		/* Checked packed gather (optimizer-only; SIMD). */
+		/* Checked packed gather (optimizer-only: SIMD). */
 		struct {
 			struct hir_expr *base;
 			struct hir_expr *length;
@@ -498,27 +506,16 @@ struct hir_local {
 	/* Variable index. */
 	int index;
 
-	/*
-	 * Proven runtime tag (docs/design/07-typed-ops.md Stage B):
-	 * -1 = unknown, else NOCT_VALUE_INT or NOCT_VALUE_FLOAT.
-	 * Computed by hir_opt_typed_func(); consumed by the LIR
-	 * generator at optimize level >= 2.
-	 *
-	 * DANGER (D-TOP10): NOCT_VALUE_INT == 0, so a zero-initialized
-	 * field would read as "proven int".  hir_add_local() is the
-	 * single allocation site and initializes this to -1; keep it
-	 * that way.
-	 */
+	/* Is parametre? */
+	bool is_parameter;
+
+	/* let or var */
+	bool is_let;
+
+	/* Optimizer: type proven */
 	int proven_type;
 
-	/*
-	 * Source declaration facts.  Keep unknown values at -1: zero is a
-	 * valid Noct value/packed tag and a valid scalar storage class.
-	 * These fields describe the source program and are not optimizer
-	 * proofs; optimizer passes must continue to use proven_type.
-	 */
-	bool is_parameter;
-	bool is_let;
+	/* Optimizer hints */
 	int declaration_kind;
 	int declared_type;
 	int declared_scalar_kind;
@@ -539,19 +536,6 @@ bool
 hir_build(void);
 
 /*
- * Side-effect-free __fast prototype registry used while compiling a require
- * graph.  Entries own their names and survive ast_cleanup()/hir_cleanup().
- */
-void hir_fast_prototypes_reset(void);
-bool hir_fast_prototype_add(const char *name, int func_kind,
-			    const struct fast_signature *signature);
-bool hir_fast_prototypes_collect(void);
-const struct fast_signature *hir_fast_prototype_find(const char *name);
-
-bool hir_gpu_build_kernel(struct hir_block *func, struct ast_func *afunc,
-			  char *error, size_t error_size);
-
-/*
  * Free constructed HIR functions.
  */
 void
@@ -570,9 +554,23 @@ struct hir_block *
 hir_get_function(
 	uint32_t index);
 
-/* Replace a function's link name while the HIR arena is alive. */
+/*
+ * Run the HIR optimizer on one function (ABCE loop versioning).
+ * A no-op below optimize level 2.  See docs/design/01-abce.md.
+ */
 bool
-hir_set_function_name(struct hir_block *func, const char *name);
+hir_optimize_func(
+	struct hir_block *func_block,
+	int optimize_level,
+	bool print_simd_info);
+
+/*
+ * Replace a function's link name while the HIR arena is alive.
+ */
+bool
+hir_set_function_name(
+	struct hir_block *func,
+	const char *name);
 
 /*
  * Get a file name.
@@ -592,11 +590,17 @@ hir_get_error_line(void);
 const char *
 hir_get_error_message(void);
 
-/* Set a deterministic error from a mandatory post-build compiler pass. */
+/*
+ * Set a deterministic error from a mandatory post-build compiler pass.
+ */
 void
-hir_set_error(int line, const char *message);
+hir_error(
+	int line,
+	const char *message);
 
-/* Return an immutable intrinsic ID for a call expression. */
+/*
+ * Return an immutable intrinsic ID for a call expression.
+ */
 int
 hir_get_intrinsic_call(
 	const struct hir_expr *expr);
@@ -608,14 +612,5 @@ void
 hir_dump_block(
 	struct hir_block *block);
 
-/*
- * Run the HIR optimizer on one function (ABCE loop versioning).
- * A no-op below optimize level 2.  See docs/design/01-abce.md.
- */
-bool
-hir_optimize_func(
-	struct hir_block *func_block,
-	int optimize_level,
-	bool print_simd_info);
 
 #endif

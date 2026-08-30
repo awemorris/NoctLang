@@ -75,8 +75,8 @@ done
 
 # Both scalar and checked-gather paths reject the same first invalid lane.
 for mode in "-j0 -O0" "-j0 -O2" "-j -O2"; do
-    if $NOCT $mode simd/drawimage/gather-invalid.noct > out 2>&1 ||
-       ! grep -q 'Array index 16 is out-of-range' out; then
+	if $NOCT $mode simd/drawimage/gather-invalid.noct > out 2>&1 ||
+	   ! grep -q 'Packed index 16 is out-of-range' out; then
         echo "FAIL checked gather invalid lane ($mode)"
         FAILED=1
     else

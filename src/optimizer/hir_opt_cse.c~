@@ -291,7 +291,9 @@ cse_assign_homes(
 
 	ctx->capture_count = 0;
 	for (i = 0; i < ctx->value_count; i++) {
-		struct cse_value *v = &ctx->values[i];
+		struct cse_value *v;
+
+		v = &ctx->values[i];
 		if (!v->is_candidate || v->hits <= 0)
 			continue;
 		if (ctx->capture_count >= ctx->capture_budget)
@@ -338,6 +340,7 @@ cse_scope_close(
 	int mark;
 
 	assert(ctx->scope_top > 0);
+
 	ctx->scope_top--;
 	if (ctx->scope_top >= CSE_MAX_SCOPES) {
 		/*
@@ -390,7 +393,9 @@ cse_intern(
 	int i;
 
 	for (i = 0; i < ctx->value_count; i++) {
-		struct cse_value *v = &ctx->values[i];
+		struct cse_value *v;
+
+		v = &ctx->values[i];
 		if (v->op != key->op || v->vn0 != key->vn0 ||
 		    v->vn1 != key->vn1 || v->epoch != key->epoch)
 			continue;
@@ -662,6 +667,7 @@ cse_visit_value(
 	if (v->avail) {
 		/* Reuse: replace the subtree with a home read. */
 		struct hir_expr *sym = cse_mk_symbol_expr(ctx, name);
+
 		if (sym == NULL)
 			return;
 		*slot = sym;
@@ -813,9 +819,9 @@ cse_expr(
 	uint32_t i;
 	size_t j;
 
-	e = *slot;
-	assert(e != NULL);
+	assert(*slot != NULL);
 
+	e = *slot;
 	memset(&key, 0, sizeof(key));
 	key.vn0 = -1;
 	key.vn1 = -1;
@@ -1058,6 +1064,7 @@ cse_stmt(
 			cse_kill_local(ctx, symbol);
 			if (rhs_vn != CSE_NOVN) {
 				int index = cse_local_index(ctx, symbol);
+
 				if (index >= 0 && index < CSE_MAX_LOCALS)
 					ctx->sym_vn[index] = rhs_vn;
 			}
@@ -1107,6 +1114,7 @@ cse_defs_stmt_list(
 		    stmt->lhs->type == HIR_EXPR_TERM &&
 		    stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL) {
 			const char *symbol = stmt->lhs->val.term.term->val.symbol;
+
 			if (strcmp(symbol, "$return") != 0)
 				cse_kill_local(ctx, symbol);
 		}

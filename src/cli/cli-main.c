@@ -111,10 +111,8 @@ void show_usage(void)
 	wide_printf("\n");
 	wide_printf(N_TR("Usage\n"));
 	wide_printf(N_TR("  noct <vm-options> <files>           ... run a program\n"));
-	wide_printf(N_TR("  noct <vm-options> -m NAME [args]    ... run NAME_main() from a package\n"));
 #if defined(NOCT_USE_BCBACKEND)
 	wide_printf(N_TR("  noct --compile <in-files>           ... convert to bytecode files\n"));
-	wide_printf(N_TR("  noct --compile --app <out.nap> <in-files> ... build a Noct App\n"));
 #endif
 #if defined(NOCT_USE_CBACKEND)
 	wide_printf(N_TR("  noct --ansic <out-file> <in-files>  ... convert to a C source file\n"));
@@ -128,22 +126,8 @@ void show_usage(void)
 	wide_printf("\n");
 	wide_printf(N_TR("vm-options:\n"));
 	wide_printf(N_TR("  -j, -j0              ... eager JIT (default), or interpreter only\n"));
-	wide_printf(N_TR("  -st, -mt             ... single/multi-thread object model\n"));
 	wide_printf(N_TR("  -O, -O0..-O3, -O9    ... optimization preset\n"));
-	wide_printf(N_TR("  --cpu[=N]            ... enable CPU automatic parallelization\n"));
-	wide_printf(N_TR("  --cpu-pe=N           ... processing elements (default: logical CPUs)\n"));
-	wide_printf(N_TR("  --cpu-affinity=LIST  ... comma-separated logical CPU IDs\n"));
-	wide_printf(N_TR("  --cpu-list            ... show CPU topology and exit\n"));
-	wide_printf(N_TR("  --gpu                 ... enable GPU automatic parallelization\n"));
-	wide_printf(N_TR("  --gpu-name=NAME       ... select one GPU by name\n"));
-	wide_printf(N_TR("  --gpu-list            ... show GPU devices and exit\n"));
 	wide_printf(N_TR("  --simd-info          ... report successfully vectorized loops\n"));
-	wide_printf(N_TR("  --accel=vulkan       ... enable the Vulkan accelerator\n"));
-	wide_printf(N_TR("  --accel=opengl       ... enable the OpenGL compute accelerator\n"));
-	wide_printf(N_TR("  --accel=dx12         ... enable the DirectX 12 compute accelerator\n"));
-	wide_printf(N_TR("  --disable-accel      ... force accelerator CPU fallback\n"));
-	wide_printf(N_TR("  --accel-info         ... report kernel generation and fallback\n"));
-	wide_printf(N_TR("  --path=DIRS          ... require search path (colon-separated)\n"));
 	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-graduate-size=N ... second GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-tenure-size=N   ... final GC space size in bytes\n"));

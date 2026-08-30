@@ -23,12 +23,6 @@ option(NOCT_ENABLE_CBACKEND       "Enable C backend"                      OFF)
 option(NOCT_ENABLE_ELBACKEND      "Enable Emacs Lisp backend"             OFF)
 option(NOCT_ENABLE_SCMBACKEND     "Enable Scheme backend"                 OFF)
 
-# Accelerator options.
-option(NOCT_ENABLE_ACCEL          "Enable GPU acceleration"               OFF)
-option(NOCT_ENABLE_ACCEL_VULKAN   "Enable Vulkan accelerator"             OFF)
-option(NOCT_ENABLE_ACCEL_OPENGL   "Enable OpenGL ES backend"              OFF)
-option(NOCT_ENABLE_ACCEL_DX12     "Enable Direct3D 12 backend"            OFF)
-
 # Multilingualization options.
 option(NOCT_ENABLE_I18N           "Enable translation (built-in)"         OFF)
 option(NOCT_ENABLE_I18N_LIBINTL   "Enable translation (gettext)"          OFF)
@@ -167,8 +161,11 @@ endif()
 # Determine the base files.
 set(
   NOCT_BASE_SOURCE
+  src/core/lexer.yy.c           # Lexer
+  src/core/parser.tab.c         # Parser
   src/core/ast.c                # AST construction (called from parser)
   src/core/hir.c                # HIR (AST->HIR construction)
+  src/core/hir_scope.c          # HIR lexical scope handling
   src/core/lir.c                # LIR (HIR->LIR construction)
   src/core/execution.c          # Runtime execution helper part
   src/core/interpreter.c        # Runtime interpreter part
@@ -176,8 +173,8 @@ set(
   src/core/gc.c                 # Runtime GC part
   src/core/runtime.c            # Runtime main part
   src/core/noct.c               # Public functions
-  src/core/intrin/intrinsics.c  # Intrinsics
-  src/core/intrin/regex.c       # Regex engine (used by the Regex.* intrinsics)
+  src/intrin/intrinsics.c       # Intrinsics
+  src/common/regex.c            # Regex engine (used by the Regex.* intrinsics)
 )
 
 # Determine the object-model sources
@@ -199,15 +196,15 @@ endif()
 if(NOCT_ENABLE_OPTIMIZER)
   set(
     NOCT_OPTIMIZER_SOURCE
-    src/core/hir_opt_abce.c     # ABCE pass
-    src/core/hir_opt_inline.c   # static inline pass
-    src/core/hir_opt_simd.c     # SIMD auto-vectorization
-    src/core/hir_opt_unroll.c   # scalar Packed loop unroll
-    src/core/hir_opt_cse.c      # CSE pass
-    src/core/hir_opt_typed.c    # Stage B type lattice
-    src/core/hir_opt_loop.c     # loop effect analysis
-    src/core/hir_opt_doall.c    # DOALL classification
-    src/core/hir_opt_dosum.c    # additive reduction analysis
+    src/optimizer/hir_opt_abce.c     # ABCE pass
+    src/optimizer/hir_opt_inline.c   # static inline pass
+    src/optimizer/hir_opt_simd.c     # SIMD auto-vectorization
+    src/optimizer/hir_opt_unroll.c   # scalar Packed loop unroll
+    src/optimizer/hir_opt_loop.c     # loop analysis
+    src/optimizer/hir_opt_doall.c    # DOALL analysis
+    src/optimizer/hir_opt_dosum.c    # DOSUM analysis
+    src/optimizer/hir_opt_cse.c      # CSE pass
+    src/optimizer/hir_opt_typed.c    # Stage B type lattice
   )
 endif()
 
@@ -225,7 +222,6 @@ if(NOCT_ENABLE_BCBACKEND)
     NOCT_BCBE_SOURCE
     src/backend/bcback.c
   )
-  add_definitions(-DNOCT_USE_PACKAGE_CACHE)
 endif()
 
 # Determine the Emacs Lisp backend files.
@@ -275,6 +271,7 @@ add_library(
 
   ${NOCT_BASE_SOURCE}
   ${NOCT_OBJMODEL_SOURCE}
+  ${NOCT_OPTIMIZER_SOURCE}
   ${NOCT_CBE_SOURCE}
   ${NOCT_BCBE_SOURCE}
   ${NOCT_ELBE_SOURCE}
@@ -394,12 +391,17 @@ set(NOCT_PRIVATE_CPPFLAGS)
 # Include Path (./include and ./src/core)
 target_include_directories(noct PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
   ${CMAKE_CURRENT_SOURCE_DIR}/src/core
   ${CMAKE_CURRENT_SOURCE_DIR}/src/api
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/common
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/intrin
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
 )
 if(NOCT_ENABLE_API)
   target_include_directories(noctapi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
   )
 endif()
@@ -571,25 +573,6 @@ if(    NOT MSVC
   target_link_libraries(noct PUBLIC m)
 endif()
 
-if(NOCT_DYNLIB_ENABLED)
-  target_link_libraries(noct PUBLIC ${CMAKE_DL_LIBS})
-endif()
-
-if(NOCT_ENABLE_ACCEL_VULKAN)
-  target_link_libraries(noct PUBLIC Vulkan::Vulkan PkgConfig::SHADERC)
-endif()
-
-if(NOCT_ENABLE_ACCEL_OPENGL)
-  target_link_libraries(noct PUBLIC PkgConfig::EGL PkgConfig::GLESV2)
-endif()
-
-if(NOCT_ENABLE_ACCEL_DX12)
-  target_include_directories(noct SYSTEM PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/directx-headers/include)
-  target_compile_definitions(noct PRIVATE __REQUIRED_RPCNDR_H_VERSION__=475)
-  target_link_libraries(noct PUBLIC d3d12 dxgi dxguid d3dcompiler ole32)
-endif()
-
 if(NOCT_ENABLE_I18N_INTL)
   target_link_libraries(noct PUBLIC ${INTL_LIBRARY})
   if(NOCT_ENABLE_API)
@@ -668,6 +651,37 @@ if(NOCT_ENABLE_CLI)
 
   # Define feature macros.
   target_compile_definitions(noctcli PRIVATE ${NOCT_PUBLIC_CPPFLAGS})
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_HTTPSERVER)
+  endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_TERM)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_TERM)
+  endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_BEUI)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_BEUI)
+  endif()
+  if(NOCT_ENABLE_API AND NOCT_ENABLE_API_PROCESS)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_PROCESS)
+  endif()
+  if(NOCT_ENABLE_CBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_CBACKEND)
+  endif()
+  if(NOCT_ENABLE_BCBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_BCBACKEND)
+  endif()
+  if(NOCT_ENABLE_ELBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_ELBACKEND)
+  endif()
+  if(NOCT_ENABLE_SCMBACKEND)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_SCMBACKEND)
+  endif()
+  if(NOCT_ENABLE_REPL)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_REPL)
+  endif()
+  if(NOT NOCT_VERSION)
+    set(NOCT_VERSION "1.0-current")
+  endif()
+  target_compile_definitions(noctcli PRIVATE NOCT_VERSION="${NOCT_VERSION}")
 
   # Include include/noct/, src/core/, and src/backend/
   target_include_directories(noctcli PRIVATE

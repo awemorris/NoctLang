@@ -248,7 +248,7 @@ noct_elback_translate(
 		return false;
 	}
 	if (ast_get_require_count() != 0) {
-		printf("%s", N_TR("Error: require is not supported by the Emacs Lisp transpiler; use --compile --app.\n"));
+		printf("%s", N_TR("Error: require is not supported by the Emacs Lisp transpiler.\n"));
 		ast_cleanup();
 		return false;
 	}
@@ -269,24 +269,6 @@ noct_elback_translate(
 
 		/* Transform HIR to LIR (bytecode). */
 		hfunc = hir_get_function(i);
-		if (hfunc->val.func.func_kind == NOCT_FUNC_GPU) {
-			printf("%s", N_TR("Error: __gpu func is not supported by the Emacs Lisp transpiler.\n"));
-			hir_cleanup();
-			ast_cleanup();
-			return false;
-		}
-		if (hfunc->val.func.func_kind == NOCT_FUNC_ACCEL) {
-			printf("%s", N_TR("Error: __accel func is GPU-only and is not supported by the Emacs Lisp transpiler.\n"));
-			hir_cleanup();
-			ast_cleanup();
-			return false;
-		}
-		if (hfunc->val.func.func_kind == NOCT_FUNC_FAST) {
-			printf("%s", N_TR("Error: __fast func is not supported by the Emacs Lisp transpiler.\n"));
-			hir_cleanup();
-			ast_cleanup();
-			return false;
-		}
 
 		/* Put a C function. */
 		if (!elback_translate_func(hfunc))

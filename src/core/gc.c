@@ -29,15 +29,15 @@
 /*
  * Link an element to a list.
  */
-#define INSERT_TO_LIST(elem, list, prev, next)	\
-	do {					\
-		(elem)->prev = NULL;		\
-		(elem)->next = (list);		\
-		if ((list) != NULL) {		\
-			assert(elem != (list)->next); \
-			(list)->prev = (elem);	\
-		}				\
-		(list) = (elem);		\
+#define INSERT_TO_LIST(elem, list, prev, next)				\
+	do {								\
+		(elem)->prev = NULL;					\
+		(elem)->next = (list);					\
+		if ((list) != NULL) {					\
+			assert(elem != (list)->next);			\
+			(list)->prev = (elem);				\
+		}							\
+		(list) = (elem);					\
 	} while (0)
 
 /*
@@ -61,10 +61,11 @@
 /*
  * Check if a value is a reference type.
  */
-#define IS_REF_VAL(v)			((v)->type == NOCT_VALUE_STRING || \
-					 (v)->type == NOCT_VALUE_ARRAY || \
-					 (v)->type == NOCT_VALUE_DICT || \
-					 (v)->type == NOCT_VALUE_PACKED)
+#define IS_REF_VAL(v)							\
+	((v)->type == NOCT_VALUE_STRING ||				\
+	 (v)->type == NOCT_VALUE_ARRAY ||				\
+	 (v)->type == NOCT_VALUE_DICT ||				\
+	 (v)->type == NOCT_VALUE_PACKED)
 
 /*
  * Heap lock.
@@ -77,13 +78,11 @@
 #if defined(NOCT_USE_MULTITHREAD)
 #define HEAP_LOCK(env)							\
 	do {								\
-		if ((env)->vm->config.object_model == NOCT_OBJECT_MODEL_MULTI) \
-			atomic_spin_lock(&(env)->vm->heap_lock);		\
+		atomic_spin_lock(&(env)->vm->heap_lock);		\
 	} while (0)
-#define HEAP_UNLOCK(env)							\
+#define HEAP_UNLOCK(env)						\
 	do {								\
-		if ((env)->vm->config.object_model == NOCT_OBJECT_MODEL_MULTI) \
-			atomic_spin_unlock(&(env)->vm->heap_lock);		\
+		atomic_spin_unlock(&(env)->vm->heap_lock);	\
 	} while (0)
 #else
 #define HEAP_LOCK(env)		do {} while (0)
@@ -413,8 +412,9 @@ rt_gc_alloc_string_tenure(
 		if (rts == NULL) {
 			HEAP_UNLOCK(env);
 			/*
-			 * "data" may point into the heap we are about to
-			 * collect or compact, so save it before doing so.
+			 * "data" may point into the heap we are about
+			 * to collect or compact, so save it before
+			 * doing so.
 			 */
 			if (retry <= 1 && saved == NULL) {
 				saved = noct_malloc(len);
@@ -425,25 +425,28 @@ rt_gc_alloc_string_tenure(
 				memcpy(saved, data, len);
 				data = saved;
 			}
+
 			/*
-			 * Retry -- but never by running another collection
-			 * from inside one. The young GC's promote path
-			 * lands here when the tenure region is full, and
-			 * an old GC or a compaction started at that point
-			 * clears the is_marked/forward bookkeeping the
-			 * young collection is standing on: objects lose
-			 * their marks mid-copy, get evacuated twice, and
-			 * the diverged copies leave slots pointing at
-			 * memory the young GC then wipes. (Found as a
-			 * once-per-hundreds-of-GCs string corruption when
-			 * loading multi-megabyte Lisp files.) When nested,
-			 * fail the allocation instead; the caller demotes
-			 * the promotion to a graduate copy.
+			 * Retry -- but never by running another
+			 * collection from inside one. The young GC's
+			 * promote path lands here when the tenure
+			 * region is full, and an old GC or a
+			 * compaction started at that point clears the
+			 * is_marked/forward bookkeeping the young
+			 * collection is standing on: objects lose
+			 * their marks mid-copy, get evacuated twice,
+			 * and the diverged copies leave slots
+			 * pointing at memory the young GC then
+			 * wipes. When nested, fail the allocation
+			 * instead; the caller demotes the promotion
+			 * to a graduate copy.
 			 */
 			if (env->vm->gc_in_progress_counter > 0) {
 				noct_free(saved);
 				return NULL;
 			}
+
+			/* GC for a retry, or fail. */
 			if (retry == 0) {
 				rt_gc_old_gc(env);
 				continue;
@@ -501,8 +504,11 @@ rt_gc_alloc_array(
 	int retry;
 
 	assert(env != NULL);
-	/* An empty container still needs a backing block; use the
-	 * minimum allocation size rather than rejecting size 0. */
+
+	/*
+	 * An empty container still needs a backing block. Use the
+	 * minimum allocation size rather than rejecting size 0.
+	 */
 	if (size < 2)
 		size = 2;
 
@@ -537,8 +543,8 @@ rt_gc_alloc_array(
 				continue;
 			} else if (retry == 1) {
 				/*
-				 * Not enough; reclaim the old generation
-				 * and retry once more. See
+				 * Not enough: reclaim the old
+				 * generation and retry once more. See
 				 * rt_gc_alloc_string.
 				 */
 				rt_gc_old_gc(env);
@@ -591,8 +597,11 @@ rt_gc_alloc_array_graduate(
 	struct rt_value *table;
 
 	assert(env != NULL);
-	/* An empty container still needs a backing block; use the
-	 * minimum allocation size rather than rejecting size 0. */
+
+	/*
+	 * An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0.
+	 */
 	if (size < 2)
 		size = 2;
 
@@ -607,8 +616,8 @@ rt_gc_alloc_array_graduate(
 	}
 
 	/*
-	 * This function is only called from the young GC,
-	 * and thus, we don't use young GC for a retry here.
+	 * This function is only called from the young GC, and thus,
+	 * we don't use young GC for a retry here.
 	 */
 
 	/* Try allocating in the graduate region. */
@@ -665,8 +674,11 @@ rt_gc_alloc_array_tenure(
 	int retry;
 
 	assert(env != NULL);
-	/* An empty container still needs a backing block; use the
-	 * minimum allocation size rather than rejecting size 0. */
+
+	/*
+	 * An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0.
+	 */
 	if (size < 2)
 		size = 2;
 
@@ -688,13 +700,15 @@ rt_gc_alloc_array_tenure(
 		if (arr == NULL) {
 			HEAP_UNLOCK(env);
 			/*
-			 * Retry -- but never by nesting a collection inside
-			 * one (see rt_gc_alloc_string_tenure): when a GC is
-			 * already running, fail so the caller can demote
-			 * the promotion instead.
+			 * Retry -- but never by nesting a collection
+			 * inside one (see rt_gc_alloc_string_tenure):
+			 * when a GC is already running, fail so the
+			 * caller can demote the promotion instead.
 			 */
 			if (env->vm->gc_in_progress_counter > 0)
 				return NULL;
+
+			/* Retry. */
 			if (retry == 0) {
 				rt_gc_old_gc(env);
 				continue;
@@ -754,8 +768,11 @@ rt_gc_alloc_dict(
 	int retry;
 
 	assert(env != NULL);
-	/* An empty container still needs a backing block; use the
-	 * minimum allocation size rather than rejecting size 0. */
+
+	/*
+	 * An empty container still needs a backing block; use the
+	 * minimum allocation size rather than rejecting size 0.
+	 */
 	if (size < 2)
 		size = 2;
 
@@ -789,8 +806,8 @@ rt_gc_alloc_dict(
 				continue;
 			} else if (retry == 1) {
 				/*
-				 * Not enough; reclaim the old generation
-				 * and retry once more. See
+				 * Not enough: reclaim the old
+				 * generation and retry once more. See
 				 * rt_gc_alloc_string.
 				 */
 				rt_gc_old_gc(env);
@@ -851,8 +868,11 @@ rt_gc_alloc_dict_graduate(
 	struct rt_value *value_table;
 
 	assert(env != NULL);
-	/* An empty container still needs a backing block; use the
-	 * minimum allocation size rather than rejecting size 0. */
+
+	/*
+	 * An empty container still needs a backing block, use the
+	 * minimum allocation size rather than rejecting size 0.
+	 */
 	if (size < 2)
 		size = 2;
 
@@ -933,8 +953,11 @@ rt_gc_alloc_dict_tenure(
 	int retry;
 
 	assert(env != NULL);
-	/* An empty container still needs a backing block; use the
-	 * minimum allocation size rather than rejecting size 0. */
+
+	/*
+	 * An empty container still needs a backing block, use the
+	 * minimum allocation size rather than rejecting size 0.
+	 */
 	if (size < 2)
 		size = 2;
 
@@ -956,13 +979,15 @@ rt_gc_alloc_dict_tenure(
 		if (dict == NULL) {
 			HEAP_UNLOCK(env);
 			/*
-			 * Retry -- but never by nesting a collection inside
-			 * one (see rt_gc_alloc_string_tenure): when a GC is
-			 * already running, fail so the caller can demote
-			 * the promotion instead.
+			 * Retry -- but never by nesting a collection
+			 * inside one (see rt_gc_alloc_string_tenure):
+			 * when a GC is already running, fail so the
+			 * caller can demote the promotion instead.
 			 */
 			if (env->vm->gc_in_progress_counter > 0)
 				return NULL;
+
+			/* Retry. */
 			if (retry == 0) {
 				rt_gc_old_gc(env);
 				continue;
@@ -1042,10 +1067,15 @@ rt_gc_alloc_packed(
 		size = 0;
 
 	/* Owned external buffers stay in tenure and never duplicate ownership. */
-	if (native_finalizer != NULL)
-		return rt_gc_alloc_packed_tenure(env, type, size, elem_size,
-						   preallocated, native_pointer,
-						   native_finalizer);
+	if (native_finalizer != NULL) {
+		return rt_gc_alloc_packed_tenure(env,
+						 type,
+						 size,
+						 elem_size,
+						 preallocated,
+						 native_pointer,
+						 native_finalizer);
+	}
 
 	/*
 	 * [Large Object Promotion]
@@ -1068,8 +1098,8 @@ rt_gc_alloc_packed(
 				continue;
 			} else if (retry == 1) {
 				/*
-				 * Not enough; reclaim the old generation
-				 * and retry once more. See
+				 * Not enough: reclaim the old
+				 * generation and retry once more. See
 				 * rt_gc_alloc_string.
 				 */
 				rt_gc_old_gc(env);
@@ -1099,8 +1129,6 @@ rt_gc_alloc_packed(
 		packed->size = size;
 		packed->elem_size = elem_size;
 		packed->packed_typed = false;
-		packed->is_accel_resource = false;
-		packed->accel_backend_data = NULL;
 		packed->packed_buffer = p;
 		packed->native_pointer = NULL;
 		packed->native_finalizer = NULL;
@@ -1164,8 +1192,6 @@ rt_gc_alloc_packed_graduate(
 		packed->size = size;
 		packed->elem_size = elem_size;
 		packed->packed_typed = false;
-		packed->is_accel_resource = false;
-		packed->accel_backend_data = NULL;
 		packed->packed_buffer = p;
 		packed->native_pointer = native_pointer;
 		packed->native_finalizer = native_finalizer;
@@ -1217,14 +1243,17 @@ rt_gc_alloc_packed_tenure(
 		packed = rt_gc_tenure_alloc(env, sizeof(struct rt_packed) + size);
 		if (packed == NULL) {
 			HEAP_UNLOCK(env);
+
 			/*
-			 * Retry -- but never by nesting a collection inside
-			 * one (see rt_gc_alloc_string_tenure): when a GC is
-			 * already running, fail so the caller can demote
-			 * the promotion instead.
+			 * Retry -- but never by nesting a collection
+			 * inside one (see rt_gc_alloc_string_tenure):
+			 * when a GC is already running, fail so the
+			 * caller can demote the promotion instead.
 			 */
 			if (env->vm->gc_in_progress_counter > 0)
 				return NULL;
+
+			/* Retry. */
 			if (retry == 0) {
 				rt_gc_old_gc(env);
 				continue;
@@ -1254,8 +1283,6 @@ rt_gc_alloc_packed_tenure(
 		packed->size = size;
 		packed->elem_size = elem_size;
 		packed->packed_typed = false;
-		packed->is_accel_resource = false;
-		packed->accel_backend_data = NULL;
 		packed->packed_buffer = p;
 		packed->native_pointer = native_pointer;
 		packed->native_finalizer = native_finalizer;
@@ -1337,19 +1364,7 @@ static void
 rt_gc_young_gc(
 	struct rt_env *env)
 {
-	/*
-	 * Make sure the tenure region can absorb this collection before
-	 * it starts. The copy phase spills into tenure whenever the
-	 * graduate space overflows or an object promotes, and a tenure
-	 * allocation that fails mid-collection can only be answered by
-	 * demoting -- or, when the graduate space is also full, by
-	 * aborting the collection half-done. Aborts are survivable (the
-	 * retry logic converges) but wasteful; reclaiming the old
-	 * generation up front, here where no collection is running yet
-	 * and nesting is not a concern, keeps them rare. The frontier
-	 * remainder understates the true free space (bins are not
-	 * counted), which errs on the side of collecting.
-	 */
+	/* Make sure the tenure region can absorb this collection before it starts. */
 	if (env->vm->gc_in_progress_counter == 0) {
 		size_t headroom = (size_t)(env->vm->gc.tenure_freelist.end -
 					   env->vm->gc.tenure_frontier);
@@ -1361,15 +1376,12 @@ rt_gc_young_gc(
 		}
 	}
 
-	/*
-	 * A false return means this collection is redundant inside the
-	 * one already running, so the body must be skipped: running it
-	 * again would unwind the nursery a second time and free objects
-	 * the outer collection has already evacuated.
-	 */
+	/* A false return means this collection is redundant. */
 	if (!om_enter_gc(env, RT_GC_LEVEL_0))
 		return;
+
 	rt_gc_young_gc_body(env);
+
 	om_leave_gc(env);
 }
 
@@ -1378,18 +1390,22 @@ static void
 rt_gc_young_gc_body(
 	struct rt_env *env)
 {
-	struct rt_gc_object *obj;
-	struct rt_frame *frame;
-	uint32_t i;
-	int sp;
 	struct finalize_table {
 		void *native_pointer;
 		void (*native_finalizer)(void *native_pointer);
-	} *finalize_table;
+	};
+
+	struct rt_gc_object *obj;
+	struct rt_frame *frame;
+	struct finalize_table *finalize_table;
+	struct rt_env *e;
+	uint32_t i;
+	int sp;
 	uint32_t finalize_size;
 	uint32_t finalize_count;
 
 	env->vm->gc.graduate_new_list = NULL;
+
 	finalize_table = NULL;
 	finalize_size = 0;
 	finalize_count = 0;
@@ -1429,18 +1445,7 @@ rt_gc_young_gc_body(
 		obj = obj->next;
 	}
 
-	/*
-	 * Evacuees of an aborted previous collection. A young collection
-	 * that runs out of everything mid-copy returns without swapping
-	 * the graduate spaces, leaving its half-filled to-space list
-	 * here with is_marked still set. Those marks must not survive
-	 * into this collection: a marked object is skipped as "already
-	 * descended", so an orphan copy whose slots were never rewritten
-	 * would keep pointers into the from-space this collection is
-	 * about to clear. With the marks cleared, the abort-and-retry
-	 * sequence converges, because no mutator step happens between an
-	 * aborted collection and the retry.
-	 */
+	/* Evacuees of an aborted previous collection. */
 	obj = env->vm->gc.graduate_new_list;
 	while (obj != NULL) {
 		obj->is_marked = false;
@@ -1466,26 +1471,23 @@ rt_gc_young_gc_body(
 	}
 
 	/* For all call frames of all thread envs. */
-	{
-		struct rt_env *e;
-		for (e = env->vm->env_list; e != NULL; e = e->next) {
-			for (sp = (int)e->cur_frame_index; sp >= 0; sp--) {
-				frame = &e->frame_alloc[sp];
+	for (e = env->vm->env_list; e != NULL; e = e->next) {
+		for (sp = (int)e->cur_frame_index; sp >= 0; sp--) {
+			frame = &e->frame_alloc[sp];
 
-				/* For all temporary variables in the frame. */
-				for (i = 0; i < frame->tmpvar_size; i++) {
-					if (IS_REF_VAL(&frame->tmpvar[i])) {
-						if (!rt_gc_copy_young_object(env, &frame->tmpvar[i].val.obj))
-							return;
-					}
+			/* For all temporary variables in the frame. */
+			for (i = 0; i < frame->tmpvar_size; i++) {
+				if (IS_REF_VAL(&frame->tmpvar[i])) {
+					if (!rt_gc_copy_young_object(env, &frame->tmpvar[i].val.obj))
+						return;
 				}
+			}
 
-				/* For all pinned C local variables in the frame. */
-				for (i = 0; i < frame->pinned_count; i++) {
-					if (IS_REF_VAL(frame->pinned[i])) {
-						if (!rt_gc_copy_young_object(env, &frame->pinned[i]->val.obj))
-							return;
-					}
+			/* For all pinned C local variables in the frame. */
+			for (i = 0; i < frame->pinned_count; i++) {
+				if (IS_REF_VAL(frame->pinned[i])) {
+					if (!rt_gc_copy_young_object(env, &frame->pinned[i]->val.obj))
+						return;
 				}
 			}
 		}
@@ -1498,24 +1500,13 @@ rt_gc_young_gc_body(
 				return;
 		}
 	}
-	/* Live accelerator events own their retained launch arguments. */
-	{
-		uint32_t ei, vi;
-		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
-			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
-				if (IS_REF_VAL(&env->vm->accel_event[ei].retained[vi]))
-					if (!rt_gc_copy_young_object(env,
-						&env->vm->accel_event[ei].retained[vi].val.obj))
-						return;
-	}
-
 	/* For all remember set objects. */
 	obj = env->vm->gc.remember_set;
 	while (obj != NULL) {
 		/*
-		 * Save the next link first: the copy call below may replace
-		 * "o" with the newest structural generation, whose rem_next
-		 * is not a valid list link.
+		 * Save the next link first: the copy call below may
+		 * replace "o" with the newest structural generation,
+		 * whose rem_next is not a valid list link.
 		 */
 		struct rt_gc_object *next = obj->rem_next;
 		struct rt_gc_object *o = obj;
@@ -1529,12 +1520,12 @@ rt_gc_young_gc_body(
 	 */
 
 	/*
-	 * For each remember set object, update the addresses of the inner
-	 * elements using the forwarding pointer technique.
+	 * For each remember set object, update the addresses of the
+	 * inner elements using the forwarding pointer technique.
 	 *
-	 * An object that has a newer structural generation is skipped: its
-	 * own slots are stale (the live data is in the newest generation),
-	 * so they must not be dereferenced.
+	 * An object that has a newer structural generation is
+	 * skipped: its own slots are stale (the live data is in the
+	 * newest generation), so they must not be dereferenced.
 	 */
 	obj = env->vm->gc.remember_set;
 	while (obj != NULL) {
@@ -1574,13 +1565,21 @@ rt_gc_young_gc_body(
 		obj = obj->rem_next;
 	}
 
-	/* For each remember set object, remove from the remember set if the object doesn't have a cross generation reference. */
+	/*
+	 * For each remember set object, remove from the remember set
+	 * if the object doesn't have a cross generation reference.
+	 */
 	obj = env->vm->gc.remember_set;
 	while (obj != NULL) {
+		struct rt_gc_object *next;
+		bool has_cross_gen_ref;
+		bool has_newer;
+
 		/* Save the next link first: UNLINK clears obj->rem_next. */
-		struct rt_gc_object *next = obj->rem_next;
-		bool has_cross_gen_ref = false;
-		bool has_newer = false;
+		next = obj->rem_next;
+
+		has_cross_gen_ref = false;
+		has_newer = false;
 		if (obj->type == RT_GC_TYPE_ARRAY) {
 			struct rt_array *arr = (struct rt_array *)obj;
 			if (arr->newer != NULL) {
@@ -1664,18 +1663,6 @@ rt_gc_young_gc_body(
 	 * Finish.
 	 */
 
-	/*
-	 * Debug guard (NOCT_GC_VERIFY=1): nothing reachable may still point
-	 * into the arenas about to be cleared. Walks the whole heap from
-	 * the roots, so a stale slot inside an object names its container.
-	 */
-	if (getenv("NOCT_GC_VERIFY") != NULL) {
-		static unsigned long verify_pass;
-		if (verify_pass++ % 200 == 0)
-			fprintf(stderr, "gc-verify: pass %lu\n", verify_pass);
-		rt_gc_verify_young(env);
-	}
-
 	/* Clear the nursery. */
 	arena_unwind(&env->vm->gc.nursery_arena);
 		   
@@ -1702,180 +1689,8 @@ rt_gc_young_gc_body(
 
 	for (i = 0; i < finalize_count; i++)
 		finalize_table[i].native_finalizer(finalize_table[i].native_pointer);
+
 	noct_free(finalize_table);
-}
-
-/*
- * Debug-only transitive check, enabled by NOCT_GC_VERIFY=1: at the end
- * of a young collection, walk everything reachable from the roots and
- * abort loudly on any slot that still points into the from-space about
- * to be cleared. Slow and allocation-happy by design; never on by
- * default.
- */
-static void
-rt_gc_verify_young(
-	struct rt_env *env)
-{
-	char *n_lo = env->vm->gc.nursery_arena.top;
-	char *n_hi = n_lo + env->vm->gc.nursery_arena.size;
-	char *g_lo = env->vm->gc.graduate_arena[env->vm->gc.cur_grad_from].top;
-	char *g_hi = g_lo + env->vm->gc.graduate_arena[env->vm->gc.cur_grad_from].size;
-	struct rt_gc_object **stack;
-	size_t stack_cap = 1u << 16, stack_top = 0;
-	void **visited;
-	size_t vis_cap = 1u << 20;	/* power of two, open addressing */
-	struct rt_env *e;
-	uint32_t i;
-	int sp;
-
-#define VERIFY_STALE(p) \
-	(((char *)(p) >= n_lo && (char *)(p) < n_hi) || \
-	 ((char *)(p) >= g_lo && (char *)(p) < g_hi))
-#define VERIFY_PUSH(o) \
-	do { \
-		if (stack_top == stack_cap) { \
-			stack_cap *= 2; \
-			stack = realloc(stack, stack_cap * sizeof(*stack)); \
-		} \
-		stack[stack_top++] = (o); \
-	} while (0)
-#define VERIFY_ROOT(v, what) \
-	do { \
-		if (IS_REF_VAL(v)) { \
-			if (VERIFY_STALE((v)->val.obj)) { \
-				fprintf(stderr, "GC VERIFY: stale root %s\n", what); \
-				abort(); \
-			} \
-			VERIFY_PUSH((v)->val.obj); \
-		} \
-	} while (0)
-
-	stack = malloc(stack_cap * sizeof(*stack));
-	visited = calloc(vis_cap, sizeof(void *));
-	if (stack == NULL || visited == NULL) {
-		free(stack);
-		free(visited);
-		return;
-	}
-
-	for (i = 0; i < (uint32_t)env->vm->global_alloc_size; i++) {
-		if (env->vm->global[i].name == NULL || env->vm->global[i].is_removed)
-			continue;
-		VERIFY_ROOT(&env->vm->global[i].val, env->vm->global[i].name);
-	}
-	for (e = env->vm->env_list; e != NULL; e = e->next) {
-		for (sp = (int)e->cur_frame_index; sp >= 0; sp--) {
-			struct rt_frame *f = &e->frame_alloc[sp];
-			for (i = 0; i < f->tmpvar_size; i++) {
-				if (IS_REF_VAL(&f->tmpvar[i]) &&
-				    VERIFY_STALE(f->tmpvar[i].val.obj)) {
-					fprintf(stderr,
-						"GC VERIFY: stale tmpvar env=%p frame=%d/%d slot=%u size=%u func=%s obj=%p type=%d\n",
-						(void *)e, sp, (int)e->cur_frame_index,
-						i, f->tmpvar_size,
-						f->func != NULL && f->func->name != NULL ? f->func->name : "?",
-						(void *)f->tmpvar[i].val.obj,
-						f->tmpvar[i].type);
-					abort();
-				}
-				if (IS_REF_VAL(&f->tmpvar[i]))
-					VERIFY_PUSH(f->tmpvar[i].val.obj);
-			}
-			for (i = 0; i < f->pinned_count; i++)
-				VERIFY_ROOT(f->pinned[i], "pinned");
-		}
-	}
-	for (i = 0; i < env->vm->pinned_count; i++)
-		VERIFY_ROOT(env->vm->pinned[i], "vm-pinned");
-	{
-		uint32_t ei, vi;
-		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
-			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
-				VERIFY_ROOT(&env->vm->accel_event[ei].retained[vi],
-					    "accelerator-event");
-	}
-
-	while (stack_top > 0) {
-		struct rt_gc_object *o = stack[--stack_top];
-		size_t h = ((uintptr_t)o >> 4) & (vis_cap - 1);
-		struct rt_array *arr;
-		struct rt_dict *dict;
-
-		while (visited[h] != NULL && visited[h] != o)
-			h = (h + 1) & (vis_cap - 1);
-		if (visited[h] == o)
-			continue;
-		visited[h] = o;
-
-		if (o->type == RT_GC_TYPE_ARRAY) {
-			arr = (struct rt_array *)o;
-			if (arr->newer != NULL)
-				continue;	/* stale generation, unread by design */
-			for (i = 0; i < arr->size; i++) {
-				if (!IS_REF_VAL(&arr->table[i]))
-					continue;
-				if (VERIFY_STALE(arr->table[i].val.obj)) {
-					struct rt_gc_object *c = arr->table[i].val.obj;
-					struct rt_gc_object *l;
-					const char *where = "no-list";
-					int n1 = 0, n2 = 0;
-					for (l = env->vm->gc.nursery_list; l; l = l->next)
-						if (l == o) { where = "nursery"; break; }
-					for (l = env->vm->gc.graduate_list; l; l = l->next)
-						if (l == o) { where = "grad-from"; break; }
-					for (l = env->vm->gc.graduate_new_list; l; l = l->next)
-						if (l == o) { where = "grad-new"; break; }
-					for (l = env->vm->gc.tenure_list; l; l = l->next)
-						if (l == o) { where = "tenure"; break; }
-					for (n1 = 0; n1 < (int)arr->size; n1++)
-						if (IS_REF_VAL(&arr->table[n1]) &&
-						    VERIFY_STALE(arr->table[n1].val.obj))
-							n2++;
-					fprintf(stderr,
-						"GC VERIFY: stale array slot %u/%u of %p list=%s marked=%d newer=%p "
-						"child={type=%d region=%d marked=%d fwd=%p} stale-slots=%d\n",
-						i, (unsigned)arr->size, (void *)arr, where,
-						o->is_marked, (void *)arr->newer,
-						c->type, c->region, c->is_marked,
-						(void *)c->forward, n2);
-					abort();
-				}
-				VERIFY_PUSH(arr->table[i].val.obj);
-			}
-		} else if (o->type == RT_GC_TYPE_DICT) {
-			dict = (struct rt_dict *)o;
-			if (dict->newer != NULL)
-				continue;
-			for (i = 0; i < dict->alloc_size; i++) {
-				if (dict->key[i].type != NOCT_VALUE_STRING)
-					continue;
-				if (VERIFY_STALE(dict->key[i].val.obj)) {
-					fprintf(stderr,
-						"GC VERIFY: stale dict key %u of %p (region %d marked %d)\n",
-						i, (void *)dict, o->region, o->is_marked);
-					abort();
-				}
-				VERIFY_PUSH(dict->key[i].val.obj);
-				if (!IS_REF_VAL(&dict->value[i]))
-					continue;
-				if (VERIFY_STALE(dict->value[i].val.obj)) {
-					fprintf(stderr,
-						"GC VERIFY: stale dict value %u of %p key=%s (region %d marked %d)\n",
-						i, (void *)dict,
-						((struct rt_string *)dict->key[i].val.obj)->data,
-						o->region, o->is_marked);
-					abort();
-				}
-				VERIFY_PUSH(dict->value[i].val.obj);
-			}
-		}
-	}
-
-	free(stack);
-	free(visited);
-#undef VERIFY_STALE
-#undef VERIFY_PUSH
-#undef VERIFY_ROOT
 }
 
 /* Push a slot onto the traversal worklist. */
@@ -1884,7 +1699,9 @@ rt_gc_work_push(
 	struct rt_env *env,
 	struct rt_gc_object **slot)
 {
-	struct rt_gc_info *gc = &env->vm->gc;
+	struct rt_gc_info *gc;
+
+	gc = &env->vm->gc;
 
 	if (gc->work_top == gc->work_cap) {
 		size_t cap = gc->work_cap == 0 ? 1024 : gc->work_cap * 2;
@@ -1897,7 +1714,9 @@ rt_gc_work_push(
 		gc->work = w;
 		gc->work_cap = cap;
 	}
+
 	gc->work[gc->work_top++] = slot;
+
 	return true;
 }
 
@@ -1920,16 +1739,18 @@ rt_gc_promoted_push(
 		gc->promoted = p;
 		gc->promoted_cap = cap;
 	}
+
 	gc->promoted[gc->promoted_top++] = obj;
+
 	return true;
 }
 
 /*
- * A promoted object now lives in the tenure region; if it still points
- * at young data, the next young collection has to know, so it goes on
- * the remember set. Runs after the worklist drains, when every child
- * slot holds its final address -- the same post-order the recursive
- * walk provided by doing this on the way out.
+ * A promoted object now lives in the tenure region. If it still
+ * points at young data, the next young collection has to know, so it
+ * goes on the remember set. Runs after the worklist drains, when
+ * every child slot holds its final address. The same post-order the
+ * recursive walk provided by doing this on the way out.
  */
 static void
 rt_gc_note_promoted_cross_refs(
@@ -2001,15 +1822,7 @@ rt_gc_note_promoted_cross_refs(
 
 /*
  * Marks-and-copies the object graph reachable from one root slot.
- *
- * This used to be a recursive function, one C stack frame per edge.
- * The graph's depth is program data -- a Lisp cons chain of 500
- * elements is 500 levels of nesting -- and deep data overflowed the C
- * stack inside the collector (found by loading GNU Emacs's dired.el on
- * remacs; confirmed with ASan). It now drains an explicit worklist of
- * slots. Entries are slots rather than objects because the walk
- * rewrites the reference it arrived through to the object's new
- * address.
+ * This used to be a massively-recursive function, such as 500 levels.
  */
 static bool
 rt_gc_copy_young_object(
@@ -2089,15 +1902,12 @@ rt_gc_copy_young_object(
 					/* The forwarding pointer is set in rt_gc_promote_object(). */
 				} else {
 					/*
-					 * The tenure region is full, and
-					 * collecting it from in here is what
-					 * the allocator now refuses to do (a
-					 * nested collection wrecks this
-					 * one's own bookkeeping). Demote to
-					 * an ordinary graduate copy; the
-					 * promotion count is carried over
-					 * unchanged, so the next collection
-					 * simply tries again.
+					 * The tenure region is full, and collecting it from in
+					 * here is what the allocator now refuses to do (a nested
+					 * collection wrecks this one's own bookkeeping). Demote to an
+					 * ordinary graduate copy, the promotion count is carried
+					 * over unchanged, so the next collection simply tries
+					 * again.
 					 */
 					switch ((*obj)->type) {
 					case RT_GC_TYPE_STRING:
@@ -2133,15 +1943,16 @@ rt_gc_copy_young_object(
 		}
 
 		/*
-		 * Mark the object the walk descends into: the graduate
-		 * copy, the promoted copy, or a tenure object reached in
-		 * place. A second visit in this cycle (a remember-set
-		 * scan after the root scan, or another slot pointing
-		 * here) must not evacuate or descend again -- for the
-		 * graduate copy that would fork two diverging live
-		 * copies, and a tenure object left unmarked was
-		 * re-walked on every visit, which never terminated when
-		 * tenure objects formed a cycle.
+		 * Mark the object the walk descends into: the
+		 * graduate copy, the promoted copy, or a tenure
+		 * object reached in place. A second visit in this
+		 * cycle (a remember-set scan after the root scan, or
+		 * another slot pointing here) must not evacuate or
+		 * descend again. For the graduate copy that would
+		 * fork two diverging live copies, and a tenure object
+		 * left unmarked was re-walked on every visit, which
+		 * never terminated when tenure objects formed a
+		 * cycle.
 		 */
 		(*obj)->is_marked = true;
 
@@ -2307,10 +2118,10 @@ rt_gc_promote_array(
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/*
-	 * Keep the ownership and synchronization state across the move.
-	 * A mutator parked at this GC safepoint inside expand_array()/
-	 * expand_dict() still holds the write lock; the moved storage
-	 * must stay locked for it.
+	 * Keep the ownership and synchronization state across the
+	 * move. A mutator parked at this GC safepoint inside
+	 * expand_array()/ expand_dict() still holds the write lock,
+	 * the moved storage must stay locked for it.
 	 */
 	new_arr->shared = old_arr->shared;
 	new_arr->creator = old_arr->creator;
@@ -2374,10 +2185,10 @@ rt_gc_promote_dict(
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/*
-	 * Keep the ownership and synchronization state across the move.
-	 * A mutator parked at this GC safepoint inside expand_array()/
-	 * expand_dict() still holds the write lock; the moved storage
-	 * must stay locked for it.
+	 * Keep the ownership and synchronization state across the
+	 * move. A mutator parked at this GC safepoint inside
+	 * expand_array()/ expand_dict() still holds the write lock,
+	 * the moved storage must stay locked for it.
 	 */
 	new_dict->shared = old_dict->shared;
 	new_dict->creator = old_dict->creator;
@@ -2411,8 +2222,6 @@ rt_gc_promote_packed(
 	if (old_packed->size != 0)
 		memcpy(new_packed->packed_buffer, old_packed->packed_buffer, old_packed->size);
 	new_packed->packed_typed = old_packed->packed_typed;
-	new_packed->is_accel_resource = old_packed->is_accel_resource;
-	new_packed->accel_backend_data = old_packed->accel_backend_data;
 	old_packed->native_pointer = NULL;
 	old_packed->native_finalizer = NULL;
 
@@ -2431,8 +2240,8 @@ rt_gc_copy_string_to_graduate(
 	struct rt_string *new_obj;
 
 	/*
-	 * Strings larger than noct_conf_gc_lop_threshold must not be in the
-	 * nursery or graduate regions.
+	 * Strings larger than noct_conf_gc_lop_threshold must not be
+	 * in the nursery or graduate regions.
 	 */
 	assert(old_obj->len < env->vm->config.gc_lop_threshold);
 
@@ -2492,10 +2301,10 @@ rt_gc_copy_array_to_graduate(
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/*
-	 * Keep the ownership and synchronization state across the move.
-	 * A mutator parked at this GC safepoint inside expand_array()/
-	 * expand_dict() still holds the write lock; the moved storage
-	 * must stay locked for it.
+	 * Keep the ownership and synchronization state across the
+	 * move. A mutator parked at this GC safepoint inside
+	 * expand_array()/ expand_dict() still holds the write lock,
+	 * the moved storage must stay locked for it.
 	 */
 	new_obj->shared = old_obj->shared;
 	new_obj->creator = old_obj->creator;
@@ -2540,8 +2349,8 @@ rt_gc_copy_dict_to_graduate(
 
 	/*
 	 * Check for cross-generation references. The key table is an
-	 * open-addressing hash table: iterate the slots, not the entry
-	 * count, and skip the empty ones.
+	 * open-addressing hash table: iterate the slots, not the
+	 * entry count, and skip the empty ones.
 	 */
 	if (new_obj->head.region == RT_GC_REGION_TENURE) {
 		for (i = 0; i < (uint32_t)new_obj->alloc_size; i++) {
@@ -2569,10 +2378,10 @@ rt_gc_copy_dict_to_graduate(
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/*
-	 * Keep the ownership and synchronization state across the move.
-	 * A mutator parked at this GC safepoint inside expand_array()/
-	 * expand_dict() still holds the write lock; the moved storage
-	 * must stay locked for it.
+	 * Keep the ownership and synchronization state across the
+	 * move. A mutator parked at this GC safepoint inside
+	 * expand_array()/ expand_dict() still holds the write lock,
+	 * the moved storage must stay locked for it.
 	 */
 	new_obj->shared = old_obj->shared;
 	new_obj->creator = old_obj->creator;
@@ -2593,8 +2402,8 @@ rt_gc_copy_packed_to_graduate(
 	struct rt_packed *new_obj;
 
 	/*
-	 * Packed larger than noct_conf_gc_lop_threshold must not be in the
-	 * nursery or graduate regions.
+	 * Packed larger than noct_conf_gc_lop_threshold must not be
+	 * in the nursery or graduate regions.
 	 */
 	assert(old_obj->size < env->vm->config.gc_lop_threshold);
 
@@ -2613,8 +2422,6 @@ rt_gc_copy_packed_to_graduate(
 	if (old_obj->size != 0)
 		memcpy(new_obj->packed_buffer, old_obj->packed_buffer, old_obj->size);
 	new_obj->packed_typed = old_obj->packed_typed;
-	new_obj->is_accel_resource = old_obj->is_accel_resource;
-	new_obj->accel_backend_data = old_obj->accel_backend_data;
 	old_obj->native_pointer = NULL;
 	old_obj->native_finalizer = NULL;
 
@@ -2715,16 +2522,6 @@ rt_gc_old_gc_body(
 				return;
 		}
 	}
-	{
-		uint32_t ei, vi;
-		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
-			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
-				if (IS_REF_VAL(&env->vm->accel_event[ei].retained[vi]))
-					if (!rt_gc_mark_old_object(env,
-						&env->vm->accel_event[ei].retained[vi].val.obj))
-						return;
-	}
-
 	/*
 	 * Sweep.
 	 *
@@ -3113,14 +2910,6 @@ rt_gc_compact_gc_body(
 	/* For all pinned C global variables. */
 	for (i = 0; i < env->vm->pinned_count; i++)
 		rt_gc_compact_update_value(env, env->vm->pinned[i]);
-	{
-		uint32_t ei, vi;
-		for (ei = 0; ei < ACCEL_EVENT_MAX; ei++)
-			for (vi = 0; vi < env->vm->accel_event[ei].retained_count; vi++)
-				rt_gc_compact_update_value(env,
-					&env->vm->accel_event[ei].retained[vi]);
-	}
-
 	/*
 	 * Phase 2: Slide tenure objects in ascending address order.
 	 * Destinations never overlap a not-yet-moved source ahead of the
@@ -3409,7 +3198,7 @@ rt_gc_tenure_bin(size_t size)
 /*
  * Re-derives the frontier and the free bins from the header chain.
  * Called after compaction, which moves every live block and thereby
- * invalidates both; one walk over the compacted heap restores them
+ * invalidates both. One walk over the compacted heap restores them
  * and, when the heap held only free blocks (nothing to compact), puts
  * those back into circulation too.
  */
@@ -3444,15 +3233,21 @@ rt_gc_tenure_rebuild_bins(
 /*
  * Allocate a tenure block.
  *
- * The allocator for the tenure region.
- * Each block has its size at the block top.
- * The LSB of the block size indicates the block is used (set) or freed (clear).
+ * The allocator for the tenure region. Each block has its size at the
+ * block top. The LSB of the block size indicates the block is used
+ * (set) or freed (clear).
  */
 static void *
 rt_gc_tenure_alloc(
 	struct rt_env *env,
 	size_t size)
 {
+	struct rt_gc_info *gc = &env->vm->gc;
+	int b = rt_gc_tenure_bin(size);
+	int bb;
+	int probe;
+	char *blk;
+	char *prev;
 	char *cur;
 
 	assert(size > 0);
@@ -3462,68 +3257,40 @@ rt_gc_tenure_alloc(
 	/* Align. */
 	size = (size + RT_GC_FREELIST_ALIGN - 1) & ~(RT_GC_FREELIST_ALIGN - 1);
 
-	/*
-	 * No scanning: the free blocks live in size-class bins (see
-	 * gc.h at tenure_frontier for why a scan, even a rolling one,
-	 * was O(n) per allocation on the mixed-size workload every
-	 * program is).
-	 *
-	 * A block in bin b has a size in [2^(b+3), 2^(b+4)), so every
-	 * block in a bin *above* the request's own is guaranteed to
-	 * fit and is taken by popping the head. The request's own bin
-	 * can hold blocks smaller than the request, so it is probed
-	 * first fit -- but only a few entries deep. An unbounded walk
-	 * re-degenerates into the scan this design replaces: a chain
-	 * of thousands of 128-byte holes, probed in full by every
-	 * 136-byte request that none of them can serve, is the same
-	 * O(n) per allocation with extra steps. Whatever the probe
-	 * limit skips stays binned for a smaller request or for the
-	 * next compaction to reclaim.
-	 */
-	{
-		struct rt_gc_info *gc = &env->vm->gc;
-		int b = rt_gc_tenure_bin(size);
-		int bb;
-		int probe;
-		char *blk;
-		char *prev;
+	/* The request's own bin: first fit, a few probes deep. */
+	prev = NULL;
+	blk = gc->tenure_bins[b];
+	for (probe = 0; blk != NULL && probe < 8; probe++) {
+		size_t blk_size = *(size_t *)blk & RT_GC_FREELIST_SIZE_MASK;
+		char *next = *(char **)(blk + sizeof(size_t));
 
-		/* The request's own bin: first fit, a few probes deep. */
-		prev = NULL;
-		blk = gc->tenure_bins[b];
-		for (probe = 0; blk != NULL && probe < 8; probe++) {
-			size_t blk_size = *(size_t *)blk & RT_GC_FREELIST_SIZE_MASK;
-			char *next = *(char **)(blk + sizeof(size_t));
-
-			if (blk_size >= size) {
-				if (prev == NULL)
-					gc->tenure_bins[b] = next;
-				else
-					*(char **)(prev + sizeof(size_t)) = next;
-				*(size_t *)blk = blk_size | RT_GC_FREELIST_USED_BIT;
-				return blk + sizeof(size_t);
-			}
-			prev = blk;
-			blk = next;
-		}
-
-		/* Higher bins: every block fits; pop the head. */
-		for (bb = b + 1; bb < RT_GC_TENURE_BIN_COUNT; bb++) {
-			blk = gc->tenure_bins[bb];
-			if (blk == NULL)
-				continue;
-			gc->tenure_bins[bb] = *(char **)(blk + sizeof(size_t));
-			*(size_t *)blk |= RT_GC_FREELIST_USED_BIT;
+		if (blk_size >= size) {
+			if (prev == NULL)
+				gc->tenure_bins[b] = next;
+			else
+				*(char **)(prev + sizeof(size_t)) = next;
+			*(size_t *)blk = blk_size | RT_GC_FREELIST_USED_BIT;
 			return blk + sizeof(size_t);
 		}
-
-		cur = gc->tenure_frontier;
+		prev = blk;
+		blk = next;
 	}
+
+	/* Higher bins: every block fits, pop the head. */
+	for (bb = b + 1; bb < RT_GC_TENURE_BIN_COUNT; bb++) {
+		blk = gc->tenure_bins[bb];
+		if (blk == NULL)
+			continue;
+		gc->tenure_bins[bb] = *(char **)(blk + sizeof(size_t));
+		*(size_t *)blk |= RT_GC_FREELIST_USED_BIT;
+		return blk + sizeof(size_t);
+	}
+
+	cur = gc->tenure_frontier;
 
 	/* Check if the remaining size fits. */
 	if ((uintptr_t)cur + sizeof(size_t) > (uintptr_t)env->vm->gc.tenure_freelist.end ||
-	    size > (size_t)((uintptr_t)env->vm->gc.tenure_freelist.end -
-			    (uintptr_t)cur - sizeof(size_t)))
+	    size > (size_t)((uintptr_t)env->vm->gc.tenure_freelist.end - (uintptr_t)cur - sizeof(size_t)))
 		return NULL;
 
 	/* Allocate at the frontier. */

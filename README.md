@@ -9,7 +9,6 @@
 Its syntax is lightweight, but its runtime is built for high-end performance.
 
 - Automatic SIMD vectorization
-- Automatic GPU acceleration (OpenGL ES and Vulkan)
 
 **Small enough to learn today, powerful enough to ship tomorrow!**
 
@@ -26,7 +25,6 @@ and a clean C/JS-like syntax featuring a novel Dictionary-based OOP model.
 - 200KB with Interpreter + JIT
 - 400KB with Interpreter + JIT + Optimization
 - 700KB with Interpreter + JIT + Optimization + SIMD
-- 800KB with Interpreter + JIT + Optimization + SIMD + GPU
 
 JIT execution is typically 4-13x faster than interpreter execution.
 
@@ -52,10 +50,10 @@ and
 [Suika3](https://github.com/awemorris/suika3),
 they integrate Noct with game-specific APIs and refer to it as Ray scripting.
 
-### High Performance Acceleration
+### High Performance Optimization
 
-Automatic parallelization and/or vectorization for multicore CPU, SIMD
-instruction, and GPU compute shader.
+Automatic SIMD vectorization backed by target-neutral loop, DOALL, and
+reduction analyses.
 
 ---
 
@@ -95,11 +93,6 @@ Our current roadmap is:
 - PowerPC 32/64
 - MIPS 32/64
 
-### GPU Backends (optional):
-
-- OpenGL ES
-- Vulkan
-
 ### Supported OSes:
 
 - Desktop: Windows, macOS, Linux, FreeBSD
@@ -115,8 +108,8 @@ policies. Noct runs there with interpreter or AOT compilation.
 
 ### Speedup
 
-Our JIT compiler achieves speedups of upto 300 times for SIMD, 525
-times for GPU, and 50 times for scalar CPU.
+Our JIT compiler achieves speedups of upto 300 times for SIMD and 50
+times for scalar CPU.
 
 A synthetic benchmark shows that our JIT compiler
 speeds up execution time by 4.1-13.5 times.
@@ -152,7 +145,7 @@ found together in scripting languages:
 - **Portable ANSI C** — No dependencies; runs everywhere.
 - **Tiny Footprint** — Runtime fits in ~200 KB.
 - **AOT Compilation** — Translate to C for JIT-restricted platforms. (e.g. iOS, Android)
-- **Easy HPC** — Automatic parallelzation and vectorization.
+- **Easy HPC** — Automatic vectorization.
 
 While most languages compromise on at least one of these,  
 Noct delivers all without sacrificing clarity or speed.
@@ -326,25 +319,17 @@ To compile a script into an Emacs Lisp file:
 noct --elisp script.el script.noct
 ```
 
-### Optimization and Parallelization Options
+### Optimization Options
 
 ```
   -O, -O[0-3], -O9     ... optimization preset (`-O` is the default)
   -j, -j0              ... eager JIT (default), or interpreter only
-  --cpu[=N]            ... enable CPU automatic parallelization
-  --cpu-pe=N           ... processing elements (default: logical CPUs)
-  --cpu-affinity=LIST  ... logical CPU IDs, for example 0,2,4,8
-  --cpu-list           ... show NUMA/core/SMT topology and exit
-  --gpu                ... enable GPU automatic parallelization
-  --gpu-name=NAME      ... select one GPU
-  --gpu-list           ... list GPU devices and exit
 ```
 
 `-O` and `-O1` enable weak typing, typed operations and CSE. `-O2`
-adds ABCE/SIMD. `-O3` permits fused FMA semantics. `-O9` also enables
-CPU and GPU automatic parallelization. The CPU/GPU execution backends
-may be absent in a given build. The CLI/configuration surface is
-available for those backends.
+adds ABCE/SIMD. `-O3` permits fused FMA semantics. `-O9` currently
+uses the same compiler optimization set as `-O3`; it does not select a
+parallel execution backend.
 
 ### Garbage Collection Options
 

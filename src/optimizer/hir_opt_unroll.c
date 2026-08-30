@@ -40,6 +40,97 @@ struct unroll_ctx {
 	bool expensive_division;
 };
 
+static bool unroll_is_load(int type);
+static bool unroll_is_store(int type);
+static bool unroll_is_counter_term(const struct hir_expr *e,
+	const char *counter);
+static bool unroll_int_term(const struct hir_expr *e, int *value);
+static bool unroll_parse_index(struct unroll_ctx *ctx,
+	const struct hir_expr *e, int *offset);
+static bool unroll_check_expr(struct unroll_ctx *ctx,
+	const struct hir_expr *e);
+static bool unroll_check_term(struct unroll_ctx *ctx,
+	const struct hir_expr *e);
+static bool unroll_check_body(struct unroll_ctx *ctx);
+static struct hir_term *unroll_clone_term(const struct hir_term *term);
+static struct hir_expr *unroll_mk_term_int(int value);
+static struct hir_expr *unroll_mk_term_symbol(const char *symbol);
+static struct hir_expr *unroll_mk_binary(int type,
+	struct hir_expr *left, struct hir_expr *right);
+static struct hir_expr *unroll_mk_index(struct unroll_ctx *ctx, int offset);
+static struct hir_expr *unroll_clone_expr(struct unroll_ctx *ctx,
+	const struct hir_expr *expr, int lane);
+static struct hir_stmt *unroll_clone_stmts(struct unroll_ctx *ctx,
+	const struct hir_stmt *source, int lane);
+static bool unroll_append_stmts(struct hir_stmt **head,
+	struct hir_stmt **tail, struct hir_stmt *list);
+static struct hir_block *unroll_mk_basic(struct hir_block *parent,
+	int line, struct hir_stmt *stmts);
+static struct hir_block *unroll_mk_for(struct hir_block *parent, int line);
+static struct hir_expr *unroll_clone_bound(const struct hir_expr *expr);
+static struct hir_expr *unroll_mk_mid(const struct hir_expr *lo,
+	const struct hir_expr *hi);
+static bool unroll_transform(struct unroll_ctx *ctx);
+static void unroll_collect(struct hir_block *head,
+	struct hir_block **loops, int *count);
+
+bool
+hir_opt_unroll_func(struct hir_block *func_block)
+{
+	struct hir_block *loops[UNROLL_MAX_LOOPS];
+	int count;
+	int i;
+
+	assert(func_block != NULL);
+	assert(func_block->type == HIR_BLOCK_FUNC);
+
+	count = 0;
+	if (getenv("NOCT_UNROLL_DISABLE") != NULL ||
+	    func_block->val.func.inner == NULL)
+		return true;
+#if !defined(NOCT_ARCH_ARM64) && !defined(NOCT_ARCH_X86_64)
+	/* Other architectures execute the portable expanded bytecode correctly,
+	 * but have no offset-aware native lowering yet. */
+	if (getenv("NOCT_UNROLL_ENABLE") == NULL)
+		return true;
+#endif
+	unroll_collect(func_block->val.func.inner, loops, &count);
+	for (i = 0; i < count; i++) {
+		struct unroll_ctx ctx;
+
+		memset(&ctx, 0, sizeof(ctx));
+		ctx.func = func_block;
+		ctx.loop = loops[i];
+		ctx.counter = loops[i]->val.for_.counter_symbol;
+		ctx.reason = "none";
+		if (ctx.counter == NULL || !unroll_check_body(&ctx)) {
+			loops[i]->val.for_.abce_fast = false;
+			if (getenv("NOCT_UNROLL_DEBUG") != NULL)
+				fprintf(stderr,
+					"UNROLL: %s:%d: rejected (%s)\n",
+					hir_file_name, loops[i]->line, ctx.reason);
+			continue;
+		}
+		if (!unroll_transform(&ctx))
+			return false;
+		if (ctx.loop->val.for_.scalar_unroll != UNROLL_FACTOR) {
+			/* A non-allocation range-shape rejection leaves the loop intact. */
+			ctx.loop->val.for_.abce_fast = false;
+			if (getenv("NOCT_UNROLL_DEBUG") != NULL)
+				fprintf(stderr,
+					"UNROLL: %s:%d: rejected (%s)\n",
+					hir_file_name, loops[i]->line, ctx.reason);
+			continue;
+		}
+		if (getenv("NOCT_UNROLL_DEBUG") != NULL)
+			fprintf(stderr,
+				"UNROLL: %s:%d: unrolled (factor=4 nodes=%d accesses=%d)\n",
+				hir_file_name, loops[i]->line,
+				ctx.nodes, ctx.accesses);
+	}
+	return true;
+}
+
 static bool
 unroll_is_load(int type)
 {
@@ -114,13 +205,12 @@ unroll_parse_index(struct unroll_ctx *ctx, const struct hir_expr *e,
 	return false;
 }
 
-static bool unroll_check_expr(struct unroll_ctx *ctx,
-			      const struct hir_expr *e);
-
 static bool
 unroll_check_term(struct unroll_ctx *ctx, const struct hir_expr *e)
 {
-	const struct hir_term *term = e->val.term.term;
+	const struct hir_term *term;
+
+	term = e->val.term.term;
 
 	if (term == NULL)
 		return false;
@@ -150,6 +240,7 @@ unroll_check_expr(struct unroll_ctx *ctx, const struct hir_expr *e)
 	}
 	if (unroll_is_load(e->type) || unroll_is_store(e->type)) {
 		const struct hir_expr *base = e->val.binary.expr[0];
+
 		if (base == NULL || base->type != HIR_EXPR_TERM ||
 		    base->val.term.term == NULL ||
 		    base->val.term.term->type != HIR_TERM_SYMBOL ||
@@ -202,8 +293,10 @@ unroll_check_expr(struct unroll_ctx *ctx, const struct hir_expr *e)
 static bool
 unroll_check_body(struct unroll_ctx *ctx)
 {
-	struct hir_block *body = ctx->loop->val.for_.inner;
+	struct hir_block *body;
 	struct hir_stmt *stmt;
+
+	body = ctx->loop->val.for_.inner;
 
 	if (!ctx->loop->val.for_.is_ranged ||
 	    !ctx->loop->val.for_.typed_int_region ||
@@ -344,7 +437,9 @@ unroll_mk_binary(int type, struct hir_expr *left, struct hir_expr *right)
 static struct hir_expr *
 unroll_mk_index(struct unroll_ctx *ctx, int offset)
 {
-	struct hir_expr *counter = unroll_mk_term_symbol(ctx->counter);
+	struct hir_expr *counter;
+
+	counter = unroll_mk_term_symbol(ctx->counter);
 
 	if (counter == NULL || offset == 0)
 		return counter;
@@ -409,11 +504,16 @@ static struct hir_stmt *
 unroll_clone_stmts(struct unroll_ctx *ctx, const struct hir_stmt *source,
 		   int lane)
 {
-	struct hir_stmt *head = NULL;
-	struct hir_stmt *tail = NULL;
+	struct hir_stmt *head;
+	struct hir_stmt *tail;
+
+	head = NULL;
+	tail = NULL;
 
 	for (; source != NULL; source = source->next) {
-		struct hir_stmt *copy = hir_malloc(sizeof(*copy));
+		struct hir_stmt *copy;
+
+		copy = hir_malloc(sizeof(*copy));
 		if (copy == NULL) {
 			hir_out_of_memory();
 			return NULL;
@@ -453,7 +553,9 @@ unroll_append_stmts(struct hir_stmt **head, struct hir_stmt **tail,
 static struct hir_block *
 unroll_mk_basic(struct hir_block *parent, int line, struct hir_stmt *stmts)
 {
-	struct hir_block *block = hir_malloc(sizeof(*block));
+	struct hir_block *block;
+
+	block = hir_malloc(sizeof(*block));
 	if (block == NULL) {
 		hir_out_of_memory();
 		return NULL;
@@ -472,7 +574,9 @@ unroll_mk_basic(struct hir_block *parent, int line, struct hir_stmt *stmts)
 static struct hir_block *
 unroll_mk_for(struct hir_block *parent, int line)
 {
-	struct hir_block *block = hir_malloc(sizeof(*block));
+	struct hir_block *block;
+
+	block = hir_malloc(sizeof(*block));
 	if (block == NULL) {
 		hir_out_of_memory();
 		return NULL;
@@ -520,20 +624,27 @@ unroll_mk_mid(const struct hir_expr *lo, const struct hir_expr *hi)
 static bool
 unroll_transform(struct unroll_ctx *ctx)
 {
-	struct hir_block *loop = ctx->loop;
-	struct hir_block *source_body = loop->val.for_.inner;
+	struct hir_block *loop;
+	struct hir_block *source_body;
 	struct hir_block *bulk_body;
 	struct hir_block *tail_loop;
 	struct hir_block *tail_body;
-	struct hir_block *old_succ = loop->succ;
-	struct hir_expr *old_stop = loop->val.for_.stop;
+	struct hir_block *old_succ;
+	struct hir_expr *old_stop;
 	struct hir_expr *bulk_mid;
 	struct hir_expr *tail_mid;
 	struct hir_expr *tail_stop;
-	struct hir_stmt *bulk_head = NULL;
-	struct hir_stmt *bulk_tail = NULL;
+	struct hir_stmt *bulk_head;
+	struct hir_stmt *bulk_tail;
 	struct hir_stmt *tail_stmts;
 	int lane;
+
+	loop = ctx->loop;
+	source_body = loop->val.for_.inner;
+	old_succ = loop->succ;
+	old_stop = loop->val.for_.stop;
+	bulk_head = NULL;
+	bulk_tail = NULL;
 
 	if (loop->val.for_.start == NULL || old_stop == NULL ||
 	    loop->val.for_.start->type != HIR_EXPR_TERM ||
@@ -547,7 +658,9 @@ unroll_transform(struct unroll_ctx *ctx)
 	if (bulk_mid == NULL || tail_mid == NULL || tail_stop == NULL)
 		return false;
 	for (lane = 0; lane < UNROLL_FACTOR; lane++) {
-		struct hir_stmt *copy = unroll_clone_stmts(ctx,
+		struct hir_stmt *copy;
+
+		copy = unroll_clone_stmts(ctx,
 			source_body->val.basic.stmt_list, lane);
 		if (!unroll_append_stmts(&bulk_head, &bulk_tail, copy))
 			return false;
@@ -623,58 +736,4 @@ unroll_collect(struct hir_block *head, struct hir_block **loops, int *count)
 			break;
 		block = block->succ;
 	}
-}
-
-bool
-hir_opt_unroll_func(struct hir_block *func_block)
-{
-	struct hir_block *loops[UNROLL_MAX_LOOPS];
-	int count = 0;
-	int i;
-
-	assert(func_block != NULL);
-	assert(func_block->type == HIR_BLOCK_FUNC);
-	if (getenv("NOCT_UNROLL_DISABLE") != NULL ||
-	    func_block->val.func.inner == NULL)
-		return true;
-#if !defined(NOCT_ARCH_ARM64) && !defined(NOCT_ARCH_X86_64)
-	/* Other architectures execute the portable expanded bytecode correctly,
-	 * but have no offset-aware native lowering yet. */
-	if (getenv("NOCT_UNROLL_ENABLE") == NULL)
-		return true;
-#endif
-	unroll_collect(func_block->val.func.inner, loops, &count);
-	for (i = 0; i < count; i++) {
-		struct unroll_ctx ctx;
-		memset(&ctx, 0, sizeof(ctx));
-		ctx.func = func_block;
-		ctx.loop = loops[i];
-		ctx.counter = loops[i]->val.for_.counter_symbol;
-		ctx.reason = "none";
-		if (ctx.counter == NULL || !unroll_check_body(&ctx)) {
-			loops[i]->val.for_.abce_fast = false;
-			if (getenv("NOCT_UNROLL_DEBUG") != NULL)
-				fprintf(stderr,
-					"UNROLL: %s:%d: rejected (%s)\n",
-					hir_file_name, loops[i]->line, ctx.reason);
-			continue;
-		}
-		if (!unroll_transform(&ctx))
-			return false;
-		if (ctx.loop->val.for_.scalar_unroll != UNROLL_FACTOR) {
-			/* A non-allocation range-shape rejection leaves the loop intact. */
-			ctx.loop->val.for_.abce_fast = false;
-			if (getenv("NOCT_UNROLL_DEBUG") != NULL)
-				fprintf(stderr,
-					"UNROLL: %s:%d: rejected (%s)\n",
-					hir_file_name, loops[i]->line, ctx.reason);
-			continue;
-		}
-		if (getenv("NOCT_UNROLL_DEBUG") != NULL)
-			fprintf(stderr,
-				"UNROLL: %s:%d: unrolled (factor=4 nodes=%d accesses=%d)\n",
-				hir_file_name, loops[i]->line,
-				ctx.nodes, ctx.accesses);
-	}
-	return true;
 }

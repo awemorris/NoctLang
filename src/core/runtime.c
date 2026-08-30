@@ -33,30 +33,69 @@
 #define NEVER_COME_HERE		0
 #define PINNED_VAR_NOT_FOUND	0
 
-/* Multithread macros. */
-#if defined(NOCT_USE_MULTITHREAD)
-#define IS_MT(env)			(env->vm->config.object_model == NOCT_OBJECT_MODEL_MULTI)
-#define OM_DISPATCH(env, name, ...) 	(IS_MT(env) ?				\
-					 om_mt_##name(env, __VA_ARGS__) :	\
-					 om_st_##name(env, __VA_ARGS__))
-#else
-#define IS_MT(env)			false
-#define OM_DISPATCH(env, name, ...)	om_st_##name(env, __VA_ARGS__)
-#endif
+/* Finalizer. */
+struct rt_vm_finalizer {
+	void (*finalizer)(void *userdata);
+	void *userdata;
+	struct rt_vm_finalizer *next;
+};
 
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
-static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir, struct rt_module *owner_module);
-static bool rt_register_bytecode_function(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
+static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
+static bool rt_register_bytecode_func(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
-static bool rt_check_fast_call(struct rt_env *env, struct rt_func *func, uint32_t arg_count, struct rt_value *arg);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
 static void rt_report_jit_result(struct rt_func *func, bool success, const char *reason);
+static void rt_report_jit_lifecycle(const char *operation, bool success);
+static void rt_invalidate_jit_entries(struct rt_vm *vm);
 static bool rt_commit_jit(struct rt_env *env);
 static void rt_leave_frame(struct rt_env *env);
 static bool rt_init_global(struct rt_env *env);
 static void rt_cleanup_global(struct rt_env *env);
 static bool rt_expand_global(struct rt_env *env);
+
+static void
+rt_report_jit_result(
+	struct rt_func *func,
+	bool success,
+	const char *reason)
+{
+	if (getenv("NOCT_JIT_DEBUG") != NULL) {
+		fprintf(stderr,
+			"noct-jit: %s: %s",
+			func->name,
+			success ? "compiled" : "fallback");
+		if (!success && reason != NULL && reason[0] != '\0')
+			fprintf(stderr, " reason=%s", reason);
+		fputc('\n', stderr);
+	}
+}
+
+static void
+rt_report_jit_lifecycle(
+	const char *operation,
+	bool success)
+{
+	if (getenv("NOCT_JIT_DEBUG") != NULL) {
+		fprintf(stderr,
+			"noct-jit-lifecycle: %s status=%s\n",
+			operation,
+			success ? "ok" : "failed");
+	}
+}
+
+static void
+rt_invalidate_jit_entries(
+	struct rt_vm *vm)
+{
+	struct rt_func *func;
+
+	for (func = vm->func_list; func != NULL; func = func->next) {
+		func->jit_code = NULL;
+		func->call_count = -1;
+	}
+}
 
 /*
  * Initialization
@@ -88,21 +127,6 @@ rt_create_vm(
 	else
 		noct_set_default_config(&(*vm)->config);
 
-	if ((*vm)->config.object_model != NOCT_OBJECT_MODEL_SINGLE &&
-	    (*vm)->config.object_model != NOCT_OBJECT_MODEL_MULTI) {
-		noct_free(*vm);
-		*vm = NULL;
-		return false;
-	}
-
-#if !defined(NOCT_USE_MULTITHREAD)
-	if ((*vm)->config.object_model == NOCT_OBJECT_MODEL_MULTI) {
-		noct_free(*vm);
-		*vm = NULL;
-		return false;
-	}
-#endif
-
 	/* Allocate a struct rt_env. */
 	*default_env = noct_malloc(sizeof(struct rt_env));
 	if (*default_env == NULL) {
@@ -113,14 +137,6 @@ rt_create_vm(
 	memset(*default_env, 0, sizeof(struct rt_env));
 	(*default_env)->vm = *vm;
 	(*vm)->env_list = *default_env;
-	if (!module_paths_init(&(*vm)->require_path)) {
-		noct_free(*default_env);
-		noct_free(*vm);
-		*default_env = NULL;
-		*vm = NULL;
-		return false;
-	}
-
 	/* Enter the initial stack frame. */
 	(*default_env)->cur_frame_index = 0;
 	(*default_env)->frame = &(*default_env)->frame_alloc[0];
@@ -133,7 +149,6 @@ rt_create_vm(
 
 	/* Initialize the global variables. */
 	if (!rt_init_global(*default_env)) {
-		module_paths_cleanup(&(*vm)->require_path);
 		noct_free(*default_env);
 		noct_free(*vm);
 		return false;
@@ -142,7 +157,6 @@ rt_create_vm(
 	/* Initialize the garbage collector. */
 	if (!rt_gc_init(*vm)) {
 		rt_cleanup_global(*default_env);
-		module_paths_cleanup(&(*vm)->require_path);
 		noct_free(*default_env);
 		noct_free(*vm);
 		return false;
@@ -152,7 +166,6 @@ rt_create_vm(
 	if (!rt_register_intrinsics(*default_env)) {
 		rt_cleanup_global(*default_env);
 		rt_gc_cleanup(*vm);
-		module_paths_cleanup(&(*vm)->require_path);
 		noct_free(*default_env);
 		noct_free(*vm);
 		return false;
@@ -169,32 +182,26 @@ rt_destroy_vm(
 {
 	struct rt_env *env, *next_env;
 	struct rt_func *func, *next_func;
+	struct rt_vm_finalizer *finalizer;
+	struct rt_vm_finalizer *next_finalizer;
 	bool jit_cleanup_succeeded = true;
-
-	/*
-	 * The fast-prototype cache owns process-global copies
-	 * allocated through this VM's active allocator.  Release them
-	 * before that allocator's arena can be reset or replaced by
-	 * another VM.
-	 *
-	 * XXX: Is this really needed?
-	 */
-	hir_fast_prototypes_reset();
 
 	/* Free the JIT region. */
 	if (vm->config.jit_enable && !jit_free(vm->env_list))
 		jit_cleanup_succeeded = false;
 
+	/* Run VM-owned native finalizers while the VM is still usable. */
+	finalizer = vm->vm_finalizer_list;
+	while (finalizer != NULL) {
+		next_finalizer = finalizer->next;
+		finalizer->finalizer(finalizer->userdata);
+		noct_free(finalizer);
+		finalizer = next_finalizer;
+	}
+	vm->vm_finalizer_list = NULL;
+
 	/* Free global variables. */
 	rt_cleanup_global(vm->env_list);
-
-	/* Free thread environments. */
-	env = vm->env_list;
-	while (env != NULL) {
-		next_env = env->next;
-		noct_free(env);
-		env = next_env;
-	}
 
 	/* Cleanup the garbage collector. */
 	rt_gc_cleanup(vm);
@@ -206,6 +213,17 @@ rt_destroy_vm(
 		rt_free_func(vm->env_list, func);
 		func = next_func;
 	}
+
+	/* Free thread environments. */
+	env = vm->env_list;
+	while (env != NULL) {
+		next_env = env->next;
+		noct_free(env);
+		env = next_env;
+	}
+
+	if (vm->config.jit_enable)
+		rt_report_jit_lifecycle("destroy", jit_cleanup_succeeded);
 
 	noct_free(vm);
 
@@ -254,35 +272,49 @@ rt_create_thread_env(
 
 	vm = prev_env->vm;
 
-	/* Allocate a struct rt_env. */
-	env = noct_malloc(sizeof(struct rt_env));
+	/* Reuse a parked environment when possible. */
+	atomic_spin_lock(&vm->env_free_lock);
+	env = vm->env_free_list;
+	if (env != NULL)
+		vm->env_free_list = env->free_next;
+	atomic_spin_unlock(&vm->env_free_lock);
+
 	if (env == NULL) {
-		rt_out_of_memory(prev_env);
-		return false;
-	}
-	memset(env, 0, sizeof(struct rt_env));
-	env->vm = vm;
+		env = noct_calloc(1, sizeof(struct rt_env));
+		if (env == NULL) {
+			rt_out_of_memory(prev_env);
+			return false;
+		}
+		env->vm = vm;
+		env->cur_frame_index = 0;
+		env->frame = &env->frame_alloc[0];
+		env->frame->tmpvar = &env->frame->tmpvar_alloc[0];
+		env->frame->tmpvar_size = RT_TMPVAR_MAX;
 
-	/* Enter the initial stack frame. */
-	env->cur_frame_index = 0;
-	env->frame = &env->frame_alloc[0];
-	env->frame->tmpvar = &env->frame->tmpvar_alloc[0];
-	env->frame->tmpvar_size = RT_TMPVAR_MAX;
-
-	/*
-	 * Link. (The caller is in-flight or not executing a VM.)
-	 */
-	atomic_spin_lock(&vm->vm_lock);
-	{
+		atomic_spin_lock(&vm->env_free_lock);
 		env->next = vm->env_list;
 		vm->env_list = env;
+		atomic_spin_unlock(&vm->env_free_lock);
+	} else {
+		env->file_name[0] = '\0';
+		env->error_message[0] = '\0';
+		env->free_next = NULL;
 	}
-	atomic_spin_unlock(&vm->vm_lock);
 
 	/* Succeeded. The env is parked until rt_attach_thread_env(). */
 	*new_env = env;
 
 	return true;
+}
+#endif
+
+/* Adopt an environment in the current thread. */
+#if defined(NOCT_USE_MULTITHREAD)
+void
+rt_attach_thread_env(
+	struct rt_env *env)
+{
+	om_init_env(env);
 }
 #endif
 
@@ -295,25 +327,41 @@ rt_release_thread_env(
 	struct rt_env *env)
 {
 	struct rt_vm *vm;
-	struct rt_env *prev;
 
 	assert(env != NULL);
 
 	vm = env->vm;
+	atomic_spin_lock(&vm->env_free_lock);
+	env->free_next = vm->env_free_list;
+	vm->env_free_list = env;
+	atomic_spin_unlock(&vm->env_free_lock);
+}
+#endif
 
-	/* Unlink. */
-	atomic_spin_lock(&vm->vm_lock);
-	{
-		if (vm->env == env) {
-			vm->env = env->next;
-		} else {
-			prev = vm->env;
-			while (prev->next != env)
-				prev = prev->next;
-			prev->next = env->next;
-		}
-	}
-	atomic_spin_unlock(&vm->vm_lock);
+/* Detach the current thread's environment for later reuse. */
+#if defined(NOCT_USE_MULTITHREAD)
+void
+rt_detach_thread_env(
+	struct rt_env *env)
+{
+	struct rt_vm *vm;
+
+	assert(env != NULL);
+
+	vm = env->vm;
+	env->cur_frame_index = 0;
+	env->frame = &env->frame_alloc[0];
+	env->frame->tmpvar = &env->frame->tmpvar_alloc[0];
+	env->frame->tmpvar_size = RT_TMPVAR_MAX;
+	env->frame->pinned_count = 0;
+	memset(env->frame->tmpvar_alloc, 0, sizeof(env->frame->tmpvar_alloc));
+
+	om_enter_blocking(env);
+
+	atomic_spin_lock(&vm->env_free_lock);
+	env->free_next = vm->env_free_list;
+	vm->env_free_list = env;
+	atomic_spin_unlock(&vm->env_free_lock);
 }
 #endif
 
@@ -333,13 +381,10 @@ rt_register_source(
 	char init_func_name[256];
 	struct hir_block *hfunc;
 	struct lir_func *lfunc;
-	char **require_name;
-	uint32_t i, func_count, require_count;
+	uint32_t i, func_count;
 	bool is_succeeded;
 
 	is_succeeded = false;
-	require_count = 0;
-	require_name = NULL;
 	init_func_name[0] = '\0';
 
 	do {
@@ -349,27 +394,6 @@ rt_register_source(
 			env->line = ast_get_error_line();
 			rt_error(env, "%s", ast_get_error_message());
 			break;
-		}
-
-		/* Preserve require names. */
-		require_count = ast_get_require_count();
-		if (require_count != 0) {
-			require_name = noct_malloc(sizeof(*require_name) * require_count);
-			if (require_name == NULL) {
-				rt_out_of_memory(env);
-				break;
-			}
-			memset(require_name, 0, sizeof(*require_name) * require_count);
-
-			for (i = 0; i < require_count; i++) {
-				require_name[i] = noct_strdup(ast_get_require_name(i));
-				if (require_name[i] == NULL) {
-					rt_out_of_memory(env);
-					break;
-				}
-			}
-			if (i != require_count)
-				break;
 		}
 
 		/* Transform AST to HIR. */
@@ -382,6 +406,10 @@ rt_register_source(
 
 		/* Free intermediates. */
 		ast_cleanup();
+
+		/* Configure LIR construction for this VM. */
+		lir_set_optimize_level(env->vm->config.optimize_level);
+		lir_set_lineinfo(env->vm->config.line_info);
 
 		/* For each function. */
 		func_count = hir_get_function_count();
@@ -404,9 +432,7 @@ rt_register_source(
 			}
 
 			/* Make a function object. */
-			lir_set_optimize_level(env->vm->config.optimize_level);
-			lir_set_lineinfo(env->vm->config.lineinfo);
-			if (!rt_register_lir(env, lfunc, module->is_package ? module : NULL))
+			if (!rt_register_lir(env, lfunc))
 				break;
 
 			/* Remember a load-time init function. */
@@ -425,10 +451,8 @@ rt_register_source(
 		hir_cleanup();
 
 		/* JIT-commit. */
-		if (env->vm->config.jit_enable) {
-			if (rt_commit_jit(env))
-				break;
-		}
+		if (!rt_commit_jit(env))
+			break;
 
 		/* Auto-execute the load-time init function ($init section). */
 		if (init_func_name[0] != '\0') {
@@ -440,15 +464,14 @@ rt_register_source(
 		is_succeeded = true;
 	} while (0);
 
-	return result;
+	return is_succeeded;
 }
 
 /* Register a function from LIR. */
 static bool
 rt_register_lir(
 	struct rt_env *env,
-	struct lir_func *lir,
-	struct rt_module *owner_module)
+	struct lir_func *lir)
 {
 	struct rt_func *func;
 	struct rt_value global;
@@ -503,6 +526,7 @@ rt_register_lir(
 
 	func->tmpvar_size = lir->tmpvar_size;
 	func->has_vector_ops = lir->has_vector_ops;
+	func->has_fma_ops = lir->has_fma_ops;
 
 	func->file_name = noct_strdup(lir->file_name);
 	if (func->file_name == NULL) {
@@ -518,11 +542,13 @@ rt_register_lir(
 
 	if (env->vm->config.jit_enable) {
 		if (!jit_build(env, func)) {
+			rt_report_jit_result(func, false, env->error_message);
 			func->jit_code = NULL;
 			func->call_count = -1;
 			env->error_message[0] = '\0';
 			env->line = 0;
 		} else {
+			rt_report_jit_result(func, true, NULL);
 			env->vm->is_jit_dirty = true;
 		}
 	}
@@ -530,6 +556,32 @@ rt_register_lir(
 	/* Link. */
 	func->next = env->vm->func_list;
 	env->vm->func_list = func;
+
+	return true;
+}
+
+static bool
+rt_parse_bytecode_u32(
+	const char *text,
+	uint32_t *value)
+{
+	uint32_t result;
+	uint32_t digit;
+
+	if (text == NULL || text[0] == '\0')
+		return false;
+
+	result = 0;
+	while (*text != '\0') {
+		if (*text < '0' || *text > '9')
+			return false;
+		digit = (uint32_t)(*text - '0');
+		if (result > (UINT32_MAX - digit) / 10)
+			return false;
+		result = result * 10 + digit;
+		text++;
+	}
+	*value = result;
 
 	return true;
 }
@@ -553,12 +605,13 @@ rt_register_bytecode(
 	char init_func_name[256];
 
 	file_name = NULL;
+	pos = 0;
 	succeeded = false;
 	init_func_name[0] = '\0';
 	do {
 		/* Check the magic. */
 		line = rt_read_bytecode_line(data, size, &pos);
-		if (line == NULL || strcmp(line, NOCT_BYTECODE_HEADER) != 0)
+		if (line == NULL || strcmp(line, "Noct Bytecode 1.0") != 0)
 			break;
 
 		/* Check "Source". */
@@ -581,28 +634,25 @@ rt_register_bytecode(
 
 		/* Get a number of functions. */
 		line = rt_read_bytecode_line(data, size, &pos);
-		if (line == NULL)
+		if (!rt_parse_bytecode_u32(line, &func_count))
 			break;
-		func_count = (uint32_t)atoi(line);
 
 		/* Read functions. */
 		for (i = 0; i < func_count; i++) {
-			if (!rt_add_bytecode_func(env,
-						  data,
-						  size,
-						  &pos,
-						  file_name,
-						  init_func_name,
-						  sizeof(init_func_name)))
+			if (!rt_register_bytecode_func(env,
+						       data,
+						       size,
+						       &pos,
+						       file_name,
+						       init_func_name,
+						       sizeof(init_func_name)))
 				break;
 		}
 		if (i != func_count)
 			break;
 
-		if (env->vm->config.jit_enable) {
-			if (rt_commit_jit(env))
-				break;
-		}
+		if (!rt_commit_jit(env))
+			break;
 
 		succeeded = true;
 	} while (0);
@@ -610,15 +660,11 @@ rt_register_bytecode(
 	if (file_name != NULL)
 		noct_free(file_name);
 
+	if (!succeeded) {
+		if (env->error_message[0] == '\0')
+			noct_error(env, N_TR("Failed to load bytecode data."));
 		return false;
 	}
-
-	/*
-	 * Publish every eagerly generated function before returning
-	 * or running the app/module initializer.
-	 */
-	if (!rt_commit_jit(env))
-		return false;
 
 	/* Auto-execute the load-time init function ($init section). */
 	if (init_func_name[0] != '\0') {
@@ -631,7 +677,7 @@ rt_register_bytecode(
 }
 
 static bool
-rt_register_bytecode_func_helper(
+rt_register_bytecode_func(
 	struct rt_env *env,
 	uint8_t *data,
 	size_t size,
@@ -644,17 +690,20 @@ rt_register_bytecode_func_helper(
 	const char *line;
 	uint32_t i;
 	bool succeeded;
-	struct accel_param_range loaded_range[LIR_PARAM_SIZE];
-	int loaded_parallel_mode;
 	char *function_file_name;
-	struct rt_module *owner_module;
+	unsigned int optional_sections;
+	bool optional_succeeded;
+	enum {
+		BYTECODE_PARAM_TYPES = 1U << 0,
+		BYTECODE_PARAM_PACKED_TYPES = 1U << 1,
+		BYTECODE_PARAM_RESTRICTED = 1U << 2,
+		BYTECODE_RETURN_TYPE = 1U << 3,
+		BYTECODE_VECTOR_OPS = 1U << 4,
+		BYTECODE_FMA_OPS = 1U << 5
+	};
 
 	memset(&lfunc, 0, sizeof(lfunc));
-	fast_signature_init(&lfunc.fast_signature);
-	memset(loaded_range, 0, sizeof(loaded_range));
-	loaded_parallel_mode = ACCEL_PARALLEL_NOT_APPLICABLE;
 	function_file_name = NULL;
-	owner_module = NULL;
 	lfunc.file_name = file_name;
 	lfunc.return_type = -1;
 	lfunc.return_packed_type = -1;
@@ -662,9 +711,6 @@ rt_register_bytecode_func_helper(
 		lfunc.param_type[i] = -1;
 		lfunc.param_packed_type[i] = -1;
 		lfunc.param_restricted[i] = false;
-		lfunc.param_accel_access[i] = ACCEL_ACCESS_NONE;
-		lfunc.param_accel_transport[i] = ACCEL_TRANSPORT_SCALAR;
-		lfunc.param_accel_effect[i] = ACCEL_EFFECT_NONE;
 	}
 
 	succeeded = false;
@@ -693,7 +739,8 @@ rt_register_bytecode_func_helper(
 			init_name_out[init_name_size - 1] = '\0';
 		}
 
-		/* New containers retain a logical source for every function. */
+		/* Get the function's source name.  Old bytecode used the file-level
+		 * source name only, so keep that form readable as well. */
 		line = rt_read_bytecode_line(data, size, pos);
 		if (line != NULL && strcmp(line, "Source") == 0) {
 			line = rt_read_bytecode_line(data, size, pos);
@@ -712,9 +759,11 @@ rt_register_bytecode_func_helper(
 
 		/* Get number of parameters. */
 		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL)
+		if (!rt_parse_bytecode_u32(line, &lfunc.param_count))
 			break;
-		lfunc.param_count = (uint32_t)atoi(line);
+		if (lfunc.param_count > LIR_PARAM_SIZE ||
+		    lfunc.param_count > NOCT_ARG_MAX)
+			break;
 
 		/* Get parameters. */
 		for (i = 0; i < lfunc.param_count; i++) {
@@ -728,201 +777,101 @@ rt_register_bytecode_func_helper(
 		if (i != lfunc.param_count)
 			break;
 
-		/* Optional "Parameter Types" line, then "Temporary Size".
-		   (The reader is a strict line-sequence parser; peek one
-		   line to keep old-format files loading.) */
+		/* Read every optional metadata section up to "Temporary Size".
+		 * The writer has a canonical order, but the format does not require
+		 * the reader to encode that order as a chain of one-shot tests. */
+		optional_sections = 0;
+		optional_succeeded = true;
 		line = rt_read_bytecode_line(data, size, pos);
-		if (line != NULL && strcmp(line, "Parameter Types") == 0) {
-			for (i = 0; i < lfunc.param_count; i++) {
-				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL)
-					break;
-				lfunc.param_type[i] = atoi(line);
+		while (line != NULL && strcmp(line, "Temporary Size") != 0) {
+			unsigned int section;
+
+			if (strcmp(line, "Parameter Types") == 0)
+				section = BYTECODE_PARAM_TYPES;
+			else if (strcmp(line, "Parameter Packed Types") == 0)
+				section = BYTECODE_PARAM_PACKED_TYPES;
+			else if (strcmp(line, "Parameter Restricted") == 0)
+				section = BYTECODE_PARAM_RESTRICTED;
+			else if (strcmp(line, "Return Type") == 0)
+				section = BYTECODE_RETURN_TYPE;
+			else if (strcmp(line, "Vector Ops") == 0)
+				section = BYTECODE_VECTOR_OPS;
+			else if (strcmp(line, "FMA Ops") == 0)
+				section = BYTECODE_FMA_OPS;
+			else {
+				optional_succeeded = false;
+				break;
 			}
-			if (i != lfunc.param_count)
+			if ((optional_sections & section) != 0) {
+				optional_succeeded = false;
 				break;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Parameter Accel Access") == 0) {
-			for (i = 0; i < lfunc.param_count; i++) {
-				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL)
-					break;
-			lfunc.param_accel_access[i] = atoi(line);
-			lfunc.param_accel_transport[i] =
-				lfunc.param_accel_access[i];
-			lfunc.param_accel_effect[i] =
-				lfunc.param_accel_access[i] == ACCEL_ACCESS_IN ?
-				ACCEL_EFFECT_READ : ACCEL_EFFECT_WRITE;
 			}
-			if (i != lfunc.param_count)
-				break;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Parameter Accel Transport") == 0) {
-			for (i = 0; i < lfunc.param_count; i++) {
-				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL)
+			optional_sections |= section;
+
+			if (section == BYTECODE_PARAM_TYPES ||
+			    section == BYTECODE_PARAM_PACKED_TYPES ||
+			    section == BYTECODE_PARAM_RESTRICTED) {
+				for (i = 0; i < lfunc.param_count; i++) {
+					line = rt_read_bytecode_line(data, size, pos);
+					if (line == NULL)
+						break;
+					if (section == BYTECODE_PARAM_TYPES)
+						lfunc.param_type[i] = atoi(line);
+					else if (section == BYTECODE_PARAM_PACKED_TYPES)
+						lfunc.param_packed_type[i] = atoi(line);
+					else
+						lfunc.param_restricted[i] = atoi(line) != 0;
+				}
+				if (i != lfunc.param_count) {
+					optional_succeeded = false;
 					break;
-				lfunc.param_accel_transport[i] = atoi(line);
-			}
-			if (i != lfunc.param_count)
-				break;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Parameter Accel Effects") == 0) {
-			for (i = 0; i < lfunc.param_count; i++) {
+				}
+			} else if (section == BYTECODE_RETURN_TYPE) {
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL)
+				if (line == NULL) {
+					optional_succeeded = false;
 					break;
-				lfunc.param_accel_effect[i] =
-					(unsigned int)strtoul(line, NULL, 10);
-			}
-			if (i != lfunc.param_count)
-				break;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Parameter Accel Ranges") == 0) {
-			for (i = 0; i < lfunc.param_count; i++) {
-				int status;
-				int has_access;
-				long long min_offset;
-				long long max_offset;
+				}
+				lfunc.return_type = atoi(line);
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL || sscanf(line, "%d %d %lld %lld",
-							 &status, &has_access,
-							 &min_offset, &max_offset) != 4)
+				if (line == NULL) {
+					optional_succeeded = false;
 					break;
-				loaded_range[i].status = status;
-				loaded_range[i].has_access = has_access != 0;
-				loaded_range[i].min_offset = (int64_t)min_offset;
-				loaded_range[i].max_offset = (int64_t)max_offset;
-			}
-			if (i != lfunc.param_count)
-				break;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Parameter Packed Types") == 0) {
-			for (i = 0; i < lfunc.param_count; i++) {
+				}
+				lfunc.return_packed_type = atoi(line);
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL)
+				if (line == NULL) {
+					optional_succeeded = false;
 					break;
-				lfunc.param_packed_type[i] = atoi(line);
-			}
-			if (i != lfunc.param_count)
-				break;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Parameter Restricted") == 0) {
-			for (i = 0; i < lfunc.param_count; i++) {
+				}
+				lfunc.return_type_checked = atoi(line) != 0;
+			} else {
 				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL)
+				if (line == NULL) {
+					optional_succeeded = false;
 					break;
-				lfunc.param_restricted[i] = atoi(line) != 0;
+				}
+				if (section == BYTECODE_VECTOR_OPS)
+					lfunc.has_vector_ops = atoi(line) != 0;
+				else
+					lfunc.has_fma_ops = atoi(line) != 0;
 			}
-			if (i != lfunc.param_count)
-				break;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Return Type") == 0) {
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL)
-				break;
-			lfunc.return_type = atoi(line);
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL)
-				break;
-			lfunc.return_packed_type = atoi(line);
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL)
-				break;
-			lfunc.return_type_checked = atoi(line) != 0;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Vector Ops") == 0) {
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL)
-				break;
-			lfunc.has_vector_ops = atoi(line) != 0;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Function Kind") == 0) {
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL)
-				break;
-			lfunc.func_kind = atoi(line);
-			if (lfunc.func_kind < NOCT_FUNC_NORMAL ||
-			    lfunc.func_kind > NOCT_FUNC_FAST)
-				break;
-			lfunc.is_accel = lfunc.func_kind == NOCT_FUNC_ACCEL;
-			line = rt_read_bytecode_line(data, size, pos);
-		}
-		if (line != NULL && strcmp(line, "Fast Signature") == 0) {
-			int version;
-			uint32_t fast_count;
 
 			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL) break;
-			version = atoi(line);
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL) break;
-			fast_count = (uint32_t)strtoul(line, NULL, 10);
-			if (version != NOCT_FAST_SIGNATURE_VERSION ||
-			    fast_count != lfunc.param_count ||
-			    fast_count > NOCT_ARG_MAX)
-				break;
-			fast_signature_init(&lfunc.fast_signature);
-			lfunc.fast_signature.valid = true;
-			lfunc.fast_signature.param_count = fast_count;
-			for (i = 0; i < fast_count; i++) {
-				line = rt_read_bytecode_line(data, size, pos);
-				if (line == NULL || !rt_parse_fast_param_line(
-						line, &lfunc.fast_signature.param[i]))
-					break;
-			}
-			if (i != fast_count) break;
-			for (i = 0; i < fast_count; i++) {
-				int axis;
-				struct fast_param_contract *contract;
-				contract = &lfunc.fast_signature.param[i];
-				if (contract->value_type != lfunc.param_type[i] ||
-				    contract->packed_type != lfunc.param_packed_type[i])
-					break;
-				for (axis = 0; axis < contract->rank; axis++) {
-					struct fast_extent *extent;
-					extent = &contract->extent[axis];
-					if ((extent->kind == FAST_EXTENT_CONST &&
-					     extent->constant <= 0) ||
-					    (extent->kind == FAST_EXTENT_PARAM &&
-					     (extent->param_index < 0 ||
-					      (uint32_t)extent->param_index >= fast_count ||
-					      (lfunc.param_type[extent->param_index] != NOCT_VALUE_INT &&
-					       lfunc.param_type[extent->param_index] != NOCT_VALUE_LONG))) ||
-					    (extent->kind != FAST_EXTENT_CONST &&
-					     extent->kind != FAST_EXTENT_PARAM))
-						break;
-				}
-				if (axis != contract->rank) break;
-			}
-			if (i != fast_count) break;
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL) break;
-			lfunc.fast_signature.return_type = atoi(line);
-			line = rt_read_bytecode_line(data, size, pos);
 		}
-		if (lfunc.func_kind == NOCT_FUNC_FAST &&
-		    !lfunc.fast_signature.valid)
+		if (!optional_succeeded)
 			break;
 
-		/* Check "Temporary Size". */
+		/* "Temporary Size". */
 		if (line == NULL || strcmp(line, "Temporary Size") != 0)
 			break;
 
 		/* Get a local size. */
 		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL)
+		if (!rt_parse_bytecode_u32(line, &lfunc.tmpvar_size) ||
+		    lfunc.tmpvar_size > LIR_TMPVAR_MAX ||
+		    lfunc.tmpvar_size > RT_TMPVAR_MAX)
 			break;
-		lfunc.tmpvar_size = (uint32_t)atoi(line);
 
 		/* Check "Bytecode Size". */
 		line = rt_read_bytecode_line(data, size, pos);
@@ -931,27 +880,27 @@ rt_register_bytecode_func_helper(
 
 		/* Get a bytecode size. */
 		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL)
+		if (!rt_parse_bytecode_u32(line, &lfunc.bytecode_size))
 			break;
-		lfunc.bytecode_size = (uint32_t)atoi(line);
 
-		/* Load LIR. */
-		lfunc.bytecode = data + *pos;
-		if (env->loading_package_bytecode) {
-			for (owner_module = env->vm->module_list;
-			     owner_module != NULL; owner_module = owner_module->next)
-				if (owner_module->is_package &&
-				    strcmp(owner_module->logical_name,
-					   lfunc.file_name) == 0)
-					break;
-		}
-		if (!rt_register_lir(env, &lfunc, owner_module))
+		/* Validate the raw payload and its textual terminator before making
+		 * the function observable through the global table. */
+		if ((size_t)*pos > size ||
+		    (size_t)lfunc.bytecode_size > size - (size_t)*pos)
 			break;
+		lfunc.bytecode = data + *pos;
+		(*pos) += lfunc.bytecode_size;
+		if ((size_t)*pos >= size || data[*pos] != '\n')
+			break;
+		(*pos)++;
 
 		/* Check "End Function". */
-		(*pos) += lfunc.bytecode_size + 1;
 		line = rt_read_bytecode_line(data, size, pos);
 		if (line == NULL || strcmp(line, "End Function") != 0)
+			break;
+
+		/* Load LIR. */
+		if (!rt_register_lir(env, &lfunc))
 			break;
 
 		succeeded = true;
@@ -959,14 +908,13 @@ rt_register_bytecode_func_helper(
 
 	if (lfunc.func_name != NULL)
 		noct_free(lfunc.func_name);
+	if (function_file_name != NULL)
+		noct_free(function_file_name);
 
 	for (i = 0; i < NOCT_ARG_MAX; i++) {
 		if (lfunc.param_name[i] != NULL)
 			noct_free(lfunc.param_name[i]);
 	}
-	accel_kernel_free(lfunc.accel_kernel);
-	accel_program_free(lfunc.accel_program);
-	noct_free(function_file_name);
 
 	if (!succeeded) {
 		noct_error(env, N_TR("Failed to load bytecode data."));
@@ -978,7 +926,7 @@ rt_register_bytecode_func_helper(
 
 /* Read a line from bytecode file data. */
 static const char *
-rt_read_bytecode_line_helper(
+rt_read_bytecode_line(
 	uint8_t *data,
 	size_t size,
 	uint32_t *pos)
@@ -998,7 +946,90 @@ rt_read_bytecode_line_helper(
 		}
 	}
 	line[i] = '\0'; // for secuity reason
+
 	return NULL;
+}
+
+static struct rt_func *
+rt_create_cfunc(
+	struct rt_env *env,
+	const char *name,
+	size_t param_count,
+	const char *param_name[],
+	bool (*cfunc)(struct rt_env *env),
+	bool (*cfunc_with_data)(struct rt_env *env, void *userdata),
+	void *userdata)
+{
+	struct rt_func *func;
+	uint32_t i;
+
+	if (name == NULL || name[0] == '\0' || param_count > NOCT_ARG_MAX ||
+	    (param_count != 0 && param_name == NULL) ||
+	    (cfunc == NULL) == (cfunc_with_data == NULL)) {
+		rt_error(env, N_TR("Invalid native function registration."));
+		return NULL;
+	}
+
+	func = noct_calloc(1, sizeof(*func));
+	if (func == NULL) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
+	func->name = noct_strdup(name);
+	if (func->name == NULL)
+		goto oom;
+
+	func->param_count = param_count;
+	func->return_type = -1;
+	func->return_packed_type = -1;
+	for (i = 0; i < NOCT_ARG_MAX; i++) {
+		func->param_type[i] = -1;
+		func->param_packed_type[i] = -1;
+	}
+	for (i = 0; i < param_count; i++) {
+		if (param_name[i] == NULL) {
+			rt_error(env, N_TR("Invalid native function parameter name."));
+			rt_free_func(env, func);
+			return NULL;
+		}
+		func->param_name[i] = noct_strdup(param_name[i]);
+		if (func->param_name[i] == NULL)
+			goto oom;
+	}
+
+	func->cfunc = cfunc;
+	func->cfunc_with_data = cfunc_with_data;
+	func->cfunc_userdata = userdata;
+	func->tmpvar_size = (uint32_t)param_count + 1;
+	return func;
+
+oom:
+	rt_out_of_memory(env);
+	rt_free_func(env, func);
+	return NULL;
+}
+
+static bool
+rt_publish_cfunc(
+	struct rt_env *env,
+	struct rt_func *func,
+	struct rt_func **ret_func)
+{
+	struct rt_value global;
+
+	global.type = NOCT_VALUE_FUNC;
+	global.val.func = func;
+	if (!rt_set_global(env, func->name, &global)) {
+		rt_free_func(env, func);
+		return false;
+	}
+
+	func->next = env->vm->func_list;
+	env->vm->func_list = func;
+	if (ret_func != NULL)
+		*ret_func = func;
+	return true;
 }
 
 bool
@@ -1007,14 +1038,56 @@ rt_register_cfunc(
 	const char *name,
 	size_t param_count,
 	const char *param_name[],
-	NoctCFunc cfunc,
+	bool (*cfunc)(struct rt_env *env),
 	struct rt_func **ret_func)
 {
 	struct rt_func *func;
 
 	func = rt_create_cfunc(env, name, param_count, param_name,
 			       cfunc, NULL, NULL);
-	return func != NULL && rt_stage_or_publish_cfunc(env, func, ret_func);
+	return func != NULL && rt_publish_cfunc(env, func, ret_func);
+}
+
+bool
+rt_register_cfunc_with_data(
+	struct rt_env *env,
+	const char *name,
+	size_t param_count,
+	const char *param_name[],
+	bool (*cfunc)(struct rt_env *env, void *userdata),
+	void *userdata,
+	struct rt_func **ret_func)
+{
+	struct rt_func *func;
+
+	func = rt_create_cfunc(env, name, param_count, param_name,
+			       NULL, cfunc, userdata);
+	return func != NULL && rt_publish_cfunc(env, func, ret_func);
+}
+
+bool
+rt_register_vm_finalizer(
+	struct rt_env *env,
+	void (*finalizer)(void *userdata),
+	void *userdata)
+{
+	struct rt_vm_finalizer *entry;
+
+	if (finalizer == NULL) {
+		rt_error(env, N_TR("Invalid VM finalizer."));
+		return false;
+	}
+
+	entry = noct_malloc(sizeof(*entry));
+	if (entry == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+	entry->finalizer = finalizer;
+	entry->userdata = userdata;
+	entry->next = env->vm->vm_finalizer_list;
+	env->vm->vm_finalizer_list = entry;
+	return true;
 }
 
 static bool
@@ -1059,16 +1132,21 @@ rt_call_with_name(
 	do {
 		if (!rt_check_global(env, func_name))
 			break;
+
 		if (!rt_get_global(env, func_name, &global))
 			break;
+
 		if (global.type != NOCT_VALUE_FUNC)
 			break;
+
 		func_ok = true;
 	} while (0);
+
 	if (!func_ok) {
 		noct_error(env, N_TR("Cannot find function %s."), func_name);
 		return false;
 	}
+
 	func = global.val.func;
 
 	/* Call. */
@@ -1088,37 +1166,16 @@ rt_call(
 {
 	char old_file_name[256];
 	uint32_t i;
-	bool trusted_fast_caller;
 
-	if (func->func_kind == NOCT_FUNC_ACCEL || func->is_accel) {
-		rt_error(env, N_TR("Accelerator function '%s' must be invoked with Accel.call()."),
-			 func->name);
-		return false;
-	}
-	if (func->func_kind == NOCT_FUNC_GPU) {
-		rt_error(env, N_TR("GPU function '%s' cannot execute on the CPU."),
-			 func->name);
-		return false;
-	}
-	if ((!func->cfunc_variadic && arg_count != func->param_count) ||
-	    (func->cfunc_variadic && arg_count < func->param_count)) {
+	if (arg_count != func->param_count) {
 		noct_error(env, N_TR("%s(): Function arguments not match."), func->name);
 		return false;
 	}
-	/* A compiled FAST body can issue only statically resolved FAST calls.
-	 * HIR validation has already checked the exact primitive, element, shape
-	 * mapping, and restricted-argument contract.  Its own external entry was
-	 * preflighted, so repeating the same complete check at every internal call
-	 * is unnecessary.  Normal/C/API callers always take the full path. */
-	trusted_fast_caller = env->frame != NULL && env->frame->func != NULL &&
-		env->frame->func->func_kind == NOCT_FUNC_FAST;
-	if (func->func_kind == NOCT_FUNC_FAST && !trusted_fast_caller &&
-	    !rt_check_fast_call(env, func, arg_count, arg))
-		return false;
 
 	/* Allocate a frame for this call. */
 	if (!rt_enter_frame(env, func))
 		return false;
+
 	env->frame->arg_count = arg_count;
 
 	/*
@@ -1128,7 +1185,7 @@ rt_call(
 	 * the real call depth.
 	 */
 
-	/* Pass args. */
+	/* Pass the args. */
 	for (i = 0; i < arg_count; i++)
 		env->frame->tmpvar[i] = arg[i];
 
@@ -1139,37 +1196,51 @@ rt_call(
 
 	/* Run. */
 	if (func->cfunc != NULL || func->cfunc_with_data != NULL) {
-		/* Call an intrinsic or an FFI function implemented in C. */
-		bool cfunc_result;
-		if (func->cfunc_with_data != NULL)
-			cfunc_result = func->cfunc_with_data(
-				env, func->cfunc_userdata);
-		else
-			cfunc_result = func->cfunc(env);
-		if (!cfunc_result) {
+		/*
+		 * Call an intrinsic or an FFI function implemented in C.
+		 */
+		if ((func->cfunc != NULL && !func->cfunc(env)) ||
+		    (func->cfunc_with_data != NULL &&
+		     !func->cfunc_with_data(env, func->cfunc_userdata))) {
 			rt_leave_frame(env);
 			return false;
 		}
 	} else {
-		/* Backup the old file name. */
+		/*
+		 * Call a Noct world function.
+		 */
+
+		/* Backup the old file name from the env. */
 		strncpy(old_file_name, env->file_name, sizeof(old_file_name) - 1);
 
-		/* Set the new file name. */
+		/* Copy the new file name to the env. */
 		strncpy(env->file_name, env->frame->func->file_name, sizeof(env->file_name) - 1);
 
 		if (func->jit_code != NULL) {
-			/* Call a JIT-generated code. */
+			/*
+			 * The function has a JIT-generated code. Call it.
+			 */
 			if (getenv("NOCT_JIT_DEBUG") != NULL)
 				fprintf(stderr, "noct-jit: %s: native-entry\n",
 					func->name);
 			if (!func->jit_code(env)) {
+				/*
+				 * Native code returned false.
+				 * Restore the old file name and exit with false.
+				 */
 				strncpy(env->file_name, old_file_name, sizeof(env->file_name) - 1);
 				rt_leave_frame(env);
 				return false;
 			}
 		} else {
-			/* Call the bytecode interpreter. */
+			/*
+			 * No JIT-generated code. Call the bytecode interpreter.
+			 */
 			if (!rt_visit_bytecode(env, func)) {
+				/*
+				 * Interpreter returned false.
+				 * Restore the old file name and exit with false.
+				 */
 				strncpy(env->file_name, old_file_name, sizeof(env->file_name) - 1);
 				rt_leave_frame(env);
 				return false;
@@ -1233,106 +1304,6 @@ rt_leave_frame(
 	}
 
 	env->frame = &env->frame_alloc[env->cur_frame_index];
-}
-
-/*
- * Call a function.
- */
-static bool
-rt_check_fast_call(
-	struct rt_env *env,
-	struct rt_func *func,
-	uint32_t arg_count,
-	struct rt_value *arg)
-{
-	const struct fast_signature *sig;
-	uint32_t i;
-
-	sig = &func->fast_signature;
-	if (!sig->valid || sig->version != NOCT_FAST_SIGNATURE_VERSION ||
-	    sig->param_count != arg_count) {
-		rt_error(env, "Invalid __fast function signature for '%s'.", func->name);
-		return false;
-	}
-	for (i = 0; i < arg_count; i++) {
-		const struct fast_param_contract *contract;
-		int axis;
-		size_t elements;
-
-		contract = &sig->param[i];
-		if (arg[i].type != contract->value_type) {
-			rt_error(env, "__fast call '%s': argument %u has the wrong primitive type.",
-				 func->name, (unsigned int)i + 1);
-			return false;
-		}
-		if (contract->value_type != NOCT_VALUE_PACKED)
-			continue;
-		if (arg[i].val.packed == NULL ||
-		    arg[i].val.packed->type != contract->packed_type) {
-			rt_error(env, "__fast call '%s': argument %u has the wrong packed element type.",
-				 func->name, (unsigned int)i + 1);
-			return false;
-		}
-		elements = 1;
-		for (axis = 0; axis < contract->rank; axis++) {
-			const struct fast_extent *extent;
-			uint64_t value;
-
-			extent = &contract->extent[axis];
-			if (extent->kind == FAST_EXTENT_CONST) {
-				value = (uint64_t)extent->constant;
-			} else if (extent->kind == FAST_EXTENT_PARAM &&
-				   extent->param_index >= 0 &&
-				   (uint32_t)extent->param_index < arg_count) {
-				struct rt_value *extent_arg;
-				extent_arg = &arg[extent->param_index];
-				if (extent_arg->type == NOCT_VALUE_INT) {
-					if (extent_arg->val.i <= 0) value = 0;
-					else value = (uint64_t)(uint32_t)extent_arg->val.i;
-				} else if (extent_arg->type == NOCT_VALUE_LONG) {
-					if (extent_arg->val.l <= 0) value = 0;
-					else value = (uint64_t)extent_arg->val.l;
-				} else {
-					value = 0;
-				}
-			} else {
-				value = 0;
-			}
-			if (value == 0) {
-				rt_error(env, "__fast call '%s': shape extents must be positive.",
-					 func->name);
-				return false;
-			}
-			if (value > (uint64_t)SIZE_MAX ||
-			    elements > SIZE_MAX / (size_t)value) {
-				rt_error(env, "__fast call '%s': shape element count overflow.",
-					 func->name);
-				return false;
-			}
-			elements *= (size_t)value;
-		}
-		if (arg[i].val.packed->elem_size != elements) {
-			rt_error(env, "__fast call '%s': argument %u does not match the exact shape.",
-				 func->name, (unsigned int)i + 1);
-			return false;
-		}
-	}
-	for (i = 0; i < arg_count; i++) {
-		uint32_t j;
-		if (!sig->param[i].restricted ||
-		    sig->param[i].value_type != NOCT_VALUE_PACKED)
-			continue;
-		for (j = i + 1; j < arg_count; j++) {
-			if (sig->param[j].restricted &&
-			    sig->param[j].value_type == NOCT_VALUE_PACKED &&
-			    arg[i].val.packed == arg[j].val.packed) {
-				rt_error(env, "__fast call '%s': restricted packed arguments must be distinct objects.",
-					 func->name);
-				return false;
-			}
-		}
-	}
-	return true;
 }
 
 /*
@@ -1448,7 +1419,7 @@ rt_make_empty_array(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, make_array, val))
+	if (!om_make_array(env, val))
 		return false;
 
 	return true;
@@ -1464,7 +1435,7 @@ rt_get_array_size(
 	size_t *size)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, get_array_size, arr, size))
+	if (!om_get_array_size(env, arr, size))
 		return false;
 
 	return true;
@@ -1481,7 +1452,7 @@ rt_get_array_elem(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, read_array, arr, index, val))
+	if (!om_read_array(env, arr, index, val))
 		return false;
 
 	return true;
@@ -1498,7 +1469,7 @@ rt_set_array_elem(
 	NoctValue *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, write_array, arr, index, val))
+	if (!om_write_array(env, arr, index, val))
 		return false;
 
 	return true;
@@ -1514,7 +1485,7 @@ rt_resize_array(
 	size_t size)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, resize_array, arr, size))
+	if (!om_resize_array(env, arr, size))
 		return false;
 
 	return true;
@@ -1530,7 +1501,7 @@ rt_make_array_copy(
 	struct rt_value *src)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, copy_array, dst, src))
+	if (!om_copy_array(env, dst, src))
 		return false;
 
 	return true;
@@ -1545,7 +1516,7 @@ rt_make_empty_dict(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, make_dict, val))
+	if (!om_make_dict(env, val))
 		return false;
 
 	return true;
@@ -1561,7 +1532,7 @@ rt_get_dict_size(
 	size_t *size)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, get_dict_size, dict, size))
+	if (!om_get_dict_size(env, dict, size))
 		return false;
 
 	return true;
@@ -1577,7 +1548,7 @@ rt_get_dict_alloc_size(
 	size_t *size)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, get_dict_alloc_size, dict, size))
+	if (!om_get_dict_alloc_size(env, dict, size))
 		return false;
 
 	return true;
@@ -1594,7 +1565,7 @@ rt_check_dict_key(
 	bool *ret)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, check_dict_key, dict, key, ret))
+	if (!om_check_dict_key(env, dict, key, ret))
 		return false;
 
 	return true;
@@ -1623,7 +1594,7 @@ rt_check_dict_key_cstr(
 		return false;
 
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, check_dict_key, dict, &key_val, ret))
+	if (!om_check_dict_key(env, dict, &key_val, ret))
 		return false;
 		
 	if (env->frame != NULL)
@@ -1646,7 +1617,7 @@ rt_get_dict_by_index(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, read_dict_index, dict, index, key, val))
+	if (!om_read_dict_index(env, dict, index, key, val))
 		return false;
 
 	return true;
@@ -1663,7 +1634,7 @@ rt_get_dict_elem(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, read_dict, dict, key, val))
+	if (!om_read_dict(env, dict, key, val))
 		return false;
 
 	return true;	
@@ -1685,7 +1656,7 @@ rt_get_dict_elem_cstr(
 	len = strlen(key) + 1;
 
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, read_dict_with_hash,
+	if (!om_read_dict_with_hash(env,
 				    dict,
 				    key,
 				    len,
@@ -1709,7 +1680,7 @@ rt_get_dict_elem_with_hash(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, read_dict_with_hash, dict, key, len, hash, val))
+	if (!om_read_dict_with_hash(env, dict, key, len, hash, val))
 		return false;
 
 	return true;
@@ -1726,7 +1697,7 @@ rt_set_dict_elem(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, write_dict, dict, key, val))
+	if (!om_write_dict(env, dict, key, val))
 		return false;
 		
 	return true;
@@ -1748,7 +1719,7 @@ rt_set_dict_elem_cstr(
 	len = strlen(key) + 1;
 
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, write_dict_with_hash,
+	if (!om_write_dict_with_hash(env,
 				     dict,
 				     key,
 				     len,
@@ -1772,7 +1743,7 @@ rt_set_dict_elem_with_hash(
 	struct rt_value *val)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, write_dict_with_hash,
+	if (!om_write_dict_with_hash(env,
 				     dict,
 				     key,
 				     len,
@@ -1793,7 +1764,7 @@ rt_remove_dict_elem(
 	struct rt_value *key)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, erase_dict_entry, dict, key))
+	if (!om_erase_dict_entry(env, dict, key))
 		return false;
 
 	return true;
@@ -1821,7 +1792,7 @@ rt_remove_dict_elem_cstr(
 		return false;
 	
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, erase_dict_entry, dict, &key_val)) {
+	if (!om_erase_dict_entry(env, dict, &key_val)) {
 		rt_unpin_global(env, &key_val);
 		return false;
 	}
@@ -1844,7 +1815,7 @@ rt_make_dict_copy(
 	struct rt_value *src)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, copy_dict, dst, src))
+	if (!om_copy_dict(env, dst, src))
 		return false;
 
 	return true;
@@ -1861,7 +1832,7 @@ rt_merge_dict(
 	struct rt_value *src2)
 {
 	/* Delegate to the object model implementation. */
-	if (!OM_DISPATCH(env, merge_dict, dst, src1, src2))
+	if (!om_merge_dict(env, dst, src1, src2))
 		return false;
 
 	return true;
@@ -1872,25 +1843,29 @@ rt_get_latest_dict(
 	struct rt_env *env,
 	struct rt_value *dict)
 {
+#if defined(NOCT_USE_MULTITHREAD)
 	struct rt_dict *real_dict;
 	struct rt_dict *next;
 
-#if defined(NOCT_USE_MULTITHREAD)
-	if (rt_use_mt_object_model(env)) {
-		real_dict = atomic_load_acquire_ptr((void **)&dict->val.dict);
-		while ((next = atomic_load_acquire_ptr(
-				(void **)&real_dict->newer)) != NULL)
-			real_dict = next;
-		return real_dict;
-	}
-#else
 	UNUSED_PARAMETER(env);
-#endif
+
+	real_dict = atomic_load_acquire_ptr((void **)&dict->val.dict);
+	while ((next = atomic_load_acquire_ptr((void **)&real_dict->newer)) != NULL)
+		real_dict = next;
+
+	return real_dict;
+#else
+	struct rt_dict *real_dict;
+	struct rt_dict *next;
+
+	UNUSED_PARAMETER(env);
 
 	real_dict = dict->val.dict;
 	while ((next = real_dict->newer) != NULL)
 		real_dict = next;
+
 	return real_dict;
+#endif
 }
 
 /*
@@ -2014,22 +1989,20 @@ rt_finalize_packed(
 	assert(packed->type == NOCT_VALUE_PACKED);
 
 	p = packed->val.packed;
-	if (p->packed_buffer == NULL) {
-		rt_error(env, N_TR("Packed is unmapped."));
-		return false;
-	}
-	if (p->native_pointer == NULL || p->native_finalizer == NULL) {
-		rt_error(env, N_TR("Packed does not own an external buffer."));
-		return false;
-	}
+	assert(p != NULL);
+	if (p->native_finalizer == NULL)
+		return true;
 
 	native_pointer = p->native_pointer;
 	native_finalizer = p->native_finalizer;
+
 	p->native_pointer = NULL;
 	p->native_finalizer = NULL;
 	p->packed_buffer = NULL;
 	p->elem_size = 0;
+
 	native_finalizer(native_pointer);
+
 	return true;
 }
 
@@ -2098,17 +2071,13 @@ rt_get_packed_elem(
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
 	assert(val != NULL);
-	if (packed->val.packed->is_accel_resource) {
-		rt_error(env, "Accelerator resources cannot be subscripted by host code.");
-		return false;
-	}
 	if (packed->val.packed->packed_buffer == NULL) {
 		rt_error(env, N_TR("Packed is unmapped."));
 		return false;
 	}
 
 	if (index >= packed->val.packed->elem_size) {
-		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
+		rt_error(env, N_TR("Packed index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -2172,18 +2141,15 @@ rt_set_packed_elem(
 	assert(packed != NULL);
 	assert(packed->type == NOCT_VALUE_PACKED);
 	assert(packed->val.packed != NULL);
+
 	assert(val != NULL);
-	if (packed->val.packed->is_accel_resource) {
-		rt_error(env, "Accelerator resources cannot be subscripted by host code.");
-		return false;
-	}
 	if (packed->val.packed->packed_buffer == NULL) {
 		rt_error(env, N_TR("Packed is unmapped."));
 		return false;
 	}
 
 	if (index >= packed->val.packed->elem_size) {
-		rt_error(env, N_TR("Array index %ld is out-of-range."), index);
+		rt_error(env, N_TR("Packed index %ld is out-of-range."), index);
 		return false;
 	}
 
@@ -2400,20 +2366,14 @@ rt_make_packed_copy(
 
 	assert(env != NULL);
 	assert(dst != NULL);
-	assert(src != NULL);
-	if (src->val.packed->packed_buffer == NULL) {
-		rt_error(env, N_TR("Packed is unmapped."));
-		return false;
-	}
+	assert(dst->type == NOCT_VALUE_PACKED);
+	assert(dst->val.packed != NULL);
+	assert(dst->val.packed->packed_buffer != NULL);
+	assert(src->type == NOCT_VALUE_PACKED);
+	assert(src->val.packed != NULL);
+	assert(src->val.packed->packed_buffer != NULL);
 
-	/*
-	 * Determine the byte size.
-	 *
-	 * A preallocated packed carries a zero "size", so the byte size
-	 * has to be derived from the element count and the type. Doing
-	 * it unconditionally also covers the normal case, where "size"
-	 * already holds the same number.
-	 */
+	/* Determine the byte size. */
 	switch (src->val.packed->type) {
 	case NOCT_PACKED_INT8:
 	case NOCT_PACKED_UINT8:
@@ -2469,25 +2429,21 @@ rt_make_packed_copy(
 
 #else
 
-#define ACQUIRE_GLOBAL()									\
+#define ACQUIRE_GLOBAL()								\
 	do {										\
-		if (rt_use_mt_object_model(env)) {					\
-			while (1) {							\
-				int old = atomic_fetch_add_acquire_int(			\
-					&env->vm->global_var_counter, 1);		\
-				if (old == 0)						\
-					break;						\
-				atomic_fetch_sub_release_int(				\
-					&env->vm->global_var_counter, 1);		\
-			}								\
-		}								\
+		while (1) {							\
+			int old = atomic_fetch_add_acquire_int(			\
+				&env->vm->global_var_counter, 1);			\
+			if (old == 0)						\
+				break;							\
+			atomic_fetch_sub_release_int(				\
+				&env->vm->global_var_counter, 1);			\
+		}									\
 	} while (0)
 
-#define RELEASE_GLOBAL()									\
+#define RELEASE_GLOBAL()								\
 	do {										\
-		if (rt_use_mt_object_model(env))					\
-			atomic_fetch_sub_release_int(					\
-				&env->vm->global_var_counter, 1);			\
+		atomic_fetch_sub_release_int(&env->vm->global_var_counter, 1);	\
 	} while (0)
 
 #endif
@@ -2798,186 +2754,8 @@ rt_expand_global(
 	return true;
 }
 
-static void
-rt_library_registration_lock(
-	struct rt_env *env)
-{
-#if defined(NOCT_USE_MULTITHREAD)
-	if (rt_use_mt_object_model(env))
-		atomic_spin_lock(&env->vm->library_registration_lock);
-#else
-	UNUSED_PARAMETER(env);
-#endif
-}
-
-static void
-rt_library_registration_unlock(
-	struct rt_env *env)
-{
-#if defined(NOCT_USE_MULTITHREAD)
-	if (rt_use_mt_object_model(env))
-		atomic_spin_unlock(&env->vm->library_registration_lock);
-#else
-	UNUSED_PARAMETER(env);
-#endif
-}
-
-static bool
-rt_global_name_exists_locked(
-	struct rt_vm *vm,
-	const char *name)
-{
-	uint32_t i;
-
-	for (i = 0; i < vm->global_alloc_size; i++) {
-		if (vm->global[i].name != NULL && !vm->global[i].is_removed &&
-		    strcmp(vm->global[i].name, name) == 0)
-			return true;
-	}
-	return false;
-}
-
-static void
-rt_insert_global_owned_locked(
-	struct rt_vm *vm,
-	char *name,
-	struct rt_value *value)
-{
-	uint32_t hash;
-	uint32_t index;
-	uint32_t i;
-	size_t len;
-
-	len = strlen(name) + 1;
-	hash = rt_string_hash(name);
-	index = hash & (vm->global_alloc_size - 1);
-	for (i = index; ; i = (i + 1) & (vm->global_alloc_size - 1)) {
-		if (vm->global[i].name == NULL || vm->global[i].is_removed) {
-			vm->global[i].name = name;
-			vm->global[i].name_len = (uint32_t)len;
-			vm->global[i].name_hash = hash;
-			vm->global[i].val = *value;
-			vm->global[i].is_removed = false;
-			vm->global[i].is_const = false;
-			vm->global_size++;
-			return;
-		}
-	}
-}
-
-bool
-rt_library_transaction_commit(
-	struct rt_env *env)
-{
-	struct rt_library_transaction *transaction;
-	struct rt_cfunc_stage *stage;
-	struct rt_cfunc_stage *next_stage;
-	struct rt_finalizer_stage *finalizer_stage;
-	struct rt_finalizer_stage *next_finalizer_stage;
-	struct rt_vm_finalizer *prepared_finalizer;
-	struct rt_vm_finalizer *prepared_finalizer_tail;
-	struct rt_vm_finalizer *entry;
-	struct rt_vm_finalizer *next_entry;
-	struct rt_value global;
-	uint32_t cfunc_count;
-
-	transaction = env->library_transaction;
-	if (transaction == NULL) {
-		rt_error(env, N_TR("No native library registration is active."));
-		return false;
-	}
-
-	/* Allocate every finalizer node before publishing any function. */
-	prepared_finalizer = NULL;
-	prepared_finalizer_tail = NULL;
-	for (finalizer_stage = transaction->finalizer_head;
-	     finalizer_stage != NULL; finalizer_stage = finalizer_stage->next) {
-		entry = noct_malloc(sizeof(*entry));
-		if (entry == NULL) {
-			rt_out_of_memory(env);
-			while (prepared_finalizer != NULL) {
-				next_entry = prepared_finalizer->next;
-				noct_free(prepared_finalizer);
-				prepared_finalizer = next_entry;
-			}
-			rt_library_transaction_abort(env);
-			return false;
-		}
-		entry->finalizer = finalizer_stage->finalizer;
-		entry->userdata = finalizer_stage->userdata;
-		entry->next = prepared_finalizer;
-		prepared_finalizer = entry;
-		if (prepared_finalizer_tail == NULL)
-			prepared_finalizer_tail = entry;
-	}
-
-	cfunc_count = 0;
-	for (stage = transaction->cfunc_head; stage != NULL; stage = stage->next)
-		cfunc_count++;
-
-	rt_library_registration_lock(env);
-	ACQUIRE_GLOBAL();
-	for (stage = transaction->cfunc_head; stage != NULL; stage = stage->next) {
-		if (rt_global_name_exists_locked(env->vm, stage->func->name)) {
-			RELEASE_GLOBAL();
-			rt_library_registration_unlock(env);
-			rt_error(env, N_TR("Native function \"%s\" conflicts with an existing global."),
-				 stage->func->name);
-			while (prepared_finalizer != NULL) {
-				next_entry = prepared_finalizer->next;
-				noct_free(prepared_finalizer);
-				prepared_finalizer = next_entry;
-			}
-			rt_library_transaction_abort(env);
-			return false;
-		}
-	}
-	while (env->vm->global_size + cfunc_count >=
-	       env->vm->global_alloc_size / 4 * 3) {
-		if (!rt_expand_global(env)) {
-			RELEASE_GLOBAL();
-			rt_library_registration_unlock(env);
-			while (prepared_finalizer != NULL) {
-				next_entry = prepared_finalizer->next;
-				noct_free(prepared_finalizer);
-				prepared_finalizer = next_entry;
-			}
-			rt_library_transaction_abort(env);
-			return false;
-		}
-	}
-
-	for (stage = transaction->cfunc_head; stage != NULL; stage = stage->next) {
-		stage->func->next = env->vm->func_list;
-		env->vm->func_list = stage->func;
-		global.type = NOCT_VALUE_FUNC;
-		global.val.func = stage->func;
-		rt_insert_global_owned_locked(env->vm, stage->global_name, &global);
-		stage->global_name = NULL;
-	}
-	if (prepared_finalizer != NULL) {
-		prepared_finalizer_tail->next = env->vm->vm_finalizer_list;
-		env->vm->vm_finalizer_list = prepared_finalizer;
-	}
-	RELEASE_GLOBAL();
-	rt_library_registration_unlock(env);
-
-	env->library_transaction = NULL;
-	for (stage = transaction->cfunc_head; stage != NULL; stage = next_stage) {
-		next_stage = stage->next;
-		noct_free(stage);
-	}
-	for (finalizer_stage = transaction->finalizer_head;
-	     finalizer_stage != NULL; finalizer_stage = next_finalizer_stage) {
-		next_finalizer_stage = finalizer_stage->next;
-		noct_free(finalizer_stage);
-	}
-	noct_free(transaction);
-	return true;
-}
-
 /*
- * Native API Pin
+ * Pinning Native APIs
  */
 
 /*
@@ -3119,216 +2897,3 @@ rt_out_of_memory(
 {
 	noct_error(env, N_TR("Out of memory."));
 }
-
-#if 0
-/* Register a function from bytecode file data. */
-static bool
-rt_read_accel_program(
-	struct rt_env *env,
-	uint8_t *data,
-	size_t size,
-	uint32_t *pos,
-	struct lir_func *lfunc,
-	const char **next_line)
-{
-	struct accel_program *program;
-	struct accel_buffer_desc *buffer;
-	struct accel_kernel *kernel;
-	struct accel_program_step *step;
-	const char *line;
-	unsigned int version, outer_count, expr_count, buffer_count;
-	unsigned int kernel_count, step_count;
-	unsigned int i, j, u0, u1;
-	int source_line, b[16];
-	long long ll0, ll1;
-	unsigned long glsl_size, hlsl_size;
-	char validation_error[128];
-
-	UNUSED_PARAMETER(env);
-	program = noct_calloc(1, sizeof(*program));
-	if (program == NULL) return false;
-	line = rt_read_bytecode_line(data, size, pos);
-	if (line == NULL || sscanf(line, "%u %d %u %u %u %u %u", &version,
-		&source_line, &outer_count, &expr_count, &buffer_count,
-		&kernel_count, &step_count) != 7 ||
-	    version != ACCEL_PROGRAM_VERSION || outer_count > NOCT_ARG_MAX ||
-	    expr_count > ACCEL_PROGRAM_MAX_EXPRS ||
-	    buffer_count > ACCEL_PROGRAM_MAX_BUFFERS ||
-	    kernel_count > ACCEL_PROGRAM_MAX_KERNELS ||
-	    step_count > ACCEL_PROGRAM_MAX_STEPS)
-		goto failed;
-	program->descriptor_version = version;
-	program->source_line = source_line;
-	program->outer_param_count = outer_count;
-	program->expr_count = expr_count;
-	program->buffer_count = buffer_count;
-	program->name = noct_strdup(lfunc->func_name);
-	program->source_name = noct_strdup(lfunc->file_name);
-	program->expr = noct_calloc(expr_count, sizeof(*program->expr));
-	program->buffer = noct_calloc(buffer_count, sizeof(*program->buffer));
-	program->kernel = noct_calloc(kernel_count, sizeof(*program->kernel));
-	program->step = noct_calloc(step_count, sizeof(*program->step));
-	if (program->name == NULL || program->source_name == NULL ||
-	    (expr_count != 0 && program->expr == NULL) ||
-	    (buffer_count != 0 && program->buffer == NULL) ||
-	    (kernel_count != 0 && program->kernel == NULL) ||
-	    (step_count != 0 && program->step == NULL)) goto failed;
-	for (i = 0; i < outer_count; i++) {
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || sscanf(line, "%u %d %u %lld %lld", &u0,
-			&program->outer_param_range[i].status, &u1, &ll0, &ll1) != 5)
-			goto failed;
-		program->outer_param_effect[i] = u0;
-		program->outer_param_range[i].has_access = u1 != 0;
-		program->outer_param_range[i].min_offset = (int64_t)ll0;
-		program->outer_param_range[i].max_offset = (int64_t)ll1;
-	}
-	for (i = 0; i < expr_count; i++) {
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || sscanf(line, "%d %d %d %d %lld",
-			&program->expr[i].op, &program->expr[i].left,
-			&program->expr[i].right, &program->expr[i].ref, &ll0) != 5)
-			goto failed;
-		program->expr[i].value = (int64_t)ll0;
-	}
-	for (i = 0; i < buffer_count; i++) {
-		buffer = &program->buffer[i];
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || sscanf(line,
-			"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
-			&b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6],
-			&b[7], &b[8], &b[9], &b[10], &b[11], &b[12],
-			&b[13], &b[14], &b[15]) != 16) goto failed;
-		buffer->id=b[0]; buffer->source_line=b[1]; buffer->origin=b[2];
-		buffer->outer_param=b[3]; buffer->element_kind=b[4];
-		buffer->element_width=b[5]; buffer->length_expr=b[6];
-		buffer->read_start_expr=b[7]; buffer->read_end_expr=b[8];
-		buffer->write_start_expr=b[9]; buffer->write_end_expr=b[10];
-		buffer->first_step=b[11]; buffer->last_step=b[12];
-		buffer->initially_defined=b[13]!=0; buffer->upload=b[14]!=0;
-		buffer->download=b[15]!=0;
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || (buffer->name = noct_strdup(line)) == NULL)
-			goto failed;
-	}
-	for (i = 0; i < kernel_count; i++) {
-		kernel = noct_calloc(1, sizeof(*kernel));
-		if (kernel == NULL) goto failed;
-		program->kernel[i] = kernel;
-		program->kernel_count++;
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || sscanf(line, "%u %d %u %d %d %d %d %u",
-			&kernel->descriptor_version, &kernel->func_kind, &u0,
-			&kernel->rejection_reason, &kernel->parallel_mode,
-			&kernel->source_line, &kernel->dispatch_param,
-			&kernel->param_count) != 8 ||
-		    kernel->param_count > NOCT_ARG_MAX) goto failed;
-		kernel->eligible = u0 != 0;
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || (kernel->name = noct_strdup(line)) == NULL)
-			goto failed;
-		kernel->source_name = noct_strdup(lfunc->file_name);
-		if (kernel->source_name == NULL) goto failed;
-		for (j = 0; j < kernel->param_count; j++) {
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL || sscanf(line, "%d %d %d %u %d %u %lld %lld",
-				&kernel->param_type[j], &kernel->param_packed_type[j],
-				&kernel->param_transport[j], &u0,
-				&kernel->param_range[j].status, &u1, &ll0, &ll1) != 8)
-				goto failed;
-			kernel->param_access[j] = kernel->param_transport[j];
-			kernel->param_effect[j] = u0;
-			kernel->param_range[j].has_access = u1 != 0;
-			kernel->param_range[j].min_offset = (int64_t)ll0;
-			kernel->param_range[j].max_offset = (int64_t)ll1;
-		}
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || sscanf(line, "%u %lu %lu", &kernel->content_hash,
-			&glsl_size, &hlsl_size) != 3 || glsl_size >= size - *pos)
-			goto failed;
-		kernel->glsl_size = (size_t)glsl_size;
-		kernel->glsl = noct_malloc(kernel->glsl_size + 1);
-		if (kernel->glsl == NULL) goto failed;
-		memcpy(kernel->glsl, data + *pos, kernel->glsl_size);
-		kernel->glsl[kernel->glsl_size] = '\0';
-		*pos += (uint32_t)kernel->glsl_size;
-		if (*pos >= size || data[*pos] != '\n') goto failed;
-		(*pos)++;
-		if (hlsl_size >= size - *pos) goto failed;
-		kernel->hlsl_size = (size_t)hlsl_size;
-		kernel->hlsl = noct_malloc(kernel->hlsl_size + 1);
-		if (kernel->hlsl == NULL) goto failed;
-		memcpy(kernel->hlsl, data + *pos, kernel->hlsl_size);
-		kernel->hlsl[kernel->hlsl_size] = '\0';
-		*pos += (uint32_t)kernel->hlsl_size;
-		if (*pos >= size || data[*pos] != '\n') goto failed;
-		(*pos)++;
-	}
-	for (i = 0; i < step_count; i++) {
-		step = &program->step[i];
-		line = rt_read_bytecode_line(data, size, pos);
-		if (line == NULL || sscanf(line,
-			"%d %d %d %d %d %u %d %d %d %d %d %u", &step->kind,
-			&step->source_line, &step->kernel, &step->fold_kernel,
-			&step->trip_expr, &step->block_size, &step->result_buffer,
-			&step->scratch_buffer, &step->scratch_buffer2,
-			&step->reduction_operator, &step->reduction_type,
-			&step->binding_count) != 12 ||
-		    step->binding_count > NOCT_ARG_MAX) goto failed;
-		for (j = 0; j < step->binding_count; j++) {
-			line = rt_read_bytecode_line(data, size, pos);
-			if (line == NULL || sscanf(line, "%d %d %d",
-				&step->binding[j].kind, &step->binding[j].kernel_param,
-				&step->binding[j].value) != 3) goto failed;
-		}
-	}
-	program->step_count = step_count;
-	line = rt_read_bytecode_line(data, size, pos);
-	if (line == NULL || strcmp(line, "End Accelerator Program") != 0 ||
-	    !accel_program_validate(program, validation_error,
-				    sizeof(validation_error))) goto failed;
-	lfunc->accel_program = program;
-	*next_line = rt_read_bytecode_line(data, size, pos);
-	return true;
-failed:
-	accel_program_free(program);
-	return false;
-}
-
-static bool
-rt_parse_fast_param_line(const char *line, struct fast_param_contract *param)
-{
-	long long value[4 + NOCT_FAST_RANK_MAX * 3];
-	const char *p;
-	char *tail;
-	int i;
-
-	p = line;
-	for (i = 0; i < 4 + NOCT_FAST_RANK_MAX * 3; i++) {
-		while (*p == ' ' || *p == '\t') p++;
-		if (*p == '\0') return false;
-		value[i] = strtoll(p, &tail, 10);
-		if (tail == p) return false;
-		p = tail;
-	}
-	while (*p == ' ' || *p == '\t') p++;
-	if (*p != '\0') return false;
-	param->value_type = (int)value[0];
-	param->packed_type = (int)value[1];
-	param->restricted = value[2] != 0;
-	param->rank = (int)value[3];
-	if (param->rank < 0 || param->rank > NOCT_FAST_RANK_MAX)
-		return false;
-	for (i = 0; i < NOCT_FAST_RANK_MAX; i++) {
-		int n;
-		n = 4 + i * 3;
-		param->extent[i].kind = (int)value[n];
-		param->extent[i].constant = (int64_t)value[n + 1];
-		param->extent[i].param_index = (int)value[n + 2];
-		if (param->extent[i].kind < FAST_EXTENT_NONE ||
-		    param->extent[i].kind > FAST_EXTENT_PARAM)
-			return false;
-	}
-	return true;
-}
-#endif

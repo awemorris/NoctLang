@@ -11,11 +11,13 @@
 
 #include <noct/noct.h>
 #include "hir.h"
-#include "hir_parallel.h"
+#include "hir_private.h"
 #include "hir_opt.h"
+#if defined(NOCT_USE_OPTIMIZER)
+#include "hir_opt_paralle.h"
+#endif
 #include "ast.h"
 #include "arena.h"
-#include "accel_ops.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,40 +60,7 @@
 #define HIR_FUNC_MAX	1024
 
 char *hir_file_name;
-static bool hir_current_is_accel;
-static int hir_current_func_kind;
-static struct hir_block *hir_current_func_block;
-static bool hir_fast_direct_call_target;
-
-#define HIR_FAST_LOOP_MAX 16
-struct hir_fast_loop_domain {
-	const char *counter;
-	bool known;
-	int64_t lower;
-	int64_t upper;
-};
-static struct hir_fast_loop_domain hir_fast_loop[HIR_FAST_LOOP_MAX];
-static int hir_fast_loop_depth;
-static int hir_fast_cond_depth;
-
-#define HIR_FAST_EDGE_MAX 4096
-struct hir_fast_call_edge {
-	const char *caller;
-	const char *callee;
-	int line;
-};
-static struct hir_fast_call_edge hir_fast_edge[HIR_FAST_EDGE_MAX];
-static uint32_t hir_fast_edge_count;
-
-#define HIR_FAST_PROTOTYPE_MAX 1024
-struct hir_fast_prototype {
-	char *name;
-	int func_kind;
-	struct fast_signature signature;
-};
-static struct hir_fast_prototype hir_fast_prototype[HIR_FAST_PROTOTYPE_MAX];
-static uint32_t hir_fast_prototype_count;
-uint32_t hir_func_count;
+static uint32_t hir_func_count;
 struct hir_block *hir_func_tbl[HIR_FUNC_MAX];
 
 /*
@@ -105,13 +74,6 @@ static char hir_error_message[1024];
  * Block id top.
  */
 static int block_id_top;
-
-/* Allocate a fresh debug block id (shared with the optimizer passes). */
-int
-hir_next_block_id(void)
-{
-	return block_id_top++;
-}
 
 /*
  * Anonymous functions.
@@ -129,344 +91,10 @@ static struct ast_stmt_list *hir_anon_func_stmt_list[ANON_FUNC_SIZE];
  */
 static struct arena_info hir_arena;
 
-/*
- * Block scoping (docs/design/04-scoping.md).
- *
- * Scopes are pushed for the function body and for every if/elif/else/
- * for/while body.  Declarations are pre-scanned at push time (one
- * level, not nested blocks) so use-before-declaration is a static
- * error.  Shadowing renames the inner declaration to "name$N"
- * (alpha-renaming) so the rest of the compiler keeps its flat
- * per-function local list unchanged.
- */
-
-struct hir_scope_entry {
-	char *src_name;		/* name as written                 */
-	char *int_name;		/* internal name (may be name$N)   */
-	bool declared;		/* false until the decl stmt       */
-	bool is_let;
-	struct hir_scope_entry *next;
-};
-
-struct hir_scope {
-	struct hir_scope_entry *entries;
-	struct hir_scope *up;
-};
-
-static struct hir_scope *hir_scope_top;
-static int hir_scope_seq;	/* per-function rename counter     */
-static int hir_scope_line;	/* current stmt line for messages  */
-
-/* Early declarations for the scope machinery (redeclared below). */
+/* Forward declarations. */
 static void hir_fatal(int line, const char *msg);
-static bool hir_check_type_annotation(int line, const char *type_name,
-				      int *tag, int *packed_type,
-				      bool *restricted);
-/* hir_out_of_memory/hir_malloc/hir_strdup are declared in hir_opt.h. */
-
-/* Reset the scope machinery at function entry. */
-static void
-hir_scope_begin_func(void)
-{
-	hir_scope_top = NULL;
-	hir_scope_seq = 0;
-}
-
-static struct hir_scope_entry *
-hir_scope_find_here(struct hir_scope *scope, const char *name)
-{
-	struct hir_scope_entry *e;
-
-	if (scope == NULL)
-		return NULL;
-	e = scope->entries;
-	while (e != NULL) {
-		if (strcmp(e->src_name, name) == 0)
-			return e;
-		e = e->next;
-	}
-	return NULL;
-}
-
-static struct hir_scope_entry *
-hir_scope_find(const char *name)
-{
-	struct hir_scope *scope;
-	struct hir_scope_entry *e;
-
-	scope = hir_scope_top;
-	while (scope != NULL) {
-		e = hir_scope_find_here(scope, name);
-		if (e != NULL)
-			return e;
-		scope = scope->up;
-	}
-	return NULL;
-}
-
-/* Add an entry to the innermost scope. */
-static bool
-hir_scope_add_entry(
-	int line,
-	const char *src_name,
-	bool declared,
-	bool is_let,
-	struct hir_scope_entry **out)
-{
-	struct hir_scope_entry *e;
-	char msg[256];
-
-	assert(hir_scope_top != NULL);
-
-	if (hir_scope_find_here(hir_scope_top, src_name) != NULL) {
-		snprintf(msg, sizeof(msg),
-			 N_TR("Variable '%s' is already declared in this scope."),
-			 src_name);
-		hir_fatal(line, msg);
-		return false;
-	}
-
-	e = hir_malloc(sizeof(struct hir_scope_entry));
-	if (e == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	memset(e, 0, sizeof(struct hir_scope_entry));
-	e->src_name = hir_strdup(src_name);
-	if (e->src_name == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	e->declared = declared;
-	e->is_let = is_let;
-	e->next = hir_scope_top->entries;
-	hir_scope_top->entries = e;
-	if (out != NULL)
-		*out = e;
-	return true;
-}
-
-/* Compute the internal name of a newly-declared entry. */
-static bool
-hir_scope_intern(struct hir_scope_entry *e)
-{
-	char buf[64];
-
-	/*
-	 * Function-root declarations (parameters and function-body-level
-	 * vars) keep their source name: their scope covers the rest of
-	 * the function, so the flat per-function local list can never
-	 * leak them past their scope.
-	 *
-	 * Every INNER-block declaration is renamed unconditionally.
-	 * The rename is what makes the binding invisible after its
-	 * block: LIR resolves locals by name against the flat list, so
-	 * an out-of-scope use of the bare name must not match the dead
-	 * binding's slot (it must fall through to the global path).
-	 */
-	if (hir_scope_top->up == NULL) {
-		e->int_name = e->src_name;
-		return true;
-	}
-	hir_scope_seq++;
-	snprintf(buf, sizeof(buf), "%s$%d", e->src_name, hir_scope_seq);
-	e->int_name = hir_strdup(buf);
-	if (e->int_name == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	return true;
-}
-
-/* Push a scope; pre-scan the block's own statements for var/let. */
-static bool
-hir_scope_push(struct ast_stmt_list *stmt_list)
-{
-	struct hir_scope *scope;
-	struct ast_stmt *stmt;
-	struct ast_expr *lhs;
-
-	scope = hir_malloc(sizeof(struct hir_scope));
-	if (scope == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	memset(scope, 0, sizeof(struct hir_scope));
-	scope->up = hir_scope_top;
-	hir_scope_top = scope;
-
-	if (stmt_list == NULL)
-		return true;
-
-	stmt = stmt_list->list;
-	while (stmt != NULL) {
-		if (stmt->type == AST_STMT_ASSIGN &&
-		    (stmt->val.assign.is_var || stmt->val.assign.is_let)) {
-			lhs = stmt->val.assign.lhs;
-			if (lhs != NULL &&
-			    lhs->type == AST_EXPR_TERM &&
-			    lhs->val.term.term->type == AST_TERM_SYMBOL) {
-				if (!hir_scope_add_entry(stmt->line,
-							 lhs->val.term.term->val.symbol,
-							 false,
-							 stmt->val.assign.is_let,
-							 NULL))
-					return false;
-			}
-		}
-		stmt = stmt->next;
-	}
-	return true;
-}
-
-static void
-hir_scope_pop(void)
-{
-	assert(hir_scope_top != NULL);
-	hir_scope_top = hir_scope_top->up;
-}
-
-/* Declaration visit: find the pre-scanned entry, intern, mark. */
-static bool
-hir_scope_declare(
-	int line,
-	const char *src_name,
-	bool is_let,
-	const char **int_name)
-{
-	struct hir_scope_entry *e;
-	char msg[256];
-
-	e = hir_scope_find_here(hir_scope_top, src_name);
-	if (e == NULL) {
-		/* Not pre-scanned (unusual LHS shape); add now. */
-		if (!hir_scope_add_entry(line, src_name, false, is_let, &e))
-			return false;
-	}
-	if (e->declared) {
-		snprintf(msg, sizeof(msg),
-			 N_TR("Variable '%s' is already declared in this scope."),
-			 src_name);
-		hir_fatal(line, msg);
-		return false;
-	}
-	if (!hir_scope_intern(e))
-		return false;
-	e->is_let = is_let;
-	*int_name = e->int_name;
-	return true;
-}
-
-/* Mark the entry declared (after its initializer was visited). */
-static void
-hir_scope_mark_declared(const char *src_name)
-{
-	struct hir_scope_entry *e;
-
-	e = hir_scope_find_here(hir_scope_top, src_name);
-	assert(e != NULL);
-	e->declared = true;
-}
-
-/*
- * Resolve a symbol use.  Returns false on a TDZ error.  On success,
- * *out_name is the internal name to use, or NULL for the global path.
- */
-static bool
-hir_scope_resolve(
-	const char *name,
-	const char **out_name)
-{
-	struct hir_scope_entry *e;
-	char msg[256];
-
-	*out_name = NULL;
-	if (name[0] == '$')
-		return true;	/* compiler-internal names */
-	e = hir_scope_find(name);
-	if (e == NULL)
-		return true;	/* global */
-	if (!e->declared) {
-		snprintf(msg, sizeof(msg),
-			 N_TR("Variable '%s' is used before its declaration."),
-			 name);
-		hir_fatal(hir_scope_line, msg);
-		return false;
-	}
-	*out_name = e->int_name;
-	return true;
-}
-
-/* Reject assignment to a let binding (LHS already resolved). */
-static bool
-hir_scope_check_let_assign(
-	int line,
-	const char *int_name)
-{
-	struct hir_scope *scope;
-	struct hir_scope_entry *e;
-	char msg[256];
-
-	scope = hir_scope_top;
-	while (scope != NULL) {
-		e = scope->entries;
-		while (e != NULL) {
-			if (e->int_name != NULL &&
-			    strcmp(e->int_name, int_name) == 0) {
-				if (e->is_let) {
-					snprintf(msg, sizeof(msg),
-						 N_TR("Cannot assign to 'let' variable '%s'."),
-						 e->src_name);
-					hir_fatal(line, msg);
-					return false;
-				}
-				return true;
-			}
-			e = e->next;
-		}
-		scope = scope->up;
-	}
-	return true;
-}
-
-/* Wrap an expression in a Dict.freeze(...) call (class/extend). */
-static bool
-hir_wrap_freeze(
-	struct hir_expr **hexpr,
-	struct hir_expr *inner)
-{
-	struct hir_expr *call;
-	struct hir_expr *fn;
-	struct hir_term *fn_term;
-
-	call = hir_malloc(sizeof(struct hir_expr));
-	fn = hir_malloc(sizeof(struct hir_expr));
-	fn_term = hir_malloc(sizeof(struct hir_term));
-	if (call == NULL || fn == NULL || fn_term == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	memset(call, 0, sizeof(struct hir_expr));
-	memset(fn, 0, sizeof(struct hir_expr));
-	memset(fn_term, 0, sizeof(struct hir_term));
-
-	fn_term->type = HIR_TERM_SYMBOL;
-	fn_term->val.symbol = hir_strdup("Dict.freeze");
-	if (fn_term->val.symbol == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	fn->type = HIR_EXPR_TERM;
-	fn->val.term.term = fn_term;
-
-	call->type = HIR_EXPR_CALL;
-	call->val.call.func = fn;
-	call->val.call.arg_count = 1;
-	call->val.call.arg[0] = inner;
-
-	*hexpr = call;
-	return true;
-}
+static bool hir_check_type_annotation(int line, const char *type_name, int *tag, int *packed_type, bool *restricted);
+int hir_next_block_id(void);
 
 /*
  * Forward Declaration
@@ -477,11 +105,6 @@ static bool hir_visit_stmt(struct hir_block **cur_block, struct hir_block **prev
 static bool hir_visit_expr_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
 static bool hir_visit_assign_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
 static bool hir_visit_if_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
-static bool hir_scope_push(struct ast_stmt_list *stmt_list);
-static void hir_scope_pop(void);
-static bool hir_scope_declare(int line, const char *src_name, bool is_let, const char **int_name);
-static bool hir_scope_resolve(const char *name, const char **out_name);
-static bool hir_scope_check_let_assign(int line, const char *int_name);
 static bool hir_visit_elif_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
 static bool hir_visit_else_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
 static bool hir_visit_while_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
@@ -490,19 +113,8 @@ static bool hir_visit_return_stmt(struct hir_block **cur_block, struct hir_block
 static bool hir_visit_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_term_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_binary_expr(struct hir_expr **hexpr, struct ast_expr *aexpr, int type);
-static bool hir_visit_fast_multi_subscr(struct hir_expr **hexpr, struct ast_expr *aexpr);
-static int hir_fast_infer_expr_type(const struct hir_expr *expr);
 static bool hir_resolve_type_name(const char *name, int *tag,
 				  int *packed_type, bool *restricted);
-static bool hir_fast_check_subscript(const struct ast_expr *expr);
-static bool hir_fast_ast_constant(const struct ast_expr *expr,
-				  int64_t *value);
-static bool hir_fast_validate_call_graph(void);
-static bool hir_fast_stmt_list_returns(const struct ast_stmt_list *list);
-static bool hir_is_fast_intrinsic_name(const char *name);
-static struct ast_func *hir_find_fast_ast_func(const char *source_name);
-static bool hir_build_ast_fast_signature(struct ast_func *func,
-					 struct fast_signature *signature);
 static bool hir_visit_unary_expr(struct hir_expr **hexpr, struct ast_expr *aexpr, int type);
 static bool hir_visit_dot_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_call_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
@@ -528,62 +140,12 @@ static void hir_set_local_declaration(struct hir_block *block,
 				      const struct hir_expr *initializer);
 static int hir_packed_constructor_type(const struct hir_expr *expr);
 static int hir_declared_scalar_kind(const char *type_name);
+static bool hir_wrap_freeze(struct hir_expr **hexpr,
+			    struct hir_expr *inner);
 static void hir_free_block(struct hir_block *b);
 static void hir_free_stmt(struct hir_stmt *s);
 static void hir_free_expr(struct hir_expr *e);
 static void hir_free_term(struct hir_term *t);
-
-static const struct accel_op_desc *
-hir_ast_accel_math(const struct ast_expr *expr)
-{
-	const struct ast_expr *dot;
-	const struct ast_expr *obj;
-	const struct ast_term *term;
-	if (expr == NULL || expr->type != AST_EXPR_CALL) return NULL;
-	dot = expr->val.call.func;
-	if (dot == NULL || dot->type != AST_EXPR_DOT) return NULL;
-	obj = dot->val.dot.obj;
-	if (obj == NULL || obj->type != AST_EXPR_TERM) return NULL;
-	term = obj->val.term.term;
-	if (term == NULL || term->type != AST_TERM_SYMBOL ||
-	    strcmp(term->val.symbol, "Accel") != 0) return NULL;
-	return accel_math_lookup_member(dot->val.dot.symbol);
-}
-
-static const struct accel_op_desc *
-hir_ast_accel_math_property(const struct ast_expr *expr)
-{
-	const struct ast_expr *obj;
-	const struct ast_term *term;
-	if (expr == NULL || expr->type != AST_EXPR_DOT) return NULL;
-	obj = expr->val.dot.obj;
-	if (obj == NULL || obj->type != AST_EXPR_TERM) return NULL;
-	term = obj->val.term.term;
-	if (term == NULL || term->type != AST_TERM_SYMBOL ||
-	    strcmp(term->val.symbol, "Accel") != 0) return NULL;
-	return accel_math_lookup_member(expr->val.dot.symbol);
-}
-
-static bool
-hir_ast_accel_float32_bits_property(const struct ast_expr *expr)
-{
-	const struct ast_expr *obj;
-	const struct ast_term *term;
-	if (expr == NULL || expr->type != AST_EXPR_DOT ||
-	    strcmp(expr->val.dot.symbol, "float32FromBits") != 0) return false;
-	obj = expr->val.dot.obj;
-	if (obj == NULL || obj->type != AST_EXPR_TERM) return false;
-	term = obj->val.term.term;
-	return term != NULL && term->type == AST_TERM_SYMBOL &&
-	       strcmp(term->val.symbol, "Accel") == 0;
-}
-
-static bool
-hir_ast_accel_float32_bits_call(const struct ast_expr *expr)
-{
-	return expr != NULL && expr->type == AST_EXPR_CALL &&
-	       hir_ast_accel_float32_bits_property(expr->val.call.func);
-}
 
 int
 hir_get_intrinsic_call(const struct hir_expr *expr)
@@ -615,41 +177,6 @@ static void hir_fatal(int line, const char *msg);
 static void hir_free(void *p);
 static void hir_dump_block_at_level(struct hir_block *block, int level);
 
-static bool
-hir_fast_graph_reaches(const char *from, const char *target, bool *seen)
-{
-	uint32_t i;
-
-	if (strcmp(from, target) == 0) return true;
-	for (i = 0; i < hir_fast_edge_count; i++) {
-		if (!seen[i] && strcmp(hir_fast_edge[i].caller, from) == 0) {
-			seen[i] = true;
-			if (hir_fast_graph_reaches(hir_fast_edge[i].callee,
-						   target, seen))
-				return true;
-		}
-	}
-	return false;
-}
-
-static bool
-hir_fast_validate_call_graph(void)
-{
-	uint32_t i;
-
-	for (i = 0; i < hir_fast_edge_count; i++) {
-		bool seen[HIR_FAST_EDGE_MAX];
-		memset(seen, 0, sizeof(seen));
-		if (hir_fast_graph_reaches(hir_fast_edge[i].callee,
-					   hir_fast_edge[i].caller, seen)) {
-			hir_fatal(hir_fast_edge[i].line,
-				  N_TR("Recursive and mutually recursive __fast calls are not supported."));
-			return false;
-		}
-	}
-	return true;
-}
-
 /*
  * Construct an HIR from an AST.
  */
@@ -677,7 +204,6 @@ hir_build(void)
 	}
 
 	hir_anon_func_count = 0;
-	hir_fast_edge_count = 0;
 
 	/* Copy a file name. */
 	hir_file_name = hir_strdup(ast_get_file_name());
@@ -710,8 +236,6 @@ hir_build(void)
 		afunc.return_type_name = NULL;
 		afunc.is_static = false;
 		afunc.is_inline = false;
-		afunc.is_accel = false;
-		afunc.func_kind = NOCT_FUNC_NORMAL;
 		afunc.stmt_list = hir_anon_func_stmt_list[i];
 		afunc.next = NULL;
 		if (!hir_visit_func(&afunc))
@@ -721,9 +245,6 @@ hir_build(void)
 		hir_anon_func_param_list[i] = NULL;
 		hir_anon_func_stmt_list[i] = NULL;
 	}
-	if (!hir_fast_validate_call_graph())
-		return false;
-
 	return true;
 }
 
@@ -819,50 +340,11 @@ hir_get_error_message(void)
 }
 
 void
-hir_set_error(int line, const char *message)
+hir_error(int line, const char *message)
 {
 	hir_error_line = line;
 	snprintf(hir_error_message, sizeof(hir_error_message), "%s",
-		 message != NULL ? message : "Accelerator compilation failed.");
-}
-
-/* Visit an AST func. */
-static bool
-hir_fast_stmt_list_returns(const struct ast_stmt_list *list)
-{
-	const struct ast_stmt *stmt;
-
-	stmt = list != NULL ? list->list : NULL;
-	while (stmt != NULL) {
-		if (stmt->type == AST_STMT_RETURN)
-			return true;
-		if (stmt->type == AST_STMT_IF) {
-			const struct ast_stmt *branch;
-			bool all_return;
-			bool has_else;
-			all_return = hir_fast_stmt_list_returns(stmt->val.if_.stmt_list);
-			has_else = false;
-			branch = stmt->next;
-			while (branch != NULL &&
-			       (branch->type == AST_STMT_ELIF ||
-				branch->type == AST_STMT_ELSE)) {
-				if (branch->type == AST_STMT_ELIF)
-					all_return = all_return &&
-						hir_fast_stmt_list_returns(
-							branch->val.elif.stmt_list);
-				else {
-					has_else = true;
-					all_return = all_return &&
-						hir_fast_stmt_list_returns(
-							branch->val.else_.stmt_list);
-				}
-				branch = branch->next;
-			}
-			if (all_return && has_else) return true;
-		}
-		stmt = stmt->next;
-	}
-	return false;
+		 message != NULL ? message : "HIR compilation failed.");
 }
 
 static bool
@@ -873,17 +355,6 @@ hir_visit_func(
 	struct hir_block *end_block;
 	struct hir_block *cur_block;
 	struct hir_block *prev_block;
-
-	hir_current_is_accel = afunc->is_accel;
-	hir_current_func_kind = afunc->func_kind;
-	hir_fast_loop_depth = 0;
-	hir_fast_cond_depth = 0;
-	if (afunc->func_kind == NOCT_FUNC_FAST &&
-	    hir_is_fast_intrinsic_name(afunc->name)) {
-		hir_fatal(0,
-			  N_TR("A compiler-owned __fast intrinsic name cannot be redeclared."));
-		return false;
-	}
 
 	/* Check maximum functions. */
 	if (hir_func_count >= HIR_FUNC_MAX) {
@@ -898,12 +369,6 @@ hir_visit_func(
 		return false;
 	}
 	memset(func_block, 0, sizeof(struct hir_block));
-	func_block->val.func.fast_signature =
-		hir_malloc(sizeof(*func_block->val.func.fast_signature));
-	if (func_block->val.func.fast_signature == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
 	func_block->id = block_id_top++;
 	func_block->type = HIR_BLOCK_FUNC;
 	func_block->val.func.file_name = hir_strdup(hir_file_name);
@@ -911,8 +376,6 @@ hir_visit_func(
 		hir_out_of_memory();
 		return false;
 	}
-	hir_current_func_block = func_block;
-
 	do {
 		/* Set a func name. */
 		func_block->val.func.name = hir_strdup(afunc->name);
@@ -922,8 +385,6 @@ hir_visit_func(
 		}
 		func_block->val.func.is_static = afunc->is_static;
 		func_block->val.func.is_inline = afunc->is_inline;
-		func_block->val.func.is_accel = afunc->is_accel;
-		func_block->val.func.func_kind = afunc->func_kind;
 
 		/* Parse the parameters. */
 		if (!hir_visit_param_list(func_block, afunc))
@@ -933,82 +394,15 @@ hir_visit_func(
 		   alias contract and is meaningless on a returned value. */
 		{
 			bool return_restricted;
-			char return_base[64];
-			const char *return_annotation;
-			bool return_has_shape;
 
-			return_annotation = afunc->return_type_name;
-			if (return_annotation != NULL &&
-			    strchr(return_annotation, '(') != NULL) {
-				if (!fast_annotation_base(return_annotation, return_base,
-							 sizeof(return_base),
-							 &return_has_shape)) {
-					hir_fatal(0, N_TR("Invalid return type shape."));
-					break;
-				}
-				return_annotation = return_base;
-			}
 			if (!hir_check_type_annotation(0,
-					       return_annotation,
+					       afunc->return_type_name,
 					       &func_block->val.func.return_type,
 					       &func_block->val.func.return_packed_type,
 					       &return_restricted))
 				break;
 			if (return_restricted) {
 				hir_fatal(0, N_TR("A restricted packed type is only valid for a parameter."));
-				break;
-			}
-			if ((afunc->func_kind == NOCT_FUNC_ACCEL ||
-			     afunc->func_kind == NOCT_FUNC_GPU) &&
-			    func_block->val.func.return_type != HIR_TYPE_VOID) {
-				hir_fatal(0, afunc->func_kind == NOCT_FUNC_ACCEL ?
-					  N_TR("An accelerator function must declare a void return type.") :
-					  N_TR("A GPU function must declare a void return type."));
-				break;
-			}
-		}
-		if (afunc->func_kind == NOCT_FUNC_FAST &&
-		    func_block->val.func.return_type != HIR_TYPE_VOID &&
-		    !hir_fast_stmt_list_returns(afunc->stmt_list)) {
-			hir_fatal(0,
-				  N_TR("Every reachable path of a non-void __fast func must return a value."));
-			break;
-		}
-
-		/* Build the mandatory __fast signature after every parameter
-		   name and scalar type is known. */
-		{
-			const char *annotation[HIR_PARAM_SIZE];
-			const char *name[HIR_PARAM_SIZE];
-			struct ast_param *param;
-			uint32_t i;
-			char message[256];
-
-			for (i = 0; i < HIR_PARAM_SIZE; i++) {
-				annotation[i] = NULL;
-				name[i] = NULL;
-			}
-			param = afunc->param_list != NULL ?
-				afunc->param_list->list : NULL;
-			i = 0;
-			while (param != NULL && i < HIR_PARAM_SIZE) {
-				annotation[i] = param->type_name;
-				name[i] = func_block->val.func.param_name[i];
-				param = param->next;
-				i++;
-			}
-			if (!fast_signature_build(
-				    func_block->val.func.fast_signature,
-				    afunc->func_kind,
-				    func_block->val.func.param_count,
-				    name, annotation,
-				    func_block->val.func.param_type,
-				    func_block->val.func.param_packed_type,
-				    func_block->val.func.param_restricted,
-				    afunc->return_type_name,
-				    func_block->val.func.return_type,
-				    message, sizeof(message))) {
-				hir_fatal(0, message);
 				break;
 			}
 		}
@@ -1036,18 +430,14 @@ hir_visit_func(
 			   hir_visit_param_list, so the local list holds
 			   exactly the params at this point). */
 			struct hir_local *plocal;
-			struct hir_scope_entry *pentry;
 			bool param_ok;
 			param_ok = true;
 			plocal = func_block->val.func.local;
 			while (plocal != NULL) {
-				if (!hir_scope_add_entry(0,
-							 plocal->symbol,
-							 true, false, &pentry)) {
+				if (!hir_scope_add_param(0, plocal->symbol)) {
 					param_ok = false;
 					break;
 				}
-				pentry->int_name = pentry->src_name;
 				plocal = plocal->next;
 			}
 			if (!param_ok)
@@ -1082,15 +472,6 @@ hir_visit_func(
 
 		/* End the function scope. */
 		hir_scope_pop();
-
-		if (afunc->func_kind == NOCT_FUNC_GPU) {
-			char gpu_error[256];
-			if (!hir_gpu_build_kernel(func_block, afunc, gpu_error,
-						  sizeof(gpu_error))) {
-				hir_fatal(hir_error_line, gpu_error);
-				break;
-			}
-		}
 
 		/* Store func_block to the table. */
 		hir_func_tbl[hir_func_count] = func_block;
@@ -1301,9 +682,6 @@ hir_visit_stmt(
 	assert(parent_block != NULL);
 	assert(cur_astmt != NULL);
 
-	/* For scope-resolution error messages. */
-	hir_scope_line = cur_astmt->line;
-
 	hir_error_line = cur_astmt->line;
 
 	switch (cur_astmt->type) {
@@ -1432,6 +810,7 @@ hir_visit_assign_stmt(
 		struct ast_expr *alhs;
 		struct hir_term *lhs_term;
 		struct hir_expr *lhs_expr;
+		struct hir_scope_decl *scope_decl;
 		const char *src_name;
 		const char *int_name;
 		int anno_tag;
@@ -1449,41 +828,8 @@ hir_visit_assign_stmt(
 			return false;
 		}
 		src_name = alhs->val.term.term->val.symbol;
-		if (hir_current_func_kind == NOCT_FUNC_GPU &&
-		    strcmp(src_name, "Accel") == 0) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("'Accel' is a reserved name inside __gpu func."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
 
 		/* Validate the optional type annotation (hint only). */
-		if (hir_current_func_kind == NOCT_FUNC_FAST &&
-		    cur_astmt->val.assign.type_name == NULL) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("Every explicit __fast local requires a type annotation."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
-		if (hir_current_func_kind == NOCT_FUNC_FAST &&
-		    cur_astmt->val.assign.type_name != NULL &&
-		    strchr(cur_astmt->val.assign.type_name, '(') != NULL) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("A __fast local must have a primitive type."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
-		if (hir_current_func_kind == NOCT_FUNC_FAST &&
-		    cur_astmt->val.assign.type_name != NULL &&
-		    strcmp(cur_astmt->val.assign.type_name, "int") != 0 &&
-		    strcmp(cur_astmt->val.assign.type_name, "long") != 0 &&
-		    strcmp(cur_astmt->val.assign.type_name, "float") != 0 &&
-		    strcmp(cur_astmt->val.assign.type_name, "double") != 0) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("A __fast local type must be int, long, float, or double exactly."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
 		if (!hir_check_type_annotation(cur_astmt->line,
 					       cur_astmt->val.assign.type_name,
 					       &anno_tag,
@@ -1492,18 +838,9 @@ hir_visit_assign_stmt(
 			hir_free_stmt(hstmt);
 			return false;
 		}
-		if (hir_current_func_kind == NOCT_FUNC_FAST &&
-		    !(anno_tag == NOCT_VALUE_INT || anno_tag == NOCT_VALUE_LONG ||
-		      anno_tag == NOCT_VALUE_FLOAT || anno_tag == NOCT_VALUE_DOUBLE)) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("A __fast local type must be int, long, float, or double."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
-
 		if (!hir_scope_declare(cur_astmt->line, src_name,
 				       cur_astmt->val.assign.is_let,
-				       &int_name)) {
+				       &int_name, &scope_decl)) {
 			hir_free_stmt(hstmt);
 			return false;
 		}
@@ -1513,14 +850,7 @@ hir_visit_assign_stmt(
 			hir_free_stmt(hstmt);
 			return false;
 		}
-		if (hir_current_func_kind == NOCT_FUNC_FAST &&
-		    hir_fast_infer_expr_type(hstmt->rhs) != anno_tag) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("A __fast local initializer must exactly match its declared type."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
-		hir_scope_mark_declared(src_name);
+		hir_scope_mark_declared(scope_decl);
 
 		/* Build the LHS term with the internal name. */
 		lhs_term = hir_malloc(sizeof(struct hir_term));
@@ -1596,8 +926,8 @@ hir_visit_assign_stmt(
 	/* Reject assignment to a let binding. */
 	if (hstmt->lhs->type == HIR_EXPR_TERM &&
 	    hstmt->lhs->val.term.term->type == HIR_TERM_SYMBOL) {
-		if (!hir_scope_check_let_assign(cur_astmt->line,
-						hstmt->lhs->val.term.term->val.symbol)) {
+		if (!hir_scope_check_assign(cur_astmt->line,
+					    hstmt->lhs->val.term.term->val.symbol)) {
 			hir_free_stmt(hstmt);
 			return false;
 		}
@@ -1608,19 +938,6 @@ hir_visit_assign_stmt(
 		hir_free_stmt(hstmt);
 		return false;
 	}
-	if (hir_current_func_kind == NOCT_FUNC_FAST) {
-		int lhs_type;
-		int rhs_type;
-		lhs_type = hir_fast_infer_expr_type(hstmt->lhs);
-		rhs_type = hir_fast_infer_expr_type(hstmt->rhs);
-		if (lhs_type < 0 || rhs_type < 0 || lhs_type != rhs_type) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("A __fast assignment requires exactly matching primitive types."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
-	}
-
 	/* Add hstmt to the end of the block. */
 	HIR_ADD_TO_LAST(struct hir_stmt, (*cur_block)->val.basic.stmt_list, hstmt);
 
@@ -1863,18 +1180,15 @@ hir_visit_if_stmt(
 	if (!hir_scope_push(cur_astmt->val.if_.stmt_list))
 		return false;
 	if (cur_astmt->val.if_.stmt_list != NULL) {
-		if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth++;
 		inner_cur_block = if_block->val.if_.inner;
 		inner_prev_block = NULL;
 		if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
 					 &inner_prev_block,	/* prev_block */
 					 if_block,		/* parent_block */
 					 cur_astmt->val.if_.stmt_list)) {
-			if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth--;
 			hir_free_block(if_block);
 			return false;
 		}
-		if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth--;
 	}
 
 	/* End the block scope. */
@@ -1969,18 +1283,15 @@ hir_visit_elif_stmt(
 	if (!hir_scope_push(cur_astmt->val.elif.stmt_list))
 		return false;
 	if (cur_astmt->val.elif.stmt_list != NULL) {
-		if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth++;
 		inner_cur_block = elif_block->val.if_.inner;
 		inner_prev_block = NULL;
 		if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
 					 &inner_prev_block,	/* prev_block */
 					 elif_block,		/* parent_block */
 					 cur_astmt->val.elif.stmt_list)) {
-			if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth--;
 			hir_free_block(elif_block);
 			return false;
 		}
-		if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth--;
 	}
 
 	/* End the block scope. */
@@ -2062,18 +1373,15 @@ hir_visit_else_stmt(
 	if (!hir_scope_push(cur_astmt->val.else_.stmt_list))
 		return false;
 	if (cur_astmt->val.else_.stmt_list != NULL) {
-		if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth++;
 		inner_cur_block = else_block->val.if_.inner;
 		inner_prev_block = NULL;
 		if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
 					 &inner_prev_block,	/* prev_block */
 					 else_block,		/* parent_block */
 					 cur_astmt->val.else_.stmt_list)) {
-			if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth--;
 			hir_free_block(else_block);
 			return false;
 		}
-		if (hir_current_func_kind == NOCT_FUNC_FAST) hir_fast_cond_depth--;
 	}
 
 	/* End the block scope. */
@@ -2295,15 +1603,16 @@ hir_visit_for_stmt(
 		fields[2] = &for_block->val.for_.value_symbol;
 		(void)empty;
 		for (k = 0; k < 3; k++) {
+			struct hir_scope_decl *scope_decl;
 			const char *iname;
 			if (names[k] == NULL)
 				continue;
 			if (!hir_scope_declare(cur_astmt->line, names[k],
-					       false, &iname)) {
+					       false, &iname, &scope_decl)) {
 				hir_free_block(for_block);
 				return false;
 			}
-			hir_scope_mark_declared(names[k]);
+			hir_scope_mark_declared(scope_decl);
 			*fields[k] = hir_strdup(iname);
 			if (*fields[k] == NULL) {
 				hir_out_of_memory();
@@ -2313,38 +1622,13 @@ hir_visit_for_stmt(
 				return false;
 			hir_set_local_declaration(*cur_block, *fields[k],
 						  HIR_LOCAL_DECL_LOOP_COUNTER,
-						  hir_current_func_kind == NOCT_FUNC_FAST &&
-						  k == 0 && for_block->val.for_.is_ranged ?
-							NOCT_VALUE_INT : -1,
-						  hir_current_func_kind == NOCT_FUNC_FAST &&
-						  k == 0 && for_block->val.for_.is_ranged ?
-							HIR_DECL_SCALAR_INT32 :
-							HIR_DECL_SCALAR_UNKNOWN,
+						  -1,
+						  HIR_DECL_SCALAR_UNKNOWN,
 						  -1,
 						  HIR_LOCAL_STORAGE_SCALAR,
 						  cur_astmt->line,
 						  NULL,
 						  NULL);
-		}
-	}
-
-	/* Make a literal ranged-for domain available to mandatory fast
-	   bounds diagnostics while its body is constructed. */
-	if (hir_current_func_kind == NOCT_FUNC_FAST &&
-	    cur_astmt->val.for_.counter_symbol != NULL &&
-	    hir_fast_loop_depth < HIR_FAST_LOOP_MAX) {
-		int64_t start;
-		int64_t stop;
-		struct hir_fast_loop_domain *domain;
-		domain = &hir_fast_loop[hir_fast_loop_depth++];
-		domain->counter = cur_astmt->val.for_.counter_symbol;
-		domain->known = hir_fast_ast_constant(cur_astmt->val.for_.start,
-						      &start) &&
-				hir_fast_ast_constant(cur_astmt->val.for_.stop,
-						      &stop) && stop > start;
-		if (domain->known) {
-			domain->lower = start;
-			domain->upper = stop - 1;
 		}
 	}
 
@@ -2355,17 +1639,9 @@ hir_visit_for_stmt(
 				 &inner_prev_block,	/* prev_block */
 				 for_block,		/* parent_block */
 				 cur_astmt->val.for_.stmt_list)) {
-		if (hir_current_func_kind == NOCT_FUNC_FAST &&
-		    cur_astmt->val.for_.counter_symbol != NULL &&
-		    hir_fast_loop_depth > 0)
-			hir_fast_loop_depth--;
 		hir_free_block(for_block);
 		return false;
 	}
-	if (hir_current_func_kind == NOCT_FUNC_FAST &&
-	    cur_astmt->val.for_.counter_symbol != NULL &&
-	    hir_fast_loop_depth > 0)
-		hir_fast_loop_depth--;
 
 	/* End the loop-body scope. */
 	hir_scope_pop();
@@ -2437,176 +1713,11 @@ hir_visit_return_stmt(
 		hir_free_stmt(hstmt);
 		return false;
 	}
-	if (hir_current_func_kind == NOCT_FUNC_FAST &&
-	    hir_current_func_block != NULL) {
-		int declared_return;
-		declared_return = hir_current_func_block->val.func.return_type;
-		if ((hstmt->is_bare_return && declared_return != HIR_TYPE_VOID) ||
-		    (!hstmt->is_bare_return &&
-		     hir_fast_infer_expr_type(hstmt->rhs) != declared_return)) {
-			hir_fatal(cur_astmt->line,
-				  N_TR("A __fast return value must exactly match the declared return type."));
-			hir_free_stmt(hstmt);
-			return false;
-		}
-	}
-
 	/* Add hstmt to the end of the block. */
 	HIR_ADD_TO_LAST(struct hir_stmt, (*cur_block)->val.basic.stmt_list, hstmt);
 
 	/* Continue on the same basic block. */
 
-	return true;
-}
-
-static const struct fast_param_contract *
-hir_fast_subscript_contract(const struct ast_expr *base)
-{
-	const char *symbol;
-	uint32_t i;
-
-	if (hir_current_func_kind != NOCT_FUNC_FAST ||
-	    hir_current_func_block == NULL || base == NULL ||
-	    base->type != AST_EXPR_TERM || base->val.term.term == NULL ||
-	    base->val.term.term->type != AST_TERM_SYMBOL)
-		return NULL;
-	symbol = base->val.term.term->val.symbol;
-	for (i = 0; i < hir_current_func_block->val.func.param_count; i++) {
-		if (strcmp(symbol,
-		    hir_current_func_block->val.func.param_name[i]) == 0 &&
-		    hir_current_func_block->val.func.fast_signature->param[i].rank > 0)
-			return &hir_current_func_block->val.func.fast_signature->param[i];
-	}
-	return NULL;
-}
-
-static bool
-hir_fast_ast_constant(const struct ast_expr *expr, int64_t *value)
-{
-	if (expr == NULL) return false;
-	if (expr->type == AST_EXPR_PAR)
-		return hir_fast_ast_constant(expr->val.par.expr, value);
-	if (expr->type == AST_EXPR_TERM && expr->val.term.term != NULL) {
-		if (expr->val.term.term->type == AST_TERM_INT) {
-			*value = expr->val.term.term->val.i;
-			return true;
-		}
-		if (expr->val.term.term->type == AST_TERM_LONG) {
-			*value = expr->val.term.term->val.l;
-			return true;
-		}
-	}
-	if (expr->type == AST_EXPR_NEG) {
-		int64_t inner;
-		if (hir_fast_ast_constant(expr->val.unary.expr, &inner) &&
-		    inner != INT64_MIN) {
-			*value = -inner;
-			return true;
-		}
-	}
-	return false;
-}
-
-static bool
-hir_fast_index_interval(const struct ast_expr *expr, int64_t *lower,
-			int64_t *upper)
-{
-	int i;
-	int64_t constant;
-
-	if (hir_fast_ast_constant(expr, &constant)) {
-		*lower = constant;
-		*upper = constant;
-		return true;
-	}
-	if (expr != NULL && expr->type == AST_EXPR_TERM &&
-	    expr->val.term.term != NULL &&
-	    expr->val.term.term->type == AST_TERM_SYMBOL) {
-		for (i = hir_fast_loop_depth - 1; i >= 0; i--) {
-			if (hir_fast_loop[i].counter != NULL &&
-			    strcmp(hir_fast_loop[i].counter,
-				   expr->val.term.term->val.symbol) == 0 &&
-			    hir_fast_loop[i].known) {
-				*lower = hir_fast_loop[i].lower;
-				*upper = hir_fast_loop[i].upper;
-				return true;
-			}
-		}
-	}
-	if (expr != NULL &&
-	    (expr->type == AST_EXPR_PLUS || expr->type == AST_EXPR_MINUS)) {
-		int64_t lo;
-		int64_t hi;
-		int64_t c;
-		if (hir_fast_index_interval(expr->val.binary.expr[0], &lo, &hi) &&
-		    hir_fast_ast_constant(expr->val.binary.expr[1], &c)) {
-			if (expr->type == AST_EXPR_MINUS) {
-				if (c == INT64_MIN) return false;
-				c = -c;
-			}
-			if ((c > 0 && hi > INT64_MAX - c) ||
-			    (c < 0 && lo < INT64_MIN - c)) return false;
-			*lower = lo + c;
-			*upper = hi + c;
-			return true;
-		}
-		if (expr->type == AST_EXPR_PLUS &&
-		    hir_fast_ast_constant(expr->val.binary.expr[0], &c) &&
-		    hir_fast_index_interval(expr->val.binary.expr[1], &lo, &hi)) {
-			if ((c > 0 && hi > INT64_MAX - c) ||
-			    (c < 0 && lo < INT64_MIN - c)) return false;
-			*lower = lo + c;
-			*upper = hi + c;
-			return true;
-		}
-	}
-	return false;
-}
-
-static bool
-hir_fast_check_subscript(const struct ast_expr *expr)
-{
-	const struct fast_param_contract *contract;
-	const struct ast_expr *index;
-	uint32_t count;
-	uint32_t axis;
-
-	contract = hir_fast_subscript_contract(expr->val.binary.expr[0]);
-	if (contract == NULL) {
-		hir_fatal(hir_error_line,
-			  N_TR("A __fast subscript base must be a shaped rpacked parameter."));
-		return false;
-	}
-	if (expr->val.binary.expr[1]->type == AST_EXPR_ARRAY) {
-		index = expr->val.binary.expr[1]->val.array.elem_list != NULL ?
-			expr->val.binary.expr[1]->val.array.elem_list->list : NULL;
-		count = 0;
-		while (index != NULL) { count++; index = index->next; }
-		index = expr->val.binary.expr[1]->val.array.elem_list->list;
-	} else {
-		index = expr->val.binary.expr[1];
-		count = 1;
-	}
-	if ((int)count != contract->rank) {
-		hir_fatal(hir_error_line,
-			  N_TR("The number of indices does not match the __fast parameter rank."));
-		return false;
-	}
-	for (axis = 0; axis < count; axis++) {
-		int64_t lower;
-		int64_t upper;
-		const struct fast_extent *extent;
-		extent = &contract->extent[axis];
-		if (hir_fast_cond_depth == 0 &&
-		    extent->kind == FAST_EXTENT_CONST &&
-		    hir_fast_index_interval(index, &lower, &upper) &&
-		    (lower < 0 || upper >= extent->constant)) {
-			hir_fatal(hir_error_line,
-				  N_TR("A __fast packed access is provably out of bounds."));
-			return false;
-		}
-		if (count > 1) index = index->next;
-	}
 	return true;
 }
 
@@ -2682,43 +1793,7 @@ hir_visit_expr(
 		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_SHR);
 		break;
 	case AST_EXPR_SUBSCR:
-		if (hir_current_func_kind == NOCT_FUNC_FAST &&
-		    !hir_fast_check_subscript(aexpr)) {
-			result = false;
-			break;
-		}
-		if (aexpr->val.binary.expr[1] != NULL &&
-		    aexpr->val.binary.expr[1]->type == AST_EXPR_ARRAY) {
-			result = hir_visit_fast_multi_subscr(hexpr, aexpr);
-			break;
-		}
-		if (aexpr->val.binary.expr[0] != NULL &&
-		    aexpr->val.binary.expr[0]->type == AST_EXPR_TERM &&
-		    aexpr->val.binary.expr[0]->val.term.term != NULL &&
-		    aexpr->val.binary.expr[0]->val.term.term->type == AST_TERM_SYMBOL &&
-		    ast_is_accel_resource_symbol(
-			aexpr->val.binary.expr[0]->val.term.term->val.symbol)) {
-			if (hir_current_func_kind == NOCT_FUNC_NORMAL)
-				hir_fatal(hir_error_line,
-					  N_TR("Accelerator resources cannot be subscripted by host code."));
-			else
-				hir_fatal(hir_error_line,
-					  N_TR("An __accel resource must be passed through a _ptr parameter before kernel access."));
-			result = false;
-			break;
-		}
 		result = hir_visit_binary_expr(hexpr, aexpr, HIR_EXPR_SUBSCR);
-		if (result && hir_current_func_kind == NOCT_FUNC_FAST) {
-			int index_type;
-			index_type = hir_fast_infer_expr_type(
-				(*hexpr)->val.binary.expr[1]);
-			if (index_type != NOCT_VALUE_INT &&
-			    index_type != NOCT_VALUE_LONG) {
-				hir_fatal(hir_error_line,
-					  N_TR("A __fast array index must be int or long."));
-				result = false;
-			}
-		}
 		break;
 	case AST_EXPR_NEG:
 		result = hir_visit_unary_expr(hexpr, aexpr, HIR_EXPR_NEG);
@@ -2730,34 +1805,9 @@ hir_visit_expr(
 		result = hir_visit_unary_expr(hexpr, aexpr, HIR_EXPR_PAR);
 		break;
 	case AST_EXPR_DOT:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("Object and package member access is not allowed inside __fast func."));
-			result = false;
-			break;
-		}
 		result = hir_visit_dot_expr(hexpr, aexpr);
 		break;
 	case AST_EXPR_CALL:
-	{
-		const struct accel_op_desc *math_op;
-		math_op = hir_ast_accel_math(aexpr);
-		if (hir_ast_accel_float32_bits_call(aexpr) &&
-		    hir_current_func_kind != NOCT_FUNC_GPU) {
-			hir_fatal(hir_error_line,
-				  N_TR("Accel.float32FromBits() is valid only inside __gpu func."));
-			result = false;
-			break;
-		}
-		if (math_op != NULL && hir_current_func_kind != NOCT_FUNC_GPU) {
-			char msg[256];
-			snprintf(msg, sizeof(msg),
-				 N_TR("GPU math operation '%s' is valid only inside __gpu func."),
-				 math_op->source_spelling);
-			hir_fatal(hir_error_line, msg);
-			result = false;
-			break;
-		}
 		if (aexpr->val.call.func != NULL &&
 		    aexpr->val.call.func->type == AST_EXPR_DOT &&
 		    !(aexpr->val.call.func->val.dot.obj->type == AST_EXPR_TERM &&
@@ -2771,41 +1821,16 @@ hir_visit_expr(
 		else
 			result = hir_visit_call_expr(hexpr, aexpr);
 		break;
-	}
 	case AST_EXPR_ARRAY:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("Array literals are not allowed inside __fast func."));
-			result = false;
-			break;
-		}
 		result = hir_visit_array_expr(hexpr, aexpr);
 		break;
 	case AST_EXPR_DICT:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("Dictionary literals are not allowed inside __fast func."));
-			result = false;
-			break;
-		}
 		result = hir_visit_dict_expr(hexpr, aexpr);
 		break;
 	case AST_EXPR_FUNC:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("Lambda expressions are not allowed inside __fast func."));
-			result = false;
-			break;
-		}
 		result = hir_visit_func_expr(hexpr, aexpr);
 		break;
 	case AST_EXPR_NEW:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("Object construction is not allowed inside __fast func."));
-			result = false;
-			break;
-		}
 		result = hir_visit_new_expr(hexpr, aexpr);
 		break;
 	default:
@@ -2887,262 +1912,6 @@ hir_visit_binary_expr(
 	return true;
 }
 
-static struct hir_expr *
-hir_fast_term_symbol(const char *symbol)
-{
-	struct hir_expr *expr;
-	struct hir_term *term;
-
-	expr = hir_malloc(sizeof(*expr));
-	term = hir_malloc(sizeof(*term));
-	if (expr == NULL || term == NULL) {
-		hir_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(*expr));
-	memset(term, 0, sizeof(*term));
-	expr->type = HIR_EXPR_TERM;
-	expr->val.term.term = term;
-	term->type = HIR_TERM_SYMBOL;
-	term->val.symbol = hir_strdup(symbol);
-	if (term->val.symbol == NULL) {
-		hir_out_of_memory();
-		return NULL;
-	}
-	return expr;
-}
-
-static struct hir_expr *
-hir_fast_extent_expr(const struct fast_extent *extent)
-{
-	struct hir_expr *expr;
-	struct hir_term *term;
-
-	if (extent->kind == FAST_EXTENT_PARAM) {
-		if (hir_current_func_block == NULL || extent->param_index < 0 ||
-		    (uint32_t)extent->param_index >=
-			hir_current_func_block->val.func.param_count)
-			return NULL;
-		return hir_fast_term_symbol(
-			hir_current_func_block->val.func.param_name[extent->param_index]);
-	}
-	expr = hir_malloc(sizeof(*expr));
-	term = hir_malloc(sizeof(*term));
-	if (expr == NULL || term == NULL) {
-		hir_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(*expr));
-	memset(term, 0, sizeof(*term));
-	expr->type = HIR_EXPR_TERM;
-	expr->val.term.term = term;
-	if (extent->constant <= INT_MAX) {
-		term->type = HIR_TERM_INT;
-		term->val.i = (int)extent->constant;
-	} else {
-		term->type = HIR_TERM_LONG;
-		term->val.l = extent->constant;
-	}
-	return expr;
-}
-
-static struct hir_expr *
-hir_fast_binary_expr(int type, struct hir_expr *left, struct hir_expr *right)
-{
-	struct hir_expr *expr;
-
-	if (left == NULL || right == NULL)
-		return NULL;
-	expr = hir_malloc(sizeof(*expr));
-	if (expr == NULL) {
-		hir_out_of_memory();
-		return NULL;
-	}
-	memset(expr, 0, sizeof(*expr));
-	expr->type = type;
-	expr->val.binary.expr[0] = left;
-	expr->val.binary.expr[1] = right;
-	return expr;
-}
-
-static bool
-hir_fast_multi_index_proven(const struct ast_expr *array,
-			    const struct fast_param_contract *contract)
-{
-	const struct ast_expr *index;
-	int64_t elements;
-	int axis;
-
-	if (hir_fast_cond_depth != 0 || array == NULL ||
-	    array->val.array.elem_list == NULL)
-		return false;
-	elements = 1;
-	index = array->val.array.elem_list->list;
-	for (axis = 0; axis < contract->rank; axis++) {
-		int64_t lower;
-		int64_t upper;
-		const struct fast_extent *extent;
-		extent = &contract->extent[axis];
-		if (index == NULL || extent->kind != FAST_EXTENT_CONST ||
-		    extent->constant > INT_MAX ||
-		    elements > INT_MAX / extent->constant ||
-		    !hir_fast_index_interval(index, &lower, &upper) ||
-		    lower < 0 || upper >= extent->constant)
-			return false;
-		elements *= extent->constant;
-		index = index->next;
-	}
-	return index == NULL;
-}
-
-static bool
-hir_fast_lower_proven_multi_subscr(struct hir_expr **hexpr,
-				   struct ast_expr *base,
-				   struct ast_expr *array,
-				   const struct fast_param_contract *contract)
-{
-	struct hir_expr *subscr;
-	struct hir_expr *flat;
-	struct ast_expr *index;
-	int axis;
-
-	subscr = hir_malloc(sizeof(*subscr));
-	if (subscr == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	memset(subscr, 0, sizeof(*subscr));
-	subscr->type = HIR_EXPR_SUBSCR;
-	if (!hir_visit_expr(&subscr->val.binary.expr[0], base))
-		return false;
-	index = array->val.array.elem_list->list;
-	flat = NULL;
-	if (!hir_visit_expr(&flat, index))
-		return false;
-	index = index->next;
-	for (axis = 1; axis < contract->rank; axis++) {
-		struct hir_expr *extent;
-		struct hir_expr *next_index;
-		extent = hir_fast_extent_expr(&contract->extent[axis]);
-		next_index = NULL;
-		if (!hir_visit_expr(&next_index, index))
-			return false;
-		flat = hir_fast_binary_expr(HIR_EXPR_MUL, flat, extent);
-		flat = hir_fast_binary_expr(HIR_EXPR_PLUS, flat, next_index);
-		if (flat == NULL)
-			return false;
-		index = index->next;
-	}
-	subscr->val.binary.expr[1] = flat;
-	*hexpr = subscr;
-	return true;
-}
-
-/* Lower a source multi-index to an internal checked row-major helper call. */
-static bool
-hir_visit_fast_multi_subscr(struct hir_expr **hexpr, struct ast_expr *aexpr)
-{
-	struct ast_expr *base;
-	struct ast_expr *array;
-	struct ast_expr *index;
-	struct hir_expr *subscr;
-	struct hir_expr *call;
-	struct hir_expr *dot;
-	const struct fast_param_contract *contract;
-	const char *symbol;
-	char helper[32];
-	uint32_t param;
-	uint32_t count;
-	uint32_t axis;
-
-	base = aexpr->val.binary.expr[0];
-	array = aexpr->val.binary.expr[1];
-	if (hir_current_func_kind != NOCT_FUNC_FAST) {
-		hir_fatal(hir_error_line,
-			  N_TR("Multi-dimensional subscripting is valid only inside __fast func."));
-		return false;
-	}
-	if (base == NULL || base->type != AST_EXPR_TERM ||
-	    base->val.term.term == NULL ||
-	    base->val.term.term->type != AST_TERM_SYMBOL ||
-	    hir_current_func_block == NULL) {
-		hir_fatal(hir_error_line,
-			  N_TR("A multi-dimensional subscript base must be a shaped __fast parameter."));
-		return false;
-	}
-	symbol = base->val.term.term->val.symbol;
-	for (param = 0; param < hir_current_func_block->val.func.param_count;
-	     param++) {
-		if (strcmp(symbol,
-		    hir_current_func_block->val.func.param_name[param]) == 0)
-			break;
-	}
-	if (param == hir_current_func_block->val.func.param_count) {
-		hir_fatal(hir_error_line,
-			  N_TR("A multi-dimensional subscript base must be a shaped __fast parameter."));
-		return false;
-	}
-	contract = &hir_current_func_block->val.func.fast_signature->param[param];
-	count = 0;
-	index = array->val.array.elem_list != NULL ?
-		array->val.array.elem_list->list : NULL;
-	while (index != NULL) { count++; index = index->next; }
-	if ((int)count != contract->rank) {
-		hir_fatal(hir_error_line,
-			  N_TR("The number of indices does not match the __fast parameter rank."));
-		return false;
-	}
-	/* Exact constant shapes with statically bounded axes need no helper.
-	 * Preserve the row-major expression so ABCE/SIMD can see the contiguous
-	 * final axis. */
-	if (hir_fast_multi_index_proven(array, contract))
-		return hir_fast_lower_proven_multi_subscr(
-			hexpr, base, array, contract);
-	subscr = hir_malloc(sizeof(*subscr));
-	call = hir_malloc(sizeof(*call));
-	dot = hir_malloc(sizeof(*dot));
-	if (subscr == NULL || call == NULL || dot == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	memset(subscr, 0, sizeof(*subscr));
-	memset(call, 0, sizeof(*call));
-	memset(dot, 0, sizeof(*dot));
-	subscr->type = HIR_EXPR_SUBSCR;
-	call->type = HIR_EXPR_CALL;
-	dot->type = HIR_EXPR_DOT;
-	if (!hir_visit_expr(&subscr->val.binary.expr[0], base))
-		return false;
-	snprintf(helper, sizeof(helper), "index%u", count);
-	dot->val.dot.obj = hir_fast_term_symbol("$Fast");
-	dot->val.dot.symbol = hir_strdup(helper);
-	if (dot->val.dot.obj == NULL || dot->val.dot.symbol == NULL)
-		return false;
-	call->val.call.func = dot;
-	call->val.call.arg_count = count * 2;
-	index = array->val.array.elem_list->list;
-	for (axis = 0; axis < count; axis++) {
-		if (!hir_visit_expr(&call->val.call.arg[axis * 2], index))
-			return false;
-		if (hir_fast_infer_expr_type(call->val.call.arg[axis * 2]) !=
-			NOCT_VALUE_INT &&
-		    hir_fast_infer_expr_type(call->val.call.arg[axis * 2]) !=
-			NOCT_VALUE_LONG) {
-			hir_fatal(hir_error_line,
-				  N_TR("A __fast array index must be int or long."));
-			return false;
-		}
-		call->val.call.arg[axis * 2 + 1] =
-			hir_fast_extent_expr(&contract->extent[axis]);
-		if (call->val.call.arg[axis * 2 + 1] == NULL)
-			return false;
-		index = index->next;
-	}
-	subscr->val.binary.expr[1] = call;
-	*hexpr = subscr;
-	return true;
-}
-
 /* Visit an AST unary-op expr. */
 static bool
 hir_visit_unary_expr(
@@ -3186,27 +1955,11 @@ hir_visit_dot_expr(
 	struct ast_expr *aexpr)
 {
 	struct hir_expr *e;
-	const struct accel_op_desc *math_op;
-	char msg[256];
 
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
 	assert(aexpr != NULL);
 	assert(aexpr->type == AST_EXPR_DOT);
-
-	math_op = hir_ast_accel_math_property(aexpr);
-	if (hir_ast_accel_float32_bits_property(aexpr)) {
-		hir_fatal(hir_error_line,
-			  N_TR("Accel.float32FromBits must be called directly inside __gpu func."));
-		return false;
-	}
-	if (math_op != NULL) {
-		snprintf(msg, sizeof(msg),
-			 N_TR("GPU math operation '%s' must be called directly inside __gpu func."),
-			 math_op->source_spelling);
-		hir_fatal(hir_error_line, msg);
-		return false;
-	}
 
 	/* Allocate an hexpr. */
 	e = hir_malloc(sizeof(struct hir_expr));
@@ -3235,348 +1988,6 @@ hir_visit_dot_expr(
 	return true;
 }
 
-static struct ast_func *
-hir_find_fast_ast_func(const char *source_name)
-{
-	struct ast_func_list *list;
-	struct ast_func *func;
-	const char *resolved;
-
-	resolved = ast_resolve_static_symbol(source_name);
-	list = ast_get_func_list();
-	func = list != NULL ? list->list : NULL;
-	while (func != NULL) {
-		if (func->func_kind == NOCT_FUNC_FAST &&
-		    (strcmp(func->name, source_name) == 0 ||
-		     strcmp(func->name, resolved) == 0))
-			return func;
-		func = func->next;
-	}
-	return NULL;
-}
-
-static bool
-hir_build_ast_fast_signature(struct ast_func *func,
-			     struct fast_signature *signature)
-{
-	const char *name[HIR_PARAM_SIZE];
-	const char *annotation[HIR_PARAM_SIZE];
-	int type[HIR_PARAM_SIZE];
-	int packed[HIR_PARAM_SIZE];
-	bool restricted[HIR_PARAM_SIZE];
-	struct ast_param *param;
-	uint32_t count;
-	int return_type;
-	int return_packed;
-	bool return_restricted;
-	char message[256];
-
-	count = 0;
-	param = func->param_list != NULL ? func->param_list->list : NULL;
-	while (param != NULL && count < HIR_PARAM_SIZE) {
-		char base[64];
-		bool has_shape;
-		name[count] = param->name;
-		annotation[count] = param->type_name;
-		if (param->type_name == NULL ||
-		    !fast_annotation_base(param->type_name, base, sizeof(base),
-					  &has_shape) ||
-		    !hir_resolve_type_name(base, &type[count], &packed[count],
-					   &restricted[count]))
-			return false;
-		count++;
-		param = param->next;
-	}
-	if (param != NULL || func->return_type_name == NULL ||
-	    !hir_resolve_type_name(func->return_type_name, &return_type,
-				   &return_packed, &return_restricted))
-		return false;
-	return fast_signature_build(signature, NOCT_FUNC_FAST, count, name,
-		annotation, type, packed, restricted, func->return_type_name,
-		return_type, message, sizeof(message));
-}
-
-void
-hir_fast_prototypes_reset(void)
-{
-	uint32_t i;
-
-	for (i = 0; i < hir_fast_prototype_count; i++) {
-		free(hir_fast_prototype[i].name);
-		hir_fast_prototype[i].name = NULL;
-	}
-	hir_fast_prototype_count = 0;
-}
-
-bool
-hir_fast_prototype_add(const char *name, int func_kind,
-		       const struct fast_signature *signature)
-{
-	uint32_t i;
-	struct hir_fast_prototype *prototype;
-
-	for (i = 0; i < hir_fast_prototype_count; i++) {
-		prototype = &hir_fast_prototype[i];
-		if (strcmp(prototype->name, name) != 0)
-			continue;
-		if (prototype->func_kind == NOCT_FUNC_FAST ||
-		    func_kind == NOCT_FUNC_FAST) {
-			if (prototype->func_kind != func_kind ||
-			    signature == NULL ||
-			    !fast_signature_equal(&prototype->signature, signature)) {
-				char message[256];
-				snprintf(message, sizeof(message),
-					 N_TR("Incompatible duplicate __fast prototype '%s'."),
-					 name);
-				hir_fatal(0, message);
-				return false;
-			}
-		}
-		return true;
-	}
-	if (hir_fast_prototype_count >= HIR_FAST_PROTOTYPE_MAX) {
-		hir_fatal(0, N_TR("Too many function prototypes in the require graph."));
-		return false;
-	}
-	prototype = &hir_fast_prototype[hir_fast_prototype_count];
-	prototype->name = malloc(strlen(name) + 1);
-	if (prototype->name == NULL) {
-		hir_fatal(0, N_TR("Out of memory while collecting __fast prototypes."));
-		return false;
-	}
-	strcpy(prototype->name, name);
-	prototype->func_kind = func_kind;
-	fast_signature_init(&prototype->signature);
-	if (func_kind == NOCT_FUNC_FAST && signature != NULL)
-		prototype->signature = *signature;
-	hir_fast_prototype_count++;
-	return true;
-}
-
-bool
-hir_fast_prototypes_collect(void)
-{
-	struct ast_func_list *list;
-	struct ast_func *func;
-
-	list = ast_get_func_list();
-	func = list != NULL ? list->list : NULL;
-	while (func != NULL) {
-		struct fast_signature signature;
-		const struct fast_signature *signature_ptr;
-
-		if (func->is_static) {
-			func = func->next;
-			continue;
-		}
-		signature_ptr = NULL;
-		if (func->func_kind == NOCT_FUNC_FAST) {
-			if (!hir_build_ast_fast_signature(func, &signature)) {
-				hir_fatal(0, N_TR("Invalid __fast prototype in required module."));
-				return false;
-			}
-			signature_ptr = &signature;
-		}
-		if (!hir_fast_prototype_add(func->name, func->func_kind,
-					    signature_ptr))
-			return false;
-		func = func->next;
-	}
-	return true;
-}
-
-const struct fast_signature *
-hir_fast_prototype_find(const char *name)
-{
-	uint32_t i;
-
-	for (i = 0; i < hir_fast_prototype_count; i++) {
-		if (hir_fast_prototype[i].func_kind == NOCT_FUNC_FAST &&
-		    strcmp(hir_fast_prototype[i].name, name) == 0)
-			return &hir_fast_prototype[i].signature;
-	}
-	return NULL;
-}
-
-static bool
-hir_is_fast_intrinsic_name(const char *name)
-{
-	static const char *const names[] = {
-		"min", "max", "abs", "sqrt", "sin", "cos", "tan",
-		"asin", "acos", "atan", "atan2", "exp", "ln", "log2",
-		"log10", "int", "long", "float", "double"
-	};
-	size_t i;
-
-	for (i = 0; i < sizeof(names) / sizeof(names[0]); i++)
-		if (strcmp(name, names[i]) == 0) return true;
-	return false;
-}
-
-static int
-hir_fast_packed_value_type(int packed_type)
-{
-	switch (packed_type) {
-	case NOCT_PACKED_INT64:
-	case NOCT_PACKED_UINT64:
-		return NOCT_VALUE_LONG;
-	case NOCT_PACKED_FLOAT32:
-		return NOCT_VALUE_FLOAT;
-	case NOCT_PACKED_FLOAT64:
-		return NOCT_VALUE_DOUBLE;
-	default:
-		return NOCT_VALUE_INT;
-	}
-}
-
-static int
-hir_fast_infer_expr_type(const struct hir_expr *expr)
-{
-	const struct hir_term *term;
-	struct hir_local *local;
-	int left;
-	int right;
-
-	if (expr == NULL) return NOCT_FAST_RETURN_VOID;
-	switch (expr->type) {
-	case HIR_EXPR_TERM:
-		term = expr->val.term.term;
-		switch (term->type) {
-		case HIR_TERM_INT: return NOCT_VALUE_INT;
-		case HIR_TERM_LONG: return NOCT_VALUE_LONG;
-		case HIR_TERM_FLOAT: return NOCT_VALUE_FLOAT;
-		case HIR_TERM_DOUBLE: return NOCT_VALUE_DOUBLE;
-		case HIR_TERM_SYMBOL:
-			local = hir_current_func_block != NULL ?
-				hir_current_func_block->val.func.local : NULL;
-			while (local != NULL) {
-				if (strcmp(local->symbol, term->val.symbol) == 0)
-					return local->declared_type;
-				local = local->next;
-			}
-			return -1;
-		default: return -1;
-		}
-	case HIR_EXPR_SUBSCR:
-		left = hir_fast_infer_expr_type(expr->val.binary.expr[0]);
-		if (left != NOCT_VALUE_PACKED) return -1;
-		if (expr->val.binary.expr[0]->type == HIR_EXPR_TERM) {
-			const char *name;
-			name = expr->val.binary.expr[0]->val.term.term->val.symbol;
-			local = hir_current_func_block->val.func.local;
-			while (local != NULL) {
-				if (strcmp(local->symbol, name) == 0)
-					return hir_fast_packed_value_type(
-						local->declared_packed_type);
-				local = local->next;
-			}
-		}
-		return -1;
-	case HIR_EXPR_NEG:
-	case HIR_EXPR_PAR:
-		return hir_fast_infer_expr_type(expr->val.unary.expr);
-	case HIR_EXPR_NOT:
-		return NOCT_VALUE_INT;
-	case HIR_EXPR_LT: case HIR_EXPR_LTE: case HIR_EXPR_GT:
-	case HIR_EXPR_GTE: case HIR_EXPR_EQ: case HIR_EXPR_NEQ:
-	case HIR_EXPR_LAND: case HIR_EXPR_LOR:
-		return NOCT_VALUE_INT;
-	case HIR_EXPR_PLUS: case HIR_EXPR_MINUS: case HIR_EXPR_MUL:
-	case HIR_EXPR_DIV: case HIR_EXPR_MOD: case HIR_EXPR_AND:
-	case HIR_EXPR_OR: case HIR_EXPR_XOR: case HIR_EXPR_SHL:
-	case HIR_EXPR_SHR:
-		left = hir_fast_infer_expr_type(expr->val.binary.expr[0]);
-		right = hir_fast_infer_expr_type(expr->val.binary.expr[1]);
-		return left == right ? left : -1;
-	case HIR_EXPR_CALL:
-		if (expr->val.call.func != NULL &&
-		    expr->val.call.func->type == HIR_EXPR_TERM &&
-		    expr->val.call.func->val.term.term->type == HIR_TERM_SYMBOL) {
-			struct ast_func *callee;
-			const struct fast_signature *prototype;
-			const char *annotation;
-			callee = hir_find_fast_ast_func(
-				expr->val.call.func->val.term.term->val.symbol);
-			prototype = hir_fast_prototype_find(
-				expr->val.call.func->val.term.term->val.symbol);
-			annotation = callee != NULL ? callee->return_type_name : NULL;
-			if (annotation != NULL) {
-				if (strcmp(annotation, "void") == 0) return HIR_TYPE_VOID;
-				if (strcmp(annotation, "int") == 0) return NOCT_VALUE_INT;
-				if (strcmp(annotation, "long") == 0) return NOCT_VALUE_LONG;
-				if (strcmp(annotation, "float") == 0) return NOCT_VALUE_FLOAT;
-				if (strcmp(annotation, "double") == 0) return NOCT_VALUE_DOUBLE;
-			}
-			if (prototype != NULL)
-				return prototype->return_type == NOCT_FAST_RETURN_VOID ?
-					HIR_TYPE_VOID : prototype->return_type;
-		}
-		if (expr->val.call.func != NULL &&
-		    expr->val.call.func->type == HIR_EXPR_DOT &&
-		    expr->val.call.func->val.dot.obj->type == HIR_EXPR_TERM) {
-			const char *pkg;
-			const char *name;
-			pkg = expr->val.call.func->val.dot.obj->val.term.term->val.symbol;
-			name = expr->val.call.func->val.dot.symbol;
-			if (strcmp(pkg, "$Fast") == 0) return NOCT_VALUE_LONG;
-			if (strcmp(pkg, "$FastMath") == 0) {
-				if (strcmp(name, "int") == 0) return NOCT_VALUE_INT;
-				if (strcmp(name, "long") == 0) return NOCT_VALUE_LONG;
-				if (strcmp(name, "float") == 0) return NOCT_VALUE_FLOAT;
-				if (strcmp(name, "double") == 0) return NOCT_VALUE_DOUBLE;
-				return expr->val.call.arg_count != 0 ?
-					hir_fast_infer_expr_type(expr->val.call.arg[0]) : -1;
-			}
-		}
-		return -1;
-	default:
-		return -1;
-	}
-}
-
-static bool
-hir_validate_fast_intrinsic(const char *name, struct hir_expr *call)
-{
-	uint32_t expected;
-	int first;
-	int second;
-	bool primitive;
-	bool floating;
-
-	expected = strcmp(name, "min") == 0 || strcmp(name, "max") == 0 ||
-		   strcmp(name, "atan2") == 0 ? 2 : 1;
-	if (call->val.call.arg_count != expected) {
-		hir_fatal(hir_error_line, N_TR("Wrong number of arguments for __fast intrinsic."));
-		return false;
-	}
-	first = hir_fast_infer_expr_type(call->val.call.arg[0]);
-	primitive = first == NOCT_VALUE_INT || first == NOCT_VALUE_LONG ||
-		    first == NOCT_VALUE_FLOAT || first == NOCT_VALUE_DOUBLE;
-	floating = first == NOCT_VALUE_FLOAT || first == NOCT_VALUE_DOUBLE;
-	if (!primitive) {
-		hir_fatal(hir_error_line, N_TR("A __fast intrinsic requires a statically typed numeric argument."));
-		return false;
-	}
-	if (expected == 2) {
-		second = hir_fast_infer_expr_type(call->val.call.arg[1]);
-		if (second != first) {
-			hir_fatal(hir_error_line, N_TR("A binary __fast intrinsic requires operands of the same type."));
-			return false;
-		}
-	}
-	if ((strcmp(name, "sqrt") == 0 || strcmp(name, "sin") == 0 ||
-	     strcmp(name, "cos") == 0 || strcmp(name, "tan") == 0 ||
-	     strcmp(name, "asin") == 0 || strcmp(name, "acos") == 0 ||
-	     strcmp(name, "atan") == 0 || strcmp(name, "atan2") == 0 ||
-	     strcmp(name, "exp") == 0 || strcmp(name, "ln") == 0 ||
-	     strcmp(name, "log2") == 0 || strcmp(name, "log10") == 0) &&
-	    !floating) {
-		hir_fatal(hir_error_line, N_TR("A transcendental __fast intrinsic requires float or double."));
-		return false;
-	}
-	return true;
-}
-
 /* Visit an AST call expr. */
 static bool
 hir_visit_call_expr(
@@ -3585,10 +1996,6 @@ hir_visit_call_expr(
 {
 	struct hir_expr *e;
 	struct ast_expr *arg;
-	const char *fast_intrinsic_name;
-	struct ast_func *fast_callee;
-	const struct fast_signature *fast_prototype;
-	struct fast_signature fast_local_signature;
 
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
@@ -3603,109 +2010,11 @@ hir_visit_call_expr(
 	}
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_CALL;
-	fast_intrinsic_name = NULL;
-	fast_callee = NULL;
-	fast_prototype = NULL;
-	if (aexpr->val.call.func != NULL &&
-	    aexpr->val.call.func->type == AST_EXPR_TERM &&
-	    aexpr->val.call.func->val.term.term != NULL &&
-	    aexpr->val.call.func->val.term.term->type == AST_TERM_SYMBOL)
-	{
-		const char *call_name;
-		call_name = aexpr->val.call.func != NULL &&
-			aexpr->val.call.func->type == AST_EXPR_TERM &&
-			aexpr->val.call.func->val.term.term != NULL &&
-			aexpr->val.call.func->val.term.term->type == AST_TERM_SYMBOL ?
-			aexpr->val.call.func->val.term.term->val.symbol : NULL;
-		if (call_name != NULL) {
-			fast_callee = hir_find_fast_ast_func(call_name);
-			if (fast_callee != NULL) {
-				if (!hir_build_ast_fast_signature(fast_callee,
-							  &fast_local_signature)) {
-					hir_fatal(hir_error_line,
-						  N_TR("Invalid direct __fast callee signature."));
-					return false;
-				}
-				fast_prototype = &fast_local_signature;
-			} else {
-				fast_prototype = hir_fast_prototype_find(call_name);
-			}
-		}
-	}
-	if (hir_current_func_kind == NOCT_FUNC_FAST) {
-		struct ast_expr *func_expr;
-		const char *name;
-		struct ast_func *callee;
-
-		func_expr = aexpr->val.call.func;
-		if (func_expr == NULL || func_expr->type != AST_EXPR_TERM ||
-		    func_expr->val.term.term == NULL ||
-		    func_expr->val.term.term->type != AST_TERM_SYMBOL) {
-			hir_fatal(hir_error_line,
-				  N_TR("A __fast func may call only a direct __fast function or intrinsic."));
-			return false;
-		}
-		name = func_expr->val.term.term->val.symbol;
-		callee = hir_find_fast_ast_func(name);
-		fast_callee = callee;
-		if (callee == NULL && fast_prototype == NULL &&
-		    !hir_is_fast_intrinsic_name(name)) {
-			char message[256];
-			snprintf(message, sizeof(message),
-				 N_TR("Call to non-fast function '%s' is not allowed inside __fast func."),
-				 name);
-			hir_fatal(hir_error_line, message);
-			return false;
-		}
-		if (callee == NULL && fast_prototype == NULL)
-			fast_intrinsic_name = name;
-		if (callee != NULL && hir_current_func_block != NULL &&
-		    strcmp(callee->name, hir_current_func_block->val.func.name) == 0) {
-			hir_fatal(hir_error_line,
-				  N_TR("Recursive __fast function calls are not supported."));
-			return false;
-		}
-		if ((callee != NULL || fast_prototype != NULL) &&
-		    hir_current_func_block != NULL) {
-			if (hir_fast_edge_count >= HIR_FAST_EDGE_MAX) {
-				hir_fatal(hir_error_line,
-					  N_TR("Too many direct __fast call edges."));
-				return false;
-			}
-			hir_fast_edge[hir_fast_edge_count].caller =
-				hir_current_func_block->val.func.name;
-			hir_fast_edge[hir_fast_edge_count].callee =
-				callee != NULL ? callee->name : name;
-			hir_fast_edge[hir_fast_edge_count].line = hir_error_line;
-			hir_fast_edge_count++;
-		}
-	}
 
 	/* Visit the func expression. */
-	if (fast_intrinsic_name != NULL) {
-		struct hir_expr *dot;
-		dot = hir_malloc(sizeof(*dot));
-		if (dot == NULL) {
-			hir_out_of_memory();
-			return false;
-		}
-		memset(dot, 0, sizeof(*dot));
-		dot->type = HIR_EXPR_DOT;
-		dot->val.dot.obj = hir_fast_term_symbol("$FastMath");
-		dot->val.dot.symbol = hir_strdup(fast_intrinsic_name);
-		if (dot->val.dot.obj == NULL || dot->val.dot.symbol == NULL)
-			return false;
-		e->val.call.func = dot;
-	} else {
-		hir_fast_direct_call_target =
-			hir_current_func_kind == NOCT_FUNC_FAST ||
-			fast_callee != NULL || fast_prototype != NULL;
-		if (!hir_visit_expr(&e->val.call.func, aexpr->val.call.func)) {
-			hir_fast_direct_call_target = false;
-			hir_free_expr(e);
-			return false;
-		}
-		hir_fast_direct_call_target = false;
+	if (!hir_visit_expr(&e->val.call.func, aexpr->val.call.func)) {
+		hir_free_expr(e);
+		return false;
 	}
 
 	/* Visit the argument expressions. */
@@ -3724,124 +2033,6 @@ hir_visit_call_expr(
 			e->val.call.arg_count++;
 		}
 	}
-	if (fast_intrinsic_name != NULL &&
-	    !hir_validate_fast_intrinsic(fast_intrinsic_name, e)) {
-		hir_free_expr(e);
-		return false;
-	}
-	if (fast_prototype != NULL && hir_current_func_kind == NOCT_FUNC_FAST) {
-		uint32_t index;
-		if (fast_prototype->param_count != e->val.call.arg_count) {
-			hir_fatal(hir_error_line,
-				  N_TR("A direct __fast call has the wrong argument count."));
-			return false;
-		}
-		for (index = 0; index < e->val.call.arg_count; index++) {
-			const struct fast_param_contract *formal_contract;
-			formal_contract = &fast_prototype->param[index];
-			if (hir_fast_infer_expr_type(e->val.call.arg[index]) !=
-			    formal_contract->value_type) {
-				hir_fatal(hir_error_line,
-					  N_TR("A direct __fast call argument does not match the callee type."));
-				return false;
-			}
-			if (formal_contract->value_type == NOCT_VALUE_PACKED) {
-				struct hir_local *actual;
-				const char *actual_name;
-				uint32_t actual_param;
-				int axis;
-				if (e->val.call.arg[index]->type != HIR_EXPR_TERM ||
-				    e->val.call.arg[index]->val.term.term->type != HIR_TERM_SYMBOL) {
-					hir_fatal(hir_error_line,
-						  N_TR("A direct __fast call packed argument must be a parameter."));
-					return false;
-				}
-				actual_name = e->val.call.arg[index]->val.term.term->val.symbol;
-				actual = hir_current_func_block->val.func.local;
-				while (actual != NULL &&
-				       strcmp(actual->symbol, actual_name) != 0)
-					actual = actual->next;
-				if (actual == NULL ||
-				    actual->declared_packed_type != formal_contract->packed_type) {
-					hir_fatal(hir_error_line,
-						  N_TR("A direct __fast call packed argument has the wrong element type."));
-					return false;
-				}
-				for (actual_param = 0;
-				     actual_param < hir_current_func_block->val.func.param_count;
-				     actual_param++)
-					if (strcmp(actual_name,
-					    hir_current_func_block->val.func.param_name[actual_param]) == 0)
-						break;
-				if (actual_param < hir_current_func_block->val.func.param_count) {
-					const struct fast_param_contract *actual_contract;
-					actual_contract = &hir_current_func_block->val.func.fast_signature->param[actual_param];
-					if (actual_contract->rank != formal_contract->rank) {
-						hir_fatal(hir_error_line,
-							  N_TR("A direct __fast call packed shape rank does not match."));
-						return false;
-					}
-					for (axis = 0; axis < actual_contract->rank; axis++) {
-						const struct fast_extent *actual_extent;
-						const struct fast_extent *formal_extent;
-						int mapped_param;
-						actual_extent = &actual_contract->extent[axis];
-						formal_extent = &formal_contract->extent[axis];
-						mapped_param = -1;
-						if (formal_extent->kind == FAST_EXTENT_PARAM &&
-						    formal_extent->param_index >= 0 &&
-						    (uint32_t)formal_extent->param_index < e->val.call.arg_count &&
-						    e->val.call.arg[formal_extent->param_index]->type == HIR_EXPR_TERM) {
-							const char *mapped_name;
-							uint32_t m;
-							mapped_name = e->val.call.arg[formal_extent->param_index]->val.term.term->val.symbol;
-							for (m = 0; m < hir_current_func_block->val.func.param_count; m++)
-								if (strcmp(mapped_name,
-								    hir_current_func_block->val.func.param_name[m]) == 0) {
-									mapped_param = (int)m;
-									break;
-								}
-						}
-						if (actual_extent->kind != formal_extent->kind ||
-						    (actual_extent->kind == FAST_EXTENT_CONST &&
-						     actual_extent->constant != formal_extent->constant) ||
-						    (actual_extent->kind == FAST_EXTENT_PARAM &&
-						     actual_extent->param_index != mapped_param)) {
-							hir_fatal(hir_error_line,
-								  N_TR("A direct __fast call packed shape does not match the callee view."));
-							return false;
-						}
-					}
-				}
-			}
-		}
-	}
-	if (fast_prototype != NULL) {
-		uint32_t left_index;
-		left_index = 0;
-		while (left_index < e->val.call.arg_count) {
-			if (fast_prototype->param[left_index].restricted &&
-			    fast_prototype->param[left_index].value_type == NOCT_VALUE_PACKED &&
-			    e->val.call.arg[left_index]->type == HIR_EXPR_TERM) {
-				uint32_t right_index;
-				right_index = left_index + 1;
-				while (right_index < e->val.call.arg_count) {
-					if (fast_prototype->param[right_index].restricted &&
-					    fast_prototype->param[right_index].value_type == NOCT_VALUE_PACKED &&
-					    e->val.call.arg[right_index]->type == HIR_EXPR_TERM &&
-					    strcmp(e->val.call.arg[left_index]->val.term.term->val.symbol,
-						   e->val.call.arg[right_index]->val.term.term->val.symbol) == 0) {
-						hir_fatal(hir_error_line,
-							  N_TR("A direct __fast call passes the same object to restricted parameters."));
-						return false;
-					}
-					right_index++;
-				}
-			}
-			left_index++;
-		}
-	}
-
 	*hexpr = e;
 
 	return true;
@@ -4181,23 +2372,9 @@ hir_visit_term(
 		const char *resolved;
 
 		/* Scope resolution (alpha-renaming + static TDZ). */
-		if (!hir_scope_resolve(aterm->val.symbol, &resolved))
+		if (!hir_scope_resolve(hir_error_line, aterm->val.symbol,
+				       &resolved))
 			return false;
-		if (hir_current_func_kind == NOCT_FUNC_FAST && resolved == NULL &&
-		    !hir_fast_direct_call_target) {
-			char message[256];
-			snprintf(message, sizeof(message),
-				 N_TR("Global or unresolved symbol '%s' is not available inside __fast func."),
-				 aterm->val.symbol);
-			hir_fatal(hir_error_line, message);
-			return false;
-		}
-		if (resolved == NULL && !hir_fast_direct_call_target &&
-		    hir_find_fast_ast_func(aterm->val.symbol) != NULL) {
-			hir_fatal(hir_error_line,
-				  N_TR("A __fast function is not a first-class value and must be called directly."));
-			return false;
-		}
 		t->type = HIR_TERM_SYMBOL;
 		t->val.symbol = hir_strdup(resolved != NULL ? resolved :
 					   ast_resolve_static_symbol(aterm->val.symbol));
@@ -4226,11 +2403,6 @@ hir_visit_term(
 		break;
 	}
 	case AST_TERM_STRING:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("String values are not allowed inside __fast func."));
-			return false;
-		}
 		t->type = HIR_TERM_STRING;
 		t->val.s = hir_strdup(aterm->val.s);
 		if (t->val.symbol == NULL) {
@@ -4239,19 +2411,9 @@ hir_visit_term(
 		}
 		break;
 	case AST_TERM_EMPTY_ARRAY:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("Array values are not allowed inside __fast func."));
-			return false;
-		}
 		t->type = HIR_TERM_EMPTY_ARRAY;
 		break;
 	case AST_TERM_EMPTY_DICT:
-		if (hir_current_func_kind == NOCT_FUNC_FAST) {
-			hir_fatal(hir_error_line,
-				  N_TR("Dictionary values are not allowed inside __fast func."));
-			return false;
-		}
 		t->type = HIR_TERM_EMPTY_DICT;
 		break;
 	default:
@@ -4331,6 +2493,7 @@ hir_resolve_type_name(
 			return true;
 		}
 	}
+
 	return false;
 }
 
@@ -4376,10 +2539,6 @@ hir_visit_param_list(
 			hfunc->val.func.param_type[k] = -1;
 			hfunc->val.func.param_packed_type[k] = -1;
 			hfunc->val.func.param_restricted[k] = false;
-			hfunc->val.func.param_accel_access[k] = ACCEL_ACCESS_NONE;
-			hfunc->val.func.param_accel_transport[k] =
-				ACCEL_TRANSPORT_SCALAR;
-			hfunc->val.func.param_accel_effect[k] = ACCEL_EFFECT_NONE;
 		}
 	}
 
@@ -4397,76 +2556,20 @@ hir_visit_param_list(
 	param_count = 0;
 	while (param != NULL) {
 		const char *annotation;
-		char base_annotation[64];
-		char shaped_base[64];
-		bool has_shape;
-		size_t annotation_len;
-		int accel_access;
-		int accel_transport;
+
 		if (param_count >= HIR_PARAM_SIZE) {
 			hir_fatal(hir_error_line, N_TR("Too many parameters."));
-			return false;
-		}
-		if (afunc->func_kind == NOCT_FUNC_GPU &&
-		    strcmp(param->name, "Accel") == 0) {
-			hir_fatal(0, N_TR("'Accel' is a reserved name inside __gpu func."));
 			return false;
 		}
 
 		/* Copy names and count parameters. */
 		hfunc->val.func.param_name[param_count] = hir_strdup(param->name);
-		if (param->name == NULL) {
+		if (hfunc->val.func.param_name[param_count] == NULL) {
 			hir_out_of_memory();
 			return false;
 		}
 
-		/* Split accelerator direction suffixes before ordinary type
-		   resolution.  These spellings are parameter-only contracts. */
 		annotation = param->type_name;
-		accel_access = ACCEL_ACCESS_NONE;
-		accel_transport = ACCEL_TRANSPORT_SCALAR;
-		if (annotation != NULL) {
-			annotation_len = strlen(annotation);
-			if (annotation_len > 3 &&
-			    strcmp(annotation + annotation_len - 3, "_in") == 0) {
-				accel_access = ACCEL_ACCESS_IN;
-				accel_transport = ACCEL_TRANSPORT_COPY_IN;
-				annotation_len -= 3;
-			} else if (annotation_len > 4 &&
-				   strcmp(annotation + annotation_len - 4, "_out") == 0) {
-				accel_access = ACCEL_ACCESS_OUT;
-				accel_transport = ACCEL_TRANSPORT_COPY_OUT;
-				annotation_len -= 4;
-			} else if (annotation_len > 4 &&
-				   strcmp(annotation + annotation_len - 4, "_ptr") == 0) {
-				accel_transport = ACCEL_TRANSPORT_DEVICE_PTR;
-				annotation_len -= 4;
-			}
-			if (accel_transport != ACCEL_TRANSPORT_SCALAR) {
-				if (afunc->func_kind == NOCT_FUNC_NORMAL ||
-				    annotation_len >= sizeof(base_annotation)) {
-					hir_fatal(0, N_TR("Accelerator direction types are valid only on accelerator function parameters."));
-					return false;
-				}
-				memcpy(base_annotation, annotation, annotation_len);
-				base_annotation[annotation_len] = '\0';
-				annotation = base_annotation;
-			}
-		}
-		if (afunc->func_kind == NOCT_FUNC_GPU &&
-		    accel_transport != ACCEL_TRANSPORT_SCALAR &&
-		    accel_transport != ACCEL_TRANSPORT_DEVICE_PTR) {
-			hir_fatal(0, N_TR("GPU buffer parameters must use _ptr."));
-			return false;
-		}
-		if (annotation != NULL && strchr(annotation, '(') != NULL) {
-			if (!fast_annotation_base(annotation, shaped_base,
-						 sizeof(shaped_base), &has_shape)) {
-				hir_fatal(0, N_TR("Invalid shaped parameter type."));
-				return false;
-			}
-			annotation = shaped_base;
-		}
 
 		/* Resolve the optional type annotation. */
 		if (!hir_check_type_annotation(0,
@@ -4475,31 +2578,6 @@ hir_visit_param_list(
 					       &hfunc->val.func.param_packed_type[param_count],
 					       &hfunc->val.func.param_restricted[param_count]))
 			return false;
-		hfunc->val.func.param_accel_access[param_count] = accel_access;
-		hfunc->val.func.param_accel_transport[param_count] = accel_transport;
-		if (accel_access == ACCEL_ACCESS_IN)
-			hfunc->val.func.param_accel_effect[param_count] =
-				ACCEL_EFFECT_READ;
-		else if (accel_access == ACCEL_ACCESS_OUT)
-			hfunc->val.func.param_accel_effect[param_count] =
-				ACCEL_EFFECT_WRITE;
-		else if (accel_transport == ACCEL_TRANSPORT_DEVICE_PTR)
-			hfunc->val.func.param_accel_effect[param_count] =
-				ACCEL_EFFECT_READ | ACCEL_EFFECT_WRITE;
-		if (accel_transport != ACCEL_TRANSPORT_SCALAR &&
-		    (!hfunc->val.func.param_restricted[param_count] ||
-		     hfunc->val.func.param_packed_type[param_count] < 0)) {
-			hir_fatal(0, N_TR("Accelerator buffer parameters must use a restricted packed element type."));
-			return false;
-		}
-		if (accel_access != ACCEL_ACCESS_NONE &&
-		    (!hfunc->val.func.param_restricted[param_count] ||
-		     (hfunc->val.func.param_packed_type[param_count] != NOCT_PACKED_INT32 &&
-		      hfunc->val.func.param_packed_type[param_count] != NOCT_PACKED_UINT32 &&
-		      hfunc->val.func.param_packed_type[param_count] != NOCT_PACKED_FLOAT32))) {
-			hir_fatal(0, N_TR("Accelerator packed parameters must be restricted int32, uint32, or float32 values."));
-			return false;
-		}
 		/* Add to a local variable list. */
 		if (!hir_add_local(hfunc, param->name))
 			return false;
@@ -4522,6 +2600,45 @@ hir_visit_param_list(
 	}
 	hfunc->val.func.param_count = param_count;
 
+	return true;
+}
+
+/* Wrap an expression in a Dict.freeze(...) call (class/extend). */
+static bool
+hir_wrap_freeze(
+	struct hir_expr **hexpr,
+	struct hir_expr *inner)
+{
+	struct hir_expr *call;
+	struct hir_expr *fn;
+	struct hir_term *fn_term;
+
+	call = hir_malloc(sizeof(struct hir_expr));
+	fn = hir_malloc(sizeof(struct hir_expr));
+	fn_term = hir_malloc(sizeof(struct hir_term));
+	if (call == NULL || fn == NULL || fn_term == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+	memset(call, 0, sizeof(struct hir_expr));
+	memset(fn, 0, sizeof(struct hir_expr));
+	memset(fn_term, 0, sizeof(struct hir_term));
+
+	fn_term->type = HIR_TERM_SYMBOL;
+	fn_term->val.symbol = hir_strdup("Dict.freeze");
+	if (fn_term->val.symbol == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+	fn->type = HIR_EXPR_TERM;
+	fn->val.term.term = fn_term;
+
+	call->type = HIR_EXPR_CALL;
+	call->val.call.func = fn;
+	call->val.call.arg_count = 1;
+	call->val.call.arg[0] = inner;
+
+	*hexpr = call;
 	return true;
 }
 
@@ -4562,14 +2679,6 @@ hir_free_block(
 
 	switch (b->type) {
 	case HIR_BLOCK_FUNC:
-		if (b->val.func.accel_kernel != NULL) {
-			accel_kernel_free(b->val.func.accel_kernel);
-			b->val.func.accel_kernel = NULL;
-		}
-		if (b->val.func.accel_program != NULL) {
-			accel_program_free(b->val.func.accel_program);
-			b->val.func.accel_program = NULL;
-		}
 		if (b->val.func.name != NULL) {
 			hir_free(b->val.func.name);
 			b->val.func.name = NULL;
@@ -4996,7 +3105,12 @@ hir_free(
 	 */
 }
 
-
+/* Allocate a fresh debug block id (shared with the optimizer passes). */
+int
+hir_next_block_id(void)
+{
+	return block_id_top++;
+}
 
 /*
  * HIR Optimizer Driver
@@ -5011,12 +3125,17 @@ hir_optimize_func(
 	assert(func_block->type == HIR_BLOCK_FUNC);
 
 #if !defined(NOCT_USE_OPTIMIZER)
-	UNUSED_PARAMETER(level);
-	UNUSED_PARAMETER(simd_info);
+	UNUSED_PARAMETER(optimize_level);
+	UNUSED_PARAMETER(print_simd_info);
 
 	return true;
 #else
-	if (level >= 1) {
+	if (getenv("NOCT_PARALLEL_DEBUG") != NULL &&
+	    !hir_parallel_diagnose_func(func_block, stderr,
+					"parallel-analysis"))
+		return false;
+
+	if (optimize_level >= 1) {
 		/* Function inlining. */
 		if (!hir_opt_inline_func(func_block))
 			return false;
@@ -5026,13 +3145,13 @@ hir_optimize_func(
 			return false;
 	}
 
-	if (level >= 2) {
+	if (optimize_level >= 2) {
 		/* ABCE. */
 		if (!hir_opt_abce_func(func_block))
 			return false;
 
 		/* SIMD vectorization. */
-		if (!hir_opt_simd_func(func_block, simd_info))
+		if (!hir_opt_simd_func(func_block, print_simd_info))
 			return false;
 
 		/* Loop unrolling. */
@@ -5040,7 +3159,7 @@ hir_optimize_func(
 			return false;
 	}
 
-	if (level >= 1) {
+	if (optimize_level >= 1) {
 		/* CSE. */
 		if (!hir_opt_cse_func(func_block))
 			return false;

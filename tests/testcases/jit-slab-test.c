@@ -40,7 +40,7 @@ main(void)
 
 	noct_set_default_config(&config);
 	config.optimize_level = 1;
-	config.lineinfo = false;
+	config.line_info = false;
 	config.jit_code_size = 4096;
 	if (!noct_create_vm(&vm1, &env1, &config) ||
 	    !noct_create_vm(&vm2, &env2, &config)) {

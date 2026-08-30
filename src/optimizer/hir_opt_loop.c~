@@ -7,7 +7,7 @@
 
 /* Target-neutral source-HIR loop effect collection. */
 
-#include "hir_parallel.h"
+#include "hir_opt_paralle.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -38,6 +38,7 @@ static bool hir_block_within(const struct hir_block *block,
 			     const struct hir_block *loop);
 static bool hir_block_seen(struct hir_analyze_ctx *ctx,
 			   struct hir_block *block);
+static bool hir_validate_affine_invariants(struct hir_analyze_ctx *ctx);
 static struct hir_scalar_effect *
 hir_scalar_get(struct hir_analyze_ctx *ctx, const char *symbol);
 static bool hir_record_scalar(struct hir_analyze_ctx *ctx,
@@ -64,6 +65,7 @@ hir_memory_catalog_init(
 	struct hir_memory_catalog *catalog)
 {
 	assert(catalog != NULL);
+
 	memset(catalog, 0, sizeof(*catalog));
 }
 
@@ -101,30 +103,6 @@ hir_memory_catalog_find(
 			return &catalog->object[i];
 	}
 	return NULL;
-}
-
-static int
-hir_packed_width(
-	int kind)
-{
-	switch (kind) {
-	case NOCT_PACKED_INT8:
-	case NOCT_PACKED_UINT8:
-		return 1;
-	case NOCT_PACKED_INT16:
-	case NOCT_PACKED_UINT16:
-		return 2;
-	case NOCT_PACKED_INT32:
-	case NOCT_PACKED_UINT32:
-	case NOCT_PACKED_FLOAT32:
-		return 4;
-	case NOCT_PACKED_INT64:
-	case NOCT_PACKED_UINT64:
-	case NOCT_PACKED_FLOAT64:
-		return 8;
-	default:
-		return -1;
-	}
 }
 
 bool
@@ -180,113 +158,6 @@ hir_memory_catalog_build_func(
 			return false;
 	}
 	return true;
-}
-
-bool
-hir_memory_catalog_build_accel(
-	struct hir_block *func,
-	struct hir_memory_catalog *catalog)
-{
-	struct hir_memory_object object;
-	struct hir_local *local;
-	uint32_t i;
-	int param;
-
-	if (func == NULL || func->type != HIR_BLOCK_FUNC || catalog == NULL)
-		return false;
-	hir_memory_catalog_init(catalog);
-	local = func->val.func.local;
-	while (local != NULL) {
-		if (local->storage_class == HIR_LOCAL_STORAGE_LOGICAL_BUFFER &&
-		    local->declared_packed_type >= 0) {
-			memset(&object, 0, sizeof(object));
-			object.id = (int)catalog->count;
-			object.symbol = local->symbol;
-			object.source_line = local->declaration_line;
-			object.element_kind = local->declared_packed_type;
-			object.element_width = hir_packed_width(
-				local->declared_packed_type);
-			object.readable = true;
-			object.writable = true;
-			object.alias_class = local->index;
-			object.length_expr = NULL;
-			if (local->initializer != NULL &&
-			    local->initializer->type == HIR_EXPR_THISCALL &&
-			    local->initializer->val.thiscall.arg_count == 1)
-				object.length_expr =
-					local->initializer->val.thiscall.arg[0];
-			if (local->is_parameter) {
-				object.storage = HIR_MEMORY_STORAGE_PARAMETER;
-				object.alias_kind = HIR_ALIAS_MAY_ALIAS;
-				param = -1;
-				for (i = 0; i < func->val.func.param_count; i++) {
-					if (strcmp(func->val.func.param_name[i],
-						   local->symbol) == 0) {
-						param = (int)i;
-						break;
-					}
-				}
-				if (param >= 0) {
-					object.alias_kind =
-						func->val.func.param_restricted[param] ?
-						HIR_ALIAS_CHECKED_NOALIAS :
-						HIR_ALIAS_MAY_ALIAS;
-					object.readable =
-						(func->val.func.param_accel_effect[param] &
-						 ACCEL_EFFECT_READ) != 0;
-					object.writable =
-						(func->val.func.param_accel_effect[param] &
-						 ACCEL_EFFECT_WRITE) != 0;
-					if (!object.readable && !object.writable) {
-						object.readable = true;
-						object.writable = true;
-					}
-				}
-			} else {
-				object.storage = HIR_MEMORY_STORAGE_LOCAL;
-				object.alias_kind = HIR_ALIAS_UNIQUE;
-			}
-			if (!hir_memory_catalog_add(catalog, &object))
-				return false;
-		}
-		local = local->next;
-	}
-	return true;
-}
-
-static const char *
-hir_term_symbol(
-	const struct hir_expr *expr)
-{
-	if (expr == NULL || expr->type != HIR_EXPR_TERM ||
-	    expr->val.term.term == NULL ||
-	    expr->val.term.term->type != HIR_TERM_SYMBOL)
-		return NULL;
-	return expr->val.term.term->val.symbol;
-}
-
-static bool
-hir_expr_int(
-	const struct hir_expr *expr,
-	int *value)
-{
-	if (expr == NULL || expr->type != HIR_EXPR_TERM ||
-	    expr->val.term.term == NULL ||
-	    expr->val.term.term->type != HIR_TERM_INT)
-		return false;
-	*value = expr->val.term.term->val.i;
-	return true;
-}
-
-static void
-hir_mark_unknown(
-	struct hir_analyze_ctx *ctx,
-	int reason)
-{
-	if (ctx->summary->analysis_status == HIR_ANALYSIS_COMPLETE) {
-		ctx->summary->analysis_status = HIR_ANALYSIS_UNKNOWN;
-		ctx->summary->analysis_reason = reason;
-	}
 }
 
 bool
@@ -380,6 +251,228 @@ hir_parallel_affine_equal(
 	if (first->invariant_symbol == NULL || second->invariant_symbol == NULL)
 		return first->invariant_symbol == second->invariant_symbol;
 	return strcmp(first->invariant_symbol, second->invariant_symbol) == 0;
+}
+
+bool
+hir_loop_analyze(
+	struct hir_block *func,
+	struct hir_block *loop,
+	const struct hir_memory_catalog *catalog,
+	struct hir_loop_summary **summary)
+{
+	struct hir_loop_summary *result;
+	struct hir_analyze_ctx ctx;
+
+	if (summary == NULL)
+		return false;
+	*summary = NULL;
+	if (func == NULL || func->type != HIR_BLOCK_FUNC || loop == NULL ||
+	    catalog == NULL)
+		return false;
+	result = noct_calloc(1, sizeof(*result));
+	if (result == NULL)
+		return false;
+	result->func = func;
+	result->loop = loop;
+	result->catalog = catalog;
+	result->line = loop->line;
+	result->analysis_status = HIR_ANALYSIS_COMPLETE;
+	result->analysis_reason = HIR_PAR_REASON_NONE;
+	result->parallel_class = HIR_PAR_CLASS_UNCLASSIFIED;
+	result->parallel_reason = HIR_PAR_REASON_NONE;
+	result->range_status = HIR_RANGE_UNCHECKED;
+	result->range_reason = HIR_PAR_REASON_NONE;
+	if (loop->type != HIR_BLOCK_FOR || !loop->val.for_.is_ranged) {
+		result->analysis_status = HIR_ANALYSIS_UNKNOWN;
+		result->analysis_reason = HIR_PAR_REASON_NOT_RANGED_LOOP;
+		*summary = result;
+		return true;
+	}
+	result->counter_symbol = loop->val.for_.counter_symbol;
+	result->start = loop->val.for_.start;
+	result->stop = loop->val.for_.stop;
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.summary = result;
+	ctx.catalog = catalog;
+	ctx.line = loop->line;
+	if (!hir_collect_block(&ctx, loop->val.for_.inner)) {
+		hir_loop_summary_free(result);
+		return false;
+	}
+	if (!hir_validate_affine_invariants(&ctx)) {
+		hir_loop_summary_free(result);
+		return false;
+	}
+	*summary = result;
+	return true;
+}
+
+void
+hir_loop_summary_free(
+	struct hir_loop_summary *summary)
+{
+	noct_free(summary);
+}
+
+void
+hir_loop_summary_dump(
+	FILE *fp,
+	const struct hir_loop_summary *summary,
+	const char *prefix)
+{
+	struct hir_doall_result doall;
+	struct hir_dosum_result dosum;
+	const char *class_name;
+	const char *class_reason;
+
+	if (fp == NULL || summary == NULL)
+		return;
+	class_name = "unknown";
+	class_reason = hir_parallel_reason_string(summary->analysis_reason);
+	if (hir_doall_classify(summary, &doall)) {
+		if (doall.classification == HIR_PAR_CLASS_DOALL)
+			class_name = "doall";
+		else if (doall.classification == HIR_PAR_CLASS_DEPENDENT)
+			class_name = "dependent";
+		class_reason = hir_parallel_reason_string(doall.reason);
+		if (doall.classification == HIR_PAR_CLASS_DEPENDENT &&
+		    hir_dosum_classify(summary, &dosum) &&
+		    dosum.classification == HIR_PAR_CLASS_DOSUM) {
+			class_name = "dosum";
+			class_reason = hir_parallel_reason_string(dosum.reason);
+		}
+	}
+	fprintf(fp,
+		"%s line=%d status=%s reason=%s class=%s class-reason=%s accesses=%u scalars=%u calls=%u",
+		prefix != NULL ? prefix : "parallel-analysis",
+		summary->line,
+		summary->analysis_status == HIR_ANALYSIS_COMPLETE ?
+			"complete" : "unknown",
+		hir_parallel_reason_string(summary->analysis_reason),
+		class_name,
+		class_reason,
+		(unsigned int)summary->access_count,
+		(unsigned int)summary->scalar_count,
+		(unsigned int)summary->call_count);
+	fprintf(fp, " alias-guards=%u",
+		(unsigned int)doall.alias_requirement_count);
+	fputc('\n', fp);
+}
+
+const char *
+hir_parallel_reason_string(
+	int reason)
+{
+	switch (reason) {
+	case HIR_PAR_REASON_NONE: return "none";
+	case HIR_PAR_REASON_INVALID_ARGUMENT: return "invalid-argument";
+	case HIR_PAR_REASON_NOT_RANGED_LOOP: return "not-ranged-loop";
+	case HIR_PAR_REASON_NESTED_LOOP: return "nested-loop";
+	case HIR_PAR_REASON_WHILE_LOOP: return "while-loop";
+	case HIR_PAR_REASON_UNKNOWN_MEMORY: return "unknown-memory";
+	case HIR_PAR_REASON_NON_AFFINE_INDEX: return "non-affine-index";
+	case HIR_PAR_REASON_UNKNOWN_CALL: return "unknown-call";
+	case HIR_PAR_REASON_ACCESS_LIMIT: return "access-limit";
+	case HIR_PAR_REASON_SCALAR_LIMIT: return "scalar-limit";
+	case HIR_PAR_REASON_CALL_LIMIT: return "call-limit";
+	case HIR_PAR_REASON_OBJECT_LIMIT: return "object-limit";
+	case HIR_PAR_REASON_DEPENDENCE_LIMIT: return "dependence-limit";
+	case HIR_PAR_REASON_SCALAR_CARRIED: return "scalar-carried";
+	case HIR_PAR_REASON_OUTER_SCALAR_WRITE: return "outer-scalar-write";
+	case HIR_PAR_REASON_MEMORY_RAW: return "memory-raw";
+	case HIR_PAR_REASON_MEMORY_WAR: return "memory-war";
+	case HIR_PAR_REASON_MEMORY_WAW: return "memory-waw";
+	case HIR_PAR_REASON_MAY_ALIAS: return "may-alias";
+	case HIR_PAR_REASON_REDUCTION_SHAPE: return "reduction-shape";
+	case HIR_PAR_REASON_REDUCTION_IDENTITY: return "reduction-identity";
+	case HIR_PAR_REASON_REDUCTION_TYPE: return "reduction-type";
+	case HIR_PAR_REASON_REDUCTION_EFFECT: return "reduction-effect";
+	case HIR_PAR_REASON_REDUCTION_PATH: return "reduction-path";
+	case HIR_PAR_REASON_OUT_OF_MEMORY: return "out-of-memory";
+	case HIR_PAR_REASON_INTERNAL: return "internal";
+	default: return "unknown-reason";
+	}
+}
+
+bool
+hir_parallel_diagnose_func(
+	struct hir_block *func,
+	FILE *fp,
+	const char *prefix)
+{
+	struct hir_memory_catalog catalog;
+	struct hir_block *visited[HIR_ANALYZE_MAX_VISITED];
+	uint32_t visited_count;
+	uint32_t loop_count;
+
+	if (func == NULL || func->type != HIR_BLOCK_FUNC || fp == NULL)
+		return false;
+	if (!hir_memory_catalog_build_func(func, &catalog))
+		return false;
+	visited_count = 0;
+	loop_count = 0;
+	return hir_collect_top_loops(func, func->val.func.inner, &catalog, fp,
+				     prefix,
+				     visited, &visited_count, &loop_count);
+}
+
+static int
+hir_packed_width(
+	int kind)
+{
+	switch (kind) {
+	case NOCT_PACKED_INT8:
+	case NOCT_PACKED_UINT8:
+		return 1;
+	case NOCT_PACKED_INT16:
+	case NOCT_PACKED_UINT16:
+		return 2;
+	case NOCT_PACKED_INT32:
+	case NOCT_PACKED_UINT32:
+	case NOCT_PACKED_FLOAT32:
+		return 4;
+	case NOCT_PACKED_INT64:
+	case NOCT_PACKED_UINT64:
+	case NOCT_PACKED_FLOAT64:
+		return 8;
+	default:
+		return -1;
+	}
+}
+
+static const char *
+hir_term_symbol(
+	const struct hir_expr *expr)
+{
+	if (expr == NULL || expr->type != HIR_EXPR_TERM ||
+	    expr->val.term.term == NULL ||
+	    expr->val.term.term->type != HIR_TERM_SYMBOL)
+		return NULL;
+	return expr->val.term.term->val.symbol;
+}
+
+static bool
+hir_expr_int(
+	const struct hir_expr *expr,
+	int *value)
+{
+	if (expr == NULL || expr->type != HIR_EXPR_TERM ||
+	    expr->val.term.term == NULL ||
+	    expr->val.term.term->type != HIR_TERM_INT)
+		return false;
+	*value = expr->val.term.term->val.i;
+	return true;
+}
+
+static void
+hir_mark_unknown(
+	struct hir_analyze_ctx *ctx,
+	int reason)
+{
+	if (ctx->summary->analysis_status == HIR_ANALYSIS_COMPLETE) {
+		ctx->summary->analysis_status = HIR_ANALYSIS_UNKNOWN;
+		ctx->summary->analysis_reason = reason;
+	}
 }
 
 static struct hir_scalar_effect *
@@ -787,150 +880,6 @@ hir_collect_block(
 	return hir_collect_block(ctx, block->succ);
 }
 
-bool
-hir_loop_analyze(
-	struct hir_block *func,
-	struct hir_block *loop,
-	const struct hir_memory_catalog *catalog,
-	struct hir_loop_summary **summary)
-{
-	struct hir_loop_summary *result;
-	struct hir_analyze_ctx ctx;
-
-	if (summary == NULL)
-		return false;
-	*summary = NULL;
-	if (func == NULL || func->type != HIR_BLOCK_FUNC || loop == NULL ||
-	    catalog == NULL)
-		return false;
-	result = noct_calloc(1, sizeof(*result));
-	if (result == NULL)
-		return false;
-	result->func = func;
-	result->loop = loop;
-	result->catalog = catalog;
-	result->line = loop->line;
-	result->analysis_status = HIR_ANALYSIS_COMPLETE;
-	result->analysis_reason = HIR_PAR_REASON_NONE;
-	result->parallel_class = HIR_PAR_CLASS_UNCLASSIFIED;
-	result->parallel_reason = HIR_PAR_REASON_NONE;
-	result->gpu_lowering_status = HIR_GPU_LOWERING_UNCHECKED;
-	result->gpu_lowering_reason = HIR_PAR_REASON_NONE;
-	result->range_status = HIR_RANGE_UNCHECKED;
-	result->range_reason = HIR_PAR_REASON_NONE;
-	if (loop->type != HIR_BLOCK_FOR || !loop->val.for_.is_ranged) {
-		result->analysis_status = HIR_ANALYSIS_UNKNOWN;
-		result->analysis_reason = HIR_PAR_REASON_NOT_RANGED_LOOP;
-		*summary = result;
-		return true;
-	}
-	result->counter_symbol = loop->val.for_.counter_symbol;
-	result->start = loop->val.for_.start;
-	result->stop = loop->val.for_.stop;
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.summary = result;
-	ctx.catalog = catalog;
-	ctx.line = loop->line;
-	if (!hir_collect_block(&ctx, loop->val.for_.inner)) {
-		hir_loop_summary_free(result);
-		return false;
-	}
-	if (!hir_validate_affine_invariants(&ctx)) {
-		hir_loop_summary_free(result);
-		return false;
-	}
-	*summary = result;
-	return true;
-}
-
-void
-hir_loop_summary_free(
-	struct hir_loop_summary *summary)
-{
-	noct_free(summary);
-}
-
-const char *
-hir_parallel_reason_string(
-	int reason)
-{
-	switch (reason) {
-	case HIR_PAR_REASON_NONE: return "none";
-	case HIR_PAR_REASON_INVALID_ARGUMENT: return "invalid-argument";
-	case HIR_PAR_REASON_NOT_RANGED_LOOP: return "not-ranged-loop";
-	case HIR_PAR_REASON_NESTED_LOOP: return "nested-loop";
-	case HIR_PAR_REASON_WHILE_LOOP: return "while-loop";
-	case HIR_PAR_REASON_UNKNOWN_MEMORY: return "unknown-memory";
-	case HIR_PAR_REASON_NON_AFFINE_INDEX: return "non-affine-index";
-	case HIR_PAR_REASON_UNKNOWN_CALL: return "unknown-call";
-	case HIR_PAR_REASON_ACCESS_LIMIT: return "access-limit";
-	case HIR_PAR_REASON_SCALAR_LIMIT: return "scalar-limit";
-	case HIR_PAR_REASON_CALL_LIMIT: return "call-limit";
-	case HIR_PAR_REASON_OBJECT_LIMIT: return "object-limit";
-	case HIR_PAR_REASON_DEPENDENCE_LIMIT: return "dependence-limit";
-	case HIR_PAR_REASON_SCALAR_CARRIED: return "scalar-carried";
-	case HIR_PAR_REASON_OUTER_SCALAR_WRITE: return "outer-scalar-write";
-	case HIR_PAR_REASON_MEMORY_RAW: return "memory-raw";
-	case HIR_PAR_REASON_MEMORY_WAR: return "memory-war";
-	case HIR_PAR_REASON_MEMORY_WAW: return "memory-waw";
-	case HIR_PAR_REASON_MAY_ALIAS: return "may-alias";
-	case HIR_PAR_REASON_REDUCTION_SHAPE: return "reduction-shape";
-	case HIR_PAR_REASON_REDUCTION_IDENTITY: return "reduction-identity";
-	case HIR_PAR_REASON_REDUCTION_TYPE: return "reduction-type";
-	case HIR_PAR_REASON_REDUCTION_EFFECT: return "reduction-effect";
-	case HIR_PAR_REASON_REDUCTION_PATH: return "reduction-path";
-	case HIR_PAR_REASON_OUT_OF_MEMORY: return "out-of-memory";
-	case HIR_PAR_REASON_INTERNAL: return "internal";
-	default: return "unknown-reason";
-	}
-}
-
-void
-hir_loop_summary_dump(
-	FILE *fp,
-	const struct hir_loop_summary *summary,
-	const char *prefix)
-{
-	struct hir_doall_result doall;
-	struct hir_dosum_result dosum;
-	const char *class_name;
-	const char *class_reason;
-
-	if (fp == NULL || summary == NULL)
-		return;
-	class_name = "unknown";
-	class_reason = hir_parallel_reason_string(summary->analysis_reason);
-	if (hir_doall_classify(summary, &doall)) {
-		if (doall.classification == HIR_PAR_CLASS_DOALL)
-			class_name = "doall";
-		else if (doall.classification == HIR_PAR_CLASS_DEPENDENT)
-			class_name = "dependent";
-		class_reason = hir_parallel_reason_string(doall.reason);
-		if (doall.classification == HIR_PAR_CLASS_DEPENDENT &&
-		    hir_dosum_classify(summary, &dosum) &&
-		    dosum.classification == HIR_PAR_CLASS_DOSUM) {
-			class_name = "dosum";
-			class_reason = hir_parallel_reason_string(dosum.reason);
-		}
-	}
-	fprintf(fp,
-		"%s line=%d status=%s reason=%s class=%s class-reason=%s accesses=%u scalars=%u calls=%u",
-		prefix != NULL ? prefix : "parallel-analysis",
-		summary->line,
-		summary->analysis_status == HIR_ANALYSIS_COMPLETE ?
-			"complete" : "unknown",
-		hir_parallel_reason_string(summary->analysis_reason),
-		class_name,
-		class_reason,
-		(unsigned int)summary->access_count,
-		(unsigned int)summary->scalar_count,
-		(unsigned int)summary->call_count);
-	if (prefix == NULL || strcmp(prefix, "accel-analysis") != 0)
-		fprintf(fp, " alias-guards=%u",
-			(unsigned int)doall.alias_requirement_count);
-	fputc('\n', fp);
-}
-
 static bool
 hir_collect_top_loops(
 	struct hir_block *func,
@@ -984,28 +933,4 @@ hir_collect_top_loops(
 	}
 	return hir_collect_top_loops(func, block->succ, catalog, fp, prefix, visited,
 				     visited_count, loop_count);
-}
-
-bool
-hir_parallel_diagnose_func(
-	struct hir_block *func,
-	FILE *fp,
-	const char *prefix,
-	bool accel_catalog)
-{
-	struct hir_memory_catalog catalog;
-	struct hir_block *visited[HIR_ANALYZE_MAX_VISITED];
-	uint32_t visited_count;
-	uint32_t loop_count;
-
-	if (func == NULL || func->type != HIR_BLOCK_FUNC || fp == NULL)
-		return false;
-	if (!(accel_catalog ? hir_memory_catalog_build_accel(func, &catalog) :
-			       hir_memory_catalog_build_func(func, &catalog)))
-		return false;
-	visited_count = 0;
-	loop_count = 0;
-	return hir_collect_top_loops(func, func->val.func.inner, &catalog, fp,
-				     prefix,
-				     visited, &visited_count, &loop_count);
 }

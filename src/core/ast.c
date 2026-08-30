@@ -53,8 +53,6 @@ struct ast_expr *ast_accept_term_expr(struct ast_term *term);
 struct ast_term *ast_accept_symbol_term(char *symbol);
 struct ast_term *ast_accept_str_term(char *str);
 struct ast_expr *ast_accept_call_expr(struct ast_expr *expr1, struct ast_arg_list *arg_list);
-struct ast_arg_list *ast_accept_arg_list(struct ast_arg_list *arg_list,
-					 struct ast_expr *expr);
 struct ast_stmt *ast_accept_assign_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs, bool is_var, bool is_let);
 struct ast_expr *ast_accept_class_expr(struct ast_kv_list *kv_list);
 struct ast_stmt *ast_accept_expr_stmt(int line, struct ast_expr *expr);
@@ -83,17 +81,8 @@ struct ast_static_symbol {
 static struct ast_static_symbol *ast_static_symbols;
 static struct ast_static_symbol *ast_declared_symbols;
 
-struct ast_accel_resource_symbol {
-	char *name;
-	struct ast_accel_resource_symbol *next;
-};
-static struct ast_accel_resource_symbol *ast_accel_resource_symbols;
-
 #define AST_FUNC_STATIC 1
 #define AST_FUNC_INLINE 2
-#define AST_FUNC_ACCEL  4
-#define AST_FUNC_GPU    8
-#define AST_FUNC_FAST   16
 
 /*
  * Error position and message. (set by the parser)
@@ -138,59 +127,6 @@ static void ast_free_kv(struct ast_kv *kv);
 static void ast_free_term(struct ast_term *term);
 #endif
 
-/* Build the canonical spelling retained by the AST for a shaped type. */
-char *
-ast_accept_type_extent_int(int value)
-{
-	char buf[32];
-	char *result;
-
-	snprintf(buf, sizeof(buf), "%d", value);
-	result = ast_strdup(buf);
-	if (result == NULL)
-		ast_out_of_memory();
-	return result;
-}
-
-char *
-ast_accept_type_extent_list(char *list, char *extent)
-{
-	size_t size;
-	char *result;
-
-	size = strlen(list) + strlen(extent) + 2;
-	result = ast_malloc(size);
-	if (result == NULL) {
-		ast_free(list);
-		ast_free(extent);
-		ast_out_of_memory();
-		return NULL;
-	}
-	snprintf(result, size, "%s,%s", list, extent);
-	ast_free(list);
-	ast_free(extent);
-	return result;
-}
-
-char *
-ast_accept_shaped_type(char *name, char *extents)
-{
-	size_t size;
-	char *result;
-
-	size = strlen(name) + strlen(extents) + 3;
-	result = ast_malloc(size);
-	if (result == NULL) {
-		ast_free(name);
-		ast_free(extents);
-		ast_out_of_memory();
-		return NULL;
-	}
-	snprintf(result, size, "%s(%s)", name, extents);
-	ast_free(name);
-	ast_free(extents);
-	return result;
-}
 static struct ast_expr *ast_copy_expr(struct ast_expr *expr);
 static struct ast_term *ast_copy_term(struct ast_term *term);
 static struct ast_arg_list *ast_copy_arg_list(struct ast_arg_list *arg_list);
@@ -226,7 +162,6 @@ ast_build(
 	ast_init_stmt_list = NULL;
 	ast_static_symbols = NULL;
 	ast_declared_symbols = NULL;
-	ast_accel_resource_symbols = NULL;
 	ast_require_list = NULL;
 	ast_require_tail = NULL;
 	ast_require_count = 0;
@@ -300,7 +235,6 @@ ast_build_app_initializer(
 	ast_init_stmt_list = NULL;
 	ast_static_symbols = NULL;
 	ast_declared_symbols = NULL;
-	ast_accel_resource_symbols = NULL;
 	ast_require_list = NULL;
 	ast_require_tail = NULL;
 	ast_require_count = 0;
@@ -670,123 +604,6 @@ ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let,
 }
 
 /*
- * Called from the parser for a top-level accelerator resource declaration.
- * The constructor is deliberately validated here so that an ordinary call
- * cannot be disguised as a persistent accelerator allocation.
- */
-bool
-ast_accept_toplevel_accel_decl(
-	int line,
-	char *name,
-	struct ast_expr *rhs,
-	bool is_let)
-{
-	static const char *const type_name[] = {
-		"int8", "int16", "int32", "int64",
-		"uint8", "uint16", "uint32", "uint64",
-		"float32", "float64",
-	};
-	struct ast_expr *func;
-	struct ast_expr *obj;
-	struct ast_expr *arg;
-	struct ast_expr *internal_func;
-	struct ast_accel_resource_symbol *resource;
-	char *internal_name;
-	size_t internal_name_size;
-	size_t i;
-	bool found;
-
-	if (rhs == NULL || rhs->type != AST_EXPR_CALL ||
-	    rhs->val.call.arg_list == NULL ||
-	    rhs->val.call.arg_list->list == NULL ||
-	    rhs->val.call.arg_list->list->next != NULL) {
-		ast_error_line = line;
-		ast_printf("__accel %s requires Accel.<type>(LENGTH).",
-			   is_let ? "let" : "var");
-		return false;
-	}
-	func = rhs->val.call.func;
-	if (func == NULL || func->type != AST_EXPR_DOT) {
-		ast_error_line = line;
-		ast_printf("__accel %s requires Accel.<type>(LENGTH).",
-			   is_let ? "let" : "var");
-		return false;
-	}
-	obj = func->val.dot.obj;
-	if (obj == NULL || obj->type != AST_EXPR_TERM ||
-	    obj->val.term.term == NULL ||
-	    obj->val.term.term->type != AST_TERM_SYMBOL ||
-	    strcmp(obj->val.term.term->val.symbol, "Accel") != 0) {
-		ast_error_line = line;
-		ast_printf("__accel %s requires Accel.<type>(LENGTH).",
-			   is_let ? "let" : "var");
-		return false;
-	}
-	found = false;
-	for (i = 0; i < sizeof(type_name) / sizeof(type_name[0]); i++) {
-		if (strcmp(func->val.dot.symbol, type_name[i]) == 0) {
-			found = true;
-			break;
-		}
-	}
-	if (!found) {
-		ast_error_line = line;
-		ast_printf("Unknown accelerator element type '%s'.",
-			   func->val.dot.symbol);
-		return false;
-	}
-	arg = rhs->val.call.arg_list->list;
-	if (arg->type == AST_EXPR_TERM && arg->val.term.term != NULL &&
-	    ((arg->val.term.term->type == AST_TERM_INT &&
-	      arg->val.term.term->val.i <= 0) ||
-	     (arg->val.term.term->type == AST_TERM_LONG &&
-	      arg->val.term.term->val.l <= 0))) {
-		ast_error_line = line;
-		ast_printf("Accelerator element count must be positive.");
-		return false;
-	}
-	internal_name_size = strlen(func->val.dot.symbol) + 8;
-	internal_name = ast_malloc(internal_name_size);
-	if (internal_name == NULL) {
-		ast_out_of_memory();
-		return false;
-	}
-	snprintf(internal_name, internal_name_size, "$Accel.%s",
-		 func->val.dot.symbol);
-	internal_func = ast_accept_term_expr(ast_accept_symbol_term(internal_name));
-	if (internal_func == NULL)
-		return false;
-	rhs->val.call.func = internal_func;
-
-	if (!ast_accept_toplevel_var(line, name, rhs, is_let, false))
-		return false;
-	resource = ast_malloc(sizeof(*resource));
-	if (resource == NULL) {
-		ast_out_of_memory();
-		return false;
-	}
-	resource->name = name;
-	resource->next = ast_accel_resource_symbols;
-	ast_accel_resource_symbols = resource;
-	return true;
-}
-
-bool
-ast_is_accel_resource_symbol(
-	const char *name)
-{
-	struct ast_accel_resource_symbol *resource;
-
-	resource = ast_accel_resource_symbols;
-	while (resource != NULL) {
-		if (strcmp(resource->name, name) == 0)
-			return true;
-		resource = resource->next;
-	}
-	return false;
-}
-
-/*
  * Called from the parser for a top-level "class Name { ... }".
  * Lowered as: Name = class { ... }; Global.markConst("Name");
  */
@@ -863,18 +680,6 @@ ast_accept_func(
 		ast_printf(N_TR("inline functions must also be static."));
 		return NULL;
 	}
-	if ((flags & AST_FUNC_ACCEL) != 0 && (flags & AST_FUNC_INLINE) != 0) {
-		ast_printf(N_TR("accelerator functions cannot be inline."));
-		return NULL;
-	}
-	if ((flags & AST_FUNC_GPU) != 0 && (flags & AST_FUNC_INLINE) != 0) {
-		ast_printf(N_TR("GPU functions cannot be inline."));
-		return NULL;
-	}
-	if ((flags & AST_FUNC_ACCEL) != 0 && (flags & AST_FUNC_GPU) != 0) {
-		ast_printf(N_TR("A function cannot be both accel and gpu."));
-		return NULL;
-	}
 	if ((flags & AST_FUNC_STATIC) != 0) {
 		name = ast_register_static_symbol(name);
 		if (name == NULL)
@@ -895,11 +700,6 @@ ast_accept_func(
 	f->return_type_name = return_type_name;
 	f->is_static = (flags & AST_FUNC_STATIC) != 0;
 	f->is_inline = (flags & AST_FUNC_INLINE) != 0;
-	f->is_accel = (flags & AST_FUNC_ACCEL) != 0;
-	f->func_kind = (flags & AST_FUNC_GPU) != 0 ? NOCT_FUNC_GPU :
-		(f->is_accel ? NOCT_FUNC_ACCEL :
-		 ((flags & AST_FUNC_FAST) != 0 ? NOCT_FUNC_FAST :
-		  NOCT_FUNC_NORMAL));
 	f->stmt_list = stmt_list;
 
 	return f;
@@ -1013,39 +813,6 @@ ast_accept_expr_stmt(
 	return stmt;
 }
 
-/* Lower Noct's synchronous CUDA-style launch syntax to an internal cfunc. */
-struct ast_stmt *
-ast_accept_gpu_launch_stmt(
-	int line,
-	char *name,
-	struct ast_expr *grid,
-	struct ast_expr *block,
-	struct ast_arg_list *args)
-{
-	struct ast_expr *target;
-	struct ast_expr *fn;
-	struct ast_expr *call;
-	struct ast_expr *tail;
-	struct ast_arg_list *all;
-
-	target = ast_accept_term_expr(ast_accept_symbol_term(name));
-	fn = ast_accept_term_expr(ast_accept_symbol_term(
-		ast_strdup("$Accel.dispatchSync")));
-	if (target == NULL || fn == NULL) return NULL;
-	all = ast_accept_arg_list(NULL, target);
-	all = ast_accept_arg_list(all, grid);
-	all = ast_accept_arg_list(all, block);
-	if (all == NULL) return NULL;
-	if (args != NULL && args->list != NULL) {
-		tail = all->list;
-		while (tail->next != NULL) tail = tail->next;
-		tail->next = args->list;
-	}
-	call = ast_accept_call_expr(fn, all);
-	if (call == NULL) return NULL;
-	return ast_accept_expr_stmt(line, call);
-}
-
 /* Called from the parser when it accepted a assign_stmt. */
 struct ast_stmt *
 ast_accept_assign_stmt(
@@ -1068,19 +835,8 @@ ast_accept_assign_stmt(
 	stmt->val.assign.rhs = rhs;
 	stmt->val.assign.is_var = is_var;
 	stmt->val.assign.is_let = is_let;
-	stmt->val.assign.is_shared = false;
 	stmt->line = line;
 
-	return stmt;
-}
-
-struct ast_stmt *
-ast_accept_shared_stmt(int line, struct ast_expr *lhs, struct ast_expr *rhs,
-			 bool is_var)
-{
-	struct ast_stmt *stmt;
-	stmt = ast_accept_assign_stmt(line, lhs, rhs, is_var, !is_var);
-	if (stmt != NULL) stmt->val.assign.is_shared = true;
 	return stmt;
 }
 

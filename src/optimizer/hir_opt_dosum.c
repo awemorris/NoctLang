@@ -5,9 +5,11 @@
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-/* Target-neutral canonical additive reduction recognition. */
+/*
+ * Target-neutral canonical additive reduction recognition.
+ */
 
-#include "hir_parallel.h"
+#include "hir_opt_paralle.h"
 
 #include <string.h>
 
@@ -26,19 +28,152 @@ struct hir_dosum_scan {
 static const char *hir_dosum_symbol(const struct hir_expr *expr);
 static const struct hir_expr *hir_dosum_unwrap(const struct hir_expr *expr);
 static bool hir_dosum_zero(const struct hir_expr *expr, int scalar_kind);
-static bool hir_dosum_contains(const struct hir_expr *expr,
-			       const char *symbol);
-static bool hir_dosum_within(const struct hir_block *block,
-			     const struct hir_block *loop);
-static bool hir_dosum_scan_block(struct hir_dosum_scan *scan,
-				 struct hir_block *block);
-static bool hir_dosum_preceded_by_decl(struct hir_block *block,
-				       struct hir_block *loop,
-				       const struct hir_stmt *decl,
-				       struct hir_block **visited,
-				       uint32_t *visited_count);
-static const struct hir_expr *
-hir_dosum_mapped_expr(const struct hir_stmt *stmt, const char *symbol);
+static bool hir_dosum_contains(const struct hir_expr *expr, const char *symbol);
+static bool hir_dosum_within(const struct hir_block *block, const struct hir_block *loop);
+static bool hir_dosum_scan_block(struct hir_dosum_scan *scan, struct hir_block *block);
+static bool hir_dosum_preceded_by_decl(struct hir_block *block, struct hir_block *loop, const struct hir_stmt *decl, struct hir_block **visited, uint32_t *visited_count);
+static const struct hir_expr *hir_dosum_mapped_expr(const struct hir_stmt *stmt, const char *symbol);
+
+bool
+hir_dosum_classify(
+	const struct hir_loop_summary *summary,
+	struct hir_dosum_result *result)
+{
+	const struct hir_scalar_effect *effect;
+	const struct hir_scalar_effect *candidate_effect;
+	struct hir_local *local;
+	struct hir_local *candidate;
+	struct hir_dosum_scan scan;
+	struct hir_block *visited[HIR_DOSUM_MAX_VISITED];
+	struct hir_block *parent;
+	uint32_t visited_count;
+	uint32_t i;
+	uint32_t candidates;
+	const struct hir_expr *mapped;
+
+	if (summary == NULL || result == NULL)
+		return false;
+
+	memset(result, 0, sizeof(*result));
+	result->classification = HIR_PAR_CLASS_UNKNOWN;
+	result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
+	result->operator_ = HIR_REDUCTION_NONE;
+	result->value_type = HIR_DECL_SCALAR_UNKNOWN;
+	if (summary->analysis_status != HIR_ANALYSIS_COMPLETE) {
+		result->reason = summary->analysis_reason;
+		return true;
+	}
+	if (summary->has_nested_loop || summary->has_while_loop) {
+		result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
+		return true;
+	}
+
+	for (i = 0; i < summary->access_count; i++) {
+		if (summary->access[i].kind == HIR_MEMORY_WRITE) {
+			result->classification = HIR_PAR_CLASS_DEPENDENT;
+			result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
+			return true;
+		}
+	}
+	for (i = 0; i < summary->call_count; i++) {
+		if (!summary->call[i].is_pure) {
+			result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
+			return true;
+		}
+	}
+	candidate = NULL;
+	candidate_effect = NULL;
+	candidates = 0;
+	for (i = 0; i < summary->scalar_count; i++) {
+		effect = &summary->scalar[i];
+		if (effect->is_counter || effect->writes != 1 ||
+		    effect->reads == 0 || effect->declared_inside_loop)
+			continue;
+		local = summary->func->val.func.local;
+		while (local != NULL) {
+			if (strcmp(local->symbol, effect->symbol) == 0)
+				break;
+			local = local->next;
+		}
+		if (local == NULL || local->declaration_kind != HIR_LOCAL_DECL_VAR)
+			continue;
+		candidates++;
+		candidate = local;
+		candidate_effect = effect;
+	}
+	if (candidates != 1 || candidate == NULL || candidate_effect == NULL) {
+		result->classification = HIR_PAR_CLASS_DEPENDENT;
+		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
+		return true;
+	}
+	if (candidate->declared_scalar_kind != HIR_DECL_SCALAR_INT32 &&
+	    candidate->declared_scalar_kind != HIR_DECL_SCALAR_UINT32 &&
+	    candidate->declared_scalar_kind != HIR_DECL_SCALAR_FLOAT32) {
+		result->classification = HIR_PAR_CLASS_DEPENDENT;
+		result->reason = HIR_PAR_REASON_REDUCTION_TYPE;
+		return true;
+	}
+	if (!hir_dosum_zero(candidate->initializer,
+			     candidate->declared_scalar_kind)) {
+		result->classification = HIR_PAR_CLASS_DEPENDENT;
+		result->reason = HIR_PAR_REASON_REDUCTION_IDENTITY;
+		return true;
+	}
+	visited_count = 0;
+	if (!hir_dosum_preceded_by_decl(summary->func->val.func.inner,
+					 summary->loop,
+					 candidate->declaration_stmt,
+					 visited, &visited_count)) {
+		result->classification = HIR_PAR_CLASS_DEPENDENT;
+		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
+		return true;
+	}
+	memset(&scan, 0, sizeof(scan));
+	scan.summary = summary;
+	scan.symbol = candidate->symbol;
+	if (!hir_dosum_scan_block(&scan, summary->loop->val.for_.inner))
+		return false;
+	if (scan.update_count != 1 || scan.update == NULL) {
+		result->classification = HIR_PAR_CLASS_DEPENDENT;
+		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
+		return true;
+	}
+	parent = scan.update_block;
+	while (parent != NULL && parent != summary->loop) {
+		if (parent->type == HIR_BLOCK_IF) {
+			result->classification = HIR_PAR_CLASS_DEPENDENT;
+			result->reason = HIR_PAR_REASON_REDUCTION_PATH;
+			return true;
+		}
+		parent = parent->parent;
+	}
+	mapped = hir_dosum_mapped_expr(scan.update, candidate->symbol);
+	if (mapped == NULL) {
+		result->classification = HIR_PAR_CLASS_DEPENDENT;
+		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
+		return true;
+	}
+	for (i = 0; i < summary->scalar_count; i++) {
+		effect = &summary->scalar[i];
+		if (effect == candidate_effect || effect->is_counter ||
+		    effect->writes == 0 || effect->declared_inside_loop)
+			continue;
+		result->classification = HIR_PAR_CLASS_DEPENDENT;
+		result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
+		return true;
+	}
+	result->classification = HIR_PAR_CLASS_DOSUM;
+	result->reason = HIR_PAR_REASON_NONE;
+	result->operator_ = HIR_REDUCTION_ADD;
+	result->value_type = candidate->declared_scalar_kind;
+	result->accumulator_symbol = candidate->symbol;
+	result->identity = candidate->initializer;
+	result->mapped_expr = mapped;
+	result->trip_expr = summary->stop;
+	result->line = scan.update->line;
+	result->post_loop_use = true;
+	return true;
+}
 
 static const char *
 hir_dosum_symbol(
@@ -324,143 +459,4 @@ hir_dosum_mapped_expr(
 	    !hir_dosum_contains(left, symbol))
 		return left;
 	return NULL;
-}
-
-bool
-hir_dosum_classify(
-	const struct hir_loop_summary *summary,
-	struct hir_dosum_result *result)
-{
-	const struct hir_scalar_effect *effect;
-	const struct hir_scalar_effect *candidate_effect;
-	struct hir_local *local;
-	struct hir_local *candidate;
-	struct hir_dosum_scan scan;
-	struct hir_block *visited[HIR_DOSUM_MAX_VISITED];
-	struct hir_block *parent;
-	uint32_t visited_count;
-	uint32_t i;
-	uint32_t candidates;
-	const struct hir_expr *mapped;
-
-	if (summary == NULL || result == NULL)
-		return false;
-	memset(result, 0, sizeof(*result));
-	result->classification = HIR_PAR_CLASS_UNKNOWN;
-	result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
-	result->operator_ = HIR_REDUCTION_NONE;
-	result->value_type = HIR_DECL_SCALAR_UNKNOWN;
-	if (summary->analysis_status != HIR_ANALYSIS_COMPLETE) {
-		result->reason = summary->analysis_reason;
-		return true;
-	}
-	if (summary->has_nested_loop || summary->has_while_loop) {
-		result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
-		return true;
-	}
-	for (i = 0; i < summary->access_count; i++) {
-		if (summary->access[i].kind == HIR_MEMORY_WRITE) {
-			result->classification = HIR_PAR_CLASS_DEPENDENT;
-			result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
-			return true;
-		}
-	}
-	for (i = 0; i < summary->call_count; i++) {
-		if (!summary->call[i].is_pure) {
-			result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
-			return true;
-		}
-	}
-	candidate = NULL;
-	candidate_effect = NULL;
-	candidates = 0;
-	for (i = 0; i < summary->scalar_count; i++) {
-		effect = &summary->scalar[i];
-		if (effect->is_counter || effect->writes != 1 ||
-		    effect->reads == 0 || effect->declared_inside_loop)
-			continue;
-		local = summary->func->val.func.local;
-		while (local != NULL) {
-			if (strcmp(local->symbol, effect->symbol) == 0)
-				break;
-			local = local->next;
-		}
-		if (local == NULL || local->declaration_kind != HIR_LOCAL_DECL_VAR)
-			continue;
-		candidates++;
-		candidate = local;
-		candidate_effect = effect;
-	}
-	if (candidates != 1 || candidate == NULL || candidate_effect == NULL) {
-		result->classification = HIR_PAR_CLASS_DEPENDENT;
-		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
-		return true;
-	}
-	if (candidate->declared_scalar_kind != HIR_DECL_SCALAR_INT32 &&
-	    candidate->declared_scalar_kind != HIR_DECL_SCALAR_UINT32 &&
-	    candidate->declared_scalar_kind != HIR_DECL_SCALAR_FLOAT32) {
-		result->classification = HIR_PAR_CLASS_DEPENDENT;
-		result->reason = HIR_PAR_REASON_REDUCTION_TYPE;
-		return true;
-	}
-	if (!hir_dosum_zero(candidate->initializer,
-			     candidate->declared_scalar_kind)) {
-		result->classification = HIR_PAR_CLASS_DEPENDENT;
-		result->reason = HIR_PAR_REASON_REDUCTION_IDENTITY;
-		return true;
-	}
-	visited_count = 0;
-	if (!hir_dosum_preceded_by_decl(summary->func->val.func.inner,
-					 summary->loop,
-					 candidate->declaration_stmt,
-					 visited, &visited_count)) {
-		result->classification = HIR_PAR_CLASS_DEPENDENT;
-		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
-		return true;
-	}
-	memset(&scan, 0, sizeof(scan));
-	scan.summary = summary;
-	scan.symbol = candidate->symbol;
-	if (!hir_dosum_scan_block(&scan, summary->loop->val.for_.inner))
-		return false;
-	if (scan.update_count != 1 || scan.update == NULL) {
-		result->classification = HIR_PAR_CLASS_DEPENDENT;
-		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
-		return true;
-	}
-	parent = scan.update_block;
-	while (parent != NULL && parent != summary->loop) {
-		if (parent->type == HIR_BLOCK_IF) {
-			result->classification = HIR_PAR_CLASS_DEPENDENT;
-			result->reason = HIR_PAR_REASON_REDUCTION_PATH;
-			return true;
-		}
-		parent = parent->parent;
-	}
-	mapped = hir_dosum_mapped_expr(scan.update, candidate->symbol);
-	if (mapped == NULL) {
-		result->classification = HIR_PAR_CLASS_DEPENDENT;
-		result->reason = HIR_PAR_REASON_REDUCTION_SHAPE;
-		return true;
-	}
-	for (i = 0; i < summary->scalar_count; i++) {
-		effect = &summary->scalar[i];
-		if (effect == candidate_effect || effect->is_counter ||
-		    effect->writes == 0 || effect->declared_inside_loop)
-			continue;
-		result->classification = HIR_PAR_CLASS_DEPENDENT;
-		result->reason = HIR_PAR_REASON_REDUCTION_EFFECT;
-		return true;
-	}
-	result->classification = HIR_PAR_CLASS_DOSUM;
-	result->reason = HIR_PAR_REASON_NONE;
-	result->operator_ = HIR_REDUCTION_ADD;
-	result->value_type = candidate->declared_scalar_kind;
-	result->accumulator_symbol = candidate->symbol;
-	result->identity = candidate->initializer;
-	result->mapped_expr = mapped;
-	result->trip_expr = summary->stop;
-	result->line = scan.update->line;
-	result->post_loop_use = true;
-	return true;
 }

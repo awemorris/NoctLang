@@ -50,9 +50,6 @@ struct c_func {
 	char *c_name;
 	uint32_t param_count;
 	char *param_name[CBACK_ARG_MAX];
-	bool is_accel;
-	int func_kind;
-	struct fast_signature fast_signature;
 };
 
 static struct c_func func_table[FUNC_MAX];
@@ -145,7 +142,7 @@ noct_cback_translate(
 		return false;
 	}
 	if (ast_get_require_count() != 0) {
-		printf("%s", N_TR("Error: require is not supported by the C transpiler; use --compile --app.\n"));
+		printf("%s", N_TR("Error: require is not supported by the C transpiler.\n"));
 		ast_cleanup();
 		return false;
 	}
@@ -167,20 +164,8 @@ noct_cback_translate(
 
 		/* Run the HIR optimizer (ABCE; no-op below level 2). */
 		hfunc = hir_get_function(i);
-		if (hfunc->val.func.func_kind == NOCT_FUNC_GPU) {
-			printf("%s", N_TR("Error: __gpu func is not supported by the C transpiler.\n"));
-			hir_cleanup();
-			ast_cleanup();
-			return false;
-		}
-		if (hfunc->val.func.func_kind == NOCT_FUNC_ACCEL) {
-			printf("%s", N_TR("Error: __accel func is GPU-only and is not supported by the C transpiler.\n"));
-			hir_cleanup();
-			ast_cleanup();
-			return false;
-		}
 		if (!hir_optimize_func(hfunc, cback_optimize_level,
-				       cback_simd_info, false)) {
+				       cback_simd_info)) {
 			printf(N_TR("Error: %s\n"), hir_get_error_message());
 			return false;
 		}
@@ -248,9 +233,6 @@ cback_translate_func(
 	}
 	func_table[func_count].c_name = c_name;
 	func_table[func_count].param_count = func->param_count;
-	func_table[func_count].is_accel = func->is_accel;
-	func_table[func_count].func_kind = func->func_kind;
-	func_table[func_count].fast_signature = func->fast_signature;
 	for (i = 0; i < func->param_count; i++) {
 		func_table[func_count].param_name[i] = strdup(func->param_name[i]);
 		if (func_table[func_count].param_name[i] == NULL) {
@@ -2227,73 +2209,20 @@ cback_write_aot_init(void)
 		fprintf(fp, "    NoctValue init_ret;\n");
 	for (i = 0; i < func_count; i++) {
 		fprintf(fp, "    {\n");
-		if (func_table[i].is_accel ||
-		    func_table[i].func_kind == NOCT_FUNC_FAST)
-			fprintf(fp, "        NoctFunc *registered_func;\n");
 		if (func_table[i].param_count > 0) {
 			fprintf(fp, "        const char *params[] = {");
 			for (j = 0; j < func_table[i].param_count; j++)
 				fprintf(fp, "\"%s\",", func_table[i].param_name[j]);
 			fprintf(fp, "};\n");
 		}
-		if (func_table[i].func_kind == NOCT_FUNC_FAST) {
-			const struct fast_signature *sig;
-			uint32_t count;
-			sig = &func_table[i].fast_signature;
-			count = sig->param_count != 0 ? sig->param_count : 1;
-			fprintf(fp, "        const int fast_value_type[%u] = {", count);
-			for (j = 0; j < sig->param_count; j++)
-				fprintf(fp, "%d,", sig->param[j].value_type);
-			if (sig->param_count == 0) fprintf(fp, "0");
-			fprintf(fp, "};\n        const int fast_packed_type[%u] = {", count);
-			for (j = 0; j < sig->param_count; j++)
-				fprintf(fp, "%d,", sig->param[j].packed_type);
-			if (sig->param_count == 0) fprintf(fp, "0");
-			fprintf(fp, "};\n        const int fast_rank[%u] = {", count);
-			for (j = 0; j < sig->param_count; j++)
-				fprintf(fp, "%d,", sig->param[j].rank);
-			if (sig->param_count == 0) fprintf(fp, "0");
-			fprintf(fp, "};\n        const int fast_extent_kind[%u] = {",
-				count * NOCT_FAST_RANK_MAX);
-			for (j = 0; j < sig->param_count * NOCT_FAST_RANK_MAX; j++)
-				fprintf(fp, "%d,", sig->param[j / NOCT_FAST_RANK_MAX].extent[j % NOCT_FAST_RANK_MAX].kind);
-			if (sig->param_count == 0)
-				for (j = 0; j < NOCT_FAST_RANK_MAX; j++) fprintf(fp, "0,");
-			fprintf(fp, "};\n        const int64_t fast_extent_value[%u] = {",
-				count * NOCT_FAST_RANK_MAX);
-			for (j = 0; j < sig->param_count * NOCT_FAST_RANK_MAX; j++) {
-				const struct fast_extent *extent;
-				extent = &sig->param[j / NOCT_FAST_RANK_MAX].extent[j % NOCT_FAST_RANK_MAX];
-				fprintf(fp, "%lldLL,", (long long)(extent->kind == FAST_EXTENT_PARAM ?
-					extent->param_index : extent->constant));
-			}
-			if (sig->param_count == 0)
-				for (j = 0; j < NOCT_FAST_RANK_MAX; j++) fprintf(fp, "0LL,");
-			fprintf(fp, "};\n");
-		}
 		if (func_table[i].param_count > 0) {
-			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", %d, params, L_%s, %s))\n",
+			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", %d, params, L_%s, NULL))\n",
 				func_table[i].name, func_table[i].param_count,
-				func_table[i].c_name,
-				func_table[i].is_accel || func_table[i].func_kind == NOCT_FUNC_FAST ?
-					"&registered_func" : "NULL");
+				func_table[i].c_name);
 			fprintf(fp, "            return false;\n");
 		} else {
-			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", 0, NULL, L_%s, %s))\n",
-				func_table[i].name, func_table[i].c_name,
-				func_table[i].is_accel || func_table[i].func_kind == NOCT_FUNC_FAST ?
-					"&registered_func" : "NULL");
-			fprintf(fp, "            return false;\n");
-		}
-		if (func_table[i].is_accel) {
-			fprintf(fp, "        if (!noct_ex_mark_accel_func(registered_func))\n");
-			fprintf(fp, "            return false;\n");
-		}
-		if (func_table[i].func_kind == NOCT_FUNC_FAST) {
-			const struct fast_signature *sig;
-			sig = &func_table[i].fast_signature;
-			fprintf(fp, "        if (!noct_ex_mark_fast_func(registered_func, %d, %u, fast_value_type, fast_packed_type, fast_rank, fast_extent_kind, fast_extent_value))\n",
-				sig->return_type, sig->param_count);
+			fprintf(fp, "        if (!noct_register_cfunc(env, \"%s\", 0, NULL, L_%s, NULL))\n",
+				func_table[i].name, func_table[i].c_name);
 			fprintf(fp, "            return false;\n");
 		}
 		fprintf(fp, "    }\n");

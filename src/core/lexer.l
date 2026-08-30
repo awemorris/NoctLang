@@ -184,23 +184,11 @@ lexer_unescape(char *s)
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_SHL;
 		}
-"<<<"		{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_GPU_LAUNCH_L;
-		}
 ">>"		{
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_SHR;
-		}
-">>>"		{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_GPU_LAUNCH_R;
 		}
 "="		{
 			ast_yylloc.first_line = ast_yylloc.last_line;
@@ -388,36 +376,6 @@ lexer_unescape(char *s)
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_INLINE;
 		}
-"__accel"	{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_DUNDER_ACCEL;
-		}
-"__gpu"		{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_DUNDER_GPU;
-		}
-"__fast"	{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_DUNDER_FAST;
-		}
-"accel"		{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_ACCEL;
-		}
-"gpu"		{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_GPU;
-		}
 "require"	{
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
@@ -562,12 +520,6 @@ lexer_unescape(char *s)
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
 			return TOKEN_LET;
-		}
-"__shared"	{
-			ast_yylloc.first_line = ast_yylloc.last_line;
-			ast_yylloc.first_column = ast_yylloc.last_column + 1;
-			ast_yylloc.last_column += yyleng;
-			return TOKEN_SHARED;
 		}
 "var"		{
 			ast_yylloc.first_line = ast_yylloc.last_line;

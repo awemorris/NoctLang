@@ -7,11 +7,6 @@
 
 /*
  * HIR Optimizer: ABCE pass.
- *
- * This file is compiled only when NOCT_ENABLE_OPTIMIZER is ON
- * (which defines NOCT_USE_OPTIMIZER).  It was split out of hir.c;
- * see docs/design/01-abce.md for the design and docs/design/05-cse.md
- * for the split.
  */
 
 #include <noct/noct.h>
@@ -30,8 +25,7 @@
  * Versions eligible ranged-for loops into a guarded fast copy that
  * accesses a Packed.uint8 buffer base-relative without per-access
  * bounds checks.  Created HIR node kinds: PBASE/PLEN/PCHECK/TYPEIS/
- * PLOAD8U/PSTORE8.  See docs/design/01-abce.md for the full design,
- * eligibility rules (E1..E7), and the safepoint-freedom argument.
+ * PLOAD8U/PSTORE8.
  *
  * This is a loop-versioning bounds-check elimination in the lineage
  * of Midkiff et al.; unlike SSA-based approaches such as ABCD, it
@@ -53,18 +47,27 @@
  * ========================================================================
  */
 
-/* Limits. */
+/*
+ * Limits.
+ */
+
 #define ABCE_MAX_BLOCKS		64	/* cloneable blocks in a body    */
 #define ABCE_MAX_SITES		16	/* guarded subscript sites      */
 #define ABCE_MAX_GUARDS		32	/* TYPEIS-guarded local reads   */
+
 #define ABCE_GUARD_INT		1	/* affine-index local            */
 #define ABCE_GUARD_BODY		2	/* scalar value local            */
+
 #define ABCE_BODY_UNKNOWN	0
 #define ABCE_BODY_INT		1
 #define ABCE_BODY_F32		2
+
 #define ABCE_MAX_ASSIGNED	32	/* assigned locals in a body     */
 #define ABCE_MAX_LOOPS		16	/* candidate loops per function  */
 #define ABCE_MAX_PACKED		8	/* packed locals per loop        */
+#define ABCE_MAX_FACTS		64
+
+#define ABCE_FACT_TOP		(-2)	/* conflicting / opaque */
 
 /* A subscript site shape: p[i], p[i+u], p[u+i], p[i-u]. */
 enum abce_shape {
@@ -96,14 +99,184 @@ struct abce_site {
  * loop to the slow path.  This is deliberately NOT type inference.
  */
 
-#define ABCE_MAX_FACTS	64
-#define ABCE_FACT_TOP	(-2)	/* conflicting / opaque */
-
 struct abce_facts {
 	const char *name[ABCE_MAX_FACTS];
 	int type[ABCE_MAX_FACTS];	/* NOCT_PACKED_* or ABCE_FACT_TOP */
 	int count;
 };
+
+struct abce_ctx {
+	struct hir_block *func_block;
+	struct hir_block *loop;
+	const char *counter;
+
+	/*
+	 * Packed locals accessed by the loop.  Each packed gets its
+	 * own element-type bet, PCHECK guard term, and $abceN_baseK
+	 * hoisted base local.
+	 */
+	const char *packed[ABCE_MAX_PACKED];
+	int packed_bet[ABCE_MAX_PACKED];	/* NOCT_PACKED_* per packed */
+	int packed_count;
+	const char *assigned[ABCE_MAX_ASSIGNED];
+	int assigned_type[ABCE_MAX_ASSIGNED];
+	int assigned_count;
+	const char *guards[ABCE_MAX_GUARDS];	/* locals protected by TYPEIS */
+	uint8_t guard_req[ABCE_MAX_GUARDS];	/* ABCE_GUARD_* bit mask */
+	uint8_t guard_type[ABCE_MAX_GUARDS];	/* NOCT_VALUE_INT/FLOAT */
+	int guard_count;
+	int body_kind;				/* ABCE_BODY_* */
+	bool saw_int_term;
+	bool saw_float_term;
+	bool saw_int_only_op;
+	bool mixed_numeric;
+	struct abce_site sites[ABCE_MAX_SITES];
+	int site_count;
+
+	/* Clone map. */
+	struct hir_block *map_old[ABCE_MAX_BLOCKS];
+	struct hir_block *map_new[ABCE_MAX_BLOCKS];
+	int map_count;
+
+	/* Hoisted local names. */
+	char lo_name[32];
+	char hi_name[32];
+	char base_name[ABCE_MAX_PACKED][32];
+	char len_name[ABCE_MAX_PACKED][32];
+	char g_name[32];
+
+	/* Element-type bet (NOCT_PACKED_*) from constant propagation. */
+	int bet;
+	struct abce_facts *facts;
+};
+
+/* Per-function loop sequence number for unique $abceN names. */
+static int abce_loop_seq;
+
+/* Forward declarations. */
+static int abce_fact_find(struct abce_facts *f, const char *name);
+static void abce_fact_meet(struct abce_facts *f, const char *name, int type);
+static int abce_packed_ctor_type(struct hir_expr *rhs);
+static void abce_facts_scan_chain(struct abce_facts *f, struct hir_block *head, int pass);
+static struct hir_term *abce_mk_term_int(int v);
+static struct hir_term *abce_mk_term_symbol(const char *name);
+static struct hir_expr *abce_mk_expr_term(struct hir_term *t);
+static struct hir_expr *abce_mk_expr_int(int v);
+static struct hir_expr *abce_mk_expr_symbol(const char *name);
+static struct hir_expr *abce_mk_binary(int type, struct hir_expr *e0, struct hir_expr *e1);
+static struct hir_expr *abce_mk_unary(int type, struct hir_expr *e0);
+static struct hir_stmt *abce_mk_assign_stmt(int line, struct hir_expr *lhs, struct hir_expr *rhs);
+static struct hir_block *abce_mk_block(int type, int line, struct hir_block *parent);
+static bool abce_is_local(struct abce_ctx *ctx, const char *name);
+static bool abce_add_guard(struct abce_ctx *ctx, const char *name, uint8_t req, int type);
+static int abce_local_type(struct abce_ctx *ctx, const char *name);
+static int abce_bet_for_symbol(struct abce_ctx *ctx, const char *name);
+static bool abce_add_assigned(struct abce_ctx *ctx, const char *name);
+static void abce_set_assigned_type(struct abce_ctx *ctx, const char *name, int type);
+static bool abce_is_assigned(struct abce_ctx *ctx, const char *name);
+static bool abce_expr_equal(struct hir_expr *a, struct hir_expr *b);
+static bool abce_check_invariant_u(struct abce_ctx *ctx, struct hir_expr *e);
+static bool abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr);
+static bool abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr);
+static int abce_expr_type(struct abce_ctx *ctx, struct hir_expr *expr);
+static bool abce_check_stmt(struct abce_ctx *ctx, struct hir_stmt *stmt);
+static bool abce_scan_chain(struct abce_ctx *ctx, struct hir_block *head);
+static bool abce_check_eligibility(struct abce_ctx *ctx);
+static struct hir_term *abce_clone_term(struct hir_term *t);
+static struct hir_expr *abce_clone_expr(struct hir_expr *e);
+static struct hir_stmt *abce_clone_stmt_list(struct hir_stmt *head);
+static bool abce_collect_blocks(struct abce_ctx *ctx, struct hir_block *head);
+static struct hir_block *abce_map_block(struct abce_ctx *ctx, struct hir_block *old);
+static bool abce_clone_blocks(struct abce_ctx *ctx);
+static int abce_load_kind(int bet);
+static int abce_store_kind(int bet);
+static int abce_packed_subscr_index(struct abce_ctx *ctx, struct hir_expr *e);
+static bool abce_is_gather_site(struct abce_ctx *ctx, int packed_index, struct hir_expr *index);
+static bool abce_canonicalize_index(struct abce_ctx *ctx, int packed_index, struct hir_expr *f);
+static bool abce_rewrite_expr(struct abce_ctx *ctx, struct hir_expr *e);
+static bool abce_rewrite_block(struct abce_ctx *ctx, struct hir_block *b);
+static struct hir_expr *abce_mk_endpoint(struct abce_ctx *ctx, struct abce_site *site, bool at_hi);
+static struct hir_expr *abce_mk_guard(struct abce_ctx *ctx);
+static bool abce_version_loop(struct abce_ctx *ctx);
+#ifndef NDEBUG
+static void abce_verify_fast_expr(struct hir_expr *e);
+static void abce_verify_fast(struct abce_ctx *ctx);
+#endif
+static void abce_collect_loops(struct hir_block *head, struct hir_block **loops, int *count);
+
+/*
+ * Run the ABCE pass on one function.  (Level gating is done by the
+ * driver hir_optimize_func() in hir.c.)
+ */
+bool
+hir_opt_abce_func(
+	struct hir_block *func_block)
+{
+	struct hir_block *loops[ABCE_MAX_LOOPS];
+	struct abce_ctx *ctx;
+	int loop_count;
+	int i;
+
+	assert(func_block != NULL);
+	assert(func_block->type == HIR_BLOCK_FUNC);
+
+	abce_loop_seq = 0;
+
+	loop_count = 0;
+	if (func_block->val.func.inner != NULL)
+		abce_collect_loops(func_block->val.func.inner, loops, &loop_count);
+
+	{
+		/* Packed element-type facts (function-wide, two passes). */
+		static struct abce_facts facts;
+
+		memset(&facts, 0, sizeof(facts));
+
+		/*
+		 * Element-specific packed annotations are
+		 * entry-checked before the body at this optimization
+		 * level, so they are sound seed facts.
+		 */
+		for (i = 0; i < (int)func_block->val.func.param_count; i++) {
+			int packed_type;
+
+			packed_type = func_block->val.func.param_packed_type[i];
+			if (packed_type >= 0 && packed_type != NOCT_PACKED_ANY)
+				abce_fact_meet(&facts,
+					func_block->val.func.param_name[i], packed_type);
+		}
+		if (func_block->val.func.inner != NULL) {
+			abce_facts_scan_chain(
+				&facts, func_block->val.func.inner, 0);
+			abce_facts_scan_chain(
+				&facts, func_block->val.func.inner, 1);
+		}
+
+		for (i = 0; i < loop_count; i++) {
+			ctx = hir_malloc(sizeof(struct abce_ctx));
+			if (ctx == NULL) {
+				hir_out_of_memory();
+				return false;
+			}
+
+			memset(ctx, 0, sizeof(struct abce_ctx));
+			ctx->func_block = func_block;
+			ctx->loop = loops[i];
+			ctx->facts = &facts;
+
+			if (!abce_check_eligibility(ctx))
+				continue;
+
+			if (!abce_version_loop(ctx))
+				return false;
+#ifndef NDEBUG
+			abce_verify_fast(ctx);
+#endif
+		}
+	}
+
+	return true;
+}
 
 static int
 abce_fact_find(struct abce_facts *f, const char *name)
@@ -114,6 +287,7 @@ abce_fact_find(struct abce_facts *f, const char *name)
 		if (strcmp(f->name[i], name) == 0)
 			return i;
 	}
+
 	return -1;
 }
 
@@ -137,7 +311,8 @@ abce_fact_meet(struct abce_facts *f, const char *name, int type)
 
 /* Recognize Packed.<ctor>(...) and yield its element type. */
 static int
-abce_packed_ctor_type(struct hir_expr *rhs)
+abce_packed_ctor_type(
+	struct hir_expr *rhs)
 {
 	static const struct {
 		const char *name;
@@ -164,7 +339,9 @@ abce_packed_ctor_type(struct hir_expr *rhs)
 		fn = rhs->val.thiscall.obj;
 		ctor = rhs->val.thiscall.func;
 	} else if (rhs->type == HIR_EXPR_CALL) {
-		struct hir_expr *dot = rhs->val.call.func;
+		struct hir_expr *dot;
+
+		dot = rhs->val.call.func;
 		if (dot == NULL || dot->type != HIR_EXPR_DOT)
 			return -1;
 		fn = dot->val.dot.obj;
@@ -185,7 +362,10 @@ abce_packed_ctor_type(struct hir_expr *rhs)
 
 /* Collect creation facts over a block chain (pass 1 and 2). */
 static void
-abce_facts_scan_chain(struct abce_facts *f, struct hir_block *head, int pass)
+abce_facts_scan_chain(
+	struct abce_facts *f,
+	struct hir_block *head,
+	int pass)
 {
 	struct hir_block *b;
 	struct hir_block *c;
@@ -200,8 +380,11 @@ abce_facts_scan_chain(struct abce_facts *f, struct hir_block *head, int pass)
 				if (stmt->lhs != NULL &&
 				    stmt->lhs->type == HIR_EXPR_TERM &&
 				    stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL) {
-					const char *x = stmt->lhs->val.term.term->val.symbol;
-					int t = abce_packed_ctor_type(stmt->rhs);
+					const char *x;
+					int t;
+
+					x = stmt->lhs->val.term.term->val.symbol;
+					t = abce_packed_ctor_type(stmt->rhs);
 					if (t >= 0) {
 						abce_fact_meet(f, x, t);
 					} else if (stmt->rhs != NULL &&
@@ -212,7 +395,9 @@ abce_facts_scan_chain(struct abce_facts *f, struct hir_block *head, int pass)
 						   unresolved; pass 1 pulls
 						   the source's fact. */
 						if (pass == 1) {
-							int j = abce_fact_find(f,
+							int j;
+
+							j = abce_fact_find(f,
 								stmt->rhs->val.term.term->val.symbol);
 							if (j >= 0 && f->type[j] >= 0)
 								abce_fact_meet(f, x, f->type[j]);
@@ -249,59 +434,13 @@ abce_facts_scan_chain(struct abce_facts *f, struct hir_block *head, int pass)
 	}
 }
 
-struct abce_ctx {
-	struct hir_block *func_block;
-	struct hir_block *loop;
-	const char *counter;
-
-	/*
-	 * Packed locals accessed by the loop (multi-packed since design
-	 * 06 Part A; the SIMD strip loop needs src+dst in one loop).
-	 * Each packed gets its own element-type bet, PCHECK guard term,
-	 * and $abceN_baseK hoisted base local.
-	 */
-	const char *packed[ABCE_MAX_PACKED];
-	int packed_bet[ABCE_MAX_PACKED];	/* NOCT_PACKED_* per packed */
-	int packed_count;
-	const char *assigned[ABCE_MAX_ASSIGNED];
-	int assigned_type[ABCE_MAX_ASSIGNED];
-	int assigned_count;
-	const char *guards[ABCE_MAX_GUARDS];	/* locals protected by TYPEIS */
-	uint8_t guard_req[ABCE_MAX_GUARDS];	/* ABCE_GUARD_* bit mask */
-	uint8_t guard_type[ABCE_MAX_GUARDS];	/* NOCT_VALUE_INT/FLOAT */
-	int guard_count;
-	int body_kind;			/* ABCE_BODY_* */
-	bool saw_int_term;
-	bool saw_float_term;
-	bool saw_int_only_op;
-	bool mixed_numeric;
-	struct abce_site sites[ABCE_MAX_SITES];
-	int site_count;
-	/* Clone map. */
-	struct hir_block *map_old[ABCE_MAX_BLOCKS];
-	struct hir_block *map_new[ABCE_MAX_BLOCKS];
-	int map_count;
-	/* Hoisted local names. */
-	char lo_name[32];
-	char hi_name[32];
-	char base_name[ABCE_MAX_PACKED][32];
-	char len_name[ABCE_MAX_PACKED][32];
-	char g_name[32];
-
-	/* Element-type bet (NOCT_PACKED_*) from constant propagation. */
-	int bet;
-	struct abce_facts *facts;
-};
-
-/* Per-function loop sequence number for unique $abceN names. */
-static int abce_loop_seq;
-
 /*
  * Small constructors.
  */
 
 static struct hir_term *
-abce_mk_term_int(int v)
+abce_mk_term_int(
+	int v)
 {
 	struct hir_term *t;
 
@@ -317,7 +456,8 @@ abce_mk_term_int(int v)
 }
 
 static struct hir_term *
-abce_mk_term_symbol(const char *name)
+abce_mk_term_symbol(
+	const char *name)
 {
 	struct hir_term *t;
 
@@ -326,6 +466,7 @@ abce_mk_term_symbol(const char *name)
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(t, 0, sizeof(struct hir_term));
 	t->type = HIR_TERM_SYMBOL;
 	t->val.symbol = hir_strdup(name);
@@ -333,16 +474,19 @@ abce_mk_term_symbol(const char *name)
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	return t;
 }
 
 static struct hir_expr *
-abce_mk_expr_term(struct hir_term *t)
+abce_mk_expr_term(
+	struct hir_term *t)
 {
 	struct hir_expr *e;
 
 	if (t == NULL)
 		return NULL;
+
 	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
@@ -355,19 +499,24 @@ abce_mk_expr_term(struct hir_term *t)
 }
 
 static struct hir_expr *
-abce_mk_expr_int(int v)
+abce_mk_expr_int(
+	int v)
 {
 	return abce_mk_expr_term(abce_mk_term_int(v));
 }
 
 static struct hir_expr *
-abce_mk_expr_symbol(const char *name)
+abce_mk_expr_symbol(
+	const char *name)
 {
 	return abce_mk_expr_term(abce_mk_term_symbol(name));
 }
 
 static struct hir_expr *
-abce_mk_binary(int type, struct hir_expr *e0, struct hir_expr *e1)
+abce_mk_binary(
+	int type,
+	struct hir_expr *e0,
+	struct hir_expr *e1)
 {
 	struct hir_expr *e;
 
@@ -386,7 +535,9 @@ abce_mk_binary(int type, struct hir_expr *e0, struct hir_expr *e1)
 }
 
 static struct hir_expr *
-abce_mk_unary(int type, struct hir_expr *e0)
+abce_mk_unary(
+	int type,
+	struct hir_expr *e0)
 {
 	struct hir_expr *e;
 
@@ -404,7 +555,10 @@ abce_mk_unary(int type, struct hir_expr *e0)
 }
 
 static struct hir_stmt *
-abce_mk_assign_stmt(int line, struct hir_expr *lhs, struct hir_expr *rhs)
+abce_mk_assign_stmt(
+	int line,
+	struct hir_expr *lhs,
+	struct hir_expr *rhs)
 {
 	struct hir_stmt *s;
 
@@ -424,7 +578,10 @@ abce_mk_assign_stmt(int line, struct hir_expr *lhs, struct hir_expr *rhs)
 }
 
 static struct hir_block *
-abce_mk_block(int type, int line, struct hir_block *parent)
+abce_mk_block(
+	int type,
+	int line,
+	struct hir_block *parent)
 {
 	struct hir_block *b;
 
@@ -446,7 +603,9 @@ abce_mk_block(int type, int line, struct hir_block *parent)
  */
 
 static bool
-abce_is_local(struct abce_ctx *ctx, const char *name)
+abce_is_local(
+	struct abce_ctx *ctx,
+	const char *name)
 {
 	struct hir_local *local;
 
@@ -460,7 +619,11 @@ abce_is_local(struct abce_ctx *ctx, const char *name)
 }
 
 static bool
-abce_add_guard(struct abce_ctx *ctx, const char *name, uint8_t req, int type)
+abce_add_guard(
+	struct abce_ctx *ctx,
+	const char *name,
+	uint8_t req,
+	int type)
 {
 	int i;
 
@@ -482,11 +645,14 @@ abce_add_guard(struct abce_ctx *ctx, const char *name, uint8_t req, int type)
 }
 
 static int
-abce_local_type(struct abce_ctx *ctx, const char *name)
+abce_local_type(
+	struct abce_ctx *ctx,
+	const char *name)
 {
-	struct hir_local *local = ctx->func_block->val.func.local;
+	struct hir_local *local;
 	int i;
 
+	local = ctx->func_block->val.func.local;
 	for (i = 0; i < ctx->assigned_count; i++) {
 		if (strcmp(ctx->assigned[i], name) == 0)
 			return ctx->assigned_type[i];
@@ -502,7 +668,9 @@ abce_local_type(struct abce_ctx *ctx, const char *name)
 
 /* Pick the guarded element type for a packed local. */
 static int
-abce_bet_for_symbol(struct abce_ctx *ctx, const char *name)
+abce_bet_for_symbol(
+	struct abce_ctx *ctx,
+	const char *name)
 {
 	int k;
 
@@ -515,7 +683,9 @@ abce_bet_for_symbol(struct abce_ctx *ctx, const char *name)
 }
 
 static bool
-abce_add_assigned(struct abce_ctx *ctx, const char *name)
+abce_add_assigned(
+	struct abce_ctx *ctx,
+	const char *name)
 {
 	int i;
 
@@ -531,9 +701,13 @@ abce_add_assigned(struct abce_ctx *ctx, const char *name)
 }
 
 static void
-abce_set_assigned_type(struct abce_ctx *ctx, const char *name, int type)
+abce_set_assigned_type(
+	struct abce_ctx *ctx,
+	const char *name,
+	int type)
 {
 	int i;
+
 	for (i = 0; i < ctx->assigned_count; i++) {
 		if (strcmp(ctx->assigned[i], name) == 0) {
 			ctx->assigned_type[i] = type;
@@ -543,7 +717,9 @@ abce_set_assigned_type(struct abce_ctx *ctx, const char *name, int type)
 }
 
 static bool
-abce_is_assigned(struct abce_ctx *ctx, const char *name)
+abce_is_assigned(
+	struct abce_ctx *ctx,
+	const char *name)
 {
 	int i;
 
@@ -555,13 +731,19 @@ abce_is_assigned(struct abce_ctx *ctx, const char *name)
 }
 
 static bool
-abce_expr_equal(struct hir_expr *a, struct hir_expr *b)
+abce_expr_equal(
+	struct hir_expr *a,
+	struct hir_expr *b)
 {
 	if (a == NULL || b == NULL || a->type != b->type)
 		return false;
+
 	if (a->type == HIR_EXPR_TERM) {
-		struct hir_term *ta = a->val.term.term;
-		struct hir_term *tb = b->val.term.term;
+		struct hir_term *ta;
+		struct hir_term *tb;
+
+		ta = a->val.term.term;
+		tb = b->val.term.term;
 		if (ta->type != tb->type)
 			return false;
 		if (ta->type == HIR_TERM_INT)
@@ -570,15 +752,19 @@ abce_expr_equal(struct hir_expr *a, struct hir_expr *b)
 			return strcmp(ta->val.symbol, tb->val.symbol) == 0;
 		return false;
 	}
+
 	if (a->type == HIR_EXPR_PAR)
 		return abce_expr_equal(a->val.unary.expr, b->val.unary.expr);
+
 	return abce_expr_equal(a->val.binary.expr[0], b->val.binary.expr[0]) &&
 	       abce_expr_equal(a->val.binary.expr[1], b->val.binary.expr[1]);
 }
 
 /* Pure int expression whose local reads are invariant in this loop. */
 static bool
-abce_check_invariant_u(struct abce_ctx *ctx, struct hir_expr *e)
+abce_check_invariant_u(
+	struct abce_ctx *ctx,
+	struct hir_expr *e)
 {
 	if (e->type == HIR_EXPR_TERM) {
 		if (e->val.term.term->type == HIR_TERM_INT)
@@ -592,22 +778,25 @@ abce_check_invariant_u(struct abce_ctx *ctx, struct hir_expr *e)
 		return abce_add_guard(ctx, e->val.term.term->val.symbol,
 				      ABCE_GUARD_INT, NOCT_VALUE_INT);
 	}
+
 	if (e->type == HIR_EXPR_PAR)
 		return abce_check_invariant_u(ctx, e->val.unary.expr);
+
 	if (e->type != HIR_EXPR_PLUS && e->type != HIR_EXPR_MINUS &&
 	    e->type != HIR_EXPR_MUL && e->type != HIR_EXPR_AND &&
 	    e->type != HIR_EXPR_OR && e->type != HIR_EXPR_XOR &&
 	    e->type != HIR_EXPR_SHL && e->type != HIR_EXPR_SHR)
 		return false;
+
 	return abce_check_invariant_u(ctx, e->val.binary.expr[0]) &&
 	       abce_check_invariant_u(ctx, e->val.binary.expr[1]);
 }
 
-static bool abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr);
-
 /* Register a subscript site; validate the affine shape. */
 static bool
-abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
+abce_check_site(
+	struct abce_ctx *ctx,
+	struct hir_expr *subscr)
 {
 	struct hir_expr *base;
 	struct hir_expr *f;
@@ -615,6 +804,10 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 	struct hir_expr *a;
 	struct hir_expr *b;
 	int i;
+	const char *sym;
+	int bet;
+	int body_kind;
+	int k;
 
 	base = subscr->val.binary.expr[0];
 	f = subscr->val.binary.expr[1];
@@ -628,34 +821,29 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 		return false;
 
 	/* Find or register the owner packed local. */
-	{
-		const char *sym = base->val.term.term->val.symbol;
-		int bet = abce_bet_for_symbol(ctx, sym);
-		int body_kind;
-		int k;
-
-		if (bet == NOCT_PACKED_FLOAT64)
-			return false;
-		body_kind = bet == NOCT_PACKED_FLOAT32 ?
-			ABCE_BODY_F32 : ABCE_BODY_INT;
-		if (ctx->body_kind != ABCE_BODY_UNKNOWN &&
-		    ctx->body_kind != body_kind)
-			return false;
-		ctx->body_kind = body_kind;
-		for (k = 0; k < ctx->packed_count; k++) {
-			if (strcmp(ctx->packed[k], sym) == 0)
-				break;
-		}
-		if (k == ctx->packed_count) {
-			if (ctx->packed_count >= ABCE_MAX_PACKED)
-				return false;
-			ctx->packed[ctx->packed_count] = sym;
-			ctx->packed_bet[ctx->packed_count] = bet;
-			ctx->packed_count++;
-		}
-		memset(&site, 0, sizeof(site));
-		site.packed_index = k;
+	sym = base->val.term.term->val.symbol;
+	bet = abce_bet_for_symbol(ctx, sym);
+	if (bet == NOCT_PACKED_FLOAT64)
+		return false;
+	body_kind = bet == NOCT_PACKED_FLOAT32 ?
+		ABCE_BODY_F32 : ABCE_BODY_INT;
+	if (ctx->body_kind != ABCE_BODY_UNKNOWN &&
+	    ctx->body_kind != body_kind)
+		return false;
+	ctx->body_kind = body_kind;
+	for (k = 0; k < ctx->packed_count; k++) {
+		if (strcmp(ctx->packed[k], sym) == 0)
+			break;
 	}
+	if (k == ctx->packed_count) {
+		if (ctx->packed_count >= ABCE_MAX_PACKED)
+			return false;
+		ctx->packed[ctx->packed_count] = sym;
+		ctx->packed_bet[ctx->packed_count] = bet;
+		ctx->packed_count++;
+	}
+	memset(&site, 0, sizeof(site));
+	site.packed_index = k;
 
 	/* Match the index shape. */
 	if (f->type == HIR_EXPR_TERM &&
@@ -721,7 +909,9 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 
 	/* Dedup structurally-equal sites. */
 	for (i = 0; i < ctx->site_count; i++) {
-		struct abce_site *o = &ctx->sites[i];
+		struct abce_site *o;
+
+		o = &ctx->sites[i];
 		if (o->packed_index != site.packed_index)
 			continue;
 		if (o->shape != site.shape)
@@ -751,7 +941,9 @@ abce_check_site(struct abce_ctx *ctx, struct hir_expr *subscr)
 
 /* Safe-expression walk: proves the fast body cannot allocate. */
 static bool
-abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
+abce_check_expr(
+	struct abce_ctx *ctx,
+	struct hir_expr *expr)
 {
 	struct hir_term *t;
 
@@ -779,7 +971,9 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 			if (abce_is_assigned(ctx, t->val.symbol))
 				return true;
 			{
-				int type = abce_local_type(ctx, t->val.symbol);
+				int type;
+
+				type = abce_local_type(ctx, t->val.symbol);
 				if (type != NOCT_VALUE_INT && type != NOCT_VALUE_FLOAT)
 					return false;
 				if (type == NOCT_VALUE_FLOAT)
@@ -842,7 +1036,9 @@ abce_check_expr(struct abce_ctx *ctx, struct hir_expr *expr)
 
 /* Exact scalar tag required by raw PSTORE lowering. */
 static int
-abce_expr_type(struct abce_ctx *ctx, struct hir_expr *expr)
+abce_expr_type(
+	struct abce_ctx *ctx,
+	struct hir_expr *expr)
 {
 	int a, b;
 
@@ -873,7 +1069,9 @@ abce_expr_type(struct abce_ctx *ctx, struct hir_expr *expr)
 		if (expr->val.binary.expr[0]->type == HIR_EXPR_TERM &&
 		    expr->val.binary.expr[0]->val.term.term->type ==
 			HIR_TERM_SYMBOL) {
-			int bet = abce_bet_for_symbol(ctx,
+			int bet;
+
+			bet = abce_bet_for_symbol(ctx,
 				expr->val.binary.expr[0]->val.term.term->val.symbol);
 			return bet == NOCT_PACKED_FLOAT32 ?
 				NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
@@ -913,7 +1111,9 @@ abce_expr_type(struct abce_ctx *ctx, struct hir_expr *expr)
 }
 
 static bool
-abce_check_stmt(struct abce_ctx *ctx, struct hir_stmt *stmt)
+abce_check_stmt(
+	struct abce_ctx *ctx,
+	struct hir_stmt *stmt)
 {
 	const char *name;
 
@@ -941,6 +1141,7 @@ abce_check_stmt(struct abce_ctx *ctx, struct hir_stmt *stmt)
 	}
 	if (stmt->lhs->type == HIR_EXPR_SUBSCR) {
 		int k, si;
+
 		if (!abce_check_site(ctx, stmt->lhs))
 			return false;
 		/* Scatter is deliberately out of scope. */
@@ -966,9 +1167,11 @@ abce_check_stmt(struct abce_ctx *ctx, struct hir_stmt *stmt)
 	return false;
 }
 
-/* Scan a body block chain; reject non-BASIC/IF blocks and continues. */
+/* Scan a body block chain, reject non-BASIC/IF blocks and continues. */
 static bool
-abce_scan_chain(struct abce_ctx *ctx, struct hir_block *head)
+abce_scan_chain(
+	struct abce_ctx *ctx,
+	struct hir_block *head)
 {
 	struct hir_block *b;
 	struct hir_block *c;
@@ -1018,7 +1221,8 @@ abce_scan_chain(struct abce_ctx *ctx, struct hir_block *head)
 }
 
 static bool
-abce_check_eligibility(struct abce_ctx *ctx)
+abce_check_eligibility(
+	struct abce_ctx *ctx)
 {
 	struct hir_block *loop;
 	int i;
@@ -1069,7 +1273,7 @@ abce_check_eligibility(struct abce_ctx *ctx)
 	 * yields a long, and letting it flow into another packed's
 	 * PSTORE8/16/32 (which assume an int-tagged source) would write
 	 * raw long bits.  Single-packed 64-bit loops keep today's
-	 * behavior (loads and stores agree on the width; PSTORE64
+	 * behavior (loads and stores agree on the width, PSTORE64
 	 * dispatches on int/long).
 	 */
 	if (ctx->packed_count > 1) {
@@ -1088,7 +1292,8 @@ abce_check_eligibility(struct abce_ctx *ctx)
  */
 
 static struct hir_term *
-abce_clone_term(struct hir_term *t)
+abce_clone_term(
+	struct hir_term *t)
 {
 	struct hir_term *n;
 
@@ -1118,7 +1323,8 @@ abce_clone_term(struct hir_term *t)
 }
 
 static struct hir_expr *
-abce_clone_expr(struct hir_expr *e)
+abce_clone_expr(
+	struct hir_expr *e)
 {
 	struct hir_expr *n;
 	uint32_t i;
@@ -1187,7 +1393,8 @@ abce_clone_expr(struct hir_expr *e)
 }
 
 static struct hir_stmt *
-abce_clone_stmt_list(struct hir_stmt *head)
+abce_clone_stmt_list(
+	struct hir_stmt *head)
 {
 	struct hir_stmt *n_head;
 	struct hir_stmt *n_tail;
@@ -1225,7 +1432,9 @@ abce_clone_stmt_list(struct hir_stmt *head)
 
 /* Collect every block of a body subtree into the clone map. */
 static bool
-abce_collect_blocks(struct abce_ctx *ctx, struct hir_block *head)
+abce_collect_blocks(
+	struct abce_ctx *ctx,
+	struct hir_block *head)
 {
 	struct hir_block *b;
 	struct hir_block *c;
@@ -1234,6 +1443,7 @@ abce_collect_blocks(struct abce_ctx *ctx, struct hir_block *head)
 	while (b != NULL) {
 		if (ctx->map_count >= ABCE_MAX_BLOCKS)
 			return false;
+
 		ctx->map_old[ctx->map_count] = b;
 		ctx->map_new[ctx->map_count] = NULL;
 		ctx->map_count++;
@@ -1264,7 +1474,9 @@ abce_collect_blocks(struct abce_ctx *ctx, struct hir_block *head)
 }
 
 static struct hir_block *
-abce_map_block(struct abce_ctx *ctx, struct hir_block *old)
+abce_map_block(
+	struct abce_ctx *ctx,
+	struct hir_block *old)
 {
 	int i;
 
@@ -1279,7 +1491,8 @@ abce_map_block(struct abce_ctx *ctx, struct hir_block *old)
 
 /* Clone every collected block (fields; pointer fixup comes after). */
 static bool
-abce_clone_blocks(struct abce_ctx *ctx)
+abce_clone_blocks(
+	struct abce_ctx *ctx)
 {
 	struct hir_block *o;
 	struct hir_block *n;
@@ -1315,6 +1528,7 @@ abce_clone_blocks(struct abce_ctx *ctx)
 	/* Fix up graph pointers. */
 	for (i = 0; i < ctx->map_count; i++) {
 		struct hir_block *mapped;
+
 		o = ctx->map_old[i];
 		n = ctx->map_new[i];
 
@@ -1342,42 +1556,66 @@ abce_clone_blocks(struct abce_ctx *ctx)
 
 /* Load/store HIR kinds for the element-type bet. */
 static int
-abce_load_kind(int bet)
+abce_load_kind(
+	int bet)
 {
 	switch (bet) {
-	case NOCT_PACKED_INT8:   return HIR_EXPR_PLOAD8S;
-	case NOCT_PACKED_UINT8:  return HIR_EXPR_PLOAD8U;
-	case NOCT_PACKED_INT16:  return HIR_EXPR_PLOAD16S;
-	case NOCT_PACKED_UINT16: return HIR_EXPR_PLOAD16U;
-	case NOCT_PACKED_INT32:  return HIR_EXPR_PLOAD32;
-	case NOCT_PACKED_UINT32: return HIR_EXPR_PLOAD32;
-	case NOCT_PACKED_INT64:  return HIR_EXPR_PLOAD64;
-	case NOCT_PACKED_UINT64: return HIR_EXPR_PLOAD64;
-	case NOCT_PACKED_FLOAT32:return HIR_EXPR_PLOADF32;
-	default:                 return HIR_EXPR_PLOAD8U;
+	case NOCT_PACKED_INT8:
+		return HIR_EXPR_PLOAD8S;
+	case NOCT_PACKED_UINT8:
+		return HIR_EXPR_PLOAD8U;
+	case NOCT_PACKED_INT16:
+		return HIR_EXPR_PLOAD16S;
+	case NOCT_PACKED_UINT16:
+		return HIR_EXPR_PLOAD16U;
+	case NOCT_PACKED_INT32:
+		return HIR_EXPR_PLOAD32;
+	case NOCT_PACKED_UINT32:
+		return HIR_EXPR_PLOAD32;
+	case NOCT_PACKED_INT64:
+		return HIR_EXPR_PLOAD64;
+	case NOCT_PACKED_UINT64:
+		return HIR_EXPR_PLOAD64;
+	case NOCT_PACKED_FLOAT32:
+		return HIR_EXPR_PLOADF32;
+	default:
+		return HIR_EXPR_PLOAD8U;
 	}
 }
 
 static int
-abce_store_kind(int bet)
+abce_store_kind(
+	int bet)
 {
 	switch (bet) {
-	case NOCT_PACKED_INT8:   return HIR_EXPR_PSTORE8;
-	case NOCT_PACKED_UINT8:  return HIR_EXPR_PSTORE8;
-	case NOCT_PACKED_INT16:  return HIR_EXPR_PSTORE16;
-	case NOCT_PACKED_UINT16: return HIR_EXPR_PSTORE16;
-	case NOCT_PACKED_INT32:  return HIR_EXPR_PSTORE32;
-	case NOCT_PACKED_UINT32: return HIR_EXPR_PSTORE32;
-	case NOCT_PACKED_INT64:  return HIR_EXPR_PSTORE64;
-	case NOCT_PACKED_UINT64: return HIR_EXPR_PSTORE64;
-	case NOCT_PACKED_FLOAT32:return HIR_EXPR_PSTOREF32;
-	default:                 return HIR_EXPR_PSTORE8;
+	case NOCT_PACKED_INT8:
+		return HIR_EXPR_PSTORE8;
+	case NOCT_PACKED_UINT8:
+		return HIR_EXPR_PSTORE8;
+	case NOCT_PACKED_INT16:
+		return HIR_EXPR_PSTORE16;
+	case NOCT_PACKED_UINT16:
+		return HIR_EXPR_PSTORE16;
+	case NOCT_PACKED_INT32:
+		return HIR_EXPR_PSTORE32;
+	case NOCT_PACKED_UINT32:
+		return HIR_EXPR_PSTORE32;
+	case NOCT_PACKED_INT64:
+		return HIR_EXPR_PSTORE64;
+	case NOCT_PACKED_UINT64:
+		return HIR_EXPR_PSTORE64;
+	case NOCT_PACKED_FLOAT32:
+		return HIR_EXPR_PSTOREF32;
+	default:
+		return HIR_EXPR_PSTORE8;
 	}
 }
 
 /* Return the owner packed index of a p[f] subscript, or -1. */
 static int
-abce_packed_subscr_index(struct abce_ctx *ctx, struct hir_expr *e)
+abce_packed_subscr_index(
+	struct abce_ctx *ctx,
+	struct hir_expr *e)
 {
 	const char *sym;
 	int k;
@@ -1397,10 +1635,13 @@ abce_packed_subscr_index(struct abce_ctx *ctx, struct hir_expr *e)
 }
 
 static bool
-abce_is_gather_site(struct abce_ctx *ctx, int packed_index,
-		    struct hir_expr *index)
+abce_is_gather_site(
+	struct abce_ctx *ctx,
+	int packed_index,
+	struct hir_expr *index)
 {
 	int i;
+
 	for (i = 0; i < ctx->site_count; i++) {
 		if (ctx->sites[i].packed_index == packed_index &&
 		    ctx->sites[i].shape == ABCE_SHAPE_GATHER &&
@@ -1411,15 +1652,20 @@ abce_is_gather_site(struct abce_ctx *ctx, int packed_index,
 }
 
 static bool
-abce_canonicalize_index(struct abce_ctx *ctx, int packed_index,
-			struct hir_expr *f)
+abce_canonicalize_index(
+	struct abce_ctx *ctx,
+	int packed_index,
+	struct hir_expr *f)
 {
 	int i;
 
 	for (i = 0; i < ctx->site_count; i++) {
-		struct abce_site *site = &ctx->sites[i];
-		struct hir_expr *u = NULL;
+		struct abce_site *site;
+		struct hir_expr *u;
 		struct hir_expr *n;
+
+		site = &ctx->sites[i];
+		u = NULL;
 		if (site->packed_index != packed_index ||
 		    site->u_expr == NULL || site->hoist_name[0] == '\0')
 			continue;
@@ -1449,46 +1695,53 @@ abce_canonicalize_index(struct abce_ctx *ctx, int packed_index,
 }
 
 static bool
-abce_rewrite_expr(struct abce_ctx *ctx, struct hir_expr *e)
+abce_rewrite_expr(
+	struct abce_ctx *ctx,
+	struct hir_expr *e)
 {
 	uint32_t i;
+	int k;
 
 	if (e == NULL)
 		return true;
-	{
-		int k = abce_packed_subscr_index(ctx, e);
-		if (k >= 0) {
-			/* p[f] -> contiguous PLOAD or an explicitly checked gather. */
-			struct hir_expr *base_term;
-			struct hir_expr *index = e->val.binary.expr[1];
-			bool gather = abce_is_gather_site(ctx, k, index);
-			base_term = abce_mk_expr_symbol(ctx->base_name[k]);
-			if (base_term == NULL)
+
+	k = abce_packed_subscr_index(ctx, e);
+	if (k >= 0) {
+		/* p[f] -> contiguous PLOAD or an explicitly checked gather. */
+		struct hir_expr *base_term;
+		struct hir_expr *index;
+		bool gather;
+
+		index = e->val.binary.expr[1];
+		gather = abce_is_gather_site(ctx, k, index);
+		base_term = abce_mk_expr_symbol(ctx->base_name[k]);
+		if (base_term == NULL)
+			return false;
+		if (gather) {
+			struct hir_expr *length;
+
+			length = abce_mk_expr_symbol(ctx->len_name[k]);
+			if (length == NULL || !abce_rewrite_expr(ctx, index))
 				return false;
-			if (gather) {
-				struct hir_expr *length =
-					abce_mk_expr_symbol(ctx->len_name[k]);
-				if (length == NULL || !abce_rewrite_expr(ctx, index))
-					return false;
-				e->type = HIR_EXPR_PGATHER32;
-				e->val.gather.base = base_term;
-				e->val.gather.length = length;
-				e->val.gather.index = index;
-				e->val.gather.packed =
-					abce_mk_expr_symbol(ctx->packed[k]);
-				if (e->val.gather.packed == NULL)
-					return false;
-				return true;
-			}
-			e->type = abce_load_kind(ctx->packed_bet[k]);
-			e->val.binary.expr[0] = base_term;
-			/* expr[1] (the offset) stays. */
-			if (!abce_canonicalize_index(ctx, k,
-						      e->val.binary.expr[1]))
+			e->type = HIR_EXPR_PGATHER32;
+			e->val.gather.base = base_term;
+			e->val.gather.length = length;
+			e->val.gather.index = index;
+			e->val.gather.packed =
+				abce_mk_expr_symbol(ctx->packed[k]);
+			if (e->val.gather.packed == NULL)
 				return false;
-			return abce_rewrite_expr(ctx, e->val.binary.expr[1]);
+			return true;
 		}
+		e->type = abce_load_kind(ctx->packed_bet[k]);
+		e->val.binary.expr[0] = base_term;
+		/* expr[1] (the offset) stays. */
+		if (!abce_canonicalize_index(ctx, k,
+					     e->val.binary.expr[1]))
+			return false;
+		return abce_rewrite_expr(ctx, e->val.binary.expr[1]);
 	}
+
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		return true;
@@ -1522,7 +1775,9 @@ abce_rewrite_expr(struct abce_ctx *ctx, struct hir_expr *e)
 }
 
 static bool
-abce_rewrite_block(struct abce_ctx *ctx, struct hir_block *b)
+abce_rewrite_block(
+	struct abce_ctx *ctx,
+	struct hir_block *b)
 {
 	struct hir_stmt *stmt;
 
@@ -1531,10 +1786,12 @@ abce_rewrite_block(struct abce_ctx *ctx, struct hir_block *b)
 		stmt = b->val.basic.stmt_list;
 		while (stmt != NULL) {
 			int k;
+
 			if (stmt->lhs != NULL &&
 			    (k = abce_packed_subscr_index(ctx, stmt->lhs)) >= 0) {
 				/* p[f] = x  ->  PSTORE*($baseK, f) = x */
 				struct hir_expr *base_term;
+
 				base_term = abce_mk_expr_symbol(ctx->base_name[k]);
 				if (base_term == NULL)
 					return false;
@@ -1570,64 +1827,11 @@ abce_rewrite_block(struct abce_ctx *ctx, struct hir_block *b)
  * Guard construction.
  */
 
-static const struct fast_param_contract *
-abce_fast_contract(struct abce_ctx *ctx, int packed_index)
-{
-	uint32_t i;
-	const struct fast_signature *signature;
-
-	if (ctx->func_block->val.func.func_kind != NOCT_FUNC_FAST)
-		return NULL;
-	signature = ctx->func_block->val.func.fast_signature;
-	if (!signature->valid)
-		return NULL;
-	for (i = 0; i < ctx->func_block->val.func.param_count; i++) {
-		if (strcmp(ctx->func_block->val.func.param_name[i],
-			   ctx->packed[packed_index]) == 0 &&
-		    i < signature->param_count &&
-		    signature->param[i].value_type == NOCT_VALUE_PACKED)
-			return &signature->param[i];
-	}
-	return NULL;
-}
-
 static struct hir_expr *
-abce_fast_extent_expr(struct abce_ctx *ctx, int packed_index)
-{
-	const struct fast_param_contract *contract;
-	struct hir_expr *product;
-	int axis;
-
-	contract = abce_fast_contract(ctx, packed_index);
-	if (contract == NULL || contract->rank < 1)
-		return NULL;
-	product = abce_mk_expr_int(1);
-	for (axis = 0; axis < contract->rank; axis++) {
-		const struct fast_extent *extent;
-		struct hir_expr *factor;
-		extent = &contract->extent[axis];
-		factor = NULL;
-		if (extent->kind == FAST_EXTENT_CONST &&
-		    extent->constant <= INT_MAX)
-			factor = abce_mk_expr_int((int)extent->constant);
-		else if (extent->kind == FAST_EXTENT_PARAM &&
-			 extent->param_index >= 0 &&
-			 (uint32_t)extent->param_index <
-				ctx->func_block->val.func.param_count)
-			factor = abce_mk_expr_symbol(
-				ctx->func_block->val.func.param_name[
-					extent->param_index]);
-		if (factor == NULL)
-			return NULL;
-		product = abce_mk_binary(HIR_EXPR_MUL, product, factor);
-		if (product == NULL)
-			return NULL;
-	}
-	return product;
-}
-
-static struct hir_expr *
-abce_mk_endpoint(struct abce_ctx *ctx, struct abce_site *site, bool at_hi)
+abce_mk_endpoint(
+	struct abce_ctx *ctx,
+	struct abce_site *site,
+	bool at_hi)
 {
 	struct hir_expr *iexpr;
 	struct hir_expr *uexpr;
@@ -1640,6 +1844,7 @@ abce_mk_endpoint(struct abce_ctx *ctx, struct abce_site *site, bool at_hi)
 	} else {
 		iexpr = abce_mk_expr_symbol(ctx->lo_name);
 	}
+
 	if (iexpr == NULL)
 		return NULL;
 
@@ -1668,7 +1873,8 @@ abce_mk_endpoint(struct abce_ctx *ctx, struct abce_site *site, bool at_hi)
 }
 
 static struct hir_expr *
-abce_mk_guard(struct abce_ctx *ctx)
+abce_mk_guard(
+	struct abce_ctx *ctx)
 {
 	struct hir_expr *g;
 	struct hir_expr *e;
@@ -1685,7 +1891,9 @@ abce_mk_guard(struct abce_ctx *ctx)
 
 	/* TYPEIS(v, int/float) for every guarded local. */
 	for (i = 0; i < ctx->guard_count; i++) {
-		int type = ctx->guard_type[i];
+		int type;
+
+		type = ctx->guard_type[i];
 		e = abce_mk_binary(HIR_EXPR_TYPEIS,
 				   abce_mk_expr_symbol(ctx->guards[i]),
 				   abce_mk_expr_int(type));
@@ -1700,9 +1908,6 @@ abce_mk_guard(struct abce_ctx *ctx)
 
 	/* PCHECK(p_k, <bet_k>) for every packed. */
 	for (i = 0; i < ctx->packed_count; i++) {
-		/* A FAST caller has already checked the exact element contract. */
-		if (abce_fast_contract(ctx, i) != NULL)
-			continue;
 		e = abce_mk_binary(HIR_EXPR_PCHECK,
 				   abce_mk_expr_symbol(ctx->packed[i]),
 				   abce_mk_expr_int(ctx->packed_bet[i]));
@@ -1723,37 +1928,34 @@ abce_mk_guard(struct abce_ctx *ctx)
 	for (i = 0; i < ctx->site_count; i++) {
 		if (ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue; /* checked lane-by-lane by the gather opcode */
+
 		/* f(lo) >= 0 && f(lo) < PLEN(p) */
 		e = abce_mk_binary(HIR_EXPR_GTE,
 				   abce_mk_endpoint(ctx, &ctx->sites[i], false),
 				   abce_mk_expr_int(0));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
-		{
-			struct hir_expr *extent;
-			extent = abce_fast_extent_expr(
-				ctx, ctx->sites[i].packed_index);
-			if (extent == NULL)
-				extent = abce_mk_unary(HIR_EXPR_PLEN,
-					abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index]));
-			e = abce_mk_binary(HIR_EXPR_LT,
-				abce_mk_endpoint(ctx, &ctx->sites[i], false), extent);
-		}
+		e = abce_mk_binary(
+			HIR_EXPR_LT,
+			abce_mk_endpoint(ctx, &ctx->sites[i], false),
+			abce_mk_unary(
+				HIR_EXPR_PLEN,
+				abce_mk_expr_symbol(
+					ctx->packed[ctx->sites[i].packed_index])));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+
 		/* f(hi-1) >= 0 && f(hi-1) < PLEN(p) */
 		e = abce_mk_binary(HIR_EXPR_GTE,
 				   abce_mk_endpoint(ctx, &ctx->sites[i], true),
 				   abce_mk_expr_int(0));
+
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
-		{
-			struct hir_expr *extent;
-			extent = abce_fast_extent_expr(
-				ctx, ctx->sites[i].packed_index);
-			if (extent == NULL)
-				extent = abce_mk_unary(HIR_EXPR_PLEN,
-					abce_mk_expr_symbol(ctx->packed[ctx->sites[i].packed_index]));
-			e = abce_mk_binary(HIR_EXPR_LT,
-				abce_mk_endpoint(ctx, &ctx->sites[i], true), extent);
-		}
+		e = abce_mk_binary(
+			HIR_EXPR_LT,
+			abce_mk_endpoint(ctx, &ctx->sites[i], true),
+			abce_mk_unary(
+				HIR_EXPR_PLEN,
+				abce_mk_expr_symbol(
+					ctx->packed[ctx->sites[i].packed_index])));
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
 	}
 
@@ -1765,7 +1967,8 @@ abce_mk_guard(struct abce_ctx *ctx)
  */
 
 static bool
-abce_version_loop(struct abce_ctx *ctx)
+abce_version_loop(
+	struct abce_ctx *ctx)
 {
 	struct hir_block *F;
 	struct hir_block *P;
@@ -1785,6 +1988,7 @@ abce_version_loop(struct abce_ctx *ctx)
 	struct hir_stmt *s_base;
 	struct hir_expr *guard;
 	struct hir_expr *pbase;
+	struct hir_stmt *tail;
 	int line;
 	int i;
 
@@ -1804,6 +2008,7 @@ abce_version_loop(struct abce_ctx *ctx)
 	}
 	for (i = 0; i < ctx->site_count; i++) {
 		int j;
+
 		if (ctx->sites[i].u_expr == NULL ||
 		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
@@ -1835,6 +2040,7 @@ abce_version_loop(struct abce_ctx *ctx)
 	}
 	for (i = 0; i < ctx->site_count; i++) {
 		int j;
+
 		if (ctx->sites[i].u_expr == NULL ||
 		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
@@ -1899,14 +2105,13 @@ abce_version_loop(struct abce_ctx *ctx)
 	FAST->val.for_.is_ranged = true;
 	FAST->val.for_.counter_symbol = F->val.for_.counter_symbol;
 	/*
-	 * Typed-op region (docs/design/07-typed-ops.md 3.2): inside the
-	 * guarded fast loop every local read is TYPEIS-int proven, and
-	 * with loads of width <= 32 (int-yielding) plus the int-only
-	 * safe-expression rules, every body assignment re-establishes
-	 * int, so the proof holds inductively.  A 64-bit load would let
-	 * an accumulator turn long at runtime (width64.noct), so it
-	 * suppresses the flag.  The SLOW loop (guard false) must never
-	 * be flagged.
+	 * Typed-op region: inside the guarded fast loop every local
+	 * read is TYPEIS-int proven, and with loads of width <= 32
+	 * (int-yielding) plus the int-only safe-expression rules,
+	 * every body assignment re-establishes int, so the proof
+	 * holds inductively.  A 64-bit load would let an accumulator
+	 * turn long at runtime, so it suppresses the flag.  The SLOW
+	 * loop (guard false) must never be flagged.
 	 */
 	FAST->val.for_.typed_int_region =
 		ctx->body_kind == ABCE_BODY_INT && !ctx->mixed_numeric;
@@ -1915,6 +2120,7 @@ abce_version_loop(struct abce_ctx *ctx)
 		    ctx->packed_bet[i] == NOCT_PACKED_UINT64)
 			FAST->val.for_.typed_int_region = false;
 	}
+
 	/* Mark for the SIMD pass (design 06; it runs right after us). */
 	FAST->val.for_.abce_fast = true;
 	FAST->val.for_.packed_lanes = 1;
@@ -1928,14 +2134,20 @@ abce_version_loop(struct abce_ctx *ctx)
 	FAST->val.for_.inner = abce_map_block(ctx, F->val.for_.inner);
 	if (FAST->val.for_.inner == NULL)
 		return false;
+
 	/* Fix clone edges that referenced the original loop. */
 	for (i = 0; i < ctx->map_count; i++) {
-		struct hir_block *n = ctx->map_new[i];
+		struct hir_block *n;
+
+		n = ctx->map_new[i];
 		if (n->parent == NULL)
 			n->parent = FAST;
-		/* Back edges cloned as "old inner" were mapped already
-		   (the inner head is itself in the map).  Break edges
-		   pointed at the original loop's succ: retarget. */
+
+		/*
+		 * Back edges cloned as "old inner" were mapped already
+		 * (the inner head is itself in the map).  Break edges
+		 * pointed at the original loop's succ: retarget.
+		 */
 		if (n->succ == orig_succ)
 			n->succ = orig_succ;	/* keep: jumps after X2 */
 	}
@@ -1950,54 +2162,54 @@ abce_version_loop(struct abce_ctx *ctx)
 	}
 
 	/* B1: hoist both raw base and element count for checked gathers. */
-	{
-		struct hir_stmt *tail = NULL;
-		for (i = 0; i < ctx->packed_count; i++) {
-			struct hir_stmt *s_len;
-			pbase = abce_mk_unary(HIR_EXPR_PBASE,
-					      abce_mk_expr_symbol(ctx->packed[i]));
-			s_base = abce_mk_assign_stmt(line,
-						     abce_mk_expr_symbol(ctx->base_name[i]),
-						     pbase);
-			if (s_base == NULL)
-				return false;
-			if (tail == NULL)
-				B1->val.basic.stmt_list = s_base;
-			else
-				tail->next = s_base;
-			tail = s_base;
-			s_len = abce_mk_assign_stmt(line,
-				abce_mk_expr_symbol(ctx->len_name[i]),
-				abce_mk_unary(HIR_EXPR_PLEN,
-					abce_mk_expr_symbol(ctx->packed[i])));
-			if (s_len == NULL)
-				return false;
-			tail->next = s_len;
-			tail = s_len;
+	tail = NULL;
+	for (i = 0; i < ctx->packed_count; i++) {
+		struct hir_stmt *s_len;
+
+		pbase = abce_mk_unary(HIR_EXPR_PBASE,
+				      abce_mk_expr_symbol(ctx->packed[i]));
+		s_base = abce_mk_assign_stmt(line,
+					     abce_mk_expr_symbol(ctx->base_name[i]),
+					     pbase);
+		if (s_base == NULL)
+			return false;
+		if (tail == NULL)
+			B1->val.basic.stmt_list = s_base;
+		else
+			tail->next = s_base;
+		tail = s_base;
+		s_len = abce_mk_assign_stmt(line,
+					    abce_mk_expr_symbol(ctx->len_name[i]),
+					    abce_mk_unary(HIR_EXPR_PLEN,
+							  abce_mk_expr_symbol(ctx->packed[i])));
+		if (s_len == NULL)
+			return false;
+		tail->next = s_len;
+		tail = s_len;
+	}
+	/* Canonicalize non-trivial invariant offsets only after the
+	   TYPEIS guard has succeeded. */
+	for (i = 0; i < ctx->site_count; i++) {
+		struct hir_stmt *s_off;
+		int j;
+
+		if (ctx->sites[i].u_expr == NULL ||
+		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
+			continue;
+		for (j = 0; j < i; j++) {
+			if (strcmp(ctx->sites[j].hoist_name,
+				   ctx->sites[i].hoist_name) == 0)
+				break;
 		}
-		/* Canonicalize non-trivial invariant offsets only after the
-		   TYPEIS guard has succeeded. */
-		for (i = 0; i < ctx->site_count; i++) {
-			struct hir_stmt *s_off;
-			int j;
-			if (ctx->sites[i].u_expr == NULL ||
-			    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
-				continue;
-			for (j = 0; j < i; j++) {
-				if (strcmp(ctx->sites[j].hoist_name,
-					   ctx->sites[i].hoist_name) == 0)
-					break;
-			}
-			if (j != i)
-				continue;
-			s_off = abce_mk_assign_stmt(line,
-				abce_mk_expr_symbol(ctx->sites[i].hoist_name),
-				abce_clone_expr(ctx->sites[i].u_expr));
-			if (s_off == NULL)
-				return false;
-			tail->next = s_off;
-			tail = s_off;
-		}
+		if (j != i)
+			continue;
+		s_off = abce_mk_assign_stmt(line,
+					    abce_mk_expr_symbol(ctx->sites[i].hoist_name),
+					    abce_clone_expr(ctx->sites[i].u_expr));
+		if (s_off == NULL)
+			return false;
+		tail->next = s_off;
+		tail = s_off;
 	}
 	B1->succ = FAST;
 
@@ -2043,6 +2255,7 @@ abce_version_loop(struct abce_ctx *ctx)
 		return false;
 	{
 		struct hir_stmt *s_g;
+
 		s_g = abce_mk_assign_stmt(line,
 					  abce_mk_expr_symbol(ctx->g_name),
 					  guard);
@@ -2063,7 +2276,8 @@ abce_version_loop(struct abce_ctx *ctx)
 /* Debug verification: the fast subtree must be allocation-free. */
 #ifndef NDEBUG
 static void
-abce_verify_fast_expr(struct hir_expr *e)
+abce_verify_fast_expr(
+	struct hir_expr *e)
 {
 	if (e == NULL)
 		return;
@@ -2110,13 +2324,17 @@ abce_verify_fast_expr(struct hir_expr *e)
 }
 
 static void
-abce_verify_fast(struct abce_ctx *ctx)
+abce_verify_fast(
+	struct abce_ctx *ctx)
 {
 	struct hir_stmt *stmt;
 	int i;
 
 	for (i = 0; i < ctx->map_count; i++) {
-		struct hir_block *b = ctx->map_new[i];
+		struct hir_block *b;
+
+		b = ctx->map_new[i];
+
 		assert(b->type == HIR_BLOCK_BASIC || b->type == HIR_BLOCK_IF);
 		if (b->type == HIR_BLOCK_BASIC) {
 			stmt = b->val.basic.stmt_list;
@@ -2134,9 +2352,10 @@ abce_verify_fast(struct abce_ctx *ctx)
 
 /* Collect candidate ranged-for blocks (snapshot before transforming). */
 static void
-abce_collect_loops(struct hir_block *head,
-		   struct hir_block **loops,
-		   int *count)
+abce_collect_loops(
+	struct hir_block *head,
+	struct hir_block **loops,
+	int *count)
 {
 	struct hir_block *b;
 	struct hir_block *c;
@@ -2169,73 +2388,4 @@ abce_collect_loops(struct hir_block *head,
 			break;
 		b = b->succ;
 	}
-}
-
-/*
- * Run the ABCE pass on one function.  (Level gating is done by the
- * driver hir_optimize_func() in hir.c.)
- */
-bool
-hir_opt_abce_func(
-	struct hir_block *func_block)
-{
-	struct hir_block *loops[ABCE_MAX_LOOPS];
-	struct abce_ctx *ctx;
-	int loop_count;
-	int i;
-
-	assert(func_block != NULL);
-	assert(func_block->type == HIR_BLOCK_FUNC);
-
-	abce_loop_seq = 0;
-
-	loop_count = 0;
-	if (func_block->val.func.inner != NULL)
-		abce_collect_loops(func_block->val.func.inner, loops, &loop_count);
-
-	{
-	/* Packed element-type facts (function-wide, two passes). */
-	static struct abce_facts facts;
-	memset(&facts, 0, sizeof(facts));
-	/* Element-specific packed annotations are entry-checked before the
-	   body at this optimization level, so they are sound seed facts. */
-	for (i = 0; i < (int)func_block->val.func.param_count; i++) {
-		int packed_type = func_block->val.func.param_packed_type[i];
-		if (packed_type >= 0 && packed_type != NOCT_PACKED_ANY)
-			abce_fact_meet(&facts,
-				func_block->val.func.param_name[i], packed_type);
-	}
-	if (func_block->val.func.inner != NULL) {
-		abce_facts_scan_chain(&facts, func_block->val.func.inner, 0);
-		abce_facts_scan_chain(&facts, func_block->val.func.inner, 1);
-	}
-
-	for (i = 0; i < loop_count; i++) {
-		ctx = hir_malloc(sizeof(struct abce_ctx));
-		if (ctx == NULL) {
-			hir_out_of_memory();
-			return false;
-		}
-		memset(ctx, 0, sizeof(struct abce_ctx));
-		ctx->func_block = func_block;
-		ctx->loop = loops[i];
-		ctx->facts = &facts;
-		if (!abce_check_eligibility(ctx)) {
-			if (getenv("NOCT_ABCE_DEBUG") != NULL)
-				fprintf(stderr, "[abce] %s:%d: ineligible\n", hir_file_name, loops[i]->line);
-			continue;
-		}
-		if (!abce_version_loop(ctx))
-			return false;
-		if (getenv("NOCT_ABCE_DEBUG") != NULL)
-			fprintf(stderr, "[abce] %s:%d: versioned (sites=%d guards=%d packeds=%d bet0=%d)\n",
-				hir_file_name, loops[i]->line, ctx->site_count, ctx->guard_count,
-				ctx->packed_count, ctx->packed_bet[0]);
-#ifndef NDEBUG
-		abce_verify_fast(ctx);
-#endif
-	}
-	}
-
-	return true;
 }

@@ -43,56 +43,40 @@
 static bool jit_visit_bytecode(struct jit_context *ctx);
 static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
 static uint32_t jit_detect_simd_caps(void);
+static void jit_x86_64_dump_code(struct jit_context *ctx,
+	void *generated_end);
+static uint16_t jit_x86_64_read_u16(const uint8_t *p);
+static uint32_t jit_x86_64_read_u32(const uint8_t *p);
+static bool jit_x86_64_scan_vector_loop(struct jit_context *ctx,
+	int index_tmp, int remaining_tmp, int lanes);
 static bool jit_x86_64_is_packed_index_alias(struct jit_context *ctx,
-					      int tmp);
+	int tmp);
 static void jit_x86_64_remove_packed_index_alias(struct jit_context *ctx,
-						 int tmp);
+	int tmp);
 static bool jit_x86_64_add_packed_index_alias(struct jit_context *ctx,
-					      int tmp);
+	int tmp);
 static int jit_x86_64_resolve_packed_base(struct jit_context *ctx, int tmp);
 static void jit_x86_64_remove_packed_base_alias(struct jit_context *ctx,
-						int tmp);
+	int tmp);
 static bool jit_x86_64_set_packed_base_alias(struct jit_context *ctx,
-					     int dst, int src);
+	int dst, int src);
+static void jit_x86_64_gpr_reset(struct jit_context *ctx);
+static int jit_x86_64_gpr_limit(void);
+static bool jit_x86_64_gpr_spill(struct jit_context *ctx, int slot);
+static bool jit_x86_64_gpr_alloc(struct jit_context *ctx, int tmp,
+	unsigned pin_mask, bool load, int *reg);
 static bool jit_x86_64_gpr_get(struct jit_context *ctx, int tmp,
-			      unsigned pin_mask, int *reg);
+	unsigned pin_mask, int *reg);
 static bool jit_x86_64_gpr_dest(struct jit_context *ctx, int tmp,
-			       unsigned pin_mask, int *reg);
+	unsigned pin_mask, int *reg);
+static bool jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src);
+static bool jit_x86_64_gpr_rebind(struct jit_context *ctx, int dst,
+	int src, int *reg);
 static bool jit_x86_64_gpr_flush(struct jit_context *ctx);
 static bool jit_x86_64_gpr_flush_required(struct jit_context *ctx);
-static bool jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src);
 static bool jit_x86_64_gpr_publish_remat(struct jit_context *ctx);
-
-static void
-jit_x86_64_dump_code(struct jit_context *ctx, void *generated_end)
-{
-	const char *dir = getenv("NOCT_JIT_DUMP_DIR");
-	char name[96];
-	char path[512];
-	const char *src;
-	size_t i, n;
-	FILE *fp;
-
-	if (dir == NULL || dir[0] == '\0')
-		return;
-	src = ctx->func->name != NULL ? ctx->func->name : "anonymous";
-	for (i = 0; src[i] != '\0' && i + 1 < sizeof(name); i++) {
-		char c = src[i];
-		name[i] = (c >= 'a' && c <= 'z') ||
-			  (c >= 'A' && c <= 'Z') ||
-			  (c >= '0' && c <= '9') || c == '_' || c == '-' ? c : '_';
-	}
-	name[i] = '\0';
-	if (snprintf(path, sizeof(path), "%s/%s-%p.x86_64.bin", dir, name,
-		     (void *)ctx->func->bytecode) >= (int)sizeof(path))
-		return;
-	fp = fopen(path, "wb");
-	if (fp == NULL)
-		return;
-	n = (size_t)((uint8_t *)generated_end - (uint8_t *)ctx->code_top);
-	(void)fwrite(ctx->code_top, 1, n, fp);
-	(void)fclose(fp);
-}
+static bool jit_x86_64_packed_cursor(struct jit_context *ctx, int base,
+	int ofs, int scale, uint8_t *sib, int *cursor, int32_t *byte_disp);
 
 /*
  * Generate a JIT-compiled code for a function.
@@ -182,6 +166,40 @@ jit_commit(
         struct rt_env *env)
 {
 	return jit_slab_commit_all(env);
+}
+
+static void
+jit_x86_64_dump_code(struct jit_context *ctx, void *generated_end)
+{
+	const char *dir;
+	char name[96];
+	char path[512];
+	const char *src;
+	size_t i, n;
+	FILE *fp;
+
+	dir = getenv("NOCT_JIT_DUMP_DIR");
+	if (dir == NULL || dir[0] == '\0')
+		return;
+	src = ctx->func->name != NULL ? ctx->func->name : "anonymous";
+	for (i = 0; src[i] != '\0' && i + 1 < sizeof(name); i++) {
+		char c;
+
+		c = src[i];
+		name[i] = (c >= 'a' && c <= 'z') ||
+			  (c >= 'A' && c <= 'Z') ||
+			  (c >= '0' && c <= '9') || c == '_' || c == '-' ? c : '_';
+	}
+	name[i] = '\0';
+	if (snprintf(path, sizeof(path), "%s/%s-%p.x86_64.bin", dir, name,
+		     (void *)ctx->func->bytecode) >= (int)sizeof(path))
+		return;
+	fp = fopen(path, "wb");
+	if (fp == NULL)
+		return;
+	n = (size_t)((uint8_t *)generated_end - (uint8_t *)ctx->code_top);
+	(void)fwrite(ctx->code_top, 1, n, fp);
+	(void)fclose(fp);
 }
 
 /*
@@ -385,6 +403,7 @@ static INLINE bool
 jit_x86_64_gpr_is_cached(struct jit_context *ctx, int tmp)
 {
 	int i;
+
 	for (i = 0; i < 3; i++)
 		if (ctx->gpr_load_tmp[i] == tmp) return true;
 	return false;
@@ -425,18 +444,19 @@ jit_visit_assign_op(
 	if (jit_ploop_current_elided(ctx, 5))
 		return true;
 	if (ctx->packed_loop_hint_active) {
-		int dst_ofs = dst * (int)sizeof(struct rt_value);
-		int src_ofs = src * (int)sizeof(struct rt_value);
+		int dst_ofs;
+		int src_ofs;
 		int base_root;
+		int i;
+
+		dst_ofs = dst * (int)sizeof(struct rt_value);
+		src_ofs = src * (int)sizeof(struct rt_value);
 		if (!jit_x86_64_set_packed_base_alias(ctx, dst, src))
 			return false;
 		base_root = jit_x86_64_resolve_packed_base(ctx, dst);
-		{
-			int i;
-			for (i = 0; i < 3; i++) {
-				if (base_root == ctx->packed_loop_base_tmp[i])
-					return true;
-			}
+		for (i = 0; i < 3; i++) {
+			if (base_root == ctx->packed_loop_base_tmp[i])
+				return true;
 		}
 		if (jit_x86_64_is_packed_index_alias(ctx, src)) {
 			if (!jit_x86_64_add_packed_index_alias(ctx, dst)) {
@@ -489,8 +509,11 @@ jit_visit_assign_op(
 	    ctx->tmp_fixed_type[dst] >= 0 &&
 	    jit_tmp_has_fixed_primitive_type(ctx, src,
 					 ctx->tmp_fixed_type[dst])) {
-		int dst_ofs = dst * (int)sizeof(struct rt_value);
-		int src_ofs = src * (int)sizeof(struct rt_value);
+		int dst_ofs;
+		int src_ofs;
+
+		dst_ofs = dst * (int)sizeof(struct rt_value);
+		src_ofs = src * (int)sizeof(struct rt_value);
 
 		ASM {
 			IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(src_ofs + 8));
@@ -500,7 +523,9 @@ jit_visit_assign_op(
 	}
 	if (ctx->tmp_fixed_type != NULL && ctx->tmp_fixed_type[src] >= 0 &&
 	    !ctx->tmp_frame_tag_known[src]) {
-		int src_ofs = src * (int)sizeof(struct rt_value);
+		int src_ofs;
+
+		src_ofs = src * (int)sizeof(struct rt_value);
 		ASM {
 			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)src_ofs);
 			ID((uint32_t)ctx->tmp_fixed_type[src]);
@@ -535,7 +560,6 @@ jit_visit_iconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint32_t val;
 	bool write_tag;
 
@@ -550,6 +574,7 @@ jit_visit_iconst_op(
 	if (ctx->gpr_cache_active) {
 		if (ctx->gpr_reg_limit == 1) {
 			int reg;
+
 			if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
 				return false;
 			ASM { IB(0x41); IB((uint8_t)(0xb8 + (reg & 7)));
@@ -562,7 +587,9 @@ jit_visit_iconst_op(
 			return true;
 		}
 		if (ctx->gpr_tmp_reg[dst] >= 0) {
-			int slot = ctx->gpr_tmp_reg[dst];
+			int slot;
+
+			slot = ctx->gpr_tmp_reg[dst];
 			ctx->gpr_reg_tmp[slot] = -1;
 			ctx->gpr_tmp_reg[dst] = -1;
 		}
@@ -576,7 +603,6 @@ jit_visit_iconst_op(
 		return true;
 	}
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_INT);
         dst *= (int)sizeof(struct rt_value);
@@ -599,7 +625,6 @@ jit_visit_iconst_op(
                 /* env->frame->tmpvar[dst].val.i = val */
                 /* movl $val ->8 (%rax) */         IB(0xc7); IB(0x40); IB(0x08); ID((uint32_t)val);
         }
-	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -610,14 +635,12 @@ jit_visit_liconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint64_t val;
 	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_LONG);
         dst *= (int)sizeof(struct rt_value);
@@ -641,7 +664,6 @@ jit_visit_liconst_op(
                 /* movabs $val -> %rcx */          IB(0x48); IB(0xb9); IQ(val);
                 /* movl %rcx -> 8(%rax) */         IB(0x48); IB(0x89); IB(0x48); IB(0x08);
         }
-	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -652,14 +674,12 @@ jit_visit_fconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint32_t val;
 	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_FLOAT);
         dst *= (int)sizeof(struct rt_value);
@@ -677,7 +697,6 @@ jit_visit_fconst_op(
 		if (write_tag) { IB(0xc7); IB(0x00); ID(1); }
                 /* movl $val -> 8(%rax) */          IB(0xc7); IB(0x40); IB(0x08); ID(val);
         }
-	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -688,14 +707,12 @@ jit_visit_lfconst_op(
         struct jit_context *ctx)
 {
         int dst;
-	int dst_tmp;
         uint64_t val;
 	bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
-	dst_tmp = dst;
 	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_DOUBLE);
         dst *= (int)sizeof(struct rt_value);
@@ -719,7 +736,6 @@ jit_visit_lfconst_op(
                 /* movabs $val -> %rcx */          IB(0x48); IB(0xb9); IQ(val);
                 /* movl %rcx -> 8(%rax) */         IB(0x48); IB(0x89); IB(0x48); IB(0x08);
         }
-	UNUSED_PARAMETER(dst_tmp);
 
         return true;
 }
@@ -1037,7 +1053,9 @@ jit_x86_64_put_vex_shift(struct jit_context *ctx, int ext, int dst,
 static INLINE void
 jit_x86_64_patch_local_rel32(uint8_t *disp, uint8_t *target)
 {
-	int32_t rel = (int32_t)(target - (disp + 4));
+	int32_t rel;
+
+	rel = (int32_t)(target - (disp + 4));
 	memcpy(disp, &rel, sizeof(rel));
 }
 
@@ -1384,10 +1402,13 @@ jit_x86_64_gpr_alloc(struct jit_context *ctx, int tmp,
 		farthest = 0;
 		slot = -1;
 		for (i = 0; i < ctx->gpr_reg_limit; i++) {
-			int candidate = i;
+			int candidate;
 			int held;
 			int j;
-			bool cached = false;
+			bool cached;
+
+			candidate = i;
+			cached = false;
 			if ((pin_mask & (1u << candidate)) != 0)
 				continue;
 			held = ctx->gpr_reg_tmp[candidate];
@@ -1446,6 +1467,7 @@ static bool
 jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src)
 {
 	UNUSED_PARAMETER(ctx);
+
 	if (dst == src)
 		return true;
 	ASM {
@@ -1635,6 +1657,7 @@ jit_visit_vindex_hint_op(struct jit_context *ctx)
 	int ofs, base_ofs;
 	uint32_t imm_value;
 	int portable_force;
+
 	CONSUME_TMPVAR(a); CONSUME_TMPVAR(b); CONSUME_TMPVAR(c);
 	CONSUME_IMM8(required_vregs); CONSUME_IMM8(lanes); CONSUME_IMM8(flags);
 	ctx->vector_vreg_limit =
@@ -1672,7 +1695,9 @@ jit_visit_vindex_hint_op(struct jit_context *ctx)
 	ctx->vector_hint_flags = flags;
 	if ((flags & VINDEX_CURSOR_ONLY) != 0 &&
 	    getenv("NOCT_JIT_VECTOR_DEBUG") != NULL) {
-		int native = !IS_MSABI &&
+		int native;
+
+		native = !IS_MSABI &&
 			(ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0 &&
 			required_vregs <= ctx->vector_vreg_limit;
 		fprintf(stderr,
@@ -1753,6 +1778,7 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 	if (packed_hinted) {
 		int index_ofs;
 		int stop_ofs;
+
 		/* rdi is negative remaining: advance by the loop factor. */
 		ASM { IB(0x48); IB(0x83); IB(0xc7); IB((uint8_t)decrement); }
 		ctx->branch_patch[ctx->branch_patch_count].code = ctx->code;
@@ -1804,9 +1830,12 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)(ofs + 8)); ID(0);
 		}
 		if ((ctx->vector_hint_flags & VINDEX_WRITEBACK_STOP) != 0) {
-			int index_ofs = ctx->vector_hint_index_tmp *
+			int index_ofs;
+			int stop_ofs;
+
+			index_ofs = ctx->vector_hint_index_tmp *
 				(int)sizeof(struct rt_value);
-			int stop_ofs = ctx->vector_hint_stop_tmp *
+			stop_ofs = ctx->vector_hint_stop_tmp *
 				(int)sizeof(struct rt_value);
 			ASM {
 				IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(stop_ofs + 8));
@@ -1902,7 +1931,9 @@ jit_visit_vfmaf32x4_op(struct jit_context *ctx)
 	}
 	if (IS_MSABI ||
 	    (ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0) {
-		int packed_src2_addend = (src2 << 8) | addend;
+		int packed_src2_addend;
+
+		packed_src2_addend = (src2 << 8) | addend;
 		src2 = packed_src2_addend;
 		ASM_BINARY_OP(ex_vfmaf32x4_helper);
 		return true;
@@ -1939,15 +1970,23 @@ jit_visit_vfmaf32x4_op(struct jit_context *ctx)
 	}
 }
 
+/* Visit an OP_VCMPI32X4 instruction. */
 static INLINE bool
-jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
+jit_visit_vcmpi32x4_op(
+        struct jit_context *ctx)
 {
-	int dst, src1, src2, pred;
-	int left, right, imm;
-	bool (CDECL *helper)(NoctEnv *, int, int, int);
+	int dst;
+	int src1;
+	int src2;
+	int pred;
+	int left;
+	int right;
 
-	CONSUME_IMM8(dst); CONSUME_IMM8(src1);
-	CONSUME_IMM8(src2); CONSUME_IMM8(pred);
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(src2);
+	CONSUME_IMM8(pred);
+
 	if (dst < 0 || dst >= 16 || src1 < 0 || src1 >= 16 ||
 	    src2 < 0 || src2 >= 16 || pred < 0 ||
 	    pred >= VCMP_PREDICATE_COUNT) {
@@ -1956,32 +1995,16 @@ jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
 	}
 	if (IS_MSABI || (ctx->simd_caps & JIT_SIMD_CAP_SSE2) == 0) {
 		src2 = (src2 << 8) | pred;
-		helper = is_float ? ex_vcmpf32x4_helper :
-				    ex_vcmpi32x4_helper;
-		ASM_BINARY_OP(helper);
+		ASM_BINARY_OP(ex_vcmpi32x4_helper);
 		return true;
 	}
 	if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
 		if (dst >= ctx->vector_vreg_limit ||
 		    src1 >= ctx->vector_vreg_limit ||
 		    src2 >= ctx->vector_vreg_limit)
-			goto broken_vcmp;
+			goto broken_vcmpi32x4;
 		left = src1;
 		right = src2;
-		if (is_float) {
-			switch (pred) {
-			case VCMP_EQ: imm = 0; break;
-			case VCMP_NE: imm = 4; break;
-			case VCMP_LT: imm = 1; break;
-			case VCMP_LE: imm = 2; break;
-			case VCMP_GT: imm = 1; left = src2; right = src1; break;
-			case VCMP_GE: imm = 2; left = src2; right = src1; break;
-			default: return false;
-			}
-			return jit_x86_64_put_vex_rrr(ctx, 1, 0, 0xc2,
-						      dst, left, right) &&
-			       jit_put_byte(ctx, (uint8_t)imm);
-		}
 		if (pred == VCMP_LT || pred == VCMP_GE) {
 			left = src2;
 			right = src1;
@@ -2000,54 +2023,110 @@ jit_visit_vcmp_op(struct jit_context *ctx, bool is_float)
 		}
 		return true;
 	}
-	if (dst >= 13 || src1 >= 13 || src2 >= 13) {
-		goto broken_vcmp;
+	if (dst >= 13 || src1 >= 13 || src2 >= 13)
+		goto broken_vcmpi32x4;
+	left = src1;
+	right = src2;
+	if (pred == VCMP_LT || pred == VCMP_GE) {
+		left = src2;
+		right = src1;
 	}
-	if (is_float) {
-		left = src1;
-		right = src2;
-		switch (pred) {
-		case VCMP_EQ: imm = 0; break;
-		case VCMP_NE: imm = 4; break; /* unordered-or-not-equal */
-		case VCMP_LT: imm = 1; break;
-		case VCMP_LE: imm = 2; break;
-		case VCMP_GT: imm = 1; left = src2; right = src1; break;
-		case VCMP_GE: imm = 2; left = src2; right = src1; break;
-		default: return false;
-		}
-		if (!jit_x86_64_put_sse_rr(ctx, 0, 1, 0x28, 13, left) ||
-		    !jit_x86_64_put_sse_rr(ctx, 0, 1, 0xc2, 13, right) ||
-		    !jit_put_byte(ctx, (uint8_t)imm))
+	if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, left))
+		return false;
+	if (pred == VCMP_EQ || pred == VCMP_NE) {
+		if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x76, 13, right))
 			return false;
-	} else {
-		left = src1;
-		right = src2;
-		if (pred == VCMP_LT || pred == VCMP_GE) {
-			left = src2;
-			right = src1;
-		}
-		if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, left))
+	} else if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x66,
+					       13, right)) {
+		return false;
+	}
+	if (pred == VCMP_NE || pred == VCMP_LE || pred == VCMP_GE) {
+		if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x76, 14, 14) ||
+		    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xef, 13, 14))
 			return false;
-		if (pred == VCMP_EQ || pred == VCMP_NE) {
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x76,
-						  13, right))
-				return false;
-		} else if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x66,
-						       13, right)) {
-			return false;
-		}
-		if (pred == VCMP_NE || pred == VCMP_LE || pred == VCMP_GE) {
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x76, 14, 14) ||
-			    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xef, 13, 14))
-				return false;
-		}
 	}
 	if (dst != 13 && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
 						    dst, 13))
 		return false;
 	return true;
 
-broken_vcmp:
+broken_vcmpi32x4:
+	rt_error(ctx->env, BROKEN_BYTECODE);
+	return false;
+}
+
+/* Visit an OP_VCMPF32X4 instruction. */
+static INLINE bool
+jit_visit_vcmpf32x4_op(
+        struct jit_context *ctx)
+{
+	int dst;
+	int src1;
+	int src2;
+	int pred;
+	int left;
+	int right;
+	int imm;
+
+	CONSUME_IMM8(dst);
+	CONSUME_IMM8(src1);
+	CONSUME_IMM8(src2);
+	CONSUME_IMM8(pred);
+
+	if (dst < 0 || dst >= 16 || src1 < 0 || src1 >= 16 ||
+	    src2 < 0 || src2 >= 16 || pred < 0 ||
+	    pred >= VCMP_PREDICATE_COUNT) {
+		rt_error(ctx->env, BROKEN_BYTECODE);
+		return false;
+	}
+	if (IS_MSABI || (ctx->simd_caps & JIT_SIMD_CAP_SSE2) == 0) {
+		src2 = (src2 << 8) | pred;
+		ASM_BINARY_OP(ex_vcmpf32x4_helper);
+		return true;
+	}
+	if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+		if (dst >= ctx->vector_vreg_limit ||
+		    src1 >= ctx->vector_vreg_limit ||
+		    src2 >= ctx->vector_vreg_limit)
+			goto broken_vcmpf32x4;
+		left = src1;
+		right = src2;
+		switch (pred) {
+		case VCMP_EQ: imm = 0; break;
+		case VCMP_NE: imm = 4; break;
+		case VCMP_LT: imm = 1; break;
+		case VCMP_LE: imm = 2; break;
+		case VCMP_GT: imm = 1; left = src2; right = src1; break;
+		case VCMP_GE: imm = 2; left = src2; right = src1; break;
+		default: return false;
+		}
+		return jit_x86_64_put_vex_rrr(ctx, 1, 0, 0xc2,
+						      dst, left, right) &&
+		       jit_put_byte(ctx, (uint8_t)imm);
+	}
+	if (dst >= 13 || src1 >= 13 || src2 >= 13)
+		goto broken_vcmpf32x4;
+	left = src1;
+	right = src2;
+	switch (pred) {
+	case VCMP_EQ: imm = 0; break;
+	case VCMP_NE: imm = 4; break; /* unordered-or-not-equal */
+	case VCMP_LT: imm = 1; break;
+	case VCMP_LE: imm = 2; break;
+	case VCMP_GT: imm = 1; left = src2; right = src1; break;
+	case VCMP_GE: imm = 2; left = src2; right = src1; break;
+	default: return false;
+	}
+	if (!jit_x86_64_put_sse_rr(ctx, 0, 1, 0x28, 13, left) ||
+	    !jit_x86_64_put_sse_rr(ctx, 0, 1, 0xc2, 13, right) ||
+	    !jit_put_byte(ctx, (uint8_t)imm))
+		return false;
+	if (dst != 13 && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+						    dst, 13))
+		return false;
+	return true;
+
+broken_vcmpf32x4:
 	rt_error(ctx->env, BROKEN_BYTECODE);
 	return false;
 }
@@ -2109,6 +2188,7 @@ jit_visit_vmaskstorei32x4_op(struct jit_context *ctx)
 {
 	int dst, src1, src2;
 	int mask, base, ofs, cursor;
+
 	CONSUME_TMPVAR(dst); CONSUME_TMPVAR(src1);
 	CONSUME_IMM8(src2); CONSUME_IMM8(mask);
 	if (src2 < 0 || src2 >= 16 || mask < 0 || mask >= 16) {
@@ -2157,6 +2237,7 @@ jit_visit_vinductf32x4_op(struct jit_context *ctx)
 {
 	int dst, src1, src2;
 	int state_ofs, step_ofs, lane;
+
 	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1); CONSUME_TMPVAR(src2);
 	if (dst < 0 || dst >= 16) {
 		rt_error(ctx->env, BROKEN_BYTECODE);
@@ -2209,6 +2290,7 @@ jit_visit_vgatheri32x4_checked_op(struct jit_context *ctx)
 	uint8_t *fail_target;
 	uint8_t *done_target;
 	int fail_count;
+
 	CONSUME_IMM8(dst); CONSUME_TMPVAR(src1);
 	CONSUME_TMPVAR(plen); CONSUME_IMM8(vi);
 	if (dst < 0 || dst >= 16 || vi < 0 || vi >= 16) {
@@ -3400,10 +3482,11 @@ jit_visit_pbase_op(
         int base_id;
         uint32_t buf_ofs;
 
+        UNUSED_PARAMETER(base_id);
+
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src);
         CONSUME_IMM8(base_id);
-        UNUSED_PARAMETER(base_id);
 
         dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
@@ -3489,10 +3572,11 @@ jit_x86_64_packed_cursor(struct jit_context *ctx, int base, int ofs,
 	int base_root;
 	int32_t element_disp;
 
+	UNUSED_PARAMETER(ofs);
+
 	if (!ctx->packed_loop_hint_active ||
 	    !jit_ploop_current_access_disp(ctx, &element_disp))
 		return false;
-	UNUSED_PARAMETER(ofs);
 	if (element_disp < INT32_MIN / scale ||
 	    element_disp > INT32_MAX / scale)
 		return false;
@@ -3511,11 +3595,14 @@ jit_x86_64_packed_cursor(struct jit_context *ctx, int base, int ofs,
 	return false;
 }
 
-static bool
-jit_x86_64_try_packed_load(struct jit_context *ctx, int dst, int base,
-			   int ofs, int scale, bool is_signed,
-			   bool *handled)
+/* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code.) */
+static INLINE bool
+jit_visit_pload8u_op(
+        struct jit_context *ctx)
 {
+        int dst;
+        int base;
+        int ofs;
 	uint8_t sib;
 	int dst_ofs;
 	int cursor;
@@ -3526,198 +3613,75 @@ jit_x86_64_try_packed_load(struct jit_context *ctx, int dst, int base,
 	int32_t byte_disp;
 	uint8_t mod;
 
-	*handled = jit_x86_64_packed_cursor(ctx, base, ofs, scale, &sib,
-					    &cursor, &byte_disp);
-	if (!*handled)
-		return true;
-	jit_x86_64_remove_packed_index_alias(ctx, dst);
-	jit_x86_64_remove_packed_base_alias(ctx, dst);
-	if (ctx->gpr_cache_active) {
-		opcode_key = scale * 2 + (is_signed ? 1 : 0);
-		cached_tmp = ctx->gpr_load_tmp[cursor];
-		if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
-			cached_tmp = -1;
-		if (cached_tmp >= 0 &&
-		    ctx->gpr_load_opcode[cursor] == opcode_key &&
-		    ctx->gpr_load_disp[cursor] == byte_disp &&
-		    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
-			if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0, &cached_reg))
-				return false;
-			if (jit_ploop_next_use_lpc(ctx, cached_tmp, ctx->lpc) ==
-			    UINT32_MAX) {
-				if (!jit_x86_64_gpr_rebind(ctx, dst, cached_tmp, &reg))
-					return false;
-			} else if (!jit_x86_64_gpr_dest(ctx, dst,
-					1u << (cached_reg - 8), &reg) ||
-				   !jit_x86_64_gpr_mov(ctx, reg, cached_reg)) {
-				return false;
-			}
-		} else {
-			mod = byte_disp == 0 ? 0x00 :
-				byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
-			if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
-				return false;
-			if (scale == 4) {
-				ASM {
-					IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
-					IB(0x8b);
-					IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
-					IB(sib);
-					if (mod == 0x40) IB((uint8_t)byte_disp);
-					if (mod == 0x80) ID((uint32_t)byte_disp);
-				}
-			} else {
-				ASM {
-					IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
-					IB(0x0f);
-				}
-				if (scale == 2)
-					ASM { IB((uint8_t)(is_signed ? 0xbf : 0xb7)); }
-				else
-					ASM { IB((uint8_t)(is_signed ? 0xbe : 0xb6)); }
-				ASM {
-					IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
-					IB(sib);
-					if (mod == 0x40) IB((uint8_t)byte_disp);
-					if (mod == 0x80) ID((uint32_t)byte_disp);
-				}
-			}
-		}
-		ctx->gpr_tmp_dirty[dst] = 1;
-		ctx->gpr_range_valid[dst] = 0;
-		ctx->gpr_load_tmp[cursor] = dst;
-		ctx->gpr_load_opcode[cursor] = opcode_key;
-		ctx->gpr_load_disp[cursor] = byte_disp;
-		return true;
-	}
-	mod = byte_disp == 0 ? 0x00 :
-		byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
-	if (scale == 4) {
-		if (cursor == 2)
-			ASM { IB(0x41); }
-		ASM { IB(0x8b); IB((uint8_t)(mod | 0x14)); IB(sib);
-		      if (mod == 0x40) IB((uint8_t)byte_disp);
-		      if (mod == 0x80) ID((uint32_t)byte_disp); }
-	} else {
-		if (cursor == 2)
-			ASM { IB(0x41); }
-		ASM { IB(0x0f); }
-		if (scale == 2)
-			ASM { IB((uint8_t)(is_signed ? 0xbf : 0xb7)); }
-		else
-			ASM { IB((uint8_t)(is_signed ? 0xbe : 0xb6)); }
-		ASM { IB((uint8_t)(mod | 0x14)); IB(sib);
-		      if (mod == 0x40) IB((uint8_t)byte_disp);
-		      if (mod == 0x80) ID((uint32_t)byte_disp); }
-	}
-	dst_ofs = dst * (int)sizeof(struct rt_value);
-	ASM {
-		STORE_TAG_IF_DYNAMIC(dst_ofs, NOCT_VALUE_INT);
-		IB(0x41); IB(0x89); IB(0x97); ID((uint32_t)(dst_ofs + 8));
-	}
-	return true;
-}
-
-static bool
-jit_x86_64_try_packed_store(struct jit_context *ctx, int base, int ofs,
-			    int src, int scale, bool *handled)
-{
-	uint8_t sib;
-	int src_ofs;
-	int cursor;
-	int reg;
-	int32_t byte_disp;
-	uint8_t mod;
-
-	*handled = jit_x86_64_packed_cursor(ctx, base, ofs, scale, &sib,
-					    &cursor, &byte_disp);
-	if (!*handled)
-		return true;
-	if (ctx->gpr_cache_active) {
-		mod = byte_disp == 0 ? 0x00 :
-			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
-		if (!jit_x86_64_gpr_get(ctx, src, 0, &reg))
-			return false;
-		if (scale == 1) {
-			ASM {
-				IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
-				IB(0x88);
-				IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
-				IB(sib);
-				if (mod == 0x40) IB((uint8_t)byte_disp);
-				if (mod == 0x80) ID((uint32_t)byte_disp);
-			}
-		} else if (scale == 2) {
-			ASM {
-				IB(0x66);
-				IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
-				IB(0x89);
-				IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
-				IB(sib);
-				if (mod == 0x40) IB((uint8_t)byte_disp);
-				if (mod == 0x80) ID((uint32_t)byte_disp);
-			}
-		} else {
-			ASM {
-				IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
-				IB(0x89);
-				IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
-				IB(sib);
-				if (mod == 0x40) IB((uint8_t)byte_disp);
-				if (mod == 0x80) ID((uint32_t)byte_disp);
-			}
-		}
-		/* PLOOP eligibility requires restricted Packed roots. */
-		ctx->gpr_load_tmp[cursor] = -1;
-		return true;
-	}
-	mod = byte_disp == 0 ? 0x00 :
-		byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
-	src_ofs = src * (int)sizeof(struct rt_value);
-	ASM {
-		IB(0x41); IB(0x8b); IB(0x97); ID((uint32_t)(src_ofs + 8));
-	}
-	if (scale == 1) {
-		if (cursor == 2)
-			ASM { IB(0x41); }
-		ASM { IB(0x88); IB((uint8_t)(mod | 0x14)); IB(sib);
-		      if (mod == 0x40) IB((uint8_t)byte_disp);
-		      if (mod == 0x80) ID((uint32_t)byte_disp); }
-	} else if (scale == 2) {
-		ASM { IB(0x66); }
-		if (cursor == 2)
-			ASM { IB(0x41); }
-		ASM { IB(0x89); IB((uint8_t)(mod | 0x14)); IB(sib);
-		      if (mod == 0x40) IB((uint8_t)byte_disp);
-		      if (mod == 0x80) ID((uint32_t)byte_disp); }
-	} else {
-		if (cursor == 2)
-			ASM { IB(0x41); }
-		ASM { IB(0x89); IB((uint8_t)(mod | 0x14)); IB(sib);
-		      if (mod == 0x40) IB((uint8_t)byte_disp);
-		      if (mod == 0x80) ID((uint32_t)byte_disp); }
-	}
-	return true;
-}
-
-/* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code.) */
-static INLINE bool
-jit_visit_pload8u_op(
-        struct jit_context *ctx)
-{
-        int dst;
-        int base;
-        int ofs;
-	bool handled;
-
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 1, false,
-				       &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 1, &sib,
+				     &cursor, &byte_disp)) {
+		jit_x86_64_remove_packed_index_alias(ctx, dst);
+		jit_x86_64_remove_packed_base_alias(ctx, dst);
+		if (ctx->gpr_cache_active) {
+			opcode_key = 2;
+			cached_tmp = ctx->gpr_load_tmp[cursor];
+			if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+				cached_tmp = -1;
+			if (cached_tmp >= 0 &&
+			    ctx->gpr_load_opcode[cursor] == opcode_key &&
+			    ctx->gpr_load_disp[cursor] == byte_disp &&
+			    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
+							&cached_reg))
+					return false;
+				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+							ctx->lpc) == UINT32_MAX) {
+					if (!jit_x86_64_gpr_rebind(ctx, dst,
+								 cached_tmp, &reg))
+						return false;
+				} else if (!jit_x86_64_gpr_dest(ctx, dst,
+						1u << (cached_reg - 8), &reg) ||
+					   !jit_x86_64_gpr_mov(ctx, reg, cached_reg)) {
+					return false;
+				}
+			} else {
+				mod = byte_disp == 0 ? 0x00 :
+					byte_disp >= -128 && byte_disp <= 127 ?
+					0x40 : 0x80;
+				if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
+					return false;
+				ASM {
+				        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				        IB(0x0f); IB(0xb6);
+				        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+				        IB(sib);
+				        if (mod == 0x40) IB((uint8_t)byte_disp);
+				        if (mod == 0x80) ID((uint32_t)byte_disp);
+				}
+			}
+			ctx->gpr_tmp_dirty[dst] = 1;
+			ctx->gpr_range_valid[dst] = 0;
+			ctx->gpr_load_tmp[cursor] = dst;
+			ctx->gpr_load_opcode[cursor] = opcode_key;
+			ctx->gpr_load_disp[cursor] = byte_disp;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		if (cursor == 2)
+		        ASM { IB(0x41); }
+		ASM {
+		        IB(0x0f); IB(0xb6);
+		        IB((uint8_t)(mod | 0x14)); IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
+		dst_ofs = dst * (int)sizeof(struct rt_value);
+		ASM {
+			STORE_TAG_IF_DYNAMIC(dst_ofs, NOCT_VALUE_INT);
+			IB(0x41); IB(0x89); IB(0x97);
+			ID((uint32_t)(dst_ofs + 8));
+		}
 		return true;
+	}
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3747,15 +3711,53 @@ jit_visit_pstore8_op(
         int base;
         int ofs;
         int src;
-	bool handled;
+	uint8_t sib;
+	int src_ofs;
+	int cursor;
+	int reg;
+	int32_t byte_disp;
+	uint8_t mod;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
-	if (!jit_x86_64_try_packed_store(ctx, base, ofs, src, 1, &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 1, &sib,
+				     &cursor, &byte_disp)) {
+		if (ctx->gpr_cache_active) {
+			mod = byte_disp == 0 ? 0x00 :
+				byte_disp >= -128 && byte_disp <= 127 ?
+				0x40 : 0x80;
+			if (!jit_x86_64_gpr_get(ctx, src, 0, &reg))
+				return false;
+			ASM {
+			        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+			        IB(0x88);
+			        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+			        IB(sib);
+			        if (mod == 0x40) IB((uint8_t)byte_disp);
+			        if (mod == 0x80) ID((uint32_t)byte_disp);
+			}
+			/* PLOOP eligibility requires restricted Packed roots. */
+			ctx->gpr_load_tmp[cursor] = -1;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		src_ofs = src * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x41); IB(0x8b); IB(0x97);
+			ID((uint32_t)(src_ofs + 8));
+		}
+		ASM {
+		        if (cursor == 2) IB(0x41);
+		        IB(0x88);
+		        IB((uint8_t)(mod | 0x14));
+		        IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
 		return true;
+	}
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -3781,19 +3783,18 @@ jit_visit_checktype_op(
 {
         int dst;
         int src;
+        int flags;
 
         CONSUME_TMPVAR(dst);
         CONSUME_IMM8(src);
 
 	/* if (!ex_checktype_helper(env, slot, type)) return false; */
 	ASM_UNARY_OP(ex_checktype_helper);
-	{
-		int flags = src & (TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
-		src &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
+	flags = src & (TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
+	src &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
 	if (ctx->tmp_fixed_type != NULL &&
 	    flags == 0 && ctx->tmp_fixed_type[dst] == src)
-		ctx->tmp_frame_tag_known[dst] = 1;
-	}
+	ctx->tmp_frame_tag_known[dst] = 1;
 
 	return true;
 }
@@ -3832,16 +3833,85 @@ jit_visit_pload8s_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+	uint8_t sib;
+	int dst_ofs;
+	int cursor;
+	int reg;
+	int cached_tmp;
+	int cached_reg;
+	int opcode_key;
+	int32_t byte_disp;
+	uint8_t mod;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 1, true,
-				       &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 1, &sib,
+				     &cursor, &byte_disp)) {
+		jit_x86_64_remove_packed_index_alias(ctx, dst);
+		jit_x86_64_remove_packed_base_alias(ctx, dst);
+		if (ctx->gpr_cache_active) {
+			opcode_key = 3;
+			cached_tmp = ctx->gpr_load_tmp[cursor];
+			if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+				cached_tmp = -1;
+			if (cached_tmp >= 0 &&
+			    ctx->gpr_load_opcode[cursor] == opcode_key &&
+			    ctx->gpr_load_disp[cursor] == byte_disp &&
+			    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
+							&cached_reg))
+					return false;
+				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+							ctx->lpc) == UINT32_MAX) {
+					if (!jit_x86_64_gpr_rebind(ctx, dst,
+								 cached_tmp, &reg))
+						return false;
+				} else if (!jit_x86_64_gpr_dest(ctx, dst,
+						1u << (cached_reg - 8), &reg) ||
+					   !jit_x86_64_gpr_mov(ctx, reg, cached_reg)) {
+					return false;
+				}
+			} else {
+				mod = byte_disp == 0 ? 0x00 :
+					byte_disp >= -128 && byte_disp <= 127 ?
+					0x40 : 0x80;
+				if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
+					return false;
+				ASM {
+				        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				        IB(0x0f); IB(0xbe);
+				        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+				        IB(sib);
+				        if (mod == 0x40) IB((uint8_t)byte_disp);
+				        if (mod == 0x80) ID((uint32_t)byte_disp);
+				}
+			}
+			ctx->gpr_tmp_dirty[dst] = 1;
+			ctx->gpr_range_valid[dst] = 0;
+			ctx->gpr_load_tmp[cursor] = dst;
+			ctx->gpr_load_opcode[cursor] = opcode_key;
+			ctx->gpr_load_disp[cursor] = byte_disp;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		if (cursor == 2)
+		        ASM { IB(0x41); }
+		ASM {
+		        IB(0x0f); IB(0xbe);
+		        IB((uint8_t)(mod | 0x14)); IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
+		dst_ofs = dst * (int)sizeof(struct rt_value);
+		ASM {
+			STORE_TAG_IF_DYNAMIC(dst_ofs, NOCT_VALUE_INT);
+			IB(0x41); IB(0x89); IB(0x97);
+			ID((uint32_t)(dst_ofs + 8));
+		}
 		return true;
+	}
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3869,16 +3939,85 @@ jit_visit_pload16u_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+	uint8_t sib;
+	int dst_ofs;
+	int cursor;
+	int reg;
+	int cached_tmp;
+	int cached_reg;
+	int opcode_key;
+	int32_t byte_disp;
+	uint8_t mod;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 2, false,
-				       &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 2, &sib,
+				     &cursor, &byte_disp)) {
+		jit_x86_64_remove_packed_index_alias(ctx, dst);
+		jit_x86_64_remove_packed_base_alias(ctx, dst);
+		if (ctx->gpr_cache_active) {
+			opcode_key = 4;
+			cached_tmp = ctx->gpr_load_tmp[cursor];
+			if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+				cached_tmp = -1;
+			if (cached_tmp >= 0 &&
+			    ctx->gpr_load_opcode[cursor] == opcode_key &&
+			    ctx->gpr_load_disp[cursor] == byte_disp &&
+			    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
+							&cached_reg))
+					return false;
+				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+							ctx->lpc) == UINT32_MAX) {
+					if (!jit_x86_64_gpr_rebind(ctx, dst,
+								 cached_tmp, &reg))
+						return false;
+				} else if (!jit_x86_64_gpr_dest(ctx, dst,
+						1u << (cached_reg - 8), &reg) ||
+					   !jit_x86_64_gpr_mov(ctx, reg, cached_reg)) {
+					return false;
+				}
+			} else {
+				mod = byte_disp == 0 ? 0x00 :
+					byte_disp >= -128 && byte_disp <= 127 ?
+					0x40 : 0x80;
+				if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
+					return false;
+				ASM {
+				        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				        IB(0x0f); IB(0xb7);
+				        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+				        IB(sib);
+				        if (mod == 0x40) IB((uint8_t)byte_disp);
+				        if (mod == 0x80) ID((uint32_t)byte_disp);
+				}
+			}
+			ctx->gpr_tmp_dirty[dst] = 1;
+			ctx->gpr_range_valid[dst] = 0;
+			ctx->gpr_load_tmp[cursor] = dst;
+			ctx->gpr_load_opcode[cursor] = opcode_key;
+			ctx->gpr_load_disp[cursor] = byte_disp;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		if (cursor == 2)
+		        ASM { IB(0x41); }
+		ASM {
+		        IB(0x0f); IB(0xb7);
+		        IB((uint8_t)(mod | 0x14)); IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
+		dst_ofs = dst * (int)sizeof(struct rt_value);
+		ASM {
+			STORE_TAG_IF_DYNAMIC(dst_ofs, NOCT_VALUE_INT);
+			IB(0x41); IB(0x89); IB(0x97);
+			ID((uint32_t)(dst_ofs + 8));
+		}
 		return true;
+	}
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3906,16 +4045,85 @@ jit_visit_pload16s_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+	uint8_t sib;
+	int dst_ofs;
+	int cursor;
+	int reg;
+	int cached_tmp;
+	int cached_reg;
+	int opcode_key;
+	int32_t byte_disp;
+	uint8_t mod;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 2, true,
-				       &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 2, &sib,
+				     &cursor, &byte_disp)) {
+		jit_x86_64_remove_packed_index_alias(ctx, dst);
+		jit_x86_64_remove_packed_base_alias(ctx, dst);
+		if (ctx->gpr_cache_active) {
+			opcode_key = 5;
+			cached_tmp = ctx->gpr_load_tmp[cursor];
+			if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+				cached_tmp = -1;
+			if (cached_tmp >= 0 &&
+			    ctx->gpr_load_opcode[cursor] == opcode_key &&
+			    ctx->gpr_load_disp[cursor] == byte_disp &&
+			    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
+							&cached_reg))
+					return false;
+				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+							ctx->lpc) == UINT32_MAX) {
+					if (!jit_x86_64_gpr_rebind(ctx, dst,
+								 cached_tmp, &reg))
+						return false;
+				} else if (!jit_x86_64_gpr_dest(ctx, dst,
+						1u << (cached_reg - 8), &reg) ||
+					   !jit_x86_64_gpr_mov(ctx, reg, cached_reg)) {
+					return false;
+				}
+			} else {
+				mod = byte_disp == 0 ? 0x00 :
+					byte_disp >= -128 && byte_disp <= 127 ?
+					0x40 : 0x80;
+				if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
+					return false;
+				ASM {
+				        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				        IB(0x0f); IB(0xbf);
+				        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+				        IB(sib);
+				        if (mod == 0x40) IB((uint8_t)byte_disp);
+				        if (mod == 0x80) ID((uint32_t)byte_disp);
+				}
+			}
+			ctx->gpr_tmp_dirty[dst] = 1;
+			ctx->gpr_range_valid[dst] = 0;
+			ctx->gpr_load_tmp[cursor] = dst;
+			ctx->gpr_load_opcode[cursor] = opcode_key;
+			ctx->gpr_load_disp[cursor] = byte_disp;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		if (cursor == 2)
+		        ASM { IB(0x41); }
+		ASM {
+		        IB(0x0f); IB(0xbf);
+		        IB((uint8_t)(mod | 0x14)); IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
+		dst_ofs = dst * (int)sizeof(struct rt_value);
+		ASM {
+			STORE_TAG_IF_DYNAMIC(dst_ofs, NOCT_VALUE_INT);
+			IB(0x41); IB(0x89); IB(0x97);
+			ID((uint32_t)(dst_ofs + 8));
+		}
 		return true;
+	}
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3943,16 +4151,84 @@ jit_visit_pload32_op(
         int dst;
         int base;
         int ofs;
-	bool handled;
+	uint8_t sib;
+	int dst_ofs;
+	int cursor;
+	int reg;
+	int cached_tmp;
+	int cached_reg;
+	int opcode_key;
+	int32_t byte_disp;
+	uint8_t mod;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
-	if (!jit_x86_64_try_packed_load(ctx, dst, base, ofs, 4, false,
-				       &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 4, &sib,
+				     &cursor, &byte_disp)) {
+		jit_x86_64_remove_packed_index_alias(ctx, dst);
+		jit_x86_64_remove_packed_base_alias(ctx, dst);
+		if (ctx->gpr_cache_active) {
+			opcode_key = 8;
+			cached_tmp = ctx->gpr_load_tmp[cursor];
+			if (ctx->gpr_reg_limit == 1 && cached_tmp != dst)
+				cached_tmp = -1;
+			if (cached_tmp >= 0 &&
+			    ctx->gpr_load_opcode[cursor] == opcode_key &&
+			    ctx->gpr_load_disp[cursor] == byte_disp &&
+			    ctx->gpr_tmp_reg[cached_tmp] >= 0) {
+				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
+							&cached_reg))
+					return false;
+				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+							ctx->lpc) == UINT32_MAX) {
+					if (!jit_x86_64_gpr_rebind(ctx, dst,
+								 cached_tmp, &reg))
+						return false;
+				} else if (!jit_x86_64_gpr_dest(ctx, dst,
+						1u << (cached_reg - 8), &reg) ||
+					   !jit_x86_64_gpr_mov(ctx, reg, cached_reg)) {
+					return false;
+				}
+			} else {
+				mod = byte_disp == 0 ? 0x00 :
+					byte_disp >= -128 && byte_disp <= 127 ?
+					0x40 : 0x80;
+				if (!jit_x86_64_gpr_dest(ctx, dst, 0, &reg))
+					return false;
+				ASM {
+				        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+				        IB(0x8b);
+				        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+				        IB(sib);
+				        if (mod == 0x40) IB((uint8_t)byte_disp);
+				        if (mod == 0x80) ID((uint32_t)byte_disp);
+				}
+			}
+			ctx->gpr_tmp_dirty[dst] = 1;
+			ctx->gpr_range_valid[dst] = 0;
+			ctx->gpr_load_tmp[cursor] = dst;
+			ctx->gpr_load_opcode[cursor] = opcode_key;
+			ctx->gpr_load_disp[cursor] = byte_disp;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		if (cursor == 2)
+		        ASM { IB(0x41); }
+		ASM {
+		        IB(0x8b); IB((uint8_t)(mod | 0x14)); IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
+		dst_ofs = dst * (int)sizeof(struct rt_value);
+		ASM {
+			STORE_TAG_IF_DYNAMIC(dst_ofs, NOCT_VALUE_INT);
+			IB(0x41); IB(0x89); IB(0x97);
+			ID((uint32_t)(dst_ofs + 8));
+		}
 		return true;
+	}
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -4011,15 +4287,55 @@ jit_visit_pstore16_op(
         int base;
         int ofs;
         int src;
-	bool handled;
+	uint8_t sib;
+	int src_ofs;
+	int cursor;
+	int reg;
+	int32_t byte_disp;
+	uint8_t mod;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
-	if (!jit_x86_64_try_packed_store(ctx, base, ofs, src, 2, &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 2, &sib,
+				     &cursor, &byte_disp)) {
+		if (ctx->gpr_cache_active) {
+			mod = byte_disp == 0 ? 0x00 :
+				byte_disp >= -128 && byte_disp <= 127 ?
+				0x40 : 0x80;
+			if (!jit_x86_64_gpr_get(ctx, src, 0, &reg))
+				return false;
+			ASM {
+			        IB(0x66);
+			        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+			        IB(0x89);
+			        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+			        IB(sib);
+			        if (mod == 0x40) IB((uint8_t)byte_disp);
+			        if (mod == 0x80) ID((uint32_t)byte_disp);
+			}
+			/* PLOOP eligibility requires restricted Packed roots. */
+			ctx->gpr_load_tmp[cursor] = -1;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		src_ofs = src * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x41); IB(0x8b); IB(0x97);
+			ID((uint32_t)(src_ofs + 8));
+		}
+		ASM {
+		        IB(0x66);
+		        if (cursor == 2) IB(0x41);
+		        IB(0x89);
+		        IB((uint8_t)(mod | 0x14));
+		        IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
 		return true;
+	}
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -4045,15 +4361,53 @@ jit_visit_pstore32_op(
         int base;
         int ofs;
         int src;
-	bool handled;
+	uint8_t sib;
+	int src_ofs;
+	int cursor;
+	int reg;
+	int32_t byte_disp;
+	uint8_t mod;
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
-	if (!jit_x86_64_try_packed_store(ctx, base, ofs, src, 4, &handled))
-		return false;
-	if (handled)
+	if (jit_x86_64_packed_cursor(ctx, base, ofs, 4, &sib,
+				     &cursor, &byte_disp)) {
+		if (ctx->gpr_cache_active) {
+			mod = byte_disp == 0 ? 0x00 :
+				byte_disp >= -128 && byte_disp <= 127 ?
+				0x40 : 0x80;
+			if (!jit_x86_64_gpr_get(ctx, src, 0, &reg))
+				return false;
+			ASM {
+			        IB((uint8_t)(cursor == 2 ? 0x45 : 0x44));
+			        IB(0x89);
+			        IB((uint8_t)(mod | ((reg & 7) << 3) | 0x04));
+			        IB(sib);
+			        if (mod == 0x40) IB((uint8_t)byte_disp);
+			        if (mod == 0x80) ID((uint32_t)byte_disp);
+			}
+			/* PLOOP eligibility requires restricted Packed roots. */
+			ctx->gpr_load_tmp[cursor] = -1;
+			return true;
+		}
+		mod = byte_disp == 0 ? 0x00 :
+			byte_disp >= -128 && byte_disp <= 127 ? 0x40 : 0x80;
+		src_ofs = src * (int)sizeof(struct rt_value);
+		ASM {
+			IB(0x41); IB(0x8b); IB(0x97);
+			ID((uint32_t)(src_ofs + 8));
+		}
+		ASM {
+		        if (cursor == 2) IB(0x41);
+		        IB(0x89);
+		        IB((uint8_t)(mod | 0x14));
+		        IB(sib);
+		        if (mod == 0x40) IB((uint8_t)byte_disp);
+		        if (mod == 0x80) ID((uint32_t)byte_disp);
+		}
 		return true;
+	}
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -4152,501 +4506,2024 @@ jit_visit_pstoref32_op(
         IB(0x0f); IB(cc); IB(0xc0);                                                             \
         IB(0x0f); IB(0xb6); IB(0xc0)
 
-/* Checked int32 division: keep the normal path entirely inline.  Only a
- * zero divisor enters the existing helper so diagnostics and exception
- * unwinding remain identical to the interpreter. */
+/* Visit an OP_IADD instruction. */
 static INLINE bool
-jit_visit_checked_idiv_op(
-	struct jit_context *ctx,
-	int op,
-	int dst,
-	int src1,
-	int src2)
-{
-	int dst_ofs = dst * (int)sizeof(struct rt_value);
-	int src1_ofs = src1 * (int)sizeof(struct rt_value);
-	int src2_ofs = src2 * (int)sizeof(struct rt_value);
-	uint8_t *zero_patch;
-	uint8_t *divide_patch[2];
-	uint8_t *store_patch;
-	uint8_t *done_patch;
-	uint8_t *divide_target;
-	uint8_t *store_target;
-	uint8_t *cold_target;
-	uint8_t *done_target;
-
-	ASM {
-		/* eax = dividend, ecx = divisor. */
-		IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(src1_ofs + 8));
-		IB(0x41); IB(0x8b); IB(0x8f); ID((uint32_t)(src2_ofs + 8));
-		IB(0x85); IB(0xc9);             /* test ecx,ecx */
-		IB(0x0f); IB(0x84);             /* je cold */
-	}
-	zero_patch = (uint8_t *)ctx->code;
-	if (!jit_put_dword(ctx, 0))
-		return false;
-	ASM {
-		IB(0x83); IB(0xf9); IB(0xff);   /* cmp ecx,-1 */
-		IB(0x0f); IB(0x85);             /* jne divide */
-	}
-	divide_patch[0] = (uint8_t *)ctx->code;
-	if (!jit_put_dword(ctx, 0))
-		return false;
-	ASM {
-		IB(0x3d); ID(0x80000000u);      /* cmp eax,INT_MIN */
-		IB(0x0f); IB(0x85);             /* jne divide */
-	}
-	divide_patch[1] = (uint8_t *)ctx->code;
-	if (!jit_put_dword(ctx, 0))
-		return false;
-	if (op == OP_IMOD_CHECKED) {
-		/* INT_MIN % -1 = 0; quotient leaves eax as INT_MIN. */
-		ASM { IB(0x31); IB(0xc0); }
-	}
-	ASM { IB(0xe9); }
-	store_patch = (uint8_t *)ctx->code;
-	if (!jit_put_dword(ctx, 0))
-		return false;
-
-	divide_target = (uint8_t *)ctx->code;
-	jit_x86_64_patch_local_rel32(divide_patch[0], divide_target);
-	jit_x86_64_patch_local_rel32(divide_patch[1], divide_target);
-	ASM {
-		IB(0x99);                       /* cdq */
-		IB(0xf7); IB(0xf9);             /* idiv ecx */
-	}
-	if (op == OP_IMOD_CHECKED) {
-		ASM { IB(0x89); IB(0xd0); }     /* mov edx,eax */
-	}
-
-	store_target = (uint8_t *)ctx->code;
-	jit_x86_64_patch_local_rel32(store_patch, store_target);
-	ASM {
-		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst_ofs);
-		ID((uint32_t)NOCT_VALUE_INT);
-		IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst_ofs + 8));
-		IB(0xe9);
-	}
-	done_patch = (uint8_t *)ctx->code;
-	if (!jit_put_dword(ctx, 0))
-		return false;
-
-	cold_target = (uint8_t *)ctx->code;
-	jit_x86_64_patch_local_rel32(zero_patch, cold_target);
-	if (op == OP_IDIV_CHECKED) {
-		ASM_BINARY_OP(ex_idiv_helper);
-	} else {
-		ASM_BINARY_OP(ex_imod_helper);
-	}
-	done_target = (uint8_t *)ctx->code;
-	jit_x86_64_patch_local_rel32(done_patch, done_target);
-	return true;
-}
-
-static bool
-jit_x86_64_try_gpr_typed(struct jit_context *ctx, int op, int dst,
-			 int src1, int src2, bool *handled)
-{
-	int r1;
-	int r2;
-	int rd;
-	int opcode;
-	unsigned pins;
-	bool commutative;
-	bool v1;
-	bool v2;
-	int32_t min1;
-	int32_t max1;
-	int32_t min2;
-	int32_t max2;
-	int64_t lo;
-	int64_t hi;
-	bool imm2;
-
-	*handled = false;
-	if (!ctx->gpr_cache_active)
-		return true;
-	if (ctx->gpr_reg_limit == 1)
-		return true;
-	v1 = ctx->gpr_range_valid[src1] != 0;
-	min1 = v1 ? ctx->gpr_range_min[src1] : 0;
-	max1 = v1 ? ctx->gpr_range_max[src1] : 0;
-	v2 = op == OP_ISHL || op == OP_ISHR ? false :
-		ctx->gpr_range_valid[src2] != 0;
-	imm2 = op != OP_ISHL && op != OP_ISHR &&
-		ctx->gpr_remat_valid[src2] != 0;
-	min2 = v2 ? ctx->gpr_range_min[src2] : 0;
-	max2 = v2 ? ctx->gpr_range_max[src2] : 0;
-	if (op == OP_IDIV || op == OP_IMOD ||
-	    op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
-		bool proven = op == OP_IDIV || op == OP_IMOD ||
-			(v2 && (min2 > 0 || max2 < -1));
-		if (!proven)
-			return true;
-		if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
-			return false;
-		pins = 1u << (r1 - 8);
-		if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
-			return false;
-		pins |= 1u << (r2 - 8);
-		if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd))
-			return false;
-		ASM {
-			/* eax=dividend; edx:eax sign extension; idiv r2d. */
-			IB(0x44); IB(0x89);
-			IB((uint8_t)(0xc0 | ((r1 & 7) << 3)));
-			IB(0x99);
-			IB(0x41); IB(0xf7);
-			IB((uint8_t)(0xf8 | (r2 & 7)));
-		}
-		if (op == OP_IMOD || op == OP_IMOD_CHECKED)
-			ASM { IB(0x89); IB(0xd0); }
-		ASM {
-			IB(0x41); IB(0x89);
-			IB((uint8_t)(0xc0 | (rd & 7)));
-		}
-		ctx->gpr_tmp_dirty[dst] = 1;
-		ctx->gpr_range_valid[dst] = 0;
-		if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED)
-			ctx->gpr_proven_divisions++;
-		jit_x86_64_invalidate_all_packed_loads(ctx);
-		*handled = true;
-		return true;
-	}
-	if (op != OP_IADD && op != OP_ISUB && op != OP_IMUL &&
-	    op != OP_IAND && op != OP_IOR && op != OP_IXOR &&
-	    op != OP_ISHL && op != OP_ISHR)
-		return true;
-	if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
-		return false;
-	pins = 1u << (r1 - 8);
-	if (op == OP_ISHL || op == OP_ISHR) {
-		if (dst == src1) {
-			rd = r1;
-		} else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-			   jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
-			   UINT32_MAX) {
-			if (!jit_x86_64_gpr_rebind(ctx, dst, src1, &rd))
-				return false;
-		} else {
-			if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd) ||
-			    !jit_x86_64_gpr_mov(ctx, rd, r1))
-				return false;
-		}
-		if ((src2 & 31) != 0) {
-			ASM {
-				IB(0x41); IB(0xc1);
-				IB((uint8_t)(0xc0 |
-					(op == OP_ISHL ? 0x20 : 0x28) |
-					(rd & 7)));
-				IB((uint8_t)(src2 & 31));
-			}
-		}
-	} else if (imm2) {
-		int32_t imm = ctx->gpr_remat_value[src2];
-		int subop;
-		if (dst == src1) {
-			rd = r1;
-		} else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-			   jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
-			   UINT32_MAX) {
-			if (!jit_x86_64_gpr_rebind(ctx, dst, src1, &rd))
-				return false;
-		} else {
-			if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd) ||
-			    !jit_x86_64_gpr_mov(ctx, rd, r1))
-				return false;
-		}
-		if (op == OP_IMUL) {
-			ASM {
-				IB(0x45); IB(0x69);
-				IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
-					(rd & 7)));
-				ID((uint32_t)imm);
-			}
-		} else {
-			subop = op == OP_IADD ? 0 : op == OP_IOR ? 1 :
-				op == OP_IAND ? 4 : op == OP_ISUB ? 5 : 6;
-			ASM {
-				IB(0x41); IB(0x81);
-				IB((uint8_t)(0xc0 | (subop << 3) | (rd & 7)));
-				ID((uint32_t)imm);
-			}
-		}
-	} else {
-		if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
-			return false;
-		pins |= 1u << (r2 - 8);
-		commutative = op == OP_IADD || op == OP_IMUL ||
-			op == OP_IAND || op == OP_IOR || op == OP_IXOR;
-		if (dst == src1) {
-			rd = r1;
-		} else if (dst == src2 && commutative) {
-			rd = r2;
-			r2 = r1;
-		} else if (dst == src2) {
-			/* Keep the uncommon destructive non-commutative form simple. */
-			return true;
-		} else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-			   jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
-			   UINT32_MAX) {
-			if (!jit_x86_64_gpr_rebind(ctx, dst, src1, &rd))
-				return false;
-		} else if (commutative && !jit_x86_64_gpr_is_cached(ctx, src2) &&
-			   jit_ploop_next_use_lpc(ctx, src2, ctx->lpc) ==
-			   UINT32_MAX) {
-			if (!jit_x86_64_gpr_rebind(ctx, dst, src2, &rd))
-				return false;
-			r2 = r1;
-		} else {
-			if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd) ||
-			    !jit_x86_64_gpr_mov(ctx, rd, r1))
-				return false;
-		}
-		if (op == OP_IMUL) {
-			ASM {
-				IB(0x45); IB(0x0f); IB(0xaf);
-				IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
-					(r2 & 7)));
-			}
-		} else {
-			opcode = op == OP_IADD ? 0x03 :
-				op == OP_ISUB ? 0x2b :
-				op == OP_IAND ? 0x23 :
-				op == OP_IOR ? 0x0b : 0x33;
-			ASM {
-				IB(0x45); IB((uint8_t)opcode);
-				IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
-					(r2 & 7)));
-			}
-		}
-	}
-	ctx->gpr_tmp_dirty[dst] = 1;
-	ctx->gpr_range_valid[dst] = 0;
-	if (op == OP_IAND && v1 && min1 == max1 && min1 >= 0) {
-		ctx->gpr_range_valid[dst] = 1;
-		ctx->gpr_range_min[dst] = 0;
-		ctx->gpr_range_max[dst] = min1;
-	} else if (op == OP_IAND && v2 && min2 == max2 && min2 >= 0) {
-		ctx->gpr_range_valid[dst] = 1;
-		ctx->gpr_range_min[dst] = 0;
-		ctx->gpr_range_max[dst] = min2;
-	} else if (op == OP_IADD && v1 && v2) {
-		lo = (int64_t)min1 + min2;
-		hi = (int64_t)max1 + max2;
-		if (lo >= INT32_MIN && hi <= INT32_MAX) {
-			ctx->gpr_range_valid[dst] = 1;
-			ctx->gpr_range_min[dst] = (int32_t)lo;
-			ctx->gpr_range_max[dst] = (int32_t)hi;
-		}
-	} else if (op == OP_ISUB && v1 && v2) {
-		lo = (int64_t)min1 - max2;
-		hi = (int64_t)max1 - min2;
-		if (lo >= INT32_MIN && hi <= INT32_MAX) {
-			ctx->gpr_range_valid[dst] = 1;
-			ctx->gpr_range_min[dst] = (int32_t)lo;
-			ctx->gpr_range_max[dst] = (int32_t)hi;
-		}
-	}
-	jit_x86_64_invalidate_packed_load(ctx, dst);
-	*handled = true;
-	return true;
-}
-
-/* Visit an OP_IADD..OP_FGTE instruction.  (Typed arithmetic; inline.) */
-static INLINE bool
-jit_visit_typed_op(
-        struct jit_context *ctx,
-        int op)
+jit_visit_iadd_op(
+        struct jit_context *ctx)
 {
         int dst;
         int src1;
         int src2;
-	int dst_tmp;
-	int result_type;
-	bool write_tag;
-	bool handled;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(src1);
-        if (op == OP_ISHL || op == OP_ISHR) {
-                /* The shift count is an imm8, not a tmpvar. */
-                CONSUME_IMM8(src2);
-        } else {
-                CONSUME_TMPVAR(src2);
-        }
-	if (jit_ploop_current_elided(ctx, 7))
-		return true;
-	if (ctx->packed_loop_hint_active)
-		jit_x86_64_remove_packed_index_alias(ctx, dst);
-	if (ctx->packed_loop_hint_active)
-		jit_x86_64_remove_packed_base_alias(ctx, dst);
-	if (!jit_x86_64_try_gpr_typed(ctx, op, dst, src1, src2, &handled))
-		return false;
-	if (handled)
-		return true;
-	if (ctx->gpr_cache_active) {
-		if (!jit_x86_64_gpr_publish_remat(ctx) ||
-		    !jit_x86_64_gpr_flush_required(ctx))
-			return false;
-	}
-	if (op == OP_IDIV_CHECKED || op == OP_IMOD_CHECKED) {
-		return jit_visit_checked_idiv_op(ctx, op, dst, src1, src2);
-	}
-	dst_tmp = dst;
-	result_type = (op == OP_FADD || op == OP_FSUB ||
-		       op == OP_FMUL || op == OP_FDIV) ?
-		      NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
-	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
-						     result_type);
+        CONSUME_TMPVAR(src2);
 
-        dst *= (int)sizeof(struct rt_value);
-        if (op != OP_ISHL && op != OP_ISHR)
-                src2 *= (int)sizeof(struct rt_value);
-        src1 *= (int)sizeof(struct rt_value);
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool v1;
+                bool v2;
+                int32_t min1;
+                int32_t max1;
+                int32_t min2;
+                int32_t max2;
+                int64_t lo;
+                int64_t hi;
+                bool imm2;
 
-        switch (op) {
-        case OP_IADD:
-        case OP_ISUB:
-        case OP_IMUL:
-        case OP_IAND:
-        case OP_IOR:
-        case OP_IXOR:
-                ASM {
-                        /* r15: &env->frame->tmpvar[0] */
-                        TYPED_LOAD_EAX(src1);
-                }
-                switch (op) {
-                /* op src2+8(%r15) -> %eax */
-                case OP_IADD: ASM { IB(0x41); IB(0x03); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                case OP_ISUB: ASM { IB(0x41); IB(0x2b); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                case OP_IAND: ASM { IB(0x41); IB(0x23); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                case OP_IOR:  ASM { IB(0x41); IB(0x0b); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                case OP_IXOR: ASM { IB(0x41); IB(0x33); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                default:      ASM { IB(0x41); IB(0x0f); IB(0xaf); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                }
-                ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        case OP_ISHL:
-        case OP_ISHR:
-                /* src2 is the shift-count immediate (0..31). */
-                ASM {
-                        TYPED_LOAD_EAX(src1);
-                }
-                if ((src2 & 31) != 0) {
-                        if (op == OP_ISHL) {
-                                /* shll $imm, %eax */
-                                ASM { IB(0xc1); IB(0xe0); IB((uint8_t)(src2 & 31)); }
+                v1 = ctx->gpr_range_valid[src1] != 0;
+                min1 = v1 ? ctx->gpr_range_min[src1] : 0;
+                max1 = v1 ? ctx->gpr_range_max[src1] : 0;
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                imm2 = ctx->gpr_remat_valid[src2] != 0;
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (imm2) {
+                        int32_t imm;
+
+                        imm = ctx->gpr_remat_value[src2];
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
                         } else {
-                                /* shrl $imm, %eax (LOGICAL) */
-                                ASM { IB(0xc1); IB(0xe8); IB((uint8_t)(src2 & 31)); }
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x41); IB(0x81);
+                                IB((uint8_t)(0xc0 | (rd & 7)));
+                                ID((uint32_t)imm);
+                        }
+                } else {
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (dst == src2) {
+                                rd = r2;
+                                r2 = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
+                                   jit_ploop_next_use_lpc(ctx, src2,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
+                                                         &rd))
+                                        return false;
+                                r2 = r1;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x45); IB(0x03);
+                                IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+                                             (r2 & 7)));
                         }
                 }
-                ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                if (v1 && v2) {
+                        lo = (int64_t)min1 + min2;
+                        hi = (int64_t)max1 + max2;
+                        if (lo >= INT32_MIN && hi <= INT32_MAX) {
+                                ctx->gpr_range_valid[dst] = 1;
+                                ctx->gpr_range_min[dst] = (int32_t)lo;
+                                ctx->gpr_range_max[dst] = (int32_t)hi;
+                        }
                 }
-                break;
-        case OP_IDIV:
-        case OP_IMOD:
-                /* The LIR layer only emits these with a literal
-                   divisor outside {0, -1}: no trap is reachable from
-                   compiled code.  (Crafted bytecode is outside the
-                   JIT trust model, as with the PLOAD family.) */
-                ASM {
-                        TYPED_LOAD_EAX(src1);
-                        /* cltd */              IB(0x99);
-                        /* idivl src2+8(%r15) */ IB(0x41); IB(0xf7); IB(0xbf); ID((uint32_t)(src2 + 8));
-                }
-                if (op == OP_IMOD) {
-                        /* movl %edx, %eax */
-                        ASM { IB(0x89); IB(0xd0); }
-                }
-                ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        case OP_ILT:
-        case OP_ILTE:
-        case OP_IGT:
-        case OP_IGTE:
-                ASM {
-                        TYPED_LOAD_EAX(src1);
-                        /* cmpl src2+8(%r15), %eax */
-                        IB(0x41); IB(0x3b); IB(0x87); ID((uint32_t)(src2 + 8));
-                }
-                switch (op) {
-                case OP_ILT:  ASM { TYPED_SETCC_EAX(0x9c); } break;     /* setl  */
-                case OP_ILTE: ASM { TYPED_SETCC_EAX(0x9e); } break;     /* setle */
-                case OP_IGT:  ASM { TYPED_SETCC_EAX(0x9f); } break;     /* setg  */
-                default:      ASM { TYPED_SETCC_EAX(0x9d); } break;     /* setge */
-                }
-                ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        case OP_FADD:
-        case OP_FSUB:
-        case OP_FMUL:
-        case OP_FDIV:
-                ASM {
-                        TYPED_LOAD_XMM0(src1);
-                }
-                switch (op) {
-                /* opss src2+8(%r15) -> %xmm0 */
-                case OP_FADD: ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x58); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                case OP_FSUB: ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x5c); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                case OP_FMUL: ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x59); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                default:      ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x5e); IB(0x87); ID((uint32_t)(src2 + 8)); } break;
-                }
-                ASM {
-                        /* movl $tag, dst(%r15), unless fixed and known */
-                        if (write_tag) {
-                        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT); }
-                        /* movss %xmm0, dst+8(%r15) */
-                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x87); ID((uint32_t)(dst + 8));
-                }
-                break;
-        case OP_FLT:
-        case OP_FLTE:
-                /* a < b  ==  b > a: load b, compare against a. */
-                ASM {
-                        TYPED_LOAD_XMM0(src2);
-                        /* ucomiss src1+8(%r15), %xmm0 */
-                        IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src1 + 8));
-                }
-                if (op == OP_FLT) {
-                        ASM { TYPED_SETCC_EAX(0x97); }  /* seta  */
-                } else {
-                        ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
-                }
-                ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        case OP_FGT:
-        case OP_FGTE:
-                ASM {
-                        TYPED_LOAD_XMM0(src1);
-                        /* ucomiss src2+8(%r15), %xmm0 */
-                        IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src2 + 8));
-                }
-                if (op == OP_FGT) {
-                        ASM { TYPED_SETCC_EAX(0x97); }  /* seta  */
-                } else {
-                        ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
-                }
-                ASM {
-                        TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
-                }
-                break;
-        default:
-                assert(NEVER_COME_HERE);
-                return false;
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                TYPED_LOAD_EAX(src1);
+        }
+        ASM { IB(0x41); IB(0x03); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
         }
         return true;
 }
+
+/* Visit an OP_ISUB instruction. */
+static INLINE bool
+jit_visit_isub_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool v1;
+                bool v2;
+                int32_t min1;
+                int32_t max1;
+                int32_t min2;
+                int32_t max2;
+                int64_t lo;
+                int64_t hi;
+                bool imm2;
+
+                v1 = ctx->gpr_range_valid[src1] != 0;
+                min1 = v1 ? ctx->gpr_range_min[src1] : 0;
+                max1 = v1 ? ctx->gpr_range_max[src1] : 0;
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                imm2 = ctx->gpr_remat_valid[src2] != 0;
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (imm2) {
+                        int32_t imm;
+
+                        imm = ctx->gpr_remat_value[src2];
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x41); IB(0x81);
+                                IB((uint8_t)(0xc0 | (5 << 3) | (rd & 7)));
+                                ID((uint32_t)imm);
+                        }
+                } else {
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (dst == src2) {
+                                goto fallback_isub;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x45); IB(0x2b);
+                                IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+                                             (r2 & 7)));
+                        }
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                if (v1 && v2) {
+                        lo = (int64_t)min1 - max2;
+                        hi = (int64_t)max1 - min2;
+                        if (lo >= INT32_MIN && hi <= INT32_MAX) {
+                                ctx->gpr_range_valid[dst] = 1;
+                                ctx->gpr_range_min[dst] = (int32_t)lo;
+                                ctx->gpr_range_max[dst] = (int32_t)hi;
+                        }
+                }
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+
+fallback_isub:
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                TYPED_LOAD_EAX(src1);
+        }
+        ASM { IB(0x41); IB(0x2b); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IMUL instruction. */
+static INLINE bool
+jit_visit_imul_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool imm2;
+
+                imm2 = ctx->gpr_remat_valid[src2] != 0;
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (imm2) {
+                        int32_t imm;
+
+                        imm = ctx->gpr_remat_value[src2];
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x45); IB(0x69);
+                                IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+                                             (rd & 7)));
+                                ID((uint32_t)imm);
+                        }
+                } else {
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (dst == src2) {
+                                rd = r2;
+                                r2 = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
+                                   jit_ploop_next_use_lpc(ctx, src2,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
+                                                         &rd))
+                                        return false;
+                                r2 = r1;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x45); IB(0x0f); IB(0xaf);
+                                IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+                                             (r2 & 7)));
+                        }
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                TYPED_LOAD_EAX(src1);
+        }
+        ASM { IB(0x41); IB(0x0f); IB(0xaf); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IDIV instruction. */
+static INLINE bool
+jit_visit_idiv_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - 8);
+                if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd))
+                        return false;
+                ASM {
+                        /* eax=dividend; edx:eax sign extension; idiv r2d. */
+                        IB(0x44); IB(0x89);
+                        IB((uint8_t)(0xc0 | ((r1 & 7) << 3)));
+                        IB(0x99);
+                        IB(0x41); IB(0xf7);
+                        IB((uint8_t)(0xf8 | (r2 & 7)));
+                }
+                ASM {
+                        IB(0x41); IB(0x89);
+                        IB((uint8_t)(0xc0 | (rd & 7)));
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_x86_64_invalidate_all_packed_loads(ctx);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* The LIR layer only emits these with a literal
+           divisor outside {0, -1}: no trap is reachable from
+           compiled code.  (Crafted bytecode is outside the
+           JIT trust model, as with the PLOAD family.) */
+        ASM {
+                TYPED_LOAD_EAX(src1);
+                /* cltd */              IB(0x99);
+                /* idivl src2+8(%r15) */ IB(0x41); IB(0xf7); IB(0xbf); ID((uint32_t)(src2 + 8));
+        }
+
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IMOD instruction. */
+static INLINE bool
+jit_visit_imod_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                        return false;
+                pins |= 1u << (r2 - 8);
+                if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd))
+                        return false;
+                ASM {
+                        /* eax=dividend; edx:eax sign extension; idiv r2d. */
+                        IB(0x44); IB(0x89);
+                        IB((uint8_t)(0xc0 | ((r1 & 7) << 3)));
+                        IB(0x99);
+                        IB(0x41); IB(0xf7);
+                        IB((uint8_t)(0xf8 | (r2 & 7)));
+                }
+                ASM { IB(0x89); IB(0xd0); }
+                ASM {
+                        IB(0x41); IB(0x89);
+                        IB((uint8_t)(0xc0 | (rd & 7)));
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_x86_64_invalidate_all_packed_loads(ctx);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* The LIR layer only emits these with a literal
+           divisor outside {0, -1}: no trap is reachable from
+           compiled code.  (Crafted bytecode is outside the
+           JIT trust model, as with the PLOAD family.) */
+        ASM {
+                TYPED_LOAD_EAX(src1);
+                /* cltd */              IB(0x99);
+                /* idivl src2+8(%r15) */ IB(0x41); IB(0xf7); IB(0xbf); ID((uint32_t)(src2 + 8));
+        }
+        /* movl %edx, %eax */
+        ASM { IB(0x89); IB(0xd0); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IAND instruction. */
+static INLINE bool
+jit_visit_iand_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool v1;
+                bool v2;
+                int32_t min1;
+                int32_t max1;
+                int32_t min2;
+                int32_t max2;
+                bool imm2;
+
+                v1 = ctx->gpr_range_valid[src1] != 0;
+                min1 = v1 ? ctx->gpr_range_min[src1] : 0;
+                max1 = v1 ? ctx->gpr_range_max[src1] : 0;
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                imm2 = ctx->gpr_remat_valid[src2] != 0;
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (imm2) {
+                        int32_t imm;
+
+                        imm = ctx->gpr_remat_value[src2];
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x41); IB(0x81);
+                                IB((uint8_t)(0xc0 | (4 << 3) | (rd & 7)));
+                                ID((uint32_t)imm);
+                        }
+                } else {
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (dst == src2) {
+                                rd = r2;
+                                r2 = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
+                                   jit_ploop_next_use_lpc(ctx, src2,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
+                                                         &rd))
+                                        return false;
+                                r2 = r1;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x45); IB(0x23);
+                                IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+                                             (r2 & 7)));
+                        }
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                if (v1 && min1 == max1 && min1 >= 0) {
+                        ctx->gpr_range_valid[dst] = 1;
+                        ctx->gpr_range_min[dst] = 0;
+                        ctx->gpr_range_max[dst] = min1;
+                } else if (v2 && min2 == max2 && min2 >= 0) {
+                        ctx->gpr_range_valid[dst] = 1;
+                        ctx->gpr_range_min[dst] = 0;
+                        ctx->gpr_range_max[dst] = min2;
+                }
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                TYPED_LOAD_EAX(src1);
+        }
+        ASM { IB(0x41); IB(0x23); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IOR instruction. */
+static INLINE bool
+jit_visit_ior_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool imm2;
+
+                imm2 = ctx->gpr_remat_valid[src2] != 0;
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (imm2) {
+                        int32_t imm;
+
+                        imm = ctx->gpr_remat_value[src2];
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x41); IB(0x81);
+                                IB((uint8_t)(0xc0 | (1 << 3) | (rd & 7)));
+                                ID((uint32_t)imm);
+                        }
+                } else {
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (dst == src2) {
+                                rd = r2;
+                                r2 = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
+                                   jit_ploop_next_use_lpc(ctx, src2,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
+                                                         &rd))
+                                        return false;
+                                r2 = r1;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x45); IB(0x0b);
+                                IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+                                             (r2 & 7)));
+                        }
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                TYPED_LOAD_EAX(src1);
+        }
+        ASM { IB(0x41); IB(0x0b); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IXOR instruction. */
+static INLINE bool
+jit_visit_ixor_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool imm2;
+
+                imm2 = ctx->gpr_remat_valid[src2] != 0;
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (imm2) {
+                        int32_t imm;
+
+                        imm = ctx->gpr_remat_value[src2];
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x41); IB(0x81);
+                                IB((uint8_t)(0xc0 | (6 << 3) | (rd & 7)));
+                                ID((uint32_t)imm);
+                        }
+                } else {
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (dst == src1) {
+                                rd = r1;
+                        } else if (dst == src2) {
+                                rd = r2;
+                                r2 = r1;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                                   jit_ploop_next_use_lpc(ctx, src1,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
+                                                         &rd))
+                                        return false;
+                        } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
+                                   jit_ploop_next_use_lpc(ctx, src2,
+                                                         ctx->lpc) ==
+                                   UINT32_MAX) {
+                                if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
+                                                         &rd))
+                                        return false;
+                                r2 = r1;
+                        } else {
+                                if (!jit_x86_64_gpr_dest(ctx, dst, pins,
+                                                       &rd) ||
+                                    !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                        return false;
+                        }
+                        ASM {
+                                IB(0x45); IB(0x33);
+                                IB((uint8_t)(0xc0 | ((rd & 7) << 3) |
+                                             (r2 & 7)));
+                        }
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                TYPED_LOAD_EAX(src1);
+        }
+        ASM { IB(0x41); IB(0x33); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ISHL instruction. */
+static INLINE bool
+jit_visit_ishl_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int rd;
+                unsigned pins;
+
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (dst == src1) {
+                        rd = r1;
+                } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                           jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_x86_64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else {
+                        if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd) ||
+                            !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                return false;
+                }
+                if ((src2 & 31) != 0) {
+                        ASM {
+                                IB(0x41); IB(0xc1);
+                                IB((uint8_t)(0xc0 | 0x20 | (rd & 7)));
+                                IB((uint8_t)(src2 & 31));
+                        }
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* src2 is the shift-count immediate (0..31). */
+        ASM {
+                TYPED_LOAD_EAX(src1);
+        }
+        if ((src2 & 31) != 0) {
+                /* shll $imm, %eax */
+                ASM { IB(0xc1); IB(0xe0); IB((uint8_t)(src2 & 31)); }
+        }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ISHR instruction. */
+static INLINE bool
+jit_visit_ishr_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_IMM8(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int rd;
+                unsigned pins;
+
+                if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                        return false;
+                pins = 1u << (r1 - 8);
+                if (dst == src1) {
+                        rd = r1;
+                } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
+                           jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                           UINT32_MAX) {
+                        if (!jit_x86_64_gpr_rebind(ctx, dst, src1, &rd))
+                                return false;
+                } else {
+                        if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd) ||
+                            !jit_x86_64_gpr_mov(ctx, rd, r1))
+                                return false;
+                }
+                if ((src2 & 31) != 0) {
+                        ASM {
+                                IB(0x41); IB(0xc1);
+                                IB((uint8_t)(0xc0 | 0x28 | (rd & 7)));
+                                IB((uint8_t)(src2 & 31));
+                        }
+                }
+                ctx->gpr_tmp_dirty[dst] = 1;
+                ctx->gpr_range_valid[dst] = 0;
+                jit_x86_64_invalidate_packed_load(ctx, dst);
+                return true;
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* src2 is the shift-count immediate (0..31). */
+        ASM {
+                TYPED_LOAD_EAX(src1);
+        }
+        if ((src2 & 31) != 0) {
+                /* shrl $imm, %eax (LOGICAL) */
+                ASM { IB(0xc1); IB(0xe8); IB((uint8_t)(src2 & 31)); }
+        }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ILT instruction. */
+static INLINE bool
+jit_visit_ilt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_EAX(src1);
+                /* cmpl src2+8(%r15), %eax */
+                IB(0x41); IB(0x3b); IB(0x87); ID((uint32_t)(src2 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x9c); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_ILTE instruction. */
+static INLINE bool
+jit_visit_ilte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_EAX(src1);
+                /* cmpl src2+8(%r15), %eax */
+                IB(0x41); IB(0x3b); IB(0x87); ID((uint32_t)(src2 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x9e); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IGT instruction. */
+static INLINE bool
+jit_visit_igt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_EAX(src1);
+                /* cmpl src2+8(%r15), %eax */
+                IB(0x41); IB(0x3b); IB(0x87); ID((uint32_t)(src2 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x9f); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IGTE instruction. */
+static INLINE bool
+jit_visit_igte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_EAX(src1);
+                /* cmpl src2+8(%r15), %eax */
+                IB(0x41); IB(0x3b); IB(0x87); ID((uint32_t)(src2 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x9d); }
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FADD instruction. */
+static INLINE bool
+jit_visit_fadd_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_XMM0(src1);
+        }
+        ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x58); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                /* movl $tag, dst(%r15), unless fixed and known */
+                if (write_tag) {
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT); }
+                /* movss %xmm0, dst+8(%r15) */
+                IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x87); ID((uint32_t)(dst + 8));
+        }
+        return true;
+}
+
+/* Visit an OP_FSUB instruction. */
+static INLINE bool
+jit_visit_fsub_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_XMM0(src1);
+        }
+        ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x5c); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                /* movl $tag, dst(%r15), unless fixed and known */
+                if (write_tag) {
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT); }
+                /* movss %xmm0, dst+8(%r15) */
+                IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x87); ID((uint32_t)(dst + 8));
+        }
+        return true;
+}
+
+/* Visit an OP_FMUL instruction. */
+static INLINE bool
+jit_visit_fmul_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_XMM0(src1);
+        }
+        ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x59); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                /* movl $tag, dst(%r15), unless fixed and known */
+                if (write_tag) {
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT); }
+                /* movss %xmm0, dst+8(%r15) */
+                IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x87); ID((uint32_t)(dst + 8));
+        }
+        return true;
+}
+
+/* Visit an OP_FDIV instruction. */
+static INLINE bool
+jit_visit_fdiv_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_FLOAT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_XMM0(src1);
+        }
+        ASM { IB(0xf3); IB(0x41); IB(0x0f); IB(0x5e); IB(0x87); ID((uint32_t)(src2 + 8)); }
+        ASM {
+                /* movl $tag, dst(%r15), unless fixed and known */
+                if (write_tag) {
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst); ID((uint32_t)NOCT_VALUE_FLOAT); }
+                /* movss %xmm0, dst+8(%r15) */
+                IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x87); ID((uint32_t)(dst + 8));
+        }
+        return true;
+}
+
+/* Visit an OP_FLT instruction. */
+static INLINE bool
+jit_visit_flt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* a < b  ==  b > a: load b, compare against a. */
+        ASM {
+                TYPED_LOAD_XMM0(src2);
+                /* ucomiss src1+8(%r15), %xmm0 */
+                IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src1 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x97); }  /* seta  */
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FLTE instruction. */
+static INLINE bool
+jit_visit_flte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        /* a < b  ==  b > a: load b, compare against a. */
+        ASM {
+                TYPED_LOAD_XMM0(src2);
+                /* ucomiss src1+8(%r15), %xmm0 */
+                IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src1 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FGT instruction. */
+static INLINE bool
+jit_visit_fgt_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_XMM0(src1);
+                /* ucomiss src2+8(%r15), %xmm0 */
+                IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src2 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x97); }  /* seta  */
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_FGTE instruction. */
+static INLINE bool
+jit_visit_fgte_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_tmp;
+        int result_type;
+        bool write_tag;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+
+        dst_tmp = dst;
+        result_type = NOCT_VALUE_INT;
+        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+                                                     result_type);
+
+        dst *= (int)sizeof(struct rt_value);
+        src2 *= (int)sizeof(struct rt_value);
+        src1 *= (int)sizeof(struct rt_value);
+
+        ASM {
+                TYPED_LOAD_XMM0(src1);
+                /* ucomiss src2+8(%r15), %xmm0 */
+                IB(0x41); IB(0x0f); IB(0x2e); IB(0x87); ID((uint32_t)(src2 + 8));
+        }
+        ASM { TYPED_SETCC_EAX(0x93); }  /* setae */
+        ASM {
+                TYPED_STORE_EAX(dst, NOCT_VALUE_INT, write_tag);
+        }
+        return true;
+}
+
+/* Visit an OP_IDIV_CHECKED instruction. */
+static INLINE bool
+jit_visit_idiv_checked_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_ofs;
+        int src1_ofs;
+        int src2_ofs;
+        uint8_t *zero_patch;
+        uint8_t *divide_patch[2];
+        uint8_t *store_patch;
+        uint8_t *done_patch;
+        uint8_t *divide_target;
+        uint8_t *store_target;
+        uint8_t *cold_target;
+        uint8_t *done_target;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool v2;
+                int32_t min2;
+                int32_t max2;
+                bool proven;
+
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                proven = v2 && (min2 > 0 || max2 < -1);
+                if (proven) {
+                        if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                                return false;
+                        pins = 1u << (r1 - 8);
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd))
+                                return false;
+                        ASM {
+                                /* eax=dividend; edx:eax sign extension; idiv r2d. */
+                                IB(0x44); IB(0x89);
+                                IB((uint8_t)(0xc0 | ((r1 & 7) << 3)));
+                                IB(0x99);
+                                IB(0x41); IB(0xf7);
+                                IB((uint8_t)(0xf8 | (r2 & 7)));
+                        }
+                        ASM {
+                                IB(0x41); IB(0x89);
+                                IB((uint8_t)(0xc0 | (rd & 7)));
+                        }
+                        ctx->gpr_tmp_dirty[dst] = 1;
+                        ctx->gpr_range_valid[dst] = 0;
+                        ctx->gpr_proven_divisions++;
+                        jit_x86_64_invalidate_all_packed_loads(ctx);
+                        return true;
+                }
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+        dst_ofs = dst * (int)sizeof(struct rt_value);
+        src1_ofs = src1 * (int)sizeof(struct rt_value);
+        src2_ofs = src2 * (int)sizeof(struct rt_value);
+        ASM {
+                /* eax = dividend, ecx = divisor. */
+                IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(src1_ofs + 8));
+                IB(0x41); IB(0x8b); IB(0x8f); ID((uint32_t)(src2_ofs + 8));
+                IB(0x85); IB(0xc9);             /* test ecx,ecx */
+                IB(0x0f); IB(0x84);             /* je cold */
+        }
+        zero_patch = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+        ASM {
+                IB(0x83); IB(0xf9); IB(0xff);   /* cmp ecx,-1 */
+                IB(0x0f); IB(0x85);             /* jne divide */
+        }
+        divide_patch[0] = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+        ASM {
+                IB(0x3d); ID(0x80000000u);      /* cmp eax,INT_MIN */
+                IB(0x0f); IB(0x85);             /* jne divide */
+        }
+        divide_patch[1] = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+
+        ASM { IB(0xe9); }
+        store_patch = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+
+        divide_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(divide_patch[0], divide_target);
+        jit_x86_64_patch_local_rel32(divide_patch[1], divide_target);
+        ASM {
+                IB(0x99);                       /* cdq */
+                IB(0xf7); IB(0xf9);             /* idiv ecx */
+        }
+
+        store_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(store_patch, store_target);
+        ASM {
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst_ofs);
+                ID((uint32_t)NOCT_VALUE_INT);
+                IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst_ofs + 8));
+                IB(0xe9);
+        }
+        done_patch = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+
+        cold_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(zero_patch, cold_target);
+        ASM_BINARY_OP(ex_idiv_helper);
+        done_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(done_patch, done_target);
+        return true;
+}
+
+/* Visit an OP_IMOD_CHECKED instruction. */
+static INLINE bool
+jit_visit_imod_checked_op(
+        struct jit_context *ctx)
+{
+        int dst;
+        int src1;
+        int src2;
+        int dst_ofs;
+        int src1_ofs;
+        int src2_ofs;
+        uint8_t *zero_patch;
+        uint8_t *divide_patch[2];
+        uint8_t *store_patch;
+        uint8_t *done_patch;
+        uint8_t *divide_target;
+        uint8_t *store_target;
+        uint8_t *cold_target;
+        uint8_t *done_target;
+
+        CONSUME_TMPVAR(dst);
+        CONSUME_TMPVAR(src1);
+        CONSUME_TMPVAR(src2);
+
+        if (jit_ploop_current_elided(ctx, 7))
+                return true;
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_index_alias(ctx, dst);
+        if (ctx->packed_loop_hint_active)
+                jit_x86_64_remove_packed_base_alias(ctx, dst);
+        if (ctx->gpr_cache_active && ctx->gpr_reg_limit != 1) {
+                int r1;
+                int r2;
+                int rd;
+                unsigned pins;
+                bool v2;
+                int32_t min2;
+                int32_t max2;
+                bool proven;
+
+                v2 = ctx->gpr_range_valid[src2] != 0;
+                min2 = v2 ? ctx->gpr_range_min[src2] : 0;
+                max2 = v2 ? ctx->gpr_range_max[src2] : 0;
+                proven = v2 && (min2 > 0 || max2 < -1);
+                if (proven) {
+                        if (!jit_x86_64_gpr_get(ctx, src1, 0, &r1))
+                                return false;
+                        pins = 1u << (r1 - 8);
+                        if (!jit_x86_64_gpr_get(ctx, src2, pins, &r2))
+                                return false;
+                        pins |= 1u << (r2 - 8);
+                        if (!jit_x86_64_gpr_dest(ctx, dst, pins, &rd))
+                                return false;
+                        ASM {
+                                /* eax=dividend; edx:eax sign extension; idiv r2d. */
+                                IB(0x44); IB(0x89);
+                                IB((uint8_t)(0xc0 | ((r1 & 7) << 3)));
+                                IB(0x99);
+                                IB(0x41); IB(0xf7);
+                                IB((uint8_t)(0xf8 | (r2 & 7)));
+                        }
+                        ASM { IB(0x89); IB(0xd0); }
+                        ASM {
+                                IB(0x41); IB(0x89);
+                                IB((uint8_t)(0xc0 | (rd & 7)));
+                        }
+                        ctx->gpr_tmp_dirty[dst] = 1;
+                        ctx->gpr_range_valid[dst] = 0;
+                        ctx->gpr_proven_divisions++;
+                        jit_x86_64_invalidate_all_packed_loads(ctx);
+                        return true;
+                }
+        }
+        if (ctx->gpr_cache_active) {
+                if (!jit_x86_64_gpr_publish_remat(ctx) ||
+                    !jit_x86_64_gpr_flush_required(ctx))
+                        return false;
+        }
+        dst_ofs = dst * (int)sizeof(struct rt_value);
+        src1_ofs = src1 * (int)sizeof(struct rt_value);
+        src2_ofs = src2 * (int)sizeof(struct rt_value);
+        ASM {
+                /* eax = dividend, ecx = divisor. */
+                IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(src1_ofs + 8));
+                IB(0x41); IB(0x8b); IB(0x8f); ID((uint32_t)(src2_ofs + 8));
+                IB(0x85); IB(0xc9);             /* test ecx,ecx */
+                IB(0x0f); IB(0x84);             /* je cold */
+        }
+        zero_patch = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+        ASM {
+                IB(0x83); IB(0xf9); IB(0xff);   /* cmp ecx,-1 */
+                IB(0x0f); IB(0x85);             /* jne divide */
+        }
+        divide_patch[0] = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+        ASM {
+                IB(0x3d); ID(0x80000000u);      /* cmp eax,INT_MIN */
+                IB(0x0f); IB(0x85);             /* jne divide */
+        }
+        divide_patch[1] = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+        /* INT_MIN % -1 = 0; quotient leaves eax as INT_MIN. */
+        ASM { IB(0x31); IB(0xc0); }
+        ASM { IB(0xe9); }
+        store_patch = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+
+        divide_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(divide_patch[0], divide_target);
+        jit_x86_64_patch_local_rel32(divide_patch[1], divide_target);
+        ASM {
+                IB(0x99);                       /* cdq */
+                IB(0xf7); IB(0xf9);             /* idiv ecx */
+        }
+        ASM { IB(0x89); IB(0xd0); }     /* mov edx,eax */
+
+        store_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(store_patch, store_target);
+        ASM {
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst_ofs);
+                ID((uint32_t)NOCT_VALUE_INT);
+                IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst_ofs + 8));
+                IB(0xe9);
+        }
+        done_patch = (uint8_t *)ctx->code;
+        if (!jit_put_dword(ctx, 0))
+                return false;
+
+        cold_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(zero_patch, cold_target);
+        ASM_BINARY_OP(ex_imod_helper);
+        done_target = (uint8_t *)ctx->code;
+        jit_x86_64_patch_local_rel32(done_patch, done_target);
+        return true;
+}
+
 
 /*
  * 128-bit SIMD ops (docs/design/06-simd.md).
@@ -4665,7 +6542,11 @@ jit_detect_simd_caps(void)
 #if defined(__GNUC__)
         uint32_t a, b, c, d;
 	uint32_t xcr0_lo, xcr0_hi;
-	uint32_t caps = 0;
+	uint32_t caps;
+
+	UNUSED_PARAMETER(xcr0_hi);
+
+	caps = 0;
         __asm__ __volatile__("cpuid"
                              : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
                              : "a"(1), "c"(0));
@@ -4679,7 +6560,6 @@ jit_detect_simd_caps(void)
 		__asm__ __volatile__("xgetbv"
 				     : "=a"(xcr0_lo), "=d"(xcr0_hi)
 				     : "c"(0));
-		UNUSED_PARAMETER(xcr0_hi);
 		if ((xcr0_lo & 6u) == 6u) {
 			caps |= JIT_SIMD_CAP_AVX;
 			if ((c & (1u << 12)) != 0)
@@ -4690,7 +6570,9 @@ jit_detect_simd_caps(void)
 #elif defined(_MSC_VER)
 	int regs[4];
 	unsigned __int64 xcr0;
-	uint32_t caps = 0;
+	uint32_t caps;
+
+	caps = 0;
 	__cpuidex(regs, 1, 0);
 	if (((uint32_t)regs[3] & (1u << 26)) != 0)
 		caps |= JIT_SIMD_CAP_SSE2;
@@ -4713,24 +6595,37 @@ jit_detect_simd_caps(void)
 #endif
 }
 
-/* Direct scalar lowering for the forced-scalar and Win64 tiers. */
+/* Visit vector instructions with SSE/AVX or direct scalar lowering. */
+/* Visit an OP_VLOADI32X4 instruction. */
 static INLINE bool
-jit_visit_vector_scalar_op(
-        struct jit_context *ctx,
-        int op,
-        int dst,
-        int src1,
-        int src2)
+jit_visit_vloadi32x4_op(
+        struct jit_context *ctx)
 {
-        uint32_t vbase = (uint32_t)offsetof(struct rt_env, vreg);
+        int vd;
+        int base_tmp;
+        int ofs_tmp;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
         int lane;
+        int base;
+        int ofs;
+        int cursor;
 
-        switch (op) {
-        case OP_VLOADI32X4:
-        case OP_VLOADF32X4:
-        {
-                int base = src1 * (int)sizeof(struct rt_value);
-                int ofs = src2 * (int)sizeof(struct rt_value);
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
                 ASM {
                         IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                         IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
@@ -4738,564 +6633,1851 @@ jit_visit_vector_scalar_op(
                 for (lane = 0; lane < 4; lane++) {
                         IB(0x8b); IB(0x54); IB(0x88); IB((uint8_t)(lane * 4));
                         IB(0x41); IB(0x89); IB(0x96);
-                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                        ID(vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4);
                 }
                 return true;
         }
-        case OP_VSTOREI32X4:
-        case OP_VSTOREF32X4:
-        {
-                int base = dst * (int)sizeof(struct rt_value);
-                int ofs = src1 * (int)sizeof(struct rt_value);
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit) goto broken_vreg;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor = 1;
+        }
+        if (cursor >= 0) {
+                /* movdqu (rbx|rsi,rdi,4), xmmA */
+                ASM { IB(0xf3); }
+                if ((vd & 8) != 0) { ASM { IB(0x44); } }
+                ASM { IB(0x0f); IB(0x6f);
+                      IB((uint8_t)(0x04 | ((vd & 7) << 3)));
+                      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
+                return true;
+        }
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                /* movdqu (%rax,%rcx,4) -> %xmmA */ IB(0xf3);
+        }
+        if ((vd & 8) != 0) { ASM { IB(0x44); } }
+        ASM { IB(0x0f); IB(0x6f);
+              IB((uint8_t)(0x04 | ((vd & 7) << 3))); IB(0x88); }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VSTOREI32X4 instruction. */
+static INLINE bool
+jit_visit_vstorei32x4_op(
+        struct jit_context *ctx)
+{
+        int base_tmp;
+        int ofs_tmp;
+        int vs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        int base;
+        int ofs;
+        int cursor;
+
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
+        CONSUME_IMM8(vs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
                 ASM {
                         IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
                         IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
                 }
                 for (lane = 0; lane < 4; lane++) {
                         IB(0x41); IB(0x8b); IB(0x96);
-                        ID(vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4);
+                        ID(vbase + (uint32_t)vs * 16 + (uint32_t)lane * 4);
                         IB(0x89); IB(0x54); IB(0x88); IB((uint8_t)(lane * 4));
                 }
                 return true;
         }
-        case OP_VSPLATI32:
-        case OP_VSPLATF32:
-        {
-                int src = src1 * (int)sizeof(struct rt_value);
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vs < 0 || vs >= vreg_limit) goto broken_vreg;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor = 1;
+        }
+        if (cursor >= 0) {
+                /* movdqu xmmC, (rbx|rsi,rdi,4) */
+                ASM { IB(0xf3); }
+                if ((vs & 8) != 0) { ASM { IB(0x44); } }
+                ASM { IB(0x0f); IB(0x7f);
+                      IB((uint8_t)(0x04 | ((vs & 7) << 3)));
+                      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
+                return true;
+        }
+        ASM {
+                /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                /* movdqu %xmmC -> (%rax,%rcx,4) */ IB(0xf3);
+        }
+        if ((vs & 8) != 0) { ASM { IB(0x44); } }
+        ASM { IB(0x0f); IB(0x7f);
+              IB((uint8_t)(0x04 | ((vs & 7) << 3))); IB(0x88); }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VSPLATI32 instruction. */
+static INLINE bool
+jit_visit_vsplati32_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int src_tmp;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        int src;
+
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(src_tmp);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                src = src_tmp * (int)sizeof(struct rt_value);
                 ASM { IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(src + 8)); }
                 for (lane = 0; lane < 4; lane++) {
                         IB(0x41); IB(0x89); IB(0x86);
-                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                        ID(vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4);
                 }
                 return true;
         }
-        case OP_VGETLANEI32:
-        case OP_VGETLANEF32:
-        {
-                int d = dst * (int)sizeof(struct rt_value);
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit) goto broken_vreg;
+
+        src = src_tmp * (int)sizeof(struct rt_value);
+        ASM { IB(0x66); IB((uint8_t)((vd & 8) != 0 ? 0x45 : 0x41));
+              IB(0x0f); IB(0x6e);
+              IB((uint8_t)(0x87 | ((vd & 7) << 3)));
+              ID((uint32_t)(src + 8)); }
+        if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, vd, vd))
+                return false;
+        ASM { IB(0x00); }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VGETLANEI32 instruction. */
+static INLINE bool
+jit_visit_vgetlanei32_op(
+        struct jit_context *ctx)
+{
+        int dst_tmp;
+        int vs;
+        int lane_index;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int d;
+        int dst;
+
+        CONSUME_TMPVAR(dst_tmp);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(lane_index);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+
+                d = dst_tmp * (int)sizeof(struct rt_value);
                 ASM {
                         IB(0x41); IB(0x8b); IB(0x86);
-                        ID(vbase + (uint32_t)src1 * 16 + (uint32_t)src2 * 4);
+                        ID(vbase + (uint32_t)vs * 16 + (uint32_t)lane_index * 4);
                         IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)d);
-                        ID((uint32_t)(op == OP_VGETLANEF32 ?
-                                      NOCT_VALUE_FLOAT : NOCT_VALUE_INT));
+                        ID((uint32_t)(NOCT_VALUE_INT));
                         IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(d + 8));
                 }
                 return true;
         }
-        case OP_VMOV128:
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vs < 0 || vs >= vreg_limit) goto broken_vreg;
+
+        dst = dst_tmp * (int)sizeof(struct rt_value);
+        if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+                ASM { IB(0x66);
+                      IB((uint8_t)((vs & 8) != 0 ? 0x45 : 0x41));
+                      IB(0x0f); IB(0x3a); IB(0x16);
+                      IB((uint8_t)(0x87 | ((vs & 7) << 3)));
+                      ID((uint32_t)(dst + 8)); IB((uint8_t)lane_index); }
+        } else {
+                ASM { IB(0x66); }
+                if ((vs & 8) != 0) { ASM { IB(0x41); } }
+                ASM {
+                        /* SSE2: combine two pextrw results without changing xmmB. */
+                        IB(0x0f); IB(0xc5); IB((uint8_t)(0xc0 | (vs & 7))); IB((uint8_t)(lane_index * 2));
+                        IB(0x66);
+                }
+                if ((vs & 8) != 0) { ASM { IB(0x41); } }
+                ASM {
+                        IB(0x0f); IB(0xc5); IB((uint8_t)(0xc8 | (vs & 7))); IB((uint8_t)(lane_index * 2 + 1));
+                        IB(0xc1); IB(0xe1); IB(0x10);
+                        IB(0x09); IB(0xc8);
+                        IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst + 8));
+                }
+        }
+        ASM {
+                /* Both i32 and f32 lanes are raw 32-bit payloads. */
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst);
+                ID((uint32_t)(NOCT_VALUE_INT));
+        }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VMOV128 instruction. */
+static INLINE bool
+jit_visit_vmov128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
                 for (lane = 0; lane < 4; lane++) {
                         IB(0x41); IB(0x8b); IB(0x86);
-                        ID(vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4);
+                        ID(vbase + (uint32_t)vs * 16 + (uint32_t)lane * 4);
                         IB(0x41); IB(0x89); IB(0x86);
-                        ID(vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4);
+                        ID(vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4);
                 }
                 return true;
-	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
-		for (lane = 0; lane < 4; lane++) {
-			uint32_t s = vbase + (uint32_t)src1 * 16 +
-				(uint32_t)lane * 4;
-			uint32_t d = vbase + (uint32_t)dst * 16 +
-				(uint32_t)lane * 4;
-			if (op == OP_VCVTI32F32X4) {
-				/* cvtsi2ssl s(%r14), xmm0; movss xmm0,d(%r14) */
-				IB(0xf3); IB(0x41); IB(0x0f); IB(0x2a); IB(0x86); ID(s);
-				IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
-			} else {
-				/* cvttss2si s(%r14),eax; mov eax,d(%r14) */
-				IB(0xf3); IB(0x41); IB(0x0f); IB(0x2c); IB(0x86); ID(s);
-				IB(0x41); IB(0x89); IB(0x86); ID(d);
-			}
-		}
-		return true;
-        case OP_VADDI32X4:
-        case OP_VSUBI32X4:
-        case OP_VMULI32X4:
-        case OP_VAND128:
-        case OP_VOR128:
-        case OP_VXOR128:
-	case OP_VMINS32X4:
-	case OP_VMAXS32X4:
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || vs < 0 || vs >= vreg_limit)
+                goto broken_vreg;
+
+        if (vd != vs) {
+                if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                        if (!jit_x86_64_put_vex_rr(ctx, 1, 1, 0x6f,
+                                                 vd, vs))
+                                return false;
+                } else if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                                  0x6f, vd, vs)) {
+                        return false;
+                }
+        }
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VADDI32X4 instruction. */
+static INLINE bool
+jit_visit_vaddi32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
                 for (lane = 0; lane < 4; lane++) {
-                        uint32_t a = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
-                        uint32_t b = vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4;
-                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
                         IB(0x41); IB(0x8b); IB(0x86); ID(a);
-			if (op == OP_VMINS32X4 || op == OP_VMAXS32X4) {
-				/* cmp b,eax; signed min uses cmovg, max cmovl. */
-				IB(0x41); IB(0x3b); IB(0x86); ID(b);
-				IB(0x41); IB(0x0f);
-				IB((uint8_t)(op == OP_VMINS32X4 ? 0x4f : 0x4c));
-				IB(0x86); ID(b);
-				IB(0x41); IB(0x89); IB(0x86); ID(d);
-				continue;
-			}
+
                         IB(0x41);
-                        switch (op) {
-                        case OP_VADDI32X4: IB(0x03); IB(0x86); ID(b); break;
-                        case OP_VSUBI32X4: IB(0x2b); IB(0x86); ID(b); break;
-                        case OP_VMULI32X4: IB(0x0f); IB(0xaf); IB(0x86); ID(b); break;
-                        case OP_VAND128:   IB(0x23); IB(0x86); ID(b); break;
-                        case OP_VOR128:    IB(0x0b); IB(0x86); ID(b); break;
-                        default:           IB(0x33); IB(0x86); ID(b); break;
-                        }
+                        IB(0x03); IB(0x86); ID(b);
                         IB(0x41); IB(0x89); IB(0x86); ID(d);
                 }
                 return true;
-        case OP_VSHLI32X4:
-        case OP_VSHRI32X4:
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 1;
+                opcode = 0xfe;
+                if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+                return true;
+        }
+        /* Legacy two-address lowering. */
+
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xfe, vd, rhs))
+                return false;
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VSUBI32X4 instruction. */
+static INLINE bool
+jit_visit_vsubi32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
                 for (lane = 0; lane < 4; lane++) {
-                        uint32_t s = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
-                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+
+                        IB(0x41);
+                        IB(0x2b); IB(0x86); ID(b);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 1;
+                opcode = 0xfa;
+                if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+                return true;
+        }
+        /* Legacy two-address lowering. */
+
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xfa, vd, rhs))
+                return false;
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VMULI32X4 instruction. */
+static INLINE bool
+jit_visit_vmuli32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+
+                        IB(0x41);
+                        IB(0x0f); IB(0xaf); IB(0x86); ID(b);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 2;
+                opcode = 0x40;
+                if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+                return true;
+        }
+        /* Legacy two-address lowering. */
+        if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
+                /* xmm13/xmm14 are reserved outside the logical map. */
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, lhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, 13, 13))
+                        return false;
+                ASM { IB(0xf5); }
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 14, rhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, 14, 14))
+                        return false;
+                ASM { IB(0xf5); }
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xf4, 13, 14))
+                        return false;
+        }
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 2, 0x40,
+                                          vd, rhs))
+                        return false;
+        } else {
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xf4,
+                                          vd, rhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70,
+                                          vd, vd))
+                        return false;
+                ASM { IB(0x88); }
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70,
+                                          13, 13))
+                        return false;
+                ASM { IB(0x88); }
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x62,
+                                          vd, 13))
+                        return false;
+        }
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VAND128 instruction. */
+static INLINE bool
+jit_visit_vand128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+
+                        IB(0x41);
+                        IB(0x23); IB(0x86); ID(b);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 1;
+                opcode = 0xdb;
+                if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+                return true;
+        }
+        /* Legacy two-address lowering. */
+
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xdb, vd, rhs))
+                return false;
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VOR128 instruction. */
+static INLINE bool
+jit_visit_vor128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+
+                        IB(0x41);
+                        IB(0x0b); IB(0x86); ID(b);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 1;
+                opcode = 0xeb;
+                if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+                return true;
+        }
+        /* Legacy two-address lowering. */
+
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, vd, rhs))
+                return false;
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VXOR128 instruction. */
+static INLINE bool
+jit_visit_vxor128_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+
+                        IB(0x41);
+                        IB(0x33); IB(0x86); ID(b);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 1;
+                opcode = 0xef;
+                if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+                return true;
+        }
+        /* Legacy two-address lowering. */
+
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xef, vd, rhs))
+                return false;
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VSHLI32X4 instruction. */
+static INLINE bool
+jit_visit_vshli32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int shift;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(shift);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s;
+                        uint32_t d;
+
+                        s = vbase + (uint32_t)vs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
                         IB(0x41); IB(0x8b); IB(0x86); ID(s);
-                        IB(0xc1); IB((uint8_t)(op == OP_VSHLI32X4 ? 0xe0 : 0xe8));
-                        IB((uint8_t)src2);
+                        IB(0xc1); IB((uint8_t)(0xe0));
+                        IB((uint8_t)shift);
                         IB(0x41); IB(0x89); IB(0x86); ID(d);
                 }
                 return true;
-        case OP_VADDF32X4:
-        case OP_VSUBF32X4:
-        case OP_VMULF32X4:
-        case OP_VDIVF32X4:
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || vs < 0 || vs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_shift(ctx,
+                                6,
+                                vd, vs, (uint8_t)shift))
+                        return false;
+                return true;
+        }
+        if (vd != vs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, vs))
+                return false;
+        ASM { IB(0x66); }
+        if ((vd & 8) != 0) { ASM { IB(0x41); } }
+        ASM { IB(0x0f); IB(0x72);
+              IB((uint8_t)((0xf0) |
+                           (vd & 7))); IB((uint8_t)shift); }
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VSHRI32X4 instruction. */
+static INLINE bool
+jit_visit_vshri32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int shift;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(shift);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
                 for (lane = 0; lane < 4; lane++) {
-                        uint32_t a = vbase + (uint32_t)src1 * 16 + (uint32_t)lane * 4;
-                        uint32_t b = vbase + (uint32_t)src2 * 16 + (uint32_t)lane * 4;
-                        uint32_t d = vbase + (uint32_t)dst * 16 + (uint32_t)lane * 4;
+                        uint32_t s;
+                        uint32_t d;
+
+                        s = vbase + (uint32_t)vs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(s);
+                        IB(0xc1); IB((uint8_t)(0xe8));
+                        IB((uint8_t)shift);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || vs < 0 || vs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_shift(ctx,
+                                2,
+                                vd, vs, (uint8_t)shift))
+                        return false;
+                return true;
+        }
+        if (vd != vs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, vs))
+                return false;
+        ASM { IB(0x66); }
+        if ((vd & 8) != 0) { ASM { IB(0x41); } }
+        ASM { IB(0x0f); IB(0x72);
+              IB((uint8_t)((0xd0) |
+                           (vd & 7))); IB((uint8_t)shift); }
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VLOADF32X4 instruction. */
+static INLINE bool
+jit_visit_vloadf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int base_tmp;
+        int ofs_tmp;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        int base;
+        int ofs;
+        int cursor;
+
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                        IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x8b); IB(0x54); IB(0x88); IB((uint8_t)(lane * 4));
+                        IB(0x41); IB(0x89); IB(0x96);
+                        ID(vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit) goto broken_vreg;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor = 1;
+        }
+        if (cursor >= 0) {
+                /* movdqu (rbx|rsi,rdi,4), xmmA */
+                ASM { IB(0xf3); }
+                if ((vd & 8) != 0) { ASM { IB(0x44); } }
+                ASM { IB(0x0f); IB(0x6f);
+                      IB((uint8_t)(0x04 | ((vd & 7) << 3)));
+                      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
+                return true;
+        }
+        ASM {
+                /* r15: &env->frame->tmpvar[0] */
+                /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                /* movdqu (%rax,%rcx,4) -> %xmmA */ IB(0xf3);
+        }
+        if ((vd & 8) != 0) { ASM { IB(0x44); } }
+        ASM { IB(0x0f); IB(0x6f);
+              IB((uint8_t)(0x04 | ((vd & 7) << 3))); IB(0x88); }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VSTOREF32X4 instruction. */
+static INLINE bool
+jit_visit_vstoref32x4_op(
+        struct jit_context *ctx)
+{
+        int base_tmp;
+        int ofs_tmp;
+        int vs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        int base;
+        int ofs;
+        int cursor;
+
+        CONSUME_TMPVAR(base_tmp);
+        CONSUME_TMPVAR(ofs_tmp);
+        CONSUME_IMM8(vs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                base = base_tmp * (int)sizeof(struct rt_value);
+                ofs = ofs_tmp * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                        IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x41); IB(0x8b); IB(0x96);
+                        ID(vbase + (uint32_t)vs * 16 + (uint32_t)lane * 4);
+                        IB(0x89); IB(0x54); IB(0x88); IB((uint8_t)(lane * 4));
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vs < 0 || vs >= vreg_limit) goto broken_vreg;
+
+        base = base_tmp * (int)sizeof(struct rt_value);
+        ofs = ofs_tmp * (int)sizeof(struct rt_value);
+        cursor = -1;
+        if (ctx->vector_hint_active) {
+                if (ctx->vector_base_tmp[0] == base_tmp)
+                        cursor = 0;
+                else if (ctx->vector_base_tmp[1] == base_tmp)
+                        cursor = 1;
+        }
+        if (cursor >= 0) {
+                /* movdqu xmmC, (rbx|rsi,rdi,4) */
+                ASM { IB(0xf3); }
+                if ((vs & 8) != 0) { ASM { IB(0x44); } }
+                ASM { IB(0x0f); IB(0x7f);
+                      IB((uint8_t)(0x04 | ((vs & 7) << 3)));
+                      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
+                return true;
+        }
+        ASM {
+                /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
+                /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
+                /* movdqu %xmmC -> (%rax,%rcx,4) */ IB(0xf3);
+        }
+        if ((vs & 8) != 0) { ASM { IB(0x44); } }
+        ASM { IB(0x0f); IB(0x7f);
+              IB((uint8_t)(0x04 | ((vs & 7) << 3))); IB(0x88); }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VSPLATF32 instruction. */
+static INLINE bool
+jit_visit_vsplatf32_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int src_tmp;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        int src;
+
+        CONSUME_IMM8(vd);
+        CONSUME_TMPVAR(src_tmp);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                src = src_tmp * (int)sizeof(struct rt_value);
+                ASM { IB(0x41); IB(0x8b); IB(0x87); ID((uint32_t)(src + 8)); }
+                for (lane = 0; lane < 4; lane++) {
+                        IB(0x41); IB(0x89); IB(0x86);
+                        ID(vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit) goto broken_vreg;
+
+        src = src_tmp * (int)sizeof(struct rt_value);
+        ASM { IB(0x66); IB((uint8_t)((vd & 8) != 0 ? 0x45 : 0x41));
+              IB(0x0f); IB(0x6e);
+              IB((uint8_t)(0x87 | ((vd & 7) << 3)));
+              ID((uint32_t)(src + 8)); }
+        if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, vd, vd))
+                return false;
+        ASM { IB(0x00); }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VGETLANEF32 instruction. */
+static INLINE bool
+jit_visit_vgetlanef32_op(
+        struct jit_context *ctx)
+{
+        int dst_tmp;
+        int vs;
+        int lane_index;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int d;
+        int dst;
+
+        CONSUME_TMPVAR(dst_tmp);
+        CONSUME_IMM8(vs);
+        CONSUME_IMM8(lane_index);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+
+                d = dst_tmp * (int)sizeof(struct rt_value);
+                ASM {
+                        IB(0x41); IB(0x8b); IB(0x86);
+                        ID(vbase + (uint32_t)vs * 16 + (uint32_t)lane_index * 4);
+                        IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)d);
+                        ID((uint32_t)(NOCT_VALUE_FLOAT));
+                        IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(d + 8));
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vs < 0 || vs >= vreg_limit) goto broken_vreg;
+
+        dst = dst_tmp * (int)sizeof(struct rt_value);
+        if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+                ASM { IB(0x66);
+                      IB((uint8_t)((vs & 8) != 0 ? 0x45 : 0x41));
+                      IB(0x0f); IB(0x3a); IB(0x16);
+                      IB((uint8_t)(0x87 | ((vs & 7) << 3)));
+                      ID((uint32_t)(dst + 8)); IB((uint8_t)lane_index); }
+        } else {
+                ASM { IB(0x66); }
+                if ((vs & 8) != 0) { ASM { IB(0x41); } }
+                ASM {
+                        /* SSE2: combine two pextrw results without changing xmmB. */
+                        IB(0x0f); IB(0xc5); IB((uint8_t)(0xc0 | (vs & 7))); IB((uint8_t)(lane_index * 2));
+                        IB(0x66);
+                }
+                if ((vs & 8) != 0) { ASM { IB(0x41); } }
+                ASM {
+                        IB(0x0f); IB(0xc5); IB((uint8_t)(0xc8 | (vs & 7))); IB((uint8_t)(lane_index * 2 + 1));
+                        IB(0xc1); IB(0xe1); IB(0x10);
+                        IB(0x09); IB(0xc8);
+                        IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst + 8));
+                }
+        }
+        ASM {
+                /* Both i32 and f32 lanes are raw 32-bit payloads. */
+                IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst);
+                ID((uint32_t)(NOCT_VALUE_FLOAT));
+        }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VADDF32X4 instruction. */
+static INLINE bool
+jit_visit_vaddf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        uint8_t opcode;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
                         IB(0xf3); IB(0x41); IB(0x0f); IB(0x10); IB(0x86); ID(a);
                         IB(0xf3); IB(0x41); IB(0x0f);
-                        switch (op) {
-                        case OP_VADDF32X4: IB(0x58); break;
-                        case OP_VSUBF32X4: IB(0x5c); break;
-                        case OP_VMULF32X4: IB(0x59); break;
-                        default:           IB(0x5e); break;
-                        }
+                        IB(0x58);
                         IB(0x86); ID(b);
                         IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
                 }
                 return true;
-        default:
-                assert(NEVER_COME_HERE);
-                return false;
         }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        opcode = 0x58;
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_rrr(ctx, 1, 0, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+        } else {
+                if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                                     0x6f, vd, lhs))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0, 1, opcode, vd, rhs))
+                        return false;
+        }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
 }
 
-/* Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction. */
+/* Visit an OP_VSUBF32X4 instruction. */
 static INLINE bool
-jit_visit_vector_op(
-        struct jit_context *ctx,
-        int op)
+jit_visit_vsubf32x4_op(
+        struct jit_context *ctx)
 {
-        int a;
-        int b;
-        int c;
+        int vd;
+        int lhs;
+        int rhs;
         int inline_ok;
-	int vreg_limit;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        uint8_t opcode;
 
-	/* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
-	   receive an explicitly tested save area.  SysV needs only SSE2;
-	   SSE4.1 selects shorter multiply/extract sequences below. */
-	inline_ok = !IS_MSABI &&
-		    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
 
-        /* Decode (shapes vary per op; see bytecode.h). */
-        switch (op) {
-        case OP_VLOADI32X4:
-        case OP_VLOADF32X4:
-                CONSUME_IMM8(a);
-                CONSUME_TMPVAR(b);
-                CONSUME_TMPVAR(c);
-                break;
-        case OP_VSTOREI32X4:
-        case OP_VSTOREF32X4:
-                CONSUME_TMPVAR(a);
-                CONSUME_TMPVAR(b);
-                CONSUME_IMM8(c);
-                break;
-        case OP_VSPLATI32:
-        case OP_VSPLATF32:
-                CONSUME_IMM8(a);
-                CONSUME_TMPVAR(b);
-                c = 0;
-                break;
-        case OP_VGETLANEI32:
-        case OP_VGETLANEF32:
-                CONSUME_TMPVAR(a);
-                CONSUME_IMM8(b);
-                CONSUME_IMM8(c);
-                break;
-        case OP_VMOV128:
-	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
-                CONSUME_IMM8(a);
-                CONSUME_IMM8(b);
-                c = 0;
-                break;
-        default:
-                CONSUME_IMM8(a);
-                CONSUME_IMM8(b);
-                CONSUME_IMM8(c);
-                break;
-        }
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
 
-	if (!inline_ok)
-		return jit_visit_vector_scalar_op(ctx, op, a, b, c);
-	vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
 
-	/* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
-	 * non-destructive forms and admits logical xmm0..xmm14, reserving only
-	 * xmm15 as instruction-local scratch. */
-	switch (op) {
-	case OP_VLOADI32X4:
-	case OP_VLOADF32X4:
-	case OP_VSPLATI32:
-	case OP_VSPLATF32:
-		if (a < 0 || a >= vreg_limit) goto broken_vreg;
-		break;
-	case OP_VSTOREI32X4:
-	case OP_VSTOREF32X4:
-		if (c < 0 || c >= vreg_limit) goto broken_vreg;
-		break;
-	case OP_VGETLANEI32:
-	case OP_VGETLANEF32:
-		if (b < 0 || b >= vreg_limit) goto broken_vreg;
-		break;
-	case OP_VMOV128:
-	case OP_VCVTI32F32X4:
-	case OP_VCVTF32I32X4:
-		if (a < 0 || a >= vreg_limit || b < 0 || b >= vreg_limit)
-			goto broken_vreg;
-		break;
-	case OP_VSHLI32X4:
-	case OP_VSHRI32X4:
-		if (a < 0 || a >= vreg_limit || b < 0 || b >= vreg_limit)
-			goto broken_vreg;
-		break;
-	default:
-		if (a < 0 || a >= vreg_limit || b < 0 || b >= vreg_limit ||
-		    c < 0 || c >= vreg_limit)
-			goto broken_vreg;
-		break;
-	}
-
-        switch (op) {
-        case OP_VLOADI32X4:
-        case OP_VLOADF32X4:
-        {
-                int base = b * (int)sizeof(struct rt_value);
-                int ofs = c * (int)sizeof(struct rt_value);
-		int cursor = -1;
-		if (ctx->vector_hint_active) {
-			if (ctx->vector_base_tmp[0] == b) cursor = 0;
-			else if (ctx->vector_base_tmp[1] == b) cursor = 1;
-		}
-		if (cursor >= 0) {
-			/* movdqu (rbx|rsi,rdi,4), xmmA */
-			ASM { IB(0xf3); }
-			if ((a & 8) != 0) { ASM { IB(0x44); } }
-			ASM { IB(0x0f); IB(0x6f);
-			      IB((uint8_t)(0x04 | ((a & 7) << 3)));
-			      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
-			break;
-		}
-                ASM {
-                        /* r15: &env->frame->tmpvar[0] */
-                        /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
-                        /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
-                        /* movdqu (%rax,%rcx,4) -> %xmmA */ IB(0xf3);
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x10); IB(0x86); ID(a);
+                        IB(0xf3); IB(0x41); IB(0x0f);
+                        IB(0x5c);
+                        IB(0x86); ID(b);
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
                 }
-		if ((a & 8) != 0) { ASM { IB(0x44); } }
-		ASM { IB(0x0f); IB(0x6f);
-		      IB((uint8_t)(0x04 | ((a & 7) << 3))); IB(0x88); }
-                break;
+                return true;
         }
-        case OP_VSTOREI32X4:
-        case OP_VSTOREF32X4:
-        {
-                int base = a * (int)sizeof(struct rt_value);
-                int ofs = b * (int)sizeof(struct rt_value);
-		int cursor = -1;
-		if (ctx->vector_hint_active) {
-			if (ctx->vector_base_tmp[0] == a) cursor = 0;
-			else if (ctx->vector_base_tmp[1] == a) cursor = 1;
-		}
-		if (cursor >= 0) {
-			/* movdqu xmmC, (rbx|rsi,rdi,4) */
-			ASM { IB(0xf3); }
-			if ((c & 8) != 0) { ASM { IB(0x44); } }
-			ASM { IB(0x0f); IB(0x7f);
-			      IB((uint8_t)(0x04 | ((c & 7) << 3)));
-			      IB((uint8_t)(cursor == 0 ? 0xbb : 0xbe)); }
-			break;
-		}
-                ASM {
-                        /* movq base+8(%r15) -> %rax */    IB(0x49); IB(0x8b); IB(0x87); ID((uint32_t)(base + 8));
-                        /* movslq ofs+8(%r15) -> %rcx */   IB(0x49); IB(0x63); IB(0x8f); ID((uint32_t)(ofs + 8));
-                        /* movdqu %xmmC -> (%rax,%rcx,4) */ IB(0xf3);
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        opcode = 0x5c;
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_rrr(ctx, 1, 0, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+        } else {
+                if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                                     0x6f, vd, lhs))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0, 1, opcode, vd, rhs))
+                        return false;
+        }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VMULF32X4 instruction. */
+static INLINE bool
+jit_visit_vmulf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        uint8_t opcode;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x10); IB(0x86); ID(a);
+                        IB(0xf3); IB(0x41); IB(0x0f);
+                        IB(0x59);
+                        IB(0x86); ID(b);
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
                 }
-		if ((c & 8) != 0) { ASM { IB(0x44); } }
-		ASM { IB(0x0f); IB(0x7f);
-		      IB((uint8_t)(0x04 | ((c & 7) << 3))); IB(0x88); }
-                break;
+                return true;
         }
-        case OP_VSPLATI32:
-        case OP_VSPLATF32:
-        {
-                int src = b * (int)sizeof(struct rt_value);
-		ASM { IB(0x66); IB((uint8_t)((a & 8) != 0 ? 0x45 : 0x41));
-		      IB(0x0f); IB(0x6e);
-		      IB((uint8_t)(0x87 | ((a & 7) << 3)));
-		      ID((uint32_t)(src + 8)); }
-		if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, a, a))
-			return false;
-		ASM { IB(0x00); }
-                break;
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        opcode = 0x59;
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_rrr(ctx, 1, 0, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+        } else {
+                if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                                     0x6f, vd, lhs))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0, 1, opcode, vd, rhs))
+                        return false;
         }
-        case OP_VGETLANEI32:
-        case OP_VGETLANEF32:
-        {
-                int dst = a * (int)sizeof(struct rt_value);
-		if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
-			ASM { IB(0x66);
-			      IB((uint8_t)((b & 8) != 0 ? 0x45 : 0x41));
-			      IB(0x0f); IB(0x3a); IB(0x16);
-			      IB((uint8_t)(0x87 | ((b & 7) << 3)));
-			      ID((uint32_t)(dst + 8)); IB((uint8_t)c); }
-		} else {
-			ASM { IB(0x66); }
-			if ((b & 8) != 0) { ASM { IB(0x41); } }
-			ASM {
-				/* SSE2: combine two pextrw results without changing xmmB. */
-				IB(0x0f); IB(0xc5); IB((uint8_t)(0xc0 | (b & 7))); IB((uint8_t)(c * 2));
-				IB(0x66);
-			}
-			if ((b & 8) != 0) { ASM { IB(0x41); } }
-			ASM {
-				IB(0x0f); IB(0xc5); IB((uint8_t)(0xc8 | (b & 7))); IB((uint8_t)(c * 2 + 1));
-				IB(0xc1); IB(0xe1); IB(0x10);
-				IB(0x09); IB(0xc8);
-				IB(0x41); IB(0x89); IB(0x87); ID((uint32_t)(dst + 8));
-			}
-		}
-		ASM {
-			/* Both i32 and f32 lanes are raw 32-bit payloads. */
-			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)dst);
-			ID((uint32_t)(op == OP_VGETLANEF32 ?
-				      NOCT_VALUE_FLOAT : NOCT_VALUE_INT));
-		}
-                break;
-        }
-        case OP_VMOV128:
-                if (a != b) {
-			if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
-				if (!jit_x86_64_put_vex_rr(ctx, 1, 1, 0x6f,
-							 a, b))
-					return false;
-			} else if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
-							  0x6f, a, b)) {
-				return false;
-			}
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VDIVF32X4 instruction. */
+static INLINE bool
+jit_visit_vdivf32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+        uint8_t opcode;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x10); IB(0x86); ID(a);
+                        IB(0xf3); IB(0x41); IB(0x0f);
+                        IB(0x5e);
+                        IB(0x86); ID(b);
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
                 }
-                break;
-	case OP_VCVTI32F32X4:
-		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
-			if (!jit_x86_64_put_vex_rr(ctx, 1, 0, 0x5b, a, b))
-				return false;
-		} else if (!jit_x86_64_put_sse_rr(ctx, 0, 1, 0x5b, a, b)) {
-			return false;
-		}
-		break;
-	case OP_VCVTF32I32X4:
-		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
-			if (!jit_x86_64_put_vex_rr(ctx, 1, 2, 0x5b, a, b))
-				return false;
-		} else if (!jit_x86_64_put_sse_rr(ctx, 0xf3, 1, 0x5b,
-							  a, b)) {
-			return false;
-		}
-		break;
-        case OP_VADDI32X4:
-        case OP_VSUBI32X4:
-        case OP_VMULI32X4:
-        case OP_VAND128:
-        case OP_VOR128:
-        case OP_VXOR128:
-	case OP_VMINS32X4:
-	case OP_VMAXS32X4:
-		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
-			int map = (op == OP_VMULI32X4 ||
-				   op == OP_VMINS32X4 || op == OP_VMAXS32X4) ? 2 : 1;
-			uint8_t opcode;
-			switch (op) {
-			case OP_VADDI32X4: opcode = 0xfe; break;
-			case OP_VSUBI32X4: opcode = 0xfa; break;
-			case OP_VMULI32X4: opcode = 0x40; break;
-			case OP_VAND128: opcode = 0xdb; break;
-			case OP_VOR128: opcode = 0xeb; break;
-			case OP_VMINS32X4: opcode = 0x39; break;
-			case OP_VMAXS32X4: opcode = 0x3d; break;
-			default: opcode = 0xef; break;
-			}
-			if ((op != OP_VMINS32X4 && op != OP_VMAXS32X4) ||
-			    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
-				if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
-							      a, b, c))
-					return false;
-				break;
-			}
-		}
-		/* Legacy two-address lowering. */
-		if (op == OP_VMULI32X4 &&
-		    (ctx->simd_caps & JIT_SIMD_CAP_SSE41) == 0) {
-			/* xmm13/xmm14 are reserved outside the logical map. */
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 13, b) ||
-			    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, 13, 13))
-				return false;
-			ASM { IB(0xf5); }
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f, 14, c) ||
-			    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70, 14, 14))
-				return false;
-			ASM { IB(0xf5); }
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xf4, 13, 14))
-				return false;
-		}
-		if (a != b && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
-							 a, b))
-			return false;
-		switch (op) {
-		case OP_VADDI32X4:
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xfe, a, c))
-				return false;
-			break;
-		case OP_VSUBI32X4:
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xfa, a, c))
-				return false;
-			break;
-		case OP_VMULI32X4:
-			if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
-				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 2, 0x40,
-							  a, c))
-					return false;
-			} else {
-				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xf4,
-							  a, c) ||
-				    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70,
-							  a, a))
-					return false;
-				ASM { IB(0x88); }
-				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x70,
-							  13, 13))
-					return false;
-				ASM { IB(0x88); }
-				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x62,
-							  a, 13))
-					return false;
-			}
-			break;
-		case OP_VAND128:
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xdb, a, c))
-				return false;
-			break;
-		case OP_VOR128:
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb, a, c))
-				return false;
-			break;
-		case OP_VMINS32X4:
-		case OP_VMAXS32X4:
-			if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
-				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 2,
-						op == OP_VMINS32X4 ? 0x39 : 0x3d,
-						a, c))
-					return false;
-			} else {
-				/* SSE2 signed min/max via (a>b) mask.  xmm13/xmm14
-				 * are outside the logical map. */
-				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
-							 13, b) ||
-				    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x66,
-							 13, c) ||
-				    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
-							 14, 13))
-					return false;
-				if (op == OP_VMINS32X4) {
-					if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
-								 0xdb, 14, c) ||
-					    !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
-								 0xdf, 13, b))
-						return false;
-				} else {
-					if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
-								 0xdb, 14, b) ||
-					    !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
-								 0xdf, 13, c))
-						return false;
-				}
-				if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb,
-							 14, 13) ||
-				    (a != 14 && !jit_x86_64_put_sse_rr(ctx, 0x66,
-								      1, 0x6f, a, 14)))
-					return false;
-			}
-			break;
-		default:
-			if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xef, a, c))
-				return false;
-			break;
-		}
-                break;
-	case OP_VADDF32X4:
-	case OP_VSUBF32X4:
-	case OP_VMULF32X4:
-	case OP_VDIVF32X4:
-	{
-		uint8_t opcode = op == OP_VADDF32X4 ? 0x58 :
-			op == OP_VSUBF32X4 ? 0x5c :
-			op == OP_VMULF32X4 ? 0x59 : 0x5e;
-		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
-			if (!jit_x86_64_put_vex_rrr(ctx, 1, 0, opcode,
-						      a, b, c))
-				return false;
-		} else {
-			if (a != b && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
-							     0x6f, a, b))
-				return false;
-			if (!jit_x86_64_put_sse_rr(ctx, 0, 1, opcode, a, c))
-				return false;
-		}
-		break;
-	}
-        case OP_VSHLI32X4:
-        case OP_VSHRI32X4:
-		if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
-			if (!jit_x86_64_put_vex_shift(ctx,
-					op == OP_VSHLI32X4 ? 6 : 2,
-					a, b, (uint8_t)c))
-				return false;
-			break;
-		}
-		if (a != b && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
-							 a, b))
-			return false;
-		ASM { IB(0x66); }
-		if ((a & 8) != 0) { ASM { IB(0x41); } }
-		ASM { IB(0x0f); IB(0x72);
-		      IB((uint8_t)((op == OP_VSHLI32X4 ? 0xf0 : 0xd0) |
-				   (a & 7))); IB((uint8_t)c); }
-                break;
-        default:
-                assert(NEVER_COME_HERE);
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        opcode = 0x5e;
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_rrr(ctx, 1, 0, opcode,
+                                              vd, lhs, rhs))
+                        return false;
+        } else {
+                if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                                     0x6f, vd, lhs))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0, 1, opcode, vd, rhs))
+                        return false;
+        }
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VCVTI32F32X4 instruction. */
+static INLINE bool
+jit_visit_vcvti32f32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s;
+                        uint32_t d;
+
+                        s = vbase + (uint32_t)vs * 16 +
+                                (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 +
+                                (uint32_t)lane * 4;
+                        /* cvtsi2ssl s(%r14), xmm0; movss xmm0,d(%r14) */
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x2a); IB(0x86); ID(s);
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x11); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || vs < 0 || vs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_rr(ctx, 1, 0, 0x5b, vd, vs))
+                        return false;
+        } else if (!jit_x86_64_put_sse_rr(ctx, 0, 1, 0x5b, vd, vs)) {
                 return false;
         }
 
-	return true;
+        return true;
 
-broken_vreg:
-	rt_error(ctx->env, BROKEN_BYTECODE);
-	return false;
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
 }
+
+/* Visit an OP_VCVTF32I32X4 instruction. */
+static INLINE bool
+jit_visit_vcvtf32i32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int vs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(vs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t s;
+                        uint32_t d;
+
+                        s = vbase + (uint32_t)vs * 16 +
+                                (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 +
+                                (uint32_t)lane * 4;
+                        /* cvttss2si s(%r14),eax; mov eax,d(%r14) */
+                        IB(0xf3); IB(0x41); IB(0x0f); IB(0x2c); IB(0x86); ID(s);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || vs < 0 || vs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                if (!jit_x86_64_put_vex_rr(ctx, 1, 2, 0x5b, vd, vs))
+                        return false;
+        } else if (!jit_x86_64_put_sse_rr(ctx, 0xf3, 1, 0x5b,
+                                                  vd, vs)) {
+                return false;
+        }
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VMINS32X4 instruction. */
+static INLINE bool
+jit_visit_vmins32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+                        /* cmp b,eax; signed min uses cmovg, max cmovl. */
+                        IB(0x41); IB(0x3b); IB(0x86); ID(b);
+                        IB(0x41); IB(0x0f);
+                        IB((uint8_t)(0x4f));
+                        IB(0x86); ID(b);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 2;
+                opcode = 0x39;
+                if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+                        if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                                      vd, lhs, rhs))
+                                return false;
+                        return true;
+                }
+        }
+        /* Legacy two-address lowering. */
+
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 2,
+                                0x39,
+                                vd, rhs))
+                        return false;
+        } else {
+                /* SSE2 signed min/max via (lhs>rhs) mask.  xmm13/xmm14
+                 * are outside the logical map. */
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                         13, lhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x66,
+                                         13, rhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                         14, 13))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                         0xdb, 14, rhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                         0xdf, 13, lhs))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb,
+                                         14, 13) ||
+                    (vd != 14 && !jit_x86_64_put_sse_rr(ctx, 0x66,
+                                                      1, 0x6f, vd, 14)))
+                        return false;
+        }
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
+/* Visit an OP_VMAXS32X4 instruction. */
+static INLINE bool
+jit_visit_vmaxs32x4_op(
+        struct jit_context *ctx)
+{
+        int vd;
+        int lhs;
+        int rhs;
+        int inline_ok;
+        int vreg_limit;
+        uint32_t vbase;
+        int lane;
+
+        CONSUME_IMM8(vd);
+        CONSUME_IMM8(lhs);
+        CONSUME_IMM8(rhs);
+
+        /* Win64 keeps the memory-canonical direct scalar tier until xmm6/xmm7
+           receive an explicitly tested save area.  SysV needs only SSE2;
+           SSE4.1 selects shorter multiply/extract sequences below. */
+        inline_ok = !IS_MSABI &&
+                    (ctx->simd_caps & JIT_SIMD_CAP_SSE2) != 0;
+
+        if (!inline_ok) {
+                vbase = (uint32_t)offsetof(struct rt_env, vreg);
+                for (lane = 0; lane < 4; lane++) {
+                        uint32_t a;
+                        uint32_t b;
+                        uint32_t d;
+
+                        a = vbase + (uint32_t)lhs * 16 + (uint32_t)lane * 4;
+                        b = vbase + (uint32_t)rhs * 16 + (uint32_t)lane * 4;
+                        d = vbase + (uint32_t)vd * 16 + (uint32_t)lane * 4;
+                        IB(0x41); IB(0x8b); IB(0x86); ID(a);
+                        /* cmp b,eax; signed min uses cmovg, max cmovl. */
+                        IB(0x41); IB(0x3b); IB(0x86); ID(b);
+                        IB(0x41); IB(0x0f);
+                        IB((uint8_t)(0x4c));
+                        IB(0x86); ID(b);
+                        IB(0x41); IB(0x89); IB(0x86); ID(d);
+                }
+                return true;
+        }
+        vreg_limit = ctx->vector_vreg_limit > 0 ? ctx->vector_vreg_limit : 13;
+
+        /* SSE keeps xmm13/xmm14 scratch and xmm15 invariant.  AVX uses
+         * non-destructive forms and admits logical xmm0..xmm14, reserving only
+         * xmm15 as instruction-local scratch. */
+        if (vd < 0 || vd >= vreg_limit || lhs < 0 || lhs >= vreg_limit ||
+            rhs < 0 || rhs >= vreg_limit)
+                goto broken_vreg;
+
+        if ((ctx->simd_caps & JIT_SIMD_CAP_AVX) != 0) {
+                int map;
+                uint8_t opcode;
+
+                map = 2;
+                opcode = 0x3d;
+                if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+                        if (!jit_x86_64_put_vex_rrr(ctx, map, 1, opcode,
+                                                      vd, lhs, rhs))
+                                return false;
+                        return true;
+                }
+        }
+        /* Legacy two-address lowering. */
+
+        if (vd != lhs && !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                                 vd, lhs))
+                return false;
+        if ((ctx->simd_caps & JIT_SIMD_CAP_SSE41) != 0) {
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 2,
+                                0x3d,
+                                vd, rhs))
+                        return false;
+        } else {
+                /* SSE2 signed min/max via (lhs>rhs) mask.  xmm13/xmm14
+                 * are outside the logical map. */
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                         13, lhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x66,
+                                         13, rhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0x6f,
+                                         14, 13))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                         0xdb, 14, lhs) ||
+                    !jit_x86_64_put_sse_rr(ctx, 0x66, 1,
+                                         0xdf, 13, rhs))
+                        return false;
+                if (!jit_x86_64_put_sse_rr(ctx, 0x66, 1, 0xeb,
+                                         14, 13) ||
+                    (vd != 14 && !jit_x86_64_put_sse_rr(ctx, 0x66,
+                                                      1, 0x6f, vd, 14)))
+                        return false;
+        }
+
+        return true;
+
+        broken_vreg:
+        rt_error(ctx->env, BROKEN_BYTECODE);
+        return false;
+}
+
 
 /* Visit a bytecode of a function. */
-bool
+static bool
 jit_visit_bytecode(
         struct jit_context *ctx)
 {
@@ -5693,10 +8875,10 @@ jit_visit_bytecode(
 			if (!jit_visit_vfmaf32x4_op(ctx)) return false;
 			break;
 		case OP_VCMPI32X4:
-			if (!jit_visit_vcmp_op(ctx, false)) return false;
+			if (!jit_visit_vcmpi32x4_op(ctx)) return false;
 			break;
 		case OP_VCMPF32X4:
-			if (!jit_visit_vcmp_op(ctx, true)) return false;
+			if (!jit_visit_vcmpf32x4_op(ctx)) return false;
 			break;
 		case OP_VSELECT128:
 			if (!jit_visit_vselect128_op(ctx)) return false;
@@ -5711,58 +8893,199 @@ jit_visit_bytecode(
 			if (!jit_visit_vgatheri32x4_checked_op(ctx)) return false;
 			break;
                 case OP_IADD:
+                        if (!jit_visit_iadd_op(ctx))
+                                return false;
+                        break;
                 case OP_ISUB:
+                        if (!jit_visit_isub_op(ctx))
+                                return false;
+                        break;
                 case OP_IMUL:
+                        if (!jit_visit_imul_op(ctx))
+                                return false;
+                        break;
                 case OP_IDIV:
+                        if (!jit_visit_idiv_op(ctx))
+                                return false;
+                        break;
                 case OP_IMOD:
+                        if (!jit_visit_imod_op(ctx))
+                                return false;
+                        break;
                 case OP_IAND:
+                        if (!jit_visit_iand_op(ctx))
+                                return false;
+                        break;
                 case OP_IOR:
+                        if (!jit_visit_ior_op(ctx))
+                                return false;
+                        break;
                 case OP_IXOR:
+                        if (!jit_visit_ixor_op(ctx))
+                                return false;
+                        break;
                 case OP_ISHL:
+                        if (!jit_visit_ishl_op(ctx))
+                                return false;
+                        break;
                 case OP_ISHR:
+                        if (!jit_visit_ishr_op(ctx))
+                                return false;
+                        break;
                 case OP_ILT:
+                        if (!jit_visit_ilt_op(ctx))
+                                return false;
+                        break;
                 case OP_ILTE:
+                        if (!jit_visit_ilte_op(ctx))
+                                return false;
+                        break;
                 case OP_IGT:
+                        if (!jit_visit_igt_op(ctx))
+                                return false;
+                        break;
                 case OP_IGTE:
+                        if (!jit_visit_igte_op(ctx))
+                                return false;
+                        break;
                 case OP_FADD:
+                        if (!jit_visit_fadd_op(ctx))
+                                return false;
+                        break;
                 case OP_FSUB:
+                        if (!jit_visit_fsub_op(ctx))
+                                return false;
+                        break;
                 case OP_FMUL:
+                        if (!jit_visit_fmul_op(ctx))
+                                return false;
+                        break;
                 case OP_FDIV:
+                        if (!jit_visit_fdiv_op(ctx))
+                                return false;
+                        break;
                 case OP_FLT:
+                        if (!jit_visit_flt_op(ctx))
+                                return false;
+                        break;
                 case OP_FLTE:
+                        if (!jit_visit_flte_op(ctx))
+                                return false;
+                        break;
                 case OP_FGT:
+                        if (!jit_visit_fgt_op(ctx))
+                                return false;
+                        break;
                 case OP_FGTE:
+                        if (!jit_visit_fgte_op(ctx))
+                                return false;
+                        break;
                 case OP_IDIV_CHECKED:
+                        if (!jit_visit_idiv_checked_op(ctx))
+                                return false;
+                        break;
                 case OP_IMOD_CHECKED:
-                        if (!jit_visit_typed_op(ctx, opcode))
+                        if (!jit_visit_imod_checked_op(ctx))
                                 return false;
                         break;
                 case OP_VLOADI32X4:
+                        if (!jit_visit_vloadi32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSTOREI32X4:
+                        if (!jit_visit_vstorei32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSPLATI32:
+                        if (!jit_visit_vsplati32_op(ctx))
+                                return false;
+                        break;
                 case OP_VGETLANEI32:
+                        if (!jit_visit_vgetlanei32_op(ctx))
+                                return false;
+                        break;
                 case OP_VMOV128:
+                        if (!jit_visit_vmov128_op(ctx))
+                                return false;
+                        break;
                 case OP_VADDI32X4:
+                        if (!jit_visit_vaddi32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSUBI32X4:
+                        if (!jit_visit_vsubi32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VMULI32X4:
+                        if (!jit_visit_vmuli32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VAND128:
+                        if (!jit_visit_vand128_op(ctx))
+                                return false;
+                        break;
                 case OP_VOR128:
+                        if (!jit_visit_vor128_op(ctx))
+                                return false;
+                        break;
                 case OP_VXOR128:
+                        if (!jit_visit_vxor128_op(ctx))
+                                return false;
+                        break;
                 case OP_VSHLI32X4:
+                        if (!jit_visit_vshli32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSHRI32X4:
+                        if (!jit_visit_vshri32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VLOADF32X4:
+                        if (!jit_visit_vloadf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSTOREF32X4:
+                        if (!jit_visit_vstoref32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSPLATF32:
+                        if (!jit_visit_vsplatf32_op(ctx))
+                                return false;
+                        break;
                 case OP_VGETLANEF32:
+                        if (!jit_visit_vgetlanef32_op(ctx))
+                                return false;
+                        break;
                 case OP_VADDF32X4:
+                        if (!jit_visit_vaddf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VSUBF32X4:
+                        if (!jit_visit_vsubf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VMULF32X4:
+                        if (!jit_visit_vmulf32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VDIVF32X4:
-		case OP_VCVTI32F32X4:
+                        if (!jit_visit_vdivf32x4_op(ctx))
+                                return false;
+                        break;
+                case OP_VCVTI32F32X4:
+                        if (!jit_visit_vcvti32f32x4_op(ctx))
+                                return false;
+                        break;
                 case OP_VCVTF32I32X4:
-		case OP_VMINS32X4:
-		case OP_VMAXS32X4:
-                        if (!jit_visit_vector_op(ctx, opcode))
+                        if (!jit_visit_vcvtf32i32x4_op(ctx))
+                                return false;
+                        break;
+                case OP_VMINS32X4:
+                        if (!jit_visit_vmins32x4_op(ctx))
+                                return false;
+                        break;
+                case OP_VMAXS32X4:
+                        if (!jit_visit_vmaxs32x4_op(ctx))
                                 return false;
                         break;
 		default:

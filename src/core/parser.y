@@ -33,8 +33,6 @@ void ast_free(void *p);
 struct ast_func_list *ast_accept_func_list(struct ast_func_list *impl_list, struct ast_func *func);
 struct ast_func *ast_accept_func(int flags, char *name, struct ast_param_list *param_list, char *return_type_name, struct ast_stmt_list *stmt_list);
 bool ast_accept_toplevel_var(int line, char *name, struct ast_expr *rhs, bool is_let, bool is_static);
-bool ast_accept_toplevel_accel_decl(int line, char *name,
-				    struct ast_expr *rhs, bool is_let);
 bool ast_accept_toplevel_class(int line, char *name, struct ast_kv_list *kv_list);
 bool ast_accept_require(char *name);
 struct ast_param_list *ast_accept_param_list(struct ast_param_list *param_list, char *name);
@@ -98,9 +96,6 @@ struct ast_expr *ast_accept_neg_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_not_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_par_expr(struct ast_expr *expr);
 struct ast_expr *ast_accept_subscr_expr(struct ast_expr *expr1, struct ast_expr *expr2);
-char *ast_accept_type_extent_int(int value);
-char *ast_accept_type_extent_list(char *list, char *extent);
-char *ast_accept_shaped_type(char *name, char *extents);
 struct ast_expr *ast_accept_dot_expr(struct ast_expr *obj, char *symbol);
 struct ast_expr *ast_accept_call_expr(struct ast_expr *func, struct ast_arg_list *arg_list);
 struct ast_expr *ast_accept_array_expr(struct ast_arg_list *arg_list);
@@ -120,10 +115,6 @@ struct ast_term *ast_accept_symbol_term(char *symbol);
 struct ast_term *ast_accept_empty_array_term(void);
 struct ast_term *ast_accept_empty_dict_term(void);
 struct ast_arg_list *ast_accept_arg_list(struct ast_arg_list *arg_list, struct ast_expr *expr);
-struct ast_stmt *ast_accept_gpu_launch_stmt(int line, char *name,
-	struct ast_expr *grid, struct ast_expr *block, struct ast_arg_list *args);
-struct ast_stmt *ast_accept_shared_stmt(int line, struct ast_expr *lhs,
-	struct ast_expr *rhs, bool is_var);
 
 %}
 
@@ -159,7 +150,6 @@ extern void ast_yyerror(void *scanner, char *s);
 
 %token <sval> TOKEN_SYMBOL TOKEN_STR
 %type <sval> type_name
-%type <sval> type_extent type_extent_list
 %type <sval> property_name
 %token <ival> TOKEN_INT
 %token <lval> TOKEN_LONG
@@ -172,10 +162,12 @@ extern void ast_yyerror(void *scanner, char *s);
 %token TOKEN_LPAR TOKEN_RPAR TOKEN_RPAR_LBLK TOKEN_LBLK TOKEN_LBLK_BLK TOKEN_RBLK TOKEN_SEMICOLON TOKEN_COLON
 %token TOKEN_DOT TOKEN_COMMA TOKEN_IF TOKEN_ELSE TOKEN_ELSE_LBLK TOKEN_ELSEIF TOKEN_WHILE TOKEN_FOR TOKEN_IN TOKEN_DOTDOT TOKEN_GT
 %token TOKEN_GTE TOKEN_LT TOKEN_LTE TOKEN_EQ TOKEN_NEQ TOKEN_RETURN TOKEN_BREAK
-%token TOKEN_CONTINUE TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND TOKEN_STATIC TOKEN_INLINE TOKEN_REQUIRE TOKEN_ACCEL TOKEN_GPU
-%token TOKEN_DUNDER_ACCEL TOKEN_DUNDER_GPU TOKEN_DUNDER_FAST
-%token TOKEN_GPU_LAUNCH_L TOKEN_GPU_LAUNCH_R
-%token TOKEN_SHARED
+%token TOKEN_CONTINUE TOKEN_RPAR_DARROW_LBLK TOKEN_AND TOKEN_OR TOKEN_XOR TOKEN_VAR TOKEN_LET TOKEN_EXTEND TOKEN_STATIC TOKEN_INLINE TOKEN_REQUIRE
+/* Preserve retired token numbers for compatibility with parser.tab.h. */
+%token TOKEN_RESERVED_328 TOKEN_RESERVED_329
+%token TOKEN_RESERVED_330 TOKEN_RESERVED_331 TOKEN_RESERVED_332
+%token TOKEN_RESERVED_333 TOKEN_RESERVED_334
+%token TOKEN_RESERVED_335
 
 %type <func_list> func_list;
 %type <func> func;
@@ -184,7 +176,6 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <stmt_list> stmt_list;
 %type <stmt> stmt;
 %type <stmt> expr_stmt;
-%type <stmt> gpu_launch_stmt;
 %type <stmt> assign_stmt;
 %type <stmt> plusassign_stmt;
 %type <stmt> minusassign_stmt;
@@ -212,7 +203,6 @@ extern void ast_yyerror(void *scanner, char *s);
 %type <kv> kv;
 %type <term> term;
 %type <arg_list> arg_list;
-%type <arg_list> multi_index_list;
 
 /*
  * Operator precedence, lowest to highest, matching C:
@@ -274,32 +264,6 @@ toplevel_decl	: TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 				YYABORT;
 			debug("toplevel_decl: var");
 		}
-		| TOKEN_DUNDER_ACCEL TOKEN_VAR TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
-		{
-			if (!ast_accept_toplevel_accel_decl(@1.first_line + 1, $3, $5,
-						 false))
-				YYABORT;
-			debug("toplevel_decl: __accel var");
-		}
-		| TOKEN_DUNDER_ACCEL TOKEN_LET TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
-		{
-			if (!ast_accept_toplevel_accel_decl(@1.first_line + 1, $3, $5,
-						 true))
-				YYABORT;
-			debug("toplevel_decl: __accel let");
-		}
-		| TOKEN_ACCEL TOKEN_VAR
-		{
-			ast_yyerror(scanner,
-				"accel var is no longer accepted; use __accel var.");
-			YYABORT;
-		}
-		| TOKEN_ACCEL TOKEN_LET
-		{
-			ast_yyerror(scanner,
-				"accel let is no longer accepted; use __accel let.");
-			YYABORT;
-		}
 		| TOKEN_LET TOKEN_SYMBOL TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
 			if (!ast_accept_toplevel_var(@1.first_line + 1, $2, $4, true, false))
@@ -348,54 +312,6 @@ func_prefix	: TOKEN_FUNC
 		| TOKEN_STATIC TOKEN_INLINE TOKEN_FUNC
 		{
 			$$ = 3;
-		}
-		| TOKEN_DUNDER_ACCEL TOKEN_FUNC
-		{
-			$$ = 4;
-		}
-		| TOKEN_STATIC TOKEN_DUNDER_ACCEL TOKEN_FUNC
-		{
-			$$ = 5;
-		}
-		| TOKEN_DUNDER_GPU TOKEN_FUNC
-		{
-			$$ = 8;
-		}
-		| TOKEN_STATIC TOKEN_DUNDER_GPU TOKEN_FUNC
-		{
-			$$ = 9;
-		}
-		| TOKEN_DUNDER_FAST TOKEN_FUNC
-		{
-			$$ = 16;
-		}
-		| TOKEN_STATIC TOKEN_INLINE TOKEN_DUNDER_FAST TOKEN_FUNC
-		{
-			$$ = 19;
-		}
-		| TOKEN_ACCEL TOKEN_FUNC
-		{
-			ast_yyerror(scanner,
-				"accel func is no longer accepted; use __accel func.");
-			YYABORT;
-		}
-		| TOKEN_STATIC TOKEN_ACCEL TOKEN_FUNC
-		{
-			ast_yyerror(scanner,
-				"accel func is no longer accepted; use static __accel func.");
-			YYABORT;
-		}
-		| TOKEN_GPU TOKEN_FUNC
-		{
-			ast_yyerror(scanner,
-				"gpu func is no longer accepted; use __gpu func.");
-			YYABORT;
-		}
-		| TOKEN_STATIC TOKEN_GPU TOKEN_FUNC
-		{
-			ast_yyerror(scanner,
-				"gpu func is no longer accepted; use static __gpu func.");
-			YYABORT;
 		}
 		;
 func		: func_prefix TOKEN_SYMBOL TOKEN_LPAR param_list TOKEN_RPAR_LBLK stmt_list TOKEN_RBLK
@@ -448,34 +364,9 @@ type_name	: TOKEN_SYMBOL
 		{
 			$$ = $1;
 		}
-		| TOKEN_SYMBOL TOKEN_LPAR type_extent_list TOKEN_RPAR
-		{
-			$$ = ast_accept_shaped_type($1, $3);
-			if ($$ == NULL) YYABORT;
-		}
 		| TOKEN_FUNC
 		{
 			$$ = ast_strdup("func");
-		}
-		;
-type_extent	: TOKEN_INT
-		{
-			$$ = ast_accept_type_extent_int($1);
-			if ($$ == NULL) YYABORT;
-		}
-		| TOKEN_SYMBOL
-		{
-			$$ = $1;
-		}
-		;
-type_extent_list : type_extent
-		{
-			$$ = $1;
-		}
-		| type_extent_list TOKEN_COMMA type_extent
-		{
-			$$ = ast_accept_type_extent_list($1, $3);
-			if ($$ == NULL) YYABORT;
 		}
 		;
 stmt_list	: /* empty */
@@ -490,10 +381,6 @@ stmt_list	: /* empty */
 		}
 		;
 stmt		: expr_stmt
-		{
-			$$ = $1;
-		}
-		| gpu_launch_stmt
 		{
 			$$ = $1;
 		}
@@ -578,17 +465,6 @@ stmt		: expr_stmt
 			$$ = $1;
 		}
 		;
-gpu_launch_stmt : TOKEN_SYMBOL TOKEN_GPU_LAUNCH_L expr TOKEN_COMMA expr TOKEN_GPU_LAUNCH_R TOKEN_LPAR arg_list TOKEN_RPAR TOKEN_SEMICOLON
-		{
-			$$ = ast_accept_gpu_launch_stmt(@1.first_line + 1, $1, $3, $5, $8);
-			if ($$ == NULL) YYABORT;
-		}
-		| TOKEN_SYMBOL TOKEN_GPU_LAUNCH_L expr TOKEN_COMMA expr TOKEN_GPU_LAUNCH_R TOKEN_LPAR TOKEN_RPAR TOKEN_SEMICOLON
-		{
-			$$ = ast_accept_gpu_launch_stmt(@1.first_line + 1, $1, $3, $5, NULL);
-			if ($$ == NULL) YYABORT;
-		}
-		;
 expr_stmt	: expr TOKEN_SEMICOLON
 		{
 			$$ = ast_accept_expr_stmt(@1.first_line + 1, $1);
@@ -609,14 +485,6 @@ assign_stmt	: expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
 			$$ = ast_accept_assign_stmt(@1.first_line + 1, $2, $4, false, true);
 			debug("let assign_stmt");
-		}
-		| TOKEN_SHARED TOKEN_VAR expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
-		{
-			$$ = ast_accept_shared_stmt(@1.first_line + 1, $3, $5, true);
-		}
-		| TOKEN_SHARED TOKEN_LET expr TOKEN_ASSIGN expr TOKEN_SEMICOLON
-		{
-			$$ = ast_accept_shared_stmt(@1.first_line + 1, $3, $5, false);
 		}
 		| TOKEN_VAR expr TOKEN_COLON type_name TOKEN_ASSIGN expr TOKEN_SEMICOLON
 		{
@@ -812,12 +680,6 @@ expr		: term
 			$$ = ast_accept_subscr_expr($1, $3);
 			debug("expr: array[subscript]");
 		}
-		| expr TOKEN_LARR multi_index_list TOKEN_RARR
-		{
-			$$ = ast_accept_subscr_expr($1,
-				ast_accept_array_expr($3));
-			debug("expr: array[index, ...]");
-		}
 		| expr TOKEN_OR expr
 		{
 			$$ = ast_accept_or_expr($1, $3);
@@ -1007,16 +869,6 @@ arg_list	: expr
 			debug("arg_list: arg_list arg");
 		}
 		;
-multi_index_list : expr TOKEN_COMMA expr
-		{
-			$$ = ast_accept_arg_list(NULL, $1);
-			$$ = ast_accept_arg_list($$, $3);
-		}
-		| multi_index_list TOKEN_COMMA expr
-		{
-			$$ = ast_accept_arg_list($1, $3);
-		}
-		;
 kv_list		: kv
 		{
 			$$ = ast_accept_kv_list(NULL, $1);
@@ -1054,14 +906,6 @@ property_name	: TOKEN_SYMBOL
 		| TOKEN_REQUIRE
 		{
 			$$ = ast_strdup("require");
-		}
-		| TOKEN_ACCEL
-		{
-			$$ = ast_strdup("accel");
-		}
-		| TOKEN_GPU
-		{
-			$$ = ast_strdup("gpu");
 		}
 		;
 term		: TOKEN_INT
