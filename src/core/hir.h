@@ -344,8 +344,9 @@ struct hir_stmt {
 
 	/*
 	 * True only for a source-level `return;` assignment to $return.
-	 *
-	 * XXX: what is this for?
+	 * The return-contract checker uses this flag to distinguish a bare
+	 * return from a value-producing return, and the inliner rejects it
+	 * when an inlineable return expression is required.
 	 */
 	bool is_bare_return;
 
@@ -555,8 +556,7 @@ hir_get_function(
 	uint32_t index);
 
 /*
- * Run the HIR optimizer on one function (ABCE loop versioning).
- * A no-op below optimize level 2.  See docs/design/01-abce.md.
+ * Runs the configured HIR optimization passes on one function.
  */
 bool
 hir_optimize_func(

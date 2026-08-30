@@ -41,20 +41,25 @@ static struct hir_scope *hir_scope_top;
 static int hir_scope_seq;
 
 /* Forward declarations. */
-static struct hir_scope_decl *hir_scope_find_here(
-	const struct hir_scope *scope, const char *src_name);
+static struct hir_scope_decl *hir_scope_find_here(const struct hir_scope *scope, const char *src_name);
 static struct hir_scope_decl *hir_scope_find(const char *src_name);
-static bool hir_scope_add_decl(int line, const char *src_name,
-	bool declared, bool is_let, struct hir_scope_decl **decl_ret);
+static bool hir_scope_add_decl(int line, const char *src_name, bool declared, bool is_let, struct hir_scope_decl **decl_ret);
 static bool hir_scope_intern(struct hir_scope_decl *decl);
 
+/*
+ * Starts scope processing for one function.
+ */
 void
-hir_scope_begin_func(void)
+hir_scope_begin_func(
+	void)
 {
 	hir_scope_top = NULL;
 	hir_scope_seq = 0;
 }
 
+/*
+ * Pushes a lexical block and pre-scans its declarations.
+ */
 bool
 hir_scope_push(
 	const struct ast_stmt_list *stmt_list)
@@ -68,11 +73,14 @@ hir_scope_push(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(scope, 0, sizeof(struct hir_scope));
 	scope->parent = hir_scope_top;
 	hir_scope_top = scope;
 
 	stmt = stmt_list != NULL ? stmt_list->list : NULL;
+
+	/* Pre-register every declaration in the lexical block. */
 	while (stmt != NULL) {
 		if (stmt->type == AST_STMT_ASSIGN &&
 		    (stmt->val.assign.is_var || stmt->val.assign.is_let)) {
@@ -80,15 +88,16 @@ hir_scope_push(
 			if (lhs != NULL &&
 			    lhs->type == AST_EXPR_TERM &&
 			    lhs->val.term.term != NULL &&
-			    lhs->val.term.term->type == AST_TERM_SYMBOL &&
-			    !hir_scope_add_decl(
-				    stmt->line,
-				    lhs->val.term.term->val.symbol,
-				    false,
-				    stmt->val.assign.is_let,
-				    NULL)) {
-				hir_scope_top = scope->parent;
-				return false;
+			    lhs->val.term.term->type == AST_TERM_SYMBOL) {
+				if (!hir_scope_add_decl(
+					stmt->line,
+					lhs->val.term.term->val.symbol,
+					false,
+					stmt->val.assign.is_let,
+					NULL)) {
+					hir_scope_top = scope->parent;
+					return false;
+				}
 			}
 		}
 		stmt = stmt->next;
@@ -97,14 +106,21 @@ hir_scope_push(
 	return true;
 }
 
+/*
+ * Pops the current lexical block.
+ */
 void
-hir_scope_pop(void)
+hir_scope_pop(
+	void)
 {
 	assert(hir_scope_top != NULL);
 
 	hir_scope_top = hir_scope_top->parent;
 }
 
+/*
+ * Registers an already-declared function parameter.
+ */
 bool
 hir_scope_add_param(
 	int line,
@@ -116,9 +132,13 @@ hir_scope_add_param(
 		return false;
 
 	decl->int_name = decl->src_name;
+
 	return true;
 }
 
+/*
+ * Begins a declaration in the current lexical block.
+ */
 bool
 hir_scope_declare(
 	int line,
@@ -137,19 +157,22 @@ hir_scope_declare(
 
 	decl = hir_scope_find_here(hir_scope_top, src_name);
 	if (decl == NULL) {
-		if (!hir_scope_add_decl(line,
-					src_name,
-					false,
-					is_let,
-					&decl))
+		if (!hir_scope_add_decl(
+			line,
+			src_name,
+			false,
+			is_let,
+			&decl)) {
 			return false;
+		}
 	}
 
 	if (decl->declared) {
-		snprintf(msg,
-			 sizeof(msg),
-			 N_TR("Variable '%s' is already declared in this scope."),
-			 src_name);
+		snprintf(
+			msg,
+			sizeof(msg),
+			N_TR("Variable '%s' is already declared in this scope."),
+			src_name);
 		hir_error(line, msg);
 		return false;
 	}
@@ -160,9 +183,13 @@ hir_scope_declare(
 	decl->is_let = is_let;
 	*int_name = decl->int_name;
 	*decl_ret = decl;
+
 	return true;
 }
 
+/*
+ * Makes a declaration visible and ends its TDZ.
+ */
 void
 hir_scope_mark_declared(
 	struct hir_scope_decl *decl)
@@ -173,6 +200,9 @@ hir_scope_mark_declared(
 	decl->declared = true;
 }
 
+/*
+ * Resolves a source name to its internal name.
+ */
 bool
 hir_scope_resolve(
 	int line,
@@ -194,18 +224,23 @@ hir_scope_resolve(
 		return true;
 
 	if (!decl->declared) {
-		snprintf(msg,
-			 sizeof(msg),
-			 N_TR("Variable '%s' is used before its declaration."),
-			 src_name);
+		snprintf(
+			msg,
+			sizeof(msg),
+			N_TR("Variable '%s' is used before its declaration."),
+			src_name);
 		hir_error(line, msg);
 		return false;
 	}
 
 	*int_name = decl->int_name;
+
 	return true;
 }
 
+/*
+ * Rejects assignment to an immutable binding.
+ */
 bool
 hir_scope_check_assign(
 	int line,
@@ -218,16 +253,21 @@ hir_scope_check_assign(
 	assert(int_name != NULL);
 
 	scope = hir_scope_top;
+
+	/* Search every active lexical scope. */
 	while (scope != NULL) {
 		decl = scope->decls;
+
+		/* Search every declaration in this scope. */
 		while (decl != NULL) {
 			if (decl->int_name != NULL &&
 			    strcmp(decl->int_name, int_name) == 0) {
 				if (decl->is_let) {
-					snprintf(msg,
-						 sizeof(msg),
-						 N_TR("Cannot assign to 'let' variable '%s'."),
-						 decl->src_name);
+					snprintf(
+						msg,
+						sizeof(msg),
+						N_TR("Cannot assign to 'let' variable '%s'."),
+						decl->src_name);
 					hir_error(line, msg);
 					return false;
 				}
@@ -252,6 +292,8 @@ hir_scope_find_here(
 		return NULL;
 
 	decl = scope->decls;
+
+	/* Search declarations in the selected scope. */
 	while (decl != NULL) {
 		if (strcmp(decl->src_name, src_name) == 0)
 			return decl;
@@ -269,6 +311,8 @@ hir_scope_find(
 	struct hir_scope_decl *decl;
 
 	scope = hir_scope_top;
+
+	/* Search from the innermost scope outward. */
 	while (scope != NULL) {
 		decl = hir_scope_find_here(scope, src_name);
 		if (decl != NULL)
@@ -294,10 +338,11 @@ hir_scope_add_decl(
 	assert(src_name != NULL);
 
 	if (hir_scope_find_here(hir_scope_top, src_name) != NULL) {
-		snprintf(msg,
-			 sizeof(msg),
-			 N_TR("Variable '%s' is already declared in this scope."),
-			 src_name);
+		snprintf(
+			msg,
+			sizeof(msg),
+			N_TR("Variable '%s' is already declared in this scope."),
+			src_name);
 		hir_error(line, msg);
 		return false;
 	}
@@ -307,6 +352,7 @@ hir_scope_add_decl(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(decl, 0, sizeof(struct hir_scope_decl));
 	decl->src_name = hir_strdup(src_name);
 	if (decl->src_name == NULL) {

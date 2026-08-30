@@ -6,8 +6,7 @@
  */
 
 /*
- * HIR Optimizer: private interface between hir.c and the optimizer
- * passes (hir_opt_abce.c, hir_opt_cse.c).
+ * Private interfaces for HIR construction and optimizer passes.
  */
 
 #ifndef NOCT_HIR_OPT_H
@@ -48,7 +47,7 @@ hir_opt_typed_func(
 	struct hir_block *func_block);
 
 /*
- * hir.c internals shared with the optimizer passes.
+ * HIR arena and construction services shared by scope handling and passes.
  */
 void *hir_malloc(size_t size);
 char *hir_strdup(const char *s);

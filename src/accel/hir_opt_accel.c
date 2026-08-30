@@ -10,7 +10,7 @@
 #include "ast.h"
 #include "hir.h"
 #include "hir_opt.h"
-#include "hir_opt_paralle.h"
+#include "hir_opt_parallel.h"
 #include "gpu_ir.h"
 
 #include <assert.h>

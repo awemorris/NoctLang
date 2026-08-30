@@ -14,7 +14,7 @@
 #include "hir_private.h"
 #include "hir_opt.h"
 #if defined(NOCT_USE_OPTIMIZER)
-#include "hir_opt_paralle.h"
+#include "hir_opt_parallel.h"
 #endif
 #include "ast.h"
 #include "arena.h"
@@ -40,6 +40,12 @@
 #define ARENA_SIZE		(1024 * 1024)
 #endif
 
+/* Maximum number of functions. */
+#define HIR_FUNC_MAX		1024
+
+/* Maximum number of anonymous functions. */
+#define ANON_FUNC_SIZE	256
+
 /* List-add function. */
 #define HIR_ADD_TO_LAST(type, list, p)			\
 	do {						\
@@ -47,18 +53,15 @@
 			list = p;			\
 		} else {				\
 			type *elem = list;		\
+						\
+			/* Find the current list tail. */	\
 			while (elem->next)		\
 				elem = elem->next;	\
 			elem->next = p;			\
 		}					\
 	} while (0);
 
-/*
- * Constructed HIR.
- */
-
-#define HIR_FUNC_MAX	1024
-
+/* Constructed HIR. */
 char *hir_file_name;
 static uint32_t hir_func_count;
 struct hir_block *hir_func_tbl[HIR_FUNC_MAX];
@@ -75,12 +78,7 @@ static char hir_error_message[1024];
  */
 static int block_id_top;
 
-/*
- * Anonymous functions.
- */
-
-#define ANON_FUNC_SIZE	256
-
+/* Anonymous functions. */
 static int hir_anon_func_count;
 static char *hir_anon_func_name[ANON_FUNC_SIZE];
 static struct ast_param_list *hir_anon_func_param_list[ANON_FUNC_SIZE];
@@ -92,13 +90,6 @@ static struct ast_stmt_list *hir_anon_func_stmt_list[ANON_FUNC_SIZE];
 static struct arena_info hir_arena;
 
 /* Forward declarations. */
-static void hir_fatal(int line, const char *msg);
-static bool hir_check_type_annotation(int line, const char *type_name, int *tag, int *packed_type, bool *restricted);
-int hir_next_block_id(void);
-
-/*
- * Forward Declaration
- */
 static bool hir_visit_func(struct ast_func *afunc);
 static bool hir_visit_stmt_list(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt_list *stmt_list);
 static bool hir_visit_stmt(struct hir_block **cur_block, struct hir_block **prev_block, struct hir_block *parent_block, struct ast_stmt *cur_astmt);
@@ -113,8 +104,7 @@ static bool hir_visit_return_stmt(struct hir_block **cur_block, struct hir_block
 static bool hir_visit_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_term_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_binary_expr(struct hir_expr **hexpr, struct ast_expr *aexpr, int type);
-static bool hir_resolve_type_name(const char *name, int *tag,
-				  int *packed_type, bool *restricted);
+static bool hir_resolve_type_name(const char *name, int *tag, int *packed_type, bool *restricted);
 static bool hir_visit_unary_expr(struct hir_expr **hexpr, struct ast_expr *aexpr, int type);
 static bool hir_visit_dot_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_call_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
@@ -124,45 +114,46 @@ static bool hir_visit_dict_expr(struct hir_expr **hexpr, struct ast_expr *aexpr)
 static bool hir_visit_func_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_new_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_term(struct hir_term **hterm, struct ast_term *aterm);
-static bool hir_visit_param_list(struct hir_block *hfunc,struct ast_func *afunc);
+static bool hir_check_type_annotation(int line, const char *type_name, int *tag, int *packed_type, bool *restricted);
+static bool hir_visit_param_list(struct hir_block *hfunc, struct ast_func *afunc);
 static bool hir_defer_anon_func(struct ast_expr *aexpr, char **symbol);
-static struct hir_local *hir_find_local(struct hir_block *block,
-					const char *symbol);
-static void hir_set_local_declaration(struct hir_block *block,
-				      const char *symbol,
-				      int declaration_kind,
-				      int declared_type,
-				      int declared_scalar_kind,
-				      int declared_packed_type,
-				      int storage_class,
-				      int line,
-				      const struct hir_stmt *declaration_stmt,
-				      const struct hir_expr *initializer);
+static struct hir_local *hir_find_local(struct hir_block *block, const char *symbol);
+static void hir_set_local_declaration(struct hir_block *block, const char *symbol, int declaration_kind, int declared_type, int declared_scalar_kind, int declared_packed_type, int storage_class, int line, const struct hir_stmt *declaration_stmt, const struct hir_expr *initializer);
 static int hir_packed_constructor_type(const struct hir_expr *expr);
 static int hir_declared_scalar_kind(const char *type_name);
-static bool hir_wrap_freeze(struct hir_expr **hexpr,
-			    struct hir_expr *inner);
+static bool hir_wrap_freeze(struct hir_expr **hexpr, struct hir_expr *inner);
 static void hir_free_block(struct hir_block *b);
 static void hir_free_stmt(struct hir_stmt *s);
 static void hir_free_expr(struct hir_expr *e);
 static void hir_free_term(struct hir_term *t);
+static void hir_free_local(struct hir_local *local);
+static void hir_fatal(int line, const char *msg);
+static void hir_free(void *p);
+static void hir_dump_block_at_level(struct hir_block *block, int level);
 
+/*
+ * Identifies a recognized intrinsic call expression.
+ */
 int
-hir_get_intrinsic_call(const struct hir_expr *expr)
+hir_get_intrinsic_call(
+	const struct hir_expr *expr)
 {
 	const struct hir_expr *fn;
 	const struct hir_expr *obj;
 	const char *pkg;
 
-	if (expr == NULL || expr->type != HIR_EXPR_CALL ||
+	if (expr == NULL ||
+	    expr->type != HIR_EXPR_CALL ||
 	    expr->val.call.arg_count != 1)
 		return HIR_INTRINSIC_NONE;
 	fn = expr->val.call.func;
-	if (fn == NULL || fn->type != HIR_EXPR_DOT ||
+	if (fn == NULL ||
+	    fn->type != HIR_EXPR_DOT ||
 	    strcmp(fn->val.dot.symbol, "from") != 0)
 		return HIR_INTRINSIC_NONE;
 	obj = fn->val.dot.obj;
-	if (obj == NULL || obj->type != HIR_EXPR_TERM ||
+	if (obj == NULL ||
+	    obj->type != HIR_EXPR_TERM ||
 	    obj->val.term.term->type != HIR_TERM_SYMBOL)
 		return HIR_INTRINSIC_NONE;
 	pkg = obj->val.term.term->val.symbol;
@@ -170,18 +161,16 @@ hir_get_intrinsic_call(const struct hir_expr *expr)
 		return HIR_INTRINSIC_INT_FROM;
 	if (strcmp(pkg, "Float") == 0)
 		return HIR_INTRINSIC_FLOAT_FROM;
+
 	return HIR_INTRINSIC_NONE;
 }
-static void hir_free_local(struct hir_local *local);
-static void hir_fatal(int line, const char *msg);
-static void hir_free(void *p);
-static void hir_dump_block_at_level(struct hir_block *block, int level);
 
 /*
- * Construct an HIR from an AST.
+ * Constructs an HIR from an AST.
  */
 bool
-hir_build(void)
+hir_build(
+	void)
 {
 	struct ast_func_list *func_list;
 	struct ast_func *func;
@@ -210,10 +199,12 @@ hir_build(void)
 	if (hir_file_name == NULL)
 		return false;
 
-	/* Construct a HIR func for each AST func: */
+	/* Construct an HIR function for each AST function. */
 	func_list = ast_get_func_list();
 	assert(func_list != NULL);
 	func = func_list->list;
+
+	/* Visit every source function. */
 	while (func != NULL) {
 		/* Visit an AST func. */
 		if (!hir_visit_func(func))
@@ -227,10 +218,11 @@ hir_build(void)
 		 */
 	}
 
-	/* Construct a HIR func for each deffered anonymous func: */
+	/* Construct every deferred anonymous function. */
 	for (i = 0; i < hir_anon_func_count; i++) {
 		/* Visit an AST func. */
 		struct ast_func afunc;
+
 		afunc.name = hir_anon_func_name[i];
 		afunc.param_list = hir_anon_func_param_list[i];
 		afunc.return_type_name = NULL;
@@ -245,14 +237,16 @@ hir_build(void)
 		hir_anon_func_param_list[i] = NULL;
 		hir_anon_func_stmt_list[i] = NULL;
 	}
+
 	return true;
 }
 
 /*
- * Free constructed HIR functions.
+ * Frees all constructed HIR functions.
  */
 void
-hir_cleanup(void)
+hir_cleanup(
+	void)
 {
 	uint32_t i;
 
@@ -261,6 +255,7 @@ hir_cleanup(void)
 		hir_file_name = NULL;
 	}
 
+	/* Free every constructed function. */
 	for (i = 0; i < hir_func_count; i++) {
 		hir_free_block(hir_func_tbl[i]);
 		hir_func_tbl[i] = NULL;
@@ -271,19 +266,21 @@ hir_cleanup(void)
 }
 
 /*
- * Get a number of constructed functions.
+ * Gets the number of constructed functions.
  */
 uint32_t
-hir_get_function_count(void)
+hir_get_function_count(
+	void)
 {
 	return hir_func_count;
 }
 
 /*
- * Get a constructed HIR function.
+ * Gets a constructed HIR function.
  */
 struct hir_block *
-hir_get_function(uint32_t index)
+hir_get_function(
+	uint32_t index)
 {
 	struct hir_block *func;
 
@@ -294,27 +291,36 @@ hir_get_function(uint32_t index)
 	return func;
 }
 
+/*
+ * Replaces a function's link name.
+ */
 bool
-hir_set_function_name(struct hir_block *func, const char *name)
+hir_set_function_name(
+	struct hir_block *func,
+	const char *name)
 {
 	char *copy;
 
 	assert(func != NULL);
 	assert(func->type == HIR_BLOCK_FUNC);
+
 	copy = hir_strdup(name);
 	if (copy == NULL) {
 		hir_out_of_memory();
 		return false;
 	}
+
 	func->val.func.name = copy;
+
 	return true;
 }
 
 /*
- * Get a file name.
+ * Gets the source file name.
  */
 const char *
-hir_get_file_name(void)
+hir_get_file_name(
+	void)
 {
 	assert(hir_file_name);
 
@@ -322,29 +328,234 @@ hir_get_file_name(void)
 }
 
 /*
- * Get an error line number.
+ * Gets the current error line number.
  */
 int
-hir_get_error_line(void)
+hir_get_error_line(
+	void)
 {
 	return hir_error_line;
 }
 
 /*
- * Get an error message.
+ * Gets the current error message.
  */
 const char *
-hir_get_error_message(void)
+hir_get_error_message(
+	void)
 {
 	return hir_error_message;
 }
 
+/*
+ * Records an HIR compilation error.
+ */
 void
-hir_error(int line, const char *message)
+hir_error(
+	int line,
+	const char *message)
 {
 	hir_error_line = line;
-	snprintf(hir_error_message, sizeof(hir_error_message), "%s",
-		 message != NULL ? message : "HIR compilation failed.");
+	snprintf(
+		hir_error_message,
+		sizeof(hir_error_message),
+		"%s",
+		message != NULL ? message : "HIR compilation failed.");
+}
+
+/*
+ * Adds a local variable entry.
+ */
+bool
+hir_add_local(
+	struct hir_block *cur_block,
+	const char *symbol)
+{
+	struct hir_block *func;
+	struct hir_local *local;
+	int index;
+
+	/* Find the function containing the local. */
+	func = cur_block;
+
+	/* Walk from the current block to its function. */
+	while (func->type != HIR_BLOCK_FUNC)
+		func = func->parent;
+
+	/* Reuse an existing local with the same symbol. */
+	index = 0;
+	local = func->val.func.local;
+
+	/* Search every local in the function. */
+	while (local != NULL) {
+		if (strcmp(local->symbol, symbol) == 0)
+			return true;
+
+		index++;
+		local = local->next;
+	}
+
+	/* Add a local variable symbol. */
+	local = hir_malloc(sizeof(struct hir_local));
+	if (local == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+
+	local->symbol = hir_strdup(symbol);
+	if (local->symbol == NULL) {
+		hir_out_of_memory();
+		hir_free(local);
+		return false;
+	}
+
+	local->index = index;
+	/* -1 = unproven; NOT zero (NOCT_VALUE_INT == 0; see hir.h). */
+	local->proven_type = -1;
+	local->is_parameter = false;
+	local->is_let = false;
+	local->declaration_kind = HIR_LOCAL_DECL_UNKNOWN;
+	local->declared_type = -1;
+	local->declared_scalar_kind = HIR_DECL_SCALAR_UNKNOWN;
+	local->declared_packed_type = -1;
+	local->storage_class = HIR_LOCAL_STORAGE_UNKNOWN;
+	local->declaration_line = -1;
+	local->declaration_stmt = NULL;
+	local->initializer = NULL;
+	local->next = func->val.func.local;
+	func->val.func.local = local;
+
+	return true;
+}
+
+/*
+ * Records an out-of-memory error.
+ */
+void
+hir_out_of_memory(
+	void)
+{
+	snprintf(
+		hir_error_message,
+		sizeof(hir_error_message),
+		"%s: Out of memory error.",
+		hir_file_name != NULL ? hir_file_name : "");
+}
+
+/*
+ * Allocates memory from the HIR arena.
+ */
+void *
+hir_malloc(
+	size_t size)
+{
+	return arena_alloc(&hir_arena, size);
+}
+
+/*
+ * Duplicates a string in the HIR arena.
+ */
+char *
+hir_strdup(
+	const char *s)
+{
+	char *ret;
+	size_t len;
+
+	len = strlen(s) + 1;
+	ret = arena_alloc(&hir_arena, len);
+	if (ret == NULL)
+		return NULL;
+
+	memcpy(ret, s, len);
+
+	return ret;
+}
+
+/*
+ * Allocates a fresh HIR block identifier.
+ */
+int
+hir_next_block_id(
+	void)
+{
+	return block_id_top++;
+}
+
+/*
+ * Optimizes one HIR function.
+ */
+bool
+hir_optimize_func(
+	struct hir_block *func_block,
+	int optimize_level,
+	bool print_simd_info)
+{
+#if !defined(NOCT_USE_OPTIMIZER)
+	UNUSED_PARAMETER(optimize_level);
+	UNUSED_PARAMETER(print_simd_info);
+#endif
+
+	assert(func_block != NULL);
+	assert(func_block->type == HIR_BLOCK_FUNC);
+
+#if !defined(NOCT_USE_OPTIMIZER)
+	return true;
+#else
+	if (getenv("NOCT_PARALLEL_DEBUG") != NULL) {
+		if (!hir_parallel_diagnose_func(
+			func_block,
+			stderr,
+			"parallel-analysis"))
+			return false;
+	}
+
+	if (optimize_level >= 1) {
+		/* Function inlining. */
+		if (!hir_opt_inline_func(func_block))
+			return false;
+
+		/* Typed ops. */
+		if (!hir_opt_typed_func(func_block))
+			return false;
+	}
+
+	if (optimize_level >= 2) {
+		/* ABCE. */
+		if (!hir_opt_abce_func(func_block))
+			return false;
+
+		/* SIMD vectorization. */
+		if (!hir_opt_simd_func(func_block, print_simd_info))
+			return false;
+
+		/* Loop unrolling. */
+		if (!hir_opt_unroll_func(func_block))
+			return false;
+	}
+
+	if (optimize_level >= 1) {
+		/* CSE. */
+		if (!hir_opt_cse_func(func_block))
+			return false;
+
+		/* After CSE: the lattice must see CAPTURE home assignments. */
+		if (!hir_opt_typed_func(func_block))
+			return false;
+	}
+
+	return true;
+#endif
+}
+
+/*
+ * Dumps an HIR block tree.
+ */
+void
+hir_dump_block(
+	struct hir_block *block)
+{
+	hir_dump_block_at_level(block, 0);
 }
 
 static bool
@@ -368,6 +579,7 @@ hir_visit_func(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(func_block, 0, sizeof(struct hir_block));
 	func_block->id = block_id_top++;
 	func_block->type = HIR_BLOCK_FUNC;
@@ -376,6 +588,7 @@ hir_visit_func(
 		hir_out_of_memory();
 		return false;
 	}
+	/* Construct the function through one cleanup-controlled attempt. */
 	do {
 		/* Set a func name. */
 		func_block->val.func.name = hir_strdup(afunc->name);
@@ -390,16 +603,19 @@ hir_visit_func(
 		if (!hir_visit_param_list(func_block, afunc))
 			break;
 
-		/* Resolve the optional return type.  Restrict is an input
-		   alias contract and is meaningless on a returned value. */
+		/*
+		 * Resolve the optional return type. Restrict is an input alias
+		 * contract and is meaningless on a returned value.
+		 */
 		{
 			bool return_restricted;
 
-			if (!hir_check_type_annotation(0,
-					       afunc->return_type_name,
-					       &func_block->val.func.return_type,
-					       &func_block->val.func.return_packed_type,
-					       &return_restricted))
+			if (!hir_check_type_annotation(
+				0,
+				afunc->return_type_name,
+				&func_block->val.func.return_type,
+				&func_block->val.func.return_packed_type,
+				&return_restricted))
 				break;
 			if (return_restricted) {
 				hir_fatal(0, N_TR("A restricted packed type is only valid for a parameter."));
@@ -413,6 +629,7 @@ hir_visit_func(
 			hir_out_of_memory();
 			break;
 		}
+
 		memset(end_block, 0, sizeof(struct hir_block));
 		end_block->id = block_id_top++;
 		end_block->type = HIR_BLOCK_END;
@@ -426,13 +643,17 @@ hir_visit_func(
 		if (!hir_scope_push(afunc->stmt_list))
 			break;
 		{
-			/* Register parameters (added first by
-			   hir_visit_param_list, so the local list holds
-			   exactly the params at this point). */
 			struct hir_local *plocal;
 			bool param_ok;
+
+			/*
+			 * Register the parameters added by hir_visit_param_list().
+			 * At this point, the local list contains only parameters.
+			 */
 			param_ok = true;
 			plocal = func_block->val.func.local;
+
+			/* Register every function parameter in the scope. */
 			while (plocal != NULL) {
 				if (!hir_scope_add_param(0, plocal->symbol)) {
 					param_ok = false;
@@ -451,6 +672,7 @@ hir_visit_func(
 				hir_out_of_memory();
 				break;
 			}
+
 			memset(func_block->val.func.inner, 0, sizeof(struct hir_block));
 			func_block->val.func.inner->id = block_id_top++;
 			func_block->val.func.inner->type = HIR_BLOCK_BASIC;
@@ -459,10 +681,11 @@ hir_visit_func(
 			/* Visit the stmt_list. */
 			cur_block = func_block->val.func.inner;
 			prev_block = NULL;
-			if (!hir_visit_stmt_list(&cur_block,		/* cur_block */
-						 &prev_block,		/* prev_block */
-						 func_block,		/* parent_block*/
-						 afunc->stmt_list))	/* stmt_list */
+			if (!hir_visit_stmt_list(
+				&cur_block,
+				&prev_block,
+				func_block,
+				afunc->stmt_list))
 				break;
 
 			/* If the first inner block was garbage-collected. */
@@ -488,6 +711,7 @@ hir_visit_func(
 	/* Failed. */
 	if (func_block != NULL)
 		hir_free_block(func_block);
+
 	return false;
 }
 
@@ -518,6 +742,8 @@ hir_visit_stmt_list(
 		assert(*cur_block != NULL);
 
 		cur_astmt = stmt_list->list;
+
+		/* Visit every statement until control leaves the block. */
 		while (cur_astmt != NULL) {
 			/* Break if the astmt is a loop-control statement. */
 			if (cur_astmt->type == AST_STMT_CONTINUE ||
@@ -546,10 +772,14 @@ hir_visit_stmt_list(
 	if (cur_astmt != NULL && is_control) {
 		/* If the control stopped with... */
 		assert(cur_astmt != NULL);
+
+		/* Connect the block for the selected control transfer. */
 		switch (cur_astmt->type) {
 		case AST_STMT_CONTINUE:
 			/* Find the inner most loop. */
 			p_search = parent_block;
+
+			/* Walk outward to the enclosing loop. */
 			while (p_search != NULL) {
 				if (p_search->type == HIR_BLOCK_FOR ||
 				    p_search->type == HIR_BLOCK_WHILE)
@@ -575,6 +805,8 @@ hir_visit_stmt_list(
 		case AST_STMT_BREAK:
 			/* Find the inner most loop. */
 			p_search = parent_block;
+
+			/* Walk outward to the enclosing loop. */
 			while (p_search != NULL) {
 				if (p_search->type == HIR_BLOCK_FOR ||
 				    p_search->type == HIR_BLOCK_WHILE)
@@ -593,6 +825,8 @@ hir_visit_stmt_list(
 		case AST_STMT_RETURN:
 			/* Search a func block.*/
 			p_search = *cur_block;
+
+			/* Walk outward through blocks and conditional chains. */
 			do {
 				if (p_search->parent != NULL) {
 					p_search = p_search->parent;
@@ -616,11 +850,14 @@ hir_visit_stmt_list(
 			break;
 		}
 	} else {
-		/* If the end of... */
+
+		/* Connect the ordinary end of the statement list. */
 		switch (parent_block->type) {
 		case HIR_BLOCK_FUNC:
 			/* Search a func block.*/
 			p_search = parent_block;
+
+			/* Walk to the outermost function block. */
 			while (p_search->parent != NULL)
 				p_search = p_search->parent;
 			assert(p_search->type == HIR_BLOCK_FUNC);
@@ -684,6 +921,7 @@ hir_visit_stmt(
 
 	hir_error_line = cur_astmt->line;
 
+	/* Dispatch the source statement to its specialized visitor. */
 	switch (cur_astmt->type) {
 	case AST_STMT_EXPR:
 		result = hir_visit_expr_stmt(cur_block, prev_block, parent_block, cur_astmt);
@@ -728,8 +966,8 @@ hir_visit_expr_stmt(
 {
 	struct hir_stmt *hstmt;
 
-	UNUSED_PARAMETER(parent_block);
 	UNUSED_PARAMETER(prev_block);
+	UNUSED_PARAMETER(parent_block);
 
 	assert(cur_block != NULL);
 	assert(*cur_block != NULL);
@@ -748,6 +986,7 @@ hir_visit_expr_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(hstmt, 0, sizeof(struct hir_stmt));
 	hstmt->line = cur_astmt->line;
 
@@ -783,8 +1022,8 @@ hir_visit_assign_stmt(
 	struct hir_stmt *hstmt;
 	bool is_lhs_ok;
 
-	UNUSED_PARAMETER(parent_block);
 	UNUSED_PARAMETER(prev_block);
+	UNUSED_PARAMETER(parent_block);
 
 	assert(cur_block != NULL);
 	assert(*cur_block != NULL);
@@ -800,12 +1039,14 @@ hir_visit_assign_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(hstmt, 0, sizeof(struct hir_stmt));
 	hstmt->line = cur_astmt->line;
 
-	/* Declarations (var/let): declare-first so the LHS never goes
-	   through use resolution, and the initializer stays inside the
-	   TDZ (docs/design/04-scoping.md). */
+	/*
+	 * Declare var/let bindings first so the LHS never passes through
+	 * use resolution and the initializer remains inside the TDZ.
+	 */
 	if (cur_astmt->val.assign.is_var || cur_astmt->val.assign.is_let) {
 		struct ast_expr *alhs;
 		struct hir_term *lhs_term;
@@ -817,12 +1058,13 @@ hir_visit_assign_stmt(
 		int anno_packed_type;
 		bool anno_restricted;
 		int constructor_packed_type;
+		int declared_scalar_kind;
 		int storage_class;
 
 		alhs = cur_astmt->val.assign.lhs;
-		if (!(alhs != NULL &&
-		      alhs->type == AST_EXPR_TERM &&
-		      alhs->val.term.term->type == AST_TERM_SYMBOL)) {
+		if (alhs == NULL ||
+		    alhs->type != AST_EXPR_TERM ||
+		    alhs->val.term.term->type != AST_TERM_SYMBOL) {
 			hir_fatal(cur_astmt->line, N_TR("var is specified without a single symbol."));
 			hir_free_stmt(hstmt);
 			return false;
@@ -830,17 +1072,22 @@ hir_visit_assign_stmt(
 		src_name = alhs->val.term.term->val.symbol;
 
 		/* Validate the optional type annotation (hint only). */
-		if (!hir_check_type_annotation(cur_astmt->line,
-					       cur_astmt->val.assign.type_name,
-					       &anno_tag,
-					       &anno_packed_type,
-					       &anno_restricted)) {
+		if (!hir_check_type_annotation(
+			cur_astmt->line,
+			cur_astmt->val.assign.type_name,
+			&anno_tag,
+			&anno_packed_type,
+			&anno_restricted)) {
 			hir_free_stmt(hstmt);
 			return false;
 		}
-		if (!hir_scope_declare(cur_astmt->line, src_name,
-				       cur_astmt->val.assign.is_let,
-				       &int_name, &scope_decl)) {
+
+		if (!hir_scope_declare(
+			cur_astmt->line,
+			src_name,
+			cur_astmt->val.assign.is_let,
+			&int_name,
+			&scope_decl)) {
 			hir_free_stmt(hstmt);
 			return false;
 		}
@@ -855,18 +1102,25 @@ hir_visit_assign_stmt(
 		/* Build the LHS term with the internal name. */
 		lhs_term = hir_malloc(sizeof(struct hir_term));
 		lhs_expr = hir_malloc(sizeof(struct hir_expr));
-		if (lhs_term == NULL || lhs_expr == NULL) {
+		if (lhs_term == NULL) {
 			hir_out_of_memory();
 			return false;
 		}
+
+		if (lhs_expr == NULL) {
+			hir_out_of_memory();
+			return false;
+		}
+
 		memset(lhs_term, 0, sizeof(struct hir_term));
-		memset(lhs_expr, 0, sizeof(struct hir_expr));
 		lhs_term->type = HIR_TERM_SYMBOL;
 		lhs_term->val.symbol = hir_strdup(int_name);
 		if (lhs_term->val.symbol == NULL) {
 			hir_out_of_memory();
 			return false;
 		}
+
+		memset(lhs_expr, 0, sizeof(struct hir_expr));
 		lhs_expr->type = HIR_EXPR_TERM;
 		lhs_expr->val.term.term = lhs_term;
 		hstmt->lhs = lhs_expr;
@@ -882,18 +1136,21 @@ hir_visit_assign_stmt(
 			constructor_packed_type >= 0 ?
 			HIR_LOCAL_STORAGE_LOGICAL_BUFFER :
 			HIR_LOCAL_STORAGE_SCALAR;
-		hir_set_local_declaration(*cur_block, lhs_term->val.symbol,
-					  cur_astmt->val.assign.is_let ?
-						HIR_LOCAL_DECL_LET :
-						HIR_LOCAL_DECL_VAR,
-					  anno_tag,
-					  hir_declared_scalar_kind(
-						  cur_astmt->val.assign.type_name),
-					  anno_packed_type,
-					  storage_class,
-					  cur_astmt->line,
-					  hstmt,
-					  hstmt->rhs);
+		declared_scalar_kind =
+			hir_declared_scalar_kind(cur_astmt->val.assign.type_name);
+		hir_set_local_declaration(
+			*cur_block,
+			lhs_term->val.symbol,
+			cur_astmt->val.assign.is_let ?
+				HIR_LOCAL_DECL_LET :
+				HIR_LOCAL_DECL_VAR,
+			anno_tag,
+			declared_scalar_kind,
+			anno_packed_type,
+			storage_class,
+			cur_astmt->line,
+			hstmt,
+			hstmt->rhs);
 
 		/* Add hstmt to the end of the block. */
 		HIR_ADD_TO_LAST(struct hir_stmt, (*cur_block)->val.basic.stmt_list, hstmt);
@@ -926,8 +1183,9 @@ hir_visit_assign_stmt(
 	/* Reject assignment to a let binding. */
 	if (hstmt->lhs->type == HIR_EXPR_TERM &&
 	    hstmt->lhs->val.term.term->type == HIR_TERM_SYMBOL) {
-		if (!hir_scope_check_assign(cur_astmt->line,
-					    hstmt->lhs->val.term.term->val.symbol)) {
+		if (!hir_scope_check_assign(
+			cur_astmt->line,
+			hstmt->lhs->val.term.term->val.symbol)) {
 			hir_free_stmt(hstmt);
 			return false;
 		}
@@ -950,63 +1208,6 @@ hir_visit_assign_stmt(
 	return true;
 }
 
-/* Add a local variable entry. */
-bool
-hir_add_local(
-	struct hir_block *cur_block,
-	const char *symbol)
-{
-	struct hir_block *func;
-	struct hir_local *local;
-	int index;
-
-	/* Get a root func block. */
-	func = cur_block;
-	while (func->type != HIR_BLOCK_FUNC)
-		func = func->parent;
-
-	/* Search a symbol. */
-	index = 0;
-	local = func->val.func.local;
-	while (local != NULL) {
-		/* If already exists. */
-		if (strcmp(local->symbol, symbol) == 0)
-			return true;
-		index++;
-		local = local->next;
-	}
-
-	/* Add a local variable symbol. */
-	local = hir_malloc(sizeof(struct hir_local));
-	if (local == NULL) {
-		hir_out_of_memory();
-		return false;
-	}
-	local->symbol = hir_strdup(symbol);
-	if (local->symbol == NULL) {
-		hir_out_of_memory();
-		hir_free(local);
-		return false;
-	}
-	local->index = index;
-	/* -1 = unproven; NOT zero (NOCT_VALUE_INT == 0; see hir.h). */
-	local->proven_type = -1;
-	local->is_parameter = false;
-	local->is_let = false;
-	local->declaration_kind = HIR_LOCAL_DECL_UNKNOWN;
-	local->declared_type = -1;
-	local->declared_scalar_kind = HIR_DECL_SCALAR_UNKNOWN;
-	local->declared_packed_type = -1;
-	local->storage_class = HIR_LOCAL_STORAGE_UNKNOWN;
-	local->declaration_line = -1;
-	local->declaration_stmt = NULL;
-	local->initializer = NULL;
-	local->next = func->val.func.local;
-	func->val.func.local = local;
-
-	return true;
-}
-
 static struct hir_local *
 hir_find_local(
 	struct hir_block *block,
@@ -1014,16 +1215,22 @@ hir_find_local(
 {
 	struct hir_local *local;
 
+	/* Walk from the selected block to its function. */
 	while (block != NULL && block->type != HIR_BLOCK_FUNC)
 		block = block->parent;
+
 	if (block == NULL)
 		return NULL;
+
 	local = block->val.func.local;
+
+	/* Search every local in the function. */
 	while (local != NULL) {
 		if (strcmp(local->symbol, symbol) == 0)
 			return local;
 		local = local->next;
 	}
+
 	return NULL;
 }
 
@@ -1069,22 +1276,36 @@ hir_packed_constructor_type(
 	if (expr == NULL || expr->type != HIR_EXPR_THISCALL)
 		return -1;
 	obj = expr->val.thiscall.obj;
-	if (obj == NULL || obj->type != HIR_EXPR_TERM ||
+	if (obj == NULL ||
+	    obj->type != HIR_EXPR_TERM ||
 	    obj->val.term.term == NULL ||
 	    obj->val.term.term->type != HIR_TERM_SYMBOL ||
 	    strcmp(obj->val.term.term->val.symbol, "Packed") != 0)
 		return -1;
+
 	name = expr->val.thiscall.func;
-	if (strcmp(name, "int8") == 0) return NOCT_PACKED_INT8;
-	if (strcmp(name, "uint8") == 0) return NOCT_PACKED_UINT8;
-	if (strcmp(name, "int16") == 0) return NOCT_PACKED_INT16;
-	if (strcmp(name, "uint16") == 0) return NOCT_PACKED_UINT16;
-	if (strcmp(name, "int32") == 0) return NOCT_PACKED_INT32;
-	if (strcmp(name, "uint32") == 0) return NOCT_PACKED_UINT32;
-	if (strcmp(name, "int64") == 0) return NOCT_PACKED_INT64;
-	if (strcmp(name, "uint64") == 0) return NOCT_PACKED_UINT64;
-	if (strcmp(name, "float32") == 0) return NOCT_PACKED_FLOAT32;
-	if (strcmp(name, "float64") == 0) return NOCT_PACKED_FLOAT64;
+
+	if (strcmp(name, "int8") == 0)
+		return NOCT_PACKED_INT8;
+	if (strcmp(name, "uint8") == 0)
+		return NOCT_PACKED_UINT8;
+	if (strcmp(name, "int16") == 0)
+		return NOCT_PACKED_INT16;
+	if (strcmp(name, "uint16") == 0)
+		return NOCT_PACKED_UINT16;
+	if (strcmp(name, "int32") == 0)
+		return NOCT_PACKED_INT32;
+	if (strcmp(name, "uint32") == 0)
+		return NOCT_PACKED_UINT32;
+	if (strcmp(name, "int64") == 0)
+		return NOCT_PACKED_INT64;
+	if (strcmp(name, "uint64") == 0)
+		return NOCT_PACKED_UINT64;
+	if (strcmp(name, "float32") == 0)
+		return NOCT_PACKED_FLOAT32;
+	if (strcmp(name, "float64") == 0)
+		return NOCT_PACKED_FLOAT64;
+
 	return -1;
 }
 
@@ -1094,13 +1315,16 @@ hir_declared_scalar_kind(
 {
 	if (type_name == NULL)
 		return HIR_DECL_SCALAR_UNKNOWN;
-	if (strcmp(type_name, "int") == 0 ||
-	    strcmp(type_name, "i32") == 0)
+
+	if (strcmp(type_name, "int") == 0)
+		return HIR_DECL_SCALAR_INT32;
+	if (strcmp(type_name, "i32") == 0)
 		return HIR_DECL_SCALAR_INT32;
 	if (strcmp(type_name, "u32") == 0)
 		return HIR_DECL_SCALAR_UINT32;
 	if (strcmp(type_name, "float") == 0)
 		return HIR_DECL_SCALAR_FLOAT32;
+
 	return HIR_DECL_SCALAR_OTHER;
 }
 
@@ -1151,6 +1375,7 @@ hir_visit_if_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(if_block->val.if_.inner, 0, sizeof(struct hir_block));
 	if_block->val.if_.inner->id = block_id_top++;
 	if_block->val.if_.inner->type = HIR_BLOCK_BASIC;
@@ -1163,6 +1388,7 @@ hir_visit_if_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(exit_block, 0, sizeof(struct hir_block));
 	exit_block->id = block_id_top++;
 	exit_block->type = HIR_BLOCK_BASIC;
@@ -1182,10 +1408,11 @@ hir_visit_if_stmt(
 	if (cur_astmt->val.if_.stmt_list != NULL) {
 		inner_cur_block = if_block->val.if_.inner;
 		inner_prev_block = NULL;
-		if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
-					 &inner_prev_block,	/* prev_block */
-					 if_block,		/* parent_block */
-					 cur_astmt->val.if_.stmt_list)) {
+		if (!hir_visit_stmt_list(
+			&inner_cur_block,
+			&inner_prev_block,
+			if_block,
+			cur_astmt->val.if_.stmt_list)) {
 			hir_free_block(if_block);
 			return false;
 		}
@@ -1257,6 +1484,8 @@ hir_visit_elif_stmt(
 
 	/* Get a first if-block. */
 	b = elif_block->val.if_.chain_prev;
+
+	/* Walk to the first block in the conditional chain. */
 	while (b->val.if_.chain_prev != NULL)
 		b = b->val.if_.chain_prev;
 	elif_block->parent = b;
@@ -1267,6 +1496,7 @@ hir_visit_elif_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(elif_block->val.if_.inner, 0, sizeof(struct hir_block));
 	elif_block->val.if_.inner->id = block_id_top++;
 	elif_block->val.if_.inner->type = HIR_BLOCK_BASIC;
@@ -1285,10 +1515,11 @@ hir_visit_elif_stmt(
 	if (cur_astmt->val.elif.stmt_list != NULL) {
 		inner_cur_block = elif_block->val.if_.inner;
 		inner_prev_block = NULL;
-		if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
-					 &inner_prev_block,	/* prev_block */
-					 elif_block,		/* parent_block */
-					 cur_astmt->val.elif.stmt_list)) {
+		if (!hir_visit_stmt_list(
+			&inner_cur_block,
+			&inner_prev_block,
+			elif_block,
+			cur_astmt->val.elif.stmt_list)) {
 			hir_free_block(elif_block);
 			return false;
 		}
@@ -1341,6 +1572,7 @@ hir_visit_else_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(else_block, 0, sizeof(struct hir_block));
 	else_block->id = block_id_top++;
 	else_block->type = HIR_BLOCK_IF;
@@ -1353,6 +1585,8 @@ hir_visit_else_stmt(
 
 	/* Get a first if-block. */
 	b = else_block->val.if_.chain_prev;
+
+	/* Walk to the first block in the conditional chain. */
 	while (b->val.if_.chain_prev != NULL)
 		b = b->val.if_.chain_prev;
 	else_block->parent = b;
@@ -1363,6 +1597,7 @@ hir_visit_else_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(else_block->val.if_.inner, 0, sizeof(struct hir_block));
 	else_block->val.if_.inner->id = block_id_top++;
 	else_block->val.if_.inner->type = HIR_BLOCK_BASIC;
@@ -1375,10 +1610,11 @@ hir_visit_else_stmt(
 	if (cur_astmt->val.else_.stmt_list != NULL) {
 		inner_cur_block = else_block->val.if_.inner;
 		inner_prev_block = NULL;
-		if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
-					 &inner_prev_block,	/* prev_block */
-					 else_block,		/* parent_block */
-					 cur_astmt->val.else_.stmt_list)) {
+		if (!hir_visit_stmt_list(
+			&inner_cur_block,
+			&inner_prev_block,
+			else_block,
+			cur_astmt->val.else_.stmt_list)) {
 			hir_free_block(else_block);
 			return false;
 		}
@@ -1441,6 +1677,7 @@ hir_visit_while_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(while_block->val.while_.inner, 0, sizeof(struct hir_block));
 	while_block->id = block_id_top++;
 	while_block->val.while_.inner->type = HIR_BLOCK_BASIC;
@@ -1453,6 +1690,7 @@ hir_visit_while_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(exit_block, 0, sizeof(struct hir_block));
 	exit_block->id = block_id_top++;
 	exit_block->type = HIR_BLOCK_BASIC;
@@ -1471,10 +1709,11 @@ hir_visit_while_stmt(
 	if (cur_astmt->val.while_.stmt_list != NULL) {
 		inner_cur_block = while_block->val.while_.inner;
 		inner_prev_block = NULL;
-		if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
-					 &inner_prev_block,	/* prev_block */
-					 while_block,		/* parent_block */
-					 cur_astmt->val.while_.stmt_list)) {
+		if (!hir_visit_stmt_list(
+			&inner_cur_block,
+			&inner_prev_block,
+			while_block,
+			cur_astmt->val.while_.stmt_list)) {
 			hir_free_block(while_block);
 			return false;
 		}
@@ -1524,6 +1763,7 @@ hir_visit_for_stmt(
 			hir_out_of_memory();
 			return false;
 		}
+
 		memset(for_block, 0, sizeof(struct hir_block));
 		for_block->id = block_id_top++;
 		for_block->type = HIR_BLOCK_FOR;
@@ -1538,6 +1778,7 @@ hir_visit_for_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(for_block->val.for_.inner, 0, sizeof(struct hir_block));
 	for_block->val.for_.inner->id = block_id_top++;
 	for_block->val.for_.inner->type = HIR_BLOCK_BASIC;
@@ -1550,6 +1791,7 @@ hir_visit_for_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(exit_block, 0, sizeof(struct hir_block));
 	exit_block->id = block_id_top++;
 	exit_block->type = HIR_BLOCK_BASIC;
@@ -1557,9 +1799,10 @@ hir_visit_for_stmt(
 	exit_block->succ = parent_block->succ;
 	for_block->succ = exit_block;
 
-	/* Mark ranged-for. (Loop variables are registered after the
-	   start/stop/collection exprs are visited in the OUTER scope;
-	   see the loop-body scope section below.) */
+	/*
+	 * Mark a ranged-for loop. Its variables are registered after the
+	 * range or collection expressions are visited in the outer scope.
+	 */
 	if (cur_astmt->val.for_.counter_symbol)
 		for_block->val.for_.is_ranged = true;
 
@@ -1595,6 +1838,7 @@ hir_visit_for_stmt(
 		const char *names[3];
 		char **fields[3];
 		int k;
+
 		names[0] = cur_astmt->val.for_.counter_symbol;
 		names[1] = cur_astmt->val.for_.key_symbol;
 		names[2] = cur_astmt->val.for_.value_symbol;
@@ -1602,13 +1846,21 @@ hir_visit_for_stmt(
 		fields[1] = &for_block->val.for_.key_symbol;
 		fields[2] = &for_block->val.for_.value_symbol;
 		(void)empty;
+
+		/* Register every loop variable in the body scope. */
 		for (k = 0; k < 3; k++) {
 			struct hir_scope_decl *scope_decl;
 			const char *iname;
+
 			if (names[k] == NULL)
 				continue;
-			if (!hir_scope_declare(cur_astmt->line, names[k],
-					       false, &iname, &scope_decl)) {
+
+			if (!hir_scope_declare(
+				cur_astmt->line,
+				names[k],
+				false,
+				&iname,
+				&scope_decl)) {
 				hir_free_block(for_block);
 				return false;
 			}
@@ -1620,25 +1872,28 @@ hir_visit_for_stmt(
 			}
 			if (!hir_add_local(*cur_block, *fields[k]))
 				return false;
-			hir_set_local_declaration(*cur_block, *fields[k],
-						  HIR_LOCAL_DECL_LOOP_COUNTER,
-						  -1,
-						  HIR_DECL_SCALAR_UNKNOWN,
-						  -1,
-						  HIR_LOCAL_STORAGE_SCALAR,
-						  cur_astmt->line,
-						  NULL,
-						  NULL);
+			hir_set_local_declaration(
+				*cur_block,
+				*fields[k],
+				HIR_LOCAL_DECL_LOOP_COUNTER,
+				-1,
+				HIR_DECL_SCALAR_UNKNOWN,
+				-1,
+				HIR_LOCAL_STORAGE_SCALAR,
+				cur_astmt->line,
+				NULL,
+				NULL);
 		}
 	}
 
 	/* Visit an inner stmt_list */
 	inner_cur_block = for_block->val.for_.inner;
 	inner_prev_block = NULL;
-	if (!hir_visit_stmt_list(&inner_cur_block,	/* cur_block */
-				 &inner_prev_block,	/* prev_block */
-				 for_block,		/* parent_block */
-				 cur_astmt->val.for_.stmt_list)) {
+	if (!hir_visit_stmt_list(
+		&inner_cur_block,
+		&inner_prev_block,
+		for_block,
+		cur_astmt->val.for_.stmt_list)) {
 		hir_free_block(for_block);
 		return false;
 	}
@@ -1663,8 +1918,8 @@ hir_visit_return_stmt(
 {
 	struct hir_stmt *hstmt;
 
-	UNUSED_PARAMETER(parent_block);
 	UNUSED_PARAMETER(prev_block);
+	UNUSED_PARAMETER(parent_block);
 
 	assert(cur_block != NULL);
 	assert(*cur_block != NULL);
@@ -1683,6 +1938,7 @@ hir_visit_return_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(hstmt, 0, sizeof(struct hir_stmt));
 	hstmt->line = cur_astmt->line;
 	hstmt->is_bare_return = !cur_astmt->val.return_.has_value;
@@ -1693,6 +1949,7 @@ hir_visit_return_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(hstmt->lhs, 0, sizeof(struct hir_expr));
 	hstmt->lhs->type = HIR_EXPR_TERM;
 	hstmt->lhs->val.term.term = hir_malloc(sizeof(struct hir_term));
@@ -1700,6 +1957,7 @@ hir_visit_return_stmt(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(hstmt->lhs->val.term.term, 0, sizeof(struct hir_term));
 	hstmt->lhs->val.term.term->type = HIR_TERM_SYMBOL;
 	hstmt->lhs->val.term.term->val.symbol = hir_strdup("$return");
@@ -1808,19 +2066,38 @@ hir_visit_expr(
 		result = hir_visit_dot_expr(hexpr, aexpr);
 		break;
 	case AST_EXPR_CALL:
-		if (aexpr->val.call.func != NULL &&
-		    aexpr->val.call.func->type == AST_EXPR_DOT &&
-		    !(aexpr->val.call.func->val.dot.obj->type == AST_EXPR_TERM &&
-		      aexpr->val.call.func->val.dot.obj->val.term.term->type == AST_TERM_SYMBOL &&
-		      (strcmp(aexpr->val.call.func->val.dot.obj->val.term.term->val.symbol,
-		              "Int") == 0 ||
-		       strcmp(aexpr->val.call.func->val.dot.obj->val.term.term->val.symbol,
-		              "Float") == 0) &&
-		      strcmp(aexpr->val.call.func->val.dot.symbol, "from") == 0))
+	{
+		struct ast_expr *func;
+		struct ast_expr *obj;
+		const char *symbol;
+		bool is_thiscall;
+
+		func = aexpr->val.call.func;
+		is_thiscall = false;
+		if (func != NULL &&
+		    func->type == AST_EXPR_DOT) {
+			is_thiscall = true;
+			obj = func->val.dot.obj;
+
+			if (obj->type == AST_EXPR_TERM &&
+			    obj->val.term.term->type == AST_TERM_SYMBOL) {
+				symbol = obj->val.term.term->val.symbol;
+				if (strcmp(symbol, "Int") == 0) {
+					if (strcmp(func->val.dot.symbol, "from") == 0)
+						is_thiscall = false;
+				} else if (strcmp(symbol, "Float") == 0) {
+					if (strcmp(func->val.dot.symbol, "from") == 0)
+						is_thiscall = false;
+				}
+			}
+		}
+
+		if (is_thiscall)
 			result = hir_visit_thiscall_expr(hexpr, aexpr);
 		else
 			result = hir_visit_call_expr(hexpr, aexpr);
 		break;
+	}
 	case AST_EXPR_ARRAY:
 		result = hir_visit_array_expr(hexpr, aexpr);
 		break;
@@ -1861,6 +2138,7 @@ hir_visit_term_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_TERM;
 
@@ -1894,6 +2172,7 @@ hir_visit_binary_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = type;
 
@@ -1924,9 +2203,10 @@ hir_visit_unary_expr(
 	assert(hexpr != NULL);
 	assert(*hexpr == NULL);
 	assert(aexpr != NULL);
-	assert(aexpr->type == AST_EXPR_NEG ||
-	       aexpr->type == AST_EXPR_NOT ||
-	       aexpr->type == AST_EXPR_PAR);
+	assert(
+		aexpr->type == AST_EXPR_NEG ||
+		aexpr->type == AST_EXPR_NOT ||
+		aexpr->type == AST_EXPR_PAR);
 
 	/* Allocate an hexpr. */
 	e = hir_malloc(sizeof(struct hir_expr));
@@ -1934,6 +2214,7 @@ hir_visit_unary_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = type;
 
@@ -1967,6 +2248,7 @@ hir_visit_dot_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_DOT;
 
@@ -2008,6 +2290,7 @@ hir_visit_call_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_CALL;
 
@@ -2020,6 +2303,8 @@ hir_visit_call_expr(
 	/* Visit the argument expressions. */
 	if (aexpr->val.call.arg_list != NULL) {
 		arg = aexpr->val.call.arg_list->list;
+
+		/* Convert every call argument. */
 		while (arg != NULL) {
 			if (e->val.call.arg_count >= HIR_PARAM_SIZE) {
 				hir_fatal(hir_error_line, N_TR("Exceeded the maximum argument count."));
@@ -2068,6 +2353,7 @@ hir_visit_thiscall_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_THISCALL;
 
@@ -2087,6 +2373,8 @@ hir_visit_thiscall_expr(
 	/* Visit the argument expressions. */
 	if (arg_list != NULL) {
 		arg = arg_list->list;
+
+		/* Convert every method-call argument. */
 		while (arg != NULL) {
 			if (e->val.thiscall.arg_count >= HIR_PARAM_SIZE) {
 				hir_fatal(hir_error_line, N_TR("Too many parameters."));
@@ -2128,6 +2416,7 @@ hir_visit_array_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_ARRAY;
 
@@ -2135,6 +2424,8 @@ hir_visit_array_expr(
 	count = 0;
 	if (aexpr->val.array.elem_list != NULL) {
 		elem = aexpr->val.array.elem_list->list;
+
+		/* Count every array element. */
 		while (elem != NULL) {
 			elem = elem->next;
 			count++;
@@ -2152,6 +2443,7 @@ hir_visit_array_expr(
 			hir_out_of_memory();
 			return false;
 		}
+
 		memset(e->val.array.elem, 0, (size_t)count * sizeof(struct hir_exp *));
 	}
 
@@ -2159,6 +2451,8 @@ hir_visit_array_expr(
 	if (aexpr->val.array.elem_list != NULL) {
 		elem = aexpr->val.array.elem_list->list;
 		index = 0;
+
+		/* Convert every array element. */
 		while (elem != NULL) {
 			if (!hir_visit_expr(&e->val.array.elem[index], elem)) {
 				hir_free_expr(e);
@@ -2195,6 +2489,7 @@ hir_visit_dict_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_DICT;
 
@@ -2202,6 +2497,8 @@ hir_visit_dict_expr(
 	count = 0;
 	if (aexpr->val.dict.kv_list != NULL) {
 		kv = aexpr->val.dict.kv_list->list;
+
+		/* Count every dictionary entry. */
 		while (kv != NULL) {
 			kv = kv->next;
 			count++;
@@ -2219,6 +2516,7 @@ hir_visit_dict_expr(
 			hir_out_of_memory();
 			return false;
 		}
+
 		memset(e->val.dict.key, 0, count * sizeof(char *));
 
 		e->val.dict.value = hir_malloc(count * sizeof(struct hir_exp *));
@@ -2226,6 +2524,7 @@ hir_visit_dict_expr(
 			hir_out_of_memory();
 			return false;
 		}
+
 		memset(e->val.dict.value, 0, count * sizeof(struct hir_exp *));
 	}
 
@@ -2233,6 +2532,8 @@ hir_visit_dict_expr(
 	if (aexpr->val.dict.kv_list != NULL) {
 		kv = aexpr->val.dict.kv_list->list;
 		index = 0;
+
+		/* Convert every dictionary entry. */
 		while (kv != NULL) {
 			/* Copy the key. */
 			e->val.dict.key[index] = hir_strdup(kv->key);
@@ -2283,6 +2584,7 @@ hir_visit_func_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(t, 0, sizeof(struct hir_term));
 	t->type = HIR_TERM_SYMBOL;
 
@@ -2292,6 +2594,7 @@ hir_visit_func_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_TERM;
 	e->val.term.term = t;
@@ -2324,6 +2627,7 @@ hir_visit_new_expr(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_NEW;
 	e->val.new_.cls = hir_strdup(aexpr->val.new_.cls);
@@ -2363,6 +2667,7 @@ hir_visit_term(
 		hir_out_of_memory();
 		return false;
 	}
+
 	memset(t, 0, sizeof(struct hir_term));
 
 	/* Copy the value. */
@@ -2372,12 +2677,17 @@ hir_visit_term(
 		const char *resolved;
 
 		/* Scope resolution (alpha-renaming + static TDZ). */
-		if (!hir_scope_resolve(hir_error_line, aterm->val.symbol,
-				       &resolved))
+		if (!hir_scope_resolve(
+			hir_error_line,
+			aterm->val.symbol,
+			&resolved))
 			return false;
+
 		t->type = HIR_TERM_SYMBOL;
-		t->val.symbol = hir_strdup(resolved != NULL ? resolved :
-					   ast_resolve_static_symbol(aterm->val.symbol));
+		if (resolved == NULL)
+			resolved = ast_resolve_static_symbol(aterm->val.symbol);
+
+		t->val.symbol = hir_strdup(resolved);
 		if (t->val.symbol == NULL) {
 			hir_out_of_memory();
 			return false;
@@ -2485,6 +2795,7 @@ hir_resolve_type_name(
 	};
 	size_t i;
 
+	/* Match the source name against every supported annotation. */
 	for (i = 0; i < sizeof(tbl) / sizeof(tbl[0]); i++) {
 		if (strcmp(tbl[i].name, name) == 0) {
 			*tag = tbl[i].tag;
@@ -2515,11 +2826,15 @@ hir_check_type_annotation(
 		return true;
 	}
 	if (!hir_resolve_type_name(type_name, tag, packed_type, restricted)) {
-		snprintf(msg, sizeof(msg),
-			 N_TR("Unknown type name '%s'."), type_name);
+		snprintf(
+			msg,
+			sizeof(msg),
+			N_TR("Unknown type name '%s'."),
+			type_name);
 		hir_fatal(line, msg);
 		return false;
 	}
+
 	return true;
 }
 
@@ -2535,6 +2850,8 @@ hir_visit_param_list(
 	/* -1 = unannotated (0 would read as NOCT_VALUE_INT). */
 	{
 		uint32_t k;
+
+		/* Reset every parameter annotation slot. */
 		for (k = 0; k < HIR_PARAM_SIZE; k++) {
 			hfunc->val.func.param_type[k] = -1;
 			hfunc->val.func.param_packed_type[k] = -1;
@@ -2554,8 +2871,12 @@ hir_visit_param_list(
 	/* Do traverse. */
 	param = afunc->param_list->list;
 	param_count = 0;
+
+	/* Copy every function parameter. */
 	while (param != NULL) {
 		const char *annotation;
+		int declared_scalar_kind;
+		int storage_class;
 
 		if (param_count >= HIR_PARAM_SIZE) {
 			hir_fatal(hir_error_line, N_TR("Too many parameters."));
@@ -2572,25 +2893,32 @@ hir_visit_param_list(
 		annotation = param->type_name;
 
 		/* Resolve the optional type annotation. */
-		if (!hir_check_type_annotation(0,
-					       annotation,
-					       &hfunc->val.func.param_type[param_count],
-					       &hfunc->val.func.param_packed_type[param_count],
-					       &hfunc->val.func.param_restricted[param_count]))
+		if (!hir_check_type_annotation(
+			0,
+			annotation,
+			&hfunc->val.func.param_type[param_count],
+			&hfunc->val.func.param_packed_type[param_count],
+			&hfunc->val.func.param_restricted[param_count]))
 			return false;
+
 		/* Add to a local variable list. */
 		if (!hir_add_local(hfunc, param->name))
 			return false;
+
+		declared_scalar_kind = hir_declared_scalar_kind(annotation);
+		if (hfunc->val.func.param_packed_type[param_count] >= 0)
+			storage_class = HIR_LOCAL_STORAGE_LOGICAL_BUFFER;
+		else
+			storage_class = HIR_LOCAL_STORAGE_SCALAR;
+
 		hir_set_local_declaration(
 			hfunc,
 			param->name,
 			HIR_LOCAL_DECL_PARAMETER,
 			hfunc->val.func.param_type[param_count],
-			hir_declared_scalar_kind(annotation),
+			declared_scalar_kind,
 			hfunc->val.func.param_packed_type[param_count],
-			hfunc->val.func.param_packed_type[param_count] >= 0 ?
-				HIR_LOCAL_STORAGE_LOGICAL_BUFFER :
-				HIR_LOCAL_STORAGE_SCALAR,
+			storage_class,
 			-1,
 			NULL,
 			NULL);
@@ -2616,29 +2944,41 @@ hir_wrap_freeze(
 	call = hir_malloc(sizeof(struct hir_expr));
 	fn = hir_malloc(sizeof(struct hir_expr));
 	fn_term = hir_malloc(sizeof(struct hir_term));
-	if (call == NULL || fn == NULL || fn_term == NULL) {
+	if (call == NULL) {
 		hir_out_of_memory();
 		return false;
 	}
-	memset(call, 0, sizeof(struct hir_expr));
-	memset(fn, 0, sizeof(struct hir_expr));
-	memset(fn_term, 0, sizeof(struct hir_term));
 
+	if (fn == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+
+	if (fn_term == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+
+	memset(fn_term, 0, sizeof(struct hir_term));
 	fn_term->type = HIR_TERM_SYMBOL;
 	fn_term->val.symbol = hir_strdup("Dict.freeze");
 	if (fn_term->val.symbol == NULL) {
 		hir_out_of_memory();
 		return false;
 	}
+
+	memset(fn, 0, sizeof(struct hir_expr));
 	fn->type = HIR_EXPR_TERM;
 	fn->val.term.term = fn_term;
 
+	memset(call, 0, sizeof(struct hir_expr));
 	call->type = HIR_EXPR_CALL;
 	call->val.call.func = fn;
 	call->val.call.arg_count = 1;
 	call->val.call.arg[0] = inner;
 
 	*hexpr = call;
+
 	return true;
 }
 
@@ -2677,12 +3017,15 @@ hir_free_block(
 {
 	uint32_t i;
 
+	/* Free the resources owned by this block type. */
 	switch (b->type) {
 	case HIR_BLOCK_FUNC:
 		if (b->val.func.name != NULL) {
 			hir_free(b->val.func.name);
 			b->val.func.name = NULL;
 		}
+
+		/* Free every function parameter name. */
 		for (i = 0; i < b->val.func.param_count; i++) {
 			if (b->val.func.param_name[i] != NULL) {
 				hir_free(b->val.func.param_name[i]);
@@ -2790,6 +3133,7 @@ hir_free_expr(
 {
 	uint32_t i;
 
+	/* Free the resources owned by this expression type. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		if (e->val.term.term != NULL) {
@@ -2892,6 +3236,8 @@ hir_free_expr(
 			hir_free_expr(e->val.call.func);
 			e->val.call.func = NULL;
 		}
+
+		/* Free every call argument. */
 		for (i = 0; i < e->val.call.arg_count; i++) {
 			if (e->val.call.arg[i] != NULL) {
 				hir_free_expr(e->val.call.arg[i]);
@@ -2908,6 +3254,8 @@ hir_free_expr(
 			hir_free(e->val.thiscall.func);
 			e->val.thiscall.func = NULL;
 		}
+
+		/* Free every method-call argument. */
 		for (i = 0; i < e->val.thiscall.arg_count; i++) {
 			if (e->val.thiscall.arg[i] != NULL) {
 				hir_free_expr(e->val.thiscall.arg[i]);
@@ -2916,6 +3264,8 @@ hir_free_expr(
 		}
 		break;
 	case HIR_EXPR_ARRAY:
+
+		/* Free every array element. */
 		for (i = 0; i < e->val.array.elem_count; i++) {
 			if (e->val.array.elem[i] != NULL) {
 				hir_free_expr(e->val.array.elem[i]);
@@ -2928,6 +3278,8 @@ hir_free_expr(
 		}
 		break;
 	case HIR_EXPR_DICT:
+
+		/* Free every dictionary entry. */
 		for (i = 0; i < e->val.dict.kv_count; i++) {
 			if (e->val.dict.key[i] != NULL) {
 				hir_free(e->val.dict.key[i]);
@@ -2997,6 +3349,8 @@ static void
 hir_free_term(
 	struct hir_term *t)
 {
+
+	/* Free the resources owned by this term type. */
 	switch (t->type) {
 	case HIR_TERM_INT:
 	case HIR_TERM_LONG:
@@ -3049,47 +3403,11 @@ hir_fatal(
 	 * elback, cback) formats the file name and line by itself, so
 	 * embedding them here used to print them twice.
 	 */
-	snprintf(hir_error_message,
-		 sizeof(hir_error_message),
-		 "%s",
-		 msg);
-}
-
-/* Show out-of-memory error. */
-void hir_out_of_memory(void)
-{
-	snprintf(hir_error_message,
-		 sizeof(hir_error_message),
-		 "%s: Out of memory error.",
-		 hir_file_name != NULL ? hir_file_name : "");
-}
-
-/*
- * Allocator
- */
-
-/* malloc() alternative. */
-void *
-hir_malloc(
-	size_t size)
-{
-	return arena_alloc(&hir_arena, size);
-}
-
-/* strdup() alternative. */
-char *
-hir_strdup(const char *s)
-{
-	char *ret;
-	size_t len;
-
-	len = strlen(s) + 1;
-	ret = arena_alloc(&hir_arena, len);
-	if (ret == NULL)
-		return NULL;
-
-	memcpy(ret, s, len);
-	return ret;
+	snprintf(
+		hir_error_message,
+		sizeof(hir_error_message),
+		"%s",
+		msg);
 }
 
 /* free() alternative. */
@@ -3105,86 +3423,6 @@ hir_free(
 	 */
 }
 
-/* Allocate a fresh debug block id (shared with the optimizer passes). */
-int
-hir_next_block_id(void)
-{
-	return block_id_top++;
-}
-
-/*
- * HIR Optimizer Driver
- */
-bool
-hir_optimize_func(
-	struct hir_block *func_block,
-	int optimize_level,
-	bool print_simd_info)
-{
-	assert(func_block != NULL);
-	assert(func_block->type == HIR_BLOCK_FUNC);
-
-#if !defined(NOCT_USE_OPTIMIZER)
-	UNUSED_PARAMETER(optimize_level);
-	UNUSED_PARAMETER(print_simd_info);
-
-	return true;
-#else
-	if (getenv("NOCT_PARALLEL_DEBUG") != NULL &&
-	    !hir_parallel_diagnose_func(func_block, stderr,
-					"parallel-analysis"))
-		return false;
-
-	if (optimize_level >= 1) {
-		/* Function inlining. */
-		if (!hir_opt_inline_func(func_block))
-			return false;
-
-		/* Typed ops. */
-		if (!hir_opt_typed_func(func_block))
-			return false;
-	}
-
-	if (optimize_level >= 2) {
-		/* ABCE. */
-		if (!hir_opt_abce_func(func_block))
-			return false;
-
-		/* SIMD vectorization. */
-		if (!hir_opt_simd_func(func_block, print_simd_info))
-			return false;
-
-		/* Loop unrolling. */
-		if (!hir_opt_unroll_func(func_block))
-			return false;
-	}
-
-	if (optimize_level >= 1) {
-		/* CSE. */
-		if (!hir_opt_cse_func(func_block))
-			return false;
-
-		/* After CSE: the lattice must see CAPTURE home assignments. */
-		if (!hir_opt_typed_func(func_block))
-			return false;
-	}
-
-
-	return true;
-#endif
-}
-
-/*
- * Debug Printer
- */
-
-void
-hir_dump_block(
-	struct hir_block *block)
-{
-	hir_dump_block_at_level(block, 0);
-}
-
 static void
 hir_dump_block_at_level(
 	struct hir_block *block,
@@ -3192,17 +3430,25 @@ hir_dump_block_at_level(
 {
 	int i;
 
+	/* Dump every block in the successor chain. */
 	while (block != NULL) {
-		for (i = 0; i < level * 4; i++) printf(" ");
+
+		/* Indent the current block. */
+		for (i = 0; i < level * 4; i++)
+			printf(" ");
 		printf("BLOCK(%d)", block->id);
 
+		/* Dump the fields selected by the block type. */
 		switch (block->type) {
 		case HIR_BLOCK_FUNC:
 		{
 			printf(" FUNC parent=%d, succ=%d\n", block->parent->id, block->succ->id);
 
 			if (block->val.func.inner != NULL) {
-				for (i = 0; i < (level + 1) * 4; i++) printf(" ");
+
+				/* Indent the inner-block marker. */
+				for (i = 0; i < (level + 1) * 4; i++)
+					printf(" ");
 				printf("[INNER]\n");
 				hir_dump_block_at_level(block->val.func.inner, level + 1);
 			}
@@ -3211,13 +3457,16 @@ hir_dump_block_at_level(
 		case HIR_BLOCK_BASIC:
 		{
 			struct hir_stmt *s;
+
 			if (block->succ != NULL)
 				printf(" BASIC parent=%d, succ=%d\n", block->parent->id, block->succ->id);
 			else
 				printf(" BASIC succ=NULL\n");
 			s = block->val.basic.stmt_list;
+
+			/* Walk every statement reserved for detailed dumping. */
 			while (s != NULL) {
-				//hir_dump_stmt(level + 1, s);
+				/* hir_dump_stmt(level + 1, s); */
 				s = s->next;
 			}
 			break;
@@ -3230,7 +3479,10 @@ hir_dump_block_at_level(
 				printf(" FOR succ=NULL\n");
 
 			if (block->val.for_.inner != NULL) {
-				for (i = 0; i < (level + 1) * 4; i++) printf(" ");
+
+				/* Indent the loop-body marker. */
+				for (i = 0; i < (level + 1) * 4; i++)
+					printf(" ");
 				printf("[INNER]\n");
 				hir_dump_block_at_level(block->val.for_.inner, level + 1);
 			}
@@ -3244,12 +3496,18 @@ hir_dump_block_at_level(
 		case HIR_BLOCK_IF:
 			printf(" IF parent=%d, succ=%d, prev=%d, next=%d\n", block->parent->id, block->succ->id, block->val.if_.chain_prev->id, block->val.if_.chain_next->id);
 			if (block->val.if_.inner != NULL) {
-				for (i = 0; i < (level + 1) * 4; i++) printf(" ");
+
+				/* Indent the conditional-body marker. */
+				for (i = 0; i < (level + 1) * 4; i++)
+					printf(" ");
 				printf("[INNER]\n");
 				hir_dump_block_at_level(block->val.if_.inner, level + 1);
 			}
 			if (block->val.if_.chain_next != NULL) {
-				for (i = 0; i < (level + 1) * 4; i++) printf(" ");
+
+				/* Indent the conditional-chain marker. */
+				for (i = 0; i < (level + 1) * 4; i++)
+					printf(" ");
 				printf("[CHAIN]\n");
 				hir_dump_block_at_level(block->val.if_.chain_next, level + 1);
 			}
@@ -3264,7 +3522,10 @@ hir_dump_block_at_level(
 
 		if (block->succ != NULL) {
 			if (block->stop) {
-				for (i = 0; i < level * 4; i++) printf(" ");
+
+				/* Indent the stop marker. */
+				for (i = 0; i < level * 4; i++)
+					printf(" ");
 				printf("[STOP %d]\n", block->succ->id);
 				break;
 			}

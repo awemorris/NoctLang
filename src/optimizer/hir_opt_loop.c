@@ -9,7 +9,7 @@
  * Target-neutral source-HIR loop effect collection.
  */
 
-#include "hir_opt_paralle.h"
+#include "hir_opt_parallel.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -42,6 +42,9 @@ static bool hir_record_access(struct hir_analyze_ctx *ctx, const char *symbol, c
 static bool hir_record_call(struct hir_analyze_ctx *ctx, const struct hir_expr *expr, bool pure);
 static bool hir_collect_top_loops(struct hir_block *func, struct hir_block *block, const struct hir_memory_catalog *catalog, FILE *fp, const char *prefix, struct hir_block **visited, uint32_t *visited_count, uint32_t *loop_count);
 
+/*
+ * Initializes a memory-object catalog.
+ */
 void
 hir_memory_catalog_init(
 	struct hir_memory_catalog *catalog)
@@ -51,6 +54,9 @@ hir_memory_catalog_init(
 	memset(catalog, 0, sizeof(*catalog));
 }
 
+/*
+ * Adds one memory object to a catalog.
+ */
 bool
 hir_memory_catalog_add(
 	struct hir_memory_catalog *catalog,
@@ -58,19 +64,30 @@ hir_memory_catalog_add(
 {
 	uint32_t i;
 
-	if (catalog == NULL || object == NULL || object->symbol == NULL)
+	if (catalog == NULL)
+		return false;
+	if (object == NULL)
+		return false;
+	if (object->symbol == NULL)
 		return false;
 	if (catalog->count >= HIR_PARALLEL_MAX_OBJECTS)
 		return false;
+
+	/* Reject a second object with the same symbol. */
 	for (i = 0; i < catalog->count; i++) {
 		if (strcmp(catalog->object[i].symbol, object->symbol) == 0)
 			return false;
 	}
+
 	catalog->object[catalog->count] = *object;
 	catalog->count++;
+
 	return true;
 }
 
+/*
+ * Finds a memory object by symbol.
+ */
 const struct hir_memory_object *
 hir_memory_catalog_find(
 	const struct hir_memory_catalog *catalog,
@@ -78,15 +95,23 @@ hir_memory_catalog_find(
 {
 	uint32_t i;
 
-	if (catalog == NULL || symbol == NULL)
+	if (catalog == NULL)
 		return NULL;
+	if (symbol == NULL)
+		return NULL;
+
+	/* Search the catalog for the requested symbol. */
 	for (i = 0; i < catalog->count; i++) {
 		if (strcmp(catalog->object[i].symbol, symbol) == 0)
 			return &catalog->object[i];
 	}
+
 	return NULL;
 }
 
+/*
+ * Builds the memory-object catalog for one HIR function.
+ */
 bool
 hir_memory_catalog_build_func(
 	struct hir_block *func,
@@ -97,14 +122,23 @@ hir_memory_catalog_build_func(
 	uint32_t i;
 	int param;
 
-	if (func == NULL || func->type != HIR_BLOCK_FUNC || catalog == NULL)
+	if (func == NULL)
 		return false;
+	if (func->type != HIR_BLOCK_FUNC)
+		return false;
+	if (catalog == NULL)
+		return false;
+
 	hir_memory_catalog_init(catalog);
 	catalog->allow_non_affine_reads = true;
+
+	/* Add every declared logical buffer to the catalog. */
 	for (local = func->val.func.local; local != NULL; local = local->next) {
-		if (local->storage_class != HIR_LOCAL_STORAGE_LOGICAL_BUFFER ||
-		    local->declared_packed_type < 0)
+		if (local->storage_class != HIR_LOCAL_STORAGE_LOGICAL_BUFFER)
 			continue;
+		if (local->declared_packed_type < 0)
+			continue;
+
 		memset(&object, 0, sizeof(object));
 		object.id = (int)catalog->count;
 		object.symbol = local->symbol;
@@ -115,33 +149,51 @@ hir_memory_catalog_build_func(
 		object.writable = true;
 		object.alias_class = local->index;
 		object.length_expr = NULL;
-		if (local->initializer != NULL &&
-		    local->initializer->type == HIR_EXPR_THISCALL &&
-		    local->initializer->val.thiscall.arg_count == 1)
-			object.length_expr = local->initializer->val.thiscall.arg[0];
+
+		if (local->initializer != NULL) {
+			if (local->initializer->type == HIR_EXPR_THISCALL &&
+			    local->initializer->val.thiscall.arg_count == 1) {
+				object.length_expr =
+					local->initializer->val.thiscall.arg[0];
+			}
+		}
+
 		if (local->is_parameter) {
 			object.storage = HIR_MEMORY_STORAGE_PARAMETER;
 			object.alias_kind = HIR_ALIAS_MAY_ALIAS;
 			param = -1;
+
+			/* Find the parameter slot for this buffer. */
 			for (i = 0; i < func->val.func.param_count; i++) {
-				if (strcmp(func->val.func.param_name[i],
-					   local->symbol) == 0) {
+				if (strcmp(
+					    func->val.func.param_name[i],
+					    local->symbol) == 0) {
 					param = (int)i;
 					break;
 				}
 			}
-			if (param >= 0 && func->val.func.param_restricted[param])
-				object.alias_kind = HIR_ALIAS_CHECKED_NOALIAS;
+
+			if (param >= 0) {
+				if (func->val.func.param_restricted[param]) {
+					object.alias_kind =
+						HIR_ALIAS_CHECKED_NOALIAS;
+				}
+			}
 		} else {
 			object.storage = HIR_MEMORY_STORAGE_LOCAL;
 			object.alias_kind = HIR_ALIAS_UNIQUE;
 		}
+
 		if (!hir_memory_catalog_add(catalog, &object))
 			return false;
 	}
+
 	return true;
 }
 
+/*
+ * Normalizes one index expression into an affine form.
+ */
 bool
 hir_parallel_normalize_index(
 	const struct hir_expr *expr,
@@ -157,84 +209,131 @@ hir_parallel_normalize_index(
 	index->kind = HIR_AFFINE_UNKNOWN;
 	index->invariant_sign = 1;
 	index->expr = expr;
+
+	/* Remove redundant parentheses from the index expression. */
 	while (expr != NULL && expr->type == HIR_EXPR_PAR)
 		expr = expr->val.unary.expr;
+
 	symbol = hir_term_symbol(expr);
-	if (symbol != NULL && counter != NULL && strcmp(symbol, counter) == 0) {
-		index->kind = HIR_AFFINE_COUNTER_OFFSET;
-		return true;
-	}
 	if (symbol != NULL) {
+		if (counter != NULL) {
+			if (strcmp(symbol, counter) == 0) {
+				index->kind = HIR_AFFINE_COUNTER_OFFSET;
+				return true;
+			}
+		}
+
 		index->kind = HIR_AFFINE_INVARIANT;
 		index->invariant_symbol = symbol;
 		return true;
 	}
+
 	if (hir_expr_int(expr, &constant)) {
 		index->kind = HIR_AFFINE_INVARIANT;
 		index->offset = constant;
 		return true;
 	}
-	if (expr == NULL ||
-	    (expr->type != HIR_EXPR_PLUS && expr->type != HIR_EXPR_MINUS))
+
+	if (expr == NULL)
 		return true;
+	if (expr->type != HIR_EXPR_PLUS && expr->type != HIR_EXPR_MINUS)
+		return true;
+
 	left = expr->val.binary.expr[0];
 	right = expr->val.binary.expr[1];
 	symbol = hir_term_symbol(left);
-	if (symbol != NULL && counter != NULL && strcmp(symbol, counter) == 0 &&
-	    hir_expr_int(right, &constant)) {
-		if (expr->type == HIR_EXPR_MINUS && constant == INT_MIN)
+	if (symbol != NULL && counter != NULL) {
+		if (strcmp(symbol, counter) == 0) {
+			if (hir_expr_int(right, &constant)) {
+				if (expr->type == HIR_EXPR_MINUS &&
+				    constant == INT_MIN) {
+					return true;
+				}
+				if (expr->type == HIR_EXPR_MINUS)
+					constant = -constant;
+
+				index->kind = HIR_AFFINE_COUNTER_OFFSET;
+				index->offset = constant;
+				return true;
+			}
+
+			symbol = hir_term_symbol(right);
+			if (symbol != NULL) {
+				if (strcmp(symbol, counter) != 0) {
+					index->kind = HIR_AFFINE_COUNTER_OFFSET;
+					index->invariant_symbol = symbol;
+					if (expr->type == HIR_EXPR_MINUS)
+						index->invariant_sign = -1;
+					else
+						index->invariant_sign = 1;
+				}
+			}
+
 			return true;
-		if (expr->type == HIR_EXPR_MINUS)
-			constant = -constant;
-		index->kind = HIR_AFFINE_COUNTER_OFFSET;
-		index->offset = constant;
-		return true;
-	}
-	if (symbol != NULL && counter != NULL && strcmp(symbol, counter) == 0) {
-		symbol = hir_term_symbol(right);
-		if (symbol != NULL && strcmp(symbol, counter) != 0) {
-			index->kind = HIR_AFFINE_COUNTER_OFFSET;
-			index->invariant_symbol = symbol;
-			index->invariant_sign = expr->type == HIR_EXPR_MINUS ? -1 : 1;
 		}
-		return true;
 	}
+
 	if (expr->type == HIR_EXPR_PLUS) {
 		symbol = hir_term_symbol(right);
-		if (symbol != NULL && counter != NULL &&
-		    strcmp(symbol, counter) == 0 &&
-		    hir_expr_int(left, &constant)) {
-			index->kind = HIR_AFFINE_COUNTER_OFFSET;
-			index->offset = constant;
-			return true;
-		}
-		if (symbol != NULL && counter != NULL &&
-		    strcmp(symbol, counter) == 0) {
-			symbol = hir_term_symbol(left);
-			if (symbol != NULL && strcmp(symbol, counter) != 0) {
-				index->kind = HIR_AFFINE_COUNTER_OFFSET;
-				index->invariant_symbol = symbol;
-				index->invariant_sign = 1;
+		if (symbol != NULL && counter != NULL) {
+			if (strcmp(symbol, counter) == 0) {
+				if (hir_expr_int(left, &constant)) {
+					index->kind = HIR_AFFINE_COUNTER_OFFSET;
+					index->offset = constant;
+					return true;
+				}
+
+				symbol = hir_term_symbol(left);
+				if (symbol != NULL) {
+					if (strcmp(symbol, counter) != 0) {
+						index->kind =
+							HIR_AFFINE_COUNTER_OFFSET;
+						index->invariant_symbol = symbol;
+						index->invariant_sign = 1;
+					}
+				}
 			}
 		}
 	}
+
 	return true;
 }
 
+/*
+ * Compares two normalized affine indices.
+ */
 bool
 hir_parallel_affine_equal(
 	const struct hir_affine_index *first,
 	const struct hir_affine_index *second)
 {
-	if (first == NULL || second == NULL || first->kind != second->kind ||
-	    first->offset != second->offset ||
-	    first->invariant_sign != second->invariant_sign)
+	if (first == NULL)
 		return false;
-	if (first->invariant_symbol == NULL || second->invariant_symbol == NULL)
-		return first->invariant_symbol == second->invariant_symbol;
-	return strcmp(first->invariant_symbol, second->invariant_symbol) == 0;
+	if (second == NULL)
+		return false;
+	if (first->kind != second->kind)
+		return false;
+	if (first->offset != second->offset)
+		return false;
+	if (first->invariant_sign != second->invariant_sign)
+		return false;
+	if (first->invariant_symbol == NULL &&
+	    second->invariant_symbol == NULL) {
+		return true;
+	}
+	if (first->invariant_symbol == NULL)
+		return false;
+	if (second->invariant_symbol == NULL)
+		return false;
+	if (strcmp(first->invariant_symbol, second->invariant_symbol) != 0)
+		return false;
+
+	return true;
 }
 
+/*
+ * Collects the effects of one HIR loop.
+ */
 bool
 hir_loop_analyze(
 	struct hir_block *func,
@@ -247,13 +346,22 @@ hir_loop_analyze(
 
 	if (summary == NULL)
 		return false;
+
 	*summary = NULL;
-	if (func == NULL || func->type != HIR_BLOCK_FUNC || loop == NULL ||
-	    catalog == NULL)
+
+	if (func == NULL)
 		return false;
+	if (func->type != HIR_BLOCK_FUNC)
+		return false;
+	if (loop == NULL)
+		return false;
+	if (catalog == NULL)
+		return false;
+
 	result = noct_calloc(1, sizeof(*result));
 	if (result == NULL)
 		return false;
+
 	result->func = func;
 	result->loop = loop;
 	result->catalog = catalog;
@@ -264,7 +372,14 @@ hir_loop_analyze(
 	result->parallel_reason = HIR_PAR_REASON_NONE;
 	result->range_status = HIR_RANGE_UNCHECKED;
 	result->range_reason = HIR_PAR_REASON_NONE;
-	if (loop->type != HIR_BLOCK_FOR || !loop->val.for_.is_ranged) {
+
+	if (loop->type != HIR_BLOCK_FOR) {
+		result->analysis_status = HIR_ANALYSIS_UNKNOWN;
+		result->analysis_reason = HIR_PAR_REASON_NOT_RANGED_LOOP;
+		*summary = result;
+		return true;
+	}
+	if (!loop->val.for_.is_ranged) {
 		result->analysis_status = HIR_ANALYSIS_UNKNOWN;
 		result->analysis_reason = HIR_PAR_REASON_NOT_RANGED_LOOP;
 		*summary = result;
@@ -273,10 +388,12 @@ hir_loop_analyze(
 	result->counter_symbol = loop->val.for_.counter_symbol;
 	result->start = loop->val.for_.start;
 	result->stop = loop->val.for_.stop;
+
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.summary = result;
 	ctx.catalog = catalog;
 	ctx.line = loop->line;
+
 	if (!hir_collect_block(&ctx, loop->val.for_.inner)) {
 		hir_loop_summary_free(result);
 		return false;
@@ -285,10 +402,15 @@ hir_loop_analyze(
 		hir_loop_summary_free(result);
 		return false;
 	}
+
 	*summary = result;
+
 	return true;
 }
 
+/*
+ * Frees one loop-analysis summary.
+ */
 void
 hir_loop_summary_free(
 	struct hir_loop_summary *summary)
@@ -296,6 +418,9 @@ hir_loop_summary_free(
 	noct_free(summary);
 }
 
+/*
+ * Writes one loop-analysis summary.
+ */
 void
 hir_loop_summary_dump(
 	FILE *fp,
@@ -306,76 +431,135 @@ hir_loop_summary_dump(
 	struct hir_dosum_result dosum;
 	const char *class_name;
 	const char *class_reason;
+	const char *display_prefix;
+	const char *status_name;
 
-	if (fp == NULL || summary == NULL)
+	if (fp == NULL)
 		return;
+	if (summary == NULL)
+		return;
+
 	class_name = "unknown";
 	class_reason = hir_parallel_reason_string(summary->analysis_reason);
+
 	if (hir_doall_classify(summary, &doall)) {
 		if (doall.classification == HIR_PAR_CLASS_DOALL)
 			class_name = "doall";
 		else if (doall.classification == HIR_PAR_CLASS_DEPENDENT)
 			class_name = "dependent";
+
 		class_reason = hir_parallel_reason_string(doall.reason);
-		if (doall.classification == HIR_PAR_CLASS_DEPENDENT &&
-		    hir_dosum_classify(summary, &dosum) &&
-		    dosum.classification == HIR_PAR_CLASS_DOSUM) {
-			class_name = "dosum";
-			class_reason = hir_parallel_reason_string(dosum.reason);
+
+		if (doall.classification == HIR_PAR_CLASS_DEPENDENT) {
+			if (hir_dosum_classify(summary, &dosum)) {
+				if (dosum.classification == HIR_PAR_CLASS_DOSUM) {
+					class_name = "dosum";
+					class_reason =
+						hir_parallel_reason_string(dosum.reason);
+				}
+			}
 		}
 	}
-	fprintf(fp,
+
+	if (prefix != NULL)
+		display_prefix = prefix;
+	else
+		display_prefix = "parallel-analysis";
+
+	if (summary->analysis_status == HIR_ANALYSIS_COMPLETE)
+		status_name = "complete";
+	else
+		status_name = "unknown";
+
+	fprintf(
+		fp,
 		"%s line=%d status=%s reason=%s class=%s class-reason=%s accesses=%u scalars=%u calls=%u",
-		prefix != NULL ? prefix : "parallel-analysis",
+		display_prefix,
 		summary->line,
-		summary->analysis_status == HIR_ANALYSIS_COMPLETE ?
-			"complete" : "unknown",
+		status_name,
 		hir_parallel_reason_string(summary->analysis_reason),
 		class_name,
 		class_reason,
 		(unsigned int)summary->access_count,
 		(unsigned int)summary->scalar_count,
 		(unsigned int)summary->call_count);
-	fprintf(fp, " alias-guards=%u",
+	fprintf(
+		fp,
+		" alias-guards=%u",
 		(unsigned int)doall.alias_requirement_count);
 	fputc('\n', fp);
 }
 
+/*
+ * Returns the diagnostic name for a parallel-analysis reason.
+ */
 const char *
 hir_parallel_reason_string(
 	int reason)
 {
+
+	/* Map every analysis reason to its stable diagnostic spelling. */
 	switch (reason) {
-	case HIR_PAR_REASON_NONE: return "none";
-	case HIR_PAR_REASON_INVALID_ARGUMENT: return "invalid-argument";
-	case HIR_PAR_REASON_NOT_RANGED_LOOP: return "not-ranged-loop";
-	case HIR_PAR_REASON_NESTED_LOOP: return "nested-loop";
-	case HIR_PAR_REASON_WHILE_LOOP: return "while-loop";
-	case HIR_PAR_REASON_UNKNOWN_MEMORY: return "unknown-memory";
-	case HIR_PAR_REASON_NON_AFFINE_INDEX: return "non-affine-index";
-	case HIR_PAR_REASON_UNKNOWN_CALL: return "unknown-call";
-	case HIR_PAR_REASON_ACCESS_LIMIT: return "access-limit";
-	case HIR_PAR_REASON_SCALAR_LIMIT: return "scalar-limit";
-	case HIR_PAR_REASON_CALL_LIMIT: return "call-limit";
-	case HIR_PAR_REASON_OBJECT_LIMIT: return "object-limit";
-	case HIR_PAR_REASON_DEPENDENCE_LIMIT: return "dependence-limit";
-	case HIR_PAR_REASON_SCALAR_CARRIED: return "scalar-carried";
-	case HIR_PAR_REASON_OUTER_SCALAR_WRITE: return "outer-scalar-write";
-	case HIR_PAR_REASON_MEMORY_RAW: return "memory-raw";
-	case HIR_PAR_REASON_MEMORY_WAR: return "memory-war";
-	case HIR_PAR_REASON_MEMORY_WAW: return "memory-waw";
-	case HIR_PAR_REASON_MAY_ALIAS: return "may-alias";
-	case HIR_PAR_REASON_REDUCTION_SHAPE: return "reduction-shape";
-	case HIR_PAR_REASON_REDUCTION_IDENTITY: return "reduction-identity";
-	case HIR_PAR_REASON_REDUCTION_TYPE: return "reduction-type";
-	case HIR_PAR_REASON_REDUCTION_EFFECT: return "reduction-effect";
-	case HIR_PAR_REASON_REDUCTION_PATH: return "reduction-path";
-	case HIR_PAR_REASON_OUT_OF_MEMORY: return "out-of-memory";
-	case HIR_PAR_REASON_INTERNAL: return "internal";
-	default: return "unknown-reason";
+	case HIR_PAR_REASON_NONE:
+		return "none";
+	case HIR_PAR_REASON_INVALID_ARGUMENT:
+		return "invalid-argument";
+	case HIR_PAR_REASON_NOT_RANGED_LOOP:
+		return "not-ranged-loop";
+	case HIR_PAR_REASON_NESTED_LOOP:
+		return "nested-loop";
+	case HIR_PAR_REASON_WHILE_LOOP:
+		return "while-loop";
+	case HIR_PAR_REASON_UNKNOWN_MEMORY:
+		return "unknown-memory";
+	case HIR_PAR_REASON_NON_AFFINE_INDEX:
+		return "non-affine-index";
+	case HIR_PAR_REASON_UNKNOWN_CALL:
+		return "unknown-call";
+	case HIR_PAR_REASON_ACCESS_LIMIT:
+		return "access-limit";
+	case HIR_PAR_REASON_SCALAR_LIMIT:
+		return "scalar-limit";
+	case HIR_PAR_REASON_CALL_LIMIT:
+		return "call-limit";
+	case HIR_PAR_REASON_OBJECT_LIMIT:
+		return "object-limit";
+	case HIR_PAR_REASON_DEPENDENCE_LIMIT:
+		return "dependence-limit";
+	case HIR_PAR_REASON_SCALAR_CARRIED:
+		return "scalar-carried";
+	case HIR_PAR_REASON_OUTER_SCALAR_WRITE:
+		return "outer-scalar-write";
+	case HIR_PAR_REASON_MEMORY_RAW:
+		return "memory-raw";
+	case HIR_PAR_REASON_MEMORY_WAR:
+		return "memory-war";
+	case HIR_PAR_REASON_MEMORY_WAW:
+		return "memory-waw";
+	case HIR_PAR_REASON_MAY_ALIAS:
+		return "may-alias";
+	case HIR_PAR_REASON_REDUCTION_SHAPE:
+		return "reduction-shape";
+	case HIR_PAR_REASON_REDUCTION_IDENTITY:
+		return "reduction-identity";
+	case HIR_PAR_REASON_REDUCTION_TYPE:
+		return "reduction-type";
+	case HIR_PAR_REASON_REDUCTION_EFFECT:
+		return "reduction-effect";
+	case HIR_PAR_REASON_REDUCTION_PATH:
+		return "reduction-path";
+	case HIR_PAR_REASON_OUT_OF_MEMORY:
+		return "out-of-memory";
+	case HIR_PAR_REASON_INTERNAL:
+		return "internal";
+	default:
+		return "unknown-reason";
 	}
 }
 
+/*
+ * Writes parallel-analysis diagnostics for one HIR function.
+ */
 bool
 hir_parallel_diagnose_func(
 	struct hir_block *func,
@@ -387,21 +571,36 @@ hir_parallel_diagnose_func(
 	uint32_t visited_count;
 	uint32_t loop_count;
 
-	if (func == NULL || func->type != HIR_BLOCK_FUNC || fp == NULL)
+	if (func == NULL)
 		return false;
+	if (func->type != HIR_BLOCK_FUNC)
+		return false;
+	if (fp == NULL)
+		return false;
+
 	if (!hir_memory_catalog_build_func(func, &catalog))
 		return false;
+
 	visited_count = 0;
 	loop_count = 0;
-	return hir_collect_top_loops(func, func->val.func.inner, &catalog, fp,
-				     prefix,
-				     visited, &visited_count, &loop_count);
+
+	return hir_collect_top_loops(
+		func,
+		func->val.func.inner,
+		&catalog,
+		fp,
+		prefix,
+		visited,
+		&visited_count,
+		&loop_count);
 }
 
 static int
 hir_packed_width(
 	int kind)
 {
+
+	/* Map each packed element kind to its byte width. */
 	switch (kind) {
 	case NOCT_PACKED_INT8:
 	case NOCT_PACKED_UINT8:
@@ -426,10 +625,15 @@ static const char *
 hir_term_symbol(
 	const struct hir_expr *expr)
 {
-	if (expr == NULL || expr->type != HIR_EXPR_TERM ||
-	    expr->val.term.term == NULL ||
-	    expr->val.term.term->type != HIR_TERM_SYMBOL)
+	if (expr == NULL)
 		return NULL;
+	if (expr->type != HIR_EXPR_TERM)
+		return NULL;
+	if (expr->val.term.term == NULL)
+		return NULL;
+	if (expr->val.term.term->type != HIR_TERM_SYMBOL)
+		return NULL;
+
 	return expr->val.term.term->val.symbol;
 }
 
@@ -438,11 +642,17 @@ hir_expr_int(
 	const struct hir_expr *expr,
 	int *value)
 {
-	if (expr == NULL || expr->type != HIR_EXPR_TERM ||
-	    expr->val.term.term == NULL ||
-	    expr->val.term.term->type != HIR_TERM_INT)
+	if (expr == NULL)
 		return false;
+	if (expr->type != HIR_EXPR_TERM)
+		return false;
+	if (expr->val.term.term == NULL)
+		return false;
+	if (expr->val.term.term->type != HIR_TERM_INT)
+		return false;
+
 	*value = expr->val.term.term->val.i;
+
 	return true;
 }
 
@@ -466,29 +676,41 @@ hir_scalar_get(
 	struct hir_scalar_effect *effect;
 	struct hir_local *local;
 
+	/* Find an existing scalar-effect record. */
 	for (i = 0; i < ctx->summary->scalar_count; i++) {
 		if (strcmp(ctx->summary->scalar[i].symbol, symbol) == 0)
 			return &ctx->summary->scalar[i];
 	}
+
 	if (ctx->summary->scalar_count >= HIR_PARALLEL_MAX_SCALARS) {
 		hir_mark_unknown(ctx, HIR_PAR_REASON_SCALAR_LIMIT);
 		return NULL;
 	}
+
 	effect = &ctx->summary->scalar[ctx->summary->scalar_count++];
 	memset(effect, 0, sizeof(*effect));
 	effect->symbol = symbol;
-	effect->is_counter = ctx->summary->counter_symbol != NULL &&
-		strcmp(symbol, ctx->summary->counter_symbol) == 0;
+	effect->is_counter = false;
+	if (ctx->summary->counter_symbol != NULL) {
+		if (strcmp(symbol, ctx->summary->counter_symbol) == 0)
+			effect->is_counter = true;
+	}
+
 	local = ctx->summary->func->val.func.local;
+
+	/* Locate the declaration associated with this symbol. */
 	while (local != NULL) {
 		if (strcmp(local->symbol, symbol) == 0) {
-			effect->declared_inside_loop =
-				local->declaration_stmt != NULL &&
-				local->declaration_stmt == ctx->stmt;
+			effect->declared_inside_loop = false;
+			if (local->declaration_stmt != NULL) {
+				if (local->declaration_stmt == ctx->stmt)
+					effect->declared_inside_loop = true;
+			}
 			break;
 		}
 		local = local->next;
 	}
+
 	return effect;
 }
 
@@ -504,6 +726,7 @@ hir_record_scalar(
 	effect = hir_scalar_get(ctx, symbol);
 	if (effect == NULL)
 		return true;
+
 	if (write) {
 		effect->writes++;
 	} else {
@@ -511,13 +734,18 @@ hir_record_scalar(
 		if (effect->writes == 0)
 			effect->read_before_write = true;
 	}
+
 	local = ctx->summary->func->val.func.local;
+
+	/* Mark a scalar declared by the current statement. */
 	while (local != NULL) {
-		if (strcmp(local->symbol, symbol) == 0 &&
-		    local->declaration_stmt == ctx->stmt)
-			effect->declared_inside_loop = true;
+		if (strcmp(local->symbol, symbol) == 0) {
+			if (local->declaration_stmt == ctx->stmt)
+				effect->declared_inside_loop = true;
+		}
 		local = local->next;
 	}
+
 	return true;
 }
 
@@ -536,23 +764,37 @@ hir_record_access(
 		hir_mark_unknown(ctx, HIR_PAR_REASON_UNKNOWN_MEMORY);
 		return true;
 	}
+
 	if (ctx->summary->access_count >= HIR_PARALLEL_MAX_ACCESSES) {
 		hir_mark_unknown(ctx, HIR_PAR_REASON_ACCESS_LIMIT);
 		return true;
 	}
+
 	access = &ctx->summary->access[ctx->summary->access_count++];
 	memset(access, 0, sizeof(*access));
-	access->kind = write ? HIR_MEMORY_WRITE : HIR_MEMORY_READ;
+	if (write)
+		access->kind = HIR_MEMORY_WRITE;
+	else
+		access->kind = HIR_MEMORY_READ;
 	access->object_id = object->id;
 	access->element_kind = object->element_kind;
 	access->line = ctx->line;
-	if (!hir_parallel_normalize_index(index_expr,
-					  ctx->summary->counter_symbol,
-					  &access->index))
+
+	if (!hir_parallel_normalize_index(
+		    index_expr,
+		    ctx->summary->counter_symbol,
+		    &access->index)) {
 		return false;
-	if (access->index.kind == HIR_AFFINE_UNKNOWN &&
-	    (write || !ctx->catalog->allow_non_affine_reads))
-		hir_mark_unknown(ctx, HIR_PAR_REASON_NON_AFFINE_INDEX);
+	}
+
+	if (access->index.kind == HIR_AFFINE_UNKNOWN) {
+		if (write || !ctx->catalog->allow_non_affine_reads) {
+			hir_mark_unknown(
+				ctx,
+				HIR_PAR_REASON_NON_AFFINE_INDEX);
+		}
+	}
+
 	return true;
 }
 
@@ -568,12 +810,14 @@ hir_record_call(
 		hir_mark_unknown(ctx, HIR_PAR_REASON_CALL_LIMIT);
 		return true;
 	}
+
 	call = &ctx->summary->call[ctx->summary->call_count++];
 	call->expr = expr;
 	call->line = ctx->line;
 	call->is_pure = pure;
 	if (!pure)
 		hir_mark_unknown(ctx, HIR_PAR_REASON_UNKNOWN_CALL);
+
 	return true;
 }
 
@@ -585,10 +829,13 @@ hir_collect_expr(
 {
 	uint32_t i;
 	const char *symbol;
+	bool access_write;
 	bool pure;
 
 	if (expr == NULL)
 		return true;
+
+	/* Collect the effects contributed by this expression shape. */
 	switch (expr->type) {
 	case HIR_EXPR_TERM:
 		symbol = hir_term_symbol(expr);
@@ -601,10 +848,16 @@ hir_collect_expr(
 			hir_mark_unknown(ctx, HIR_PAR_REASON_UNKNOWN_MEMORY);
 			if (!hir_collect_expr(ctx, expr->val.binary.expr[0], false))
 				return false;
-		} else if (!hir_record_access(ctx, symbol,
-					     expr->val.binary.expr[1], write)) {
-			return false;
+		} else {
+			if (!hir_record_access(
+				    ctx,
+				    symbol,
+				    expr->val.binary.expr[1],
+				    write)) {
+				return false;
+			}
 		}
+
 		return hir_collect_expr(ctx, expr->val.binary.expr[1], false);
 	case HIR_EXPR_PLOAD32:
 	case HIR_EXPR_PLOADF32:
@@ -623,13 +876,30 @@ hir_collect_expr(
 			hir_mark_unknown(ctx, HIR_PAR_REASON_UNKNOWN_MEMORY);
 			return true;
 		}
-		if (!hir_record_access(ctx, symbol, expr->val.binary.expr[1],
-				       expr->type == HIR_EXPR_PSTORE8 ||
-				       expr->type == HIR_EXPR_PSTORE16 ||
-				       expr->type == HIR_EXPR_PSTORE32 ||
-				       expr->type == HIR_EXPR_PSTORE64 ||
-				       expr->type == HIR_EXPR_PSTOREF32))
+
+		access_write = false;
+
+		/* Distinguish packed stores from packed loads. */
+		switch (expr->type) {
+		case HIR_EXPR_PSTORE8:
+		case HIR_EXPR_PSTORE16:
+		case HIR_EXPR_PSTORE32:
+		case HIR_EXPR_PSTORE64:
+		case HIR_EXPR_PSTOREF32:
+			access_write = true;
+			break;
+		default:
+			break;
+		}
+
+		if (!hir_record_access(
+			    ctx,
+			    symbol,
+			    expr->val.binary.expr[1],
+			    access_write)) {
 			return false;
+		}
+
 		return hir_collect_expr(ctx, expr->val.binary.expr[1], false);
 	case HIR_EXPR_LT:
 	case HIR_EXPR_LTE:
@@ -672,43 +942,58 @@ hir_collect_expr(
 			return false;
 		if (!hir_collect_expr(ctx, expr->val.call.func, false))
 			return false;
+
+		/* Collect effects from every ordinary call argument. */
 		for (i = 0; i < expr->val.call.arg_count; i++) {
 			if (!hir_collect_expr(ctx, expr->val.call.arg[i], false))
 				return false;
 		}
+
 		return true;
 	case HIR_EXPR_THISCALL:
 		if (!hir_record_call(ctx, expr, false))
 			return false;
 		if (!hir_collect_expr(ctx, expr->val.thiscall.obj, false))
 			return false;
+
+		/* Collect effects from every method-call argument. */
 		for (i = 0; i < expr->val.thiscall.arg_count; i++) {
 			if (!hir_collect_expr(ctx, expr->val.thiscall.arg[i], false))
 				return false;
 		}
+
 		return true;
 	case HIR_EXPR_ARRAY:
+
+		/* Collect effects from every array element. */
 		for (i = 0; i < expr->val.array.elem_count; i++) {
 			if (!hir_collect_expr(ctx, expr->val.array.elem[i], false))
 				return false;
 		}
+
 		return true;
 	case HIR_EXPR_DICT:
+
+		/* Collect effects from every dictionary value. */
 		for (i = 0; i < expr->val.dict.kv_count; i++) {
 			if (!hir_collect_expr(ctx, expr->val.dict.value[i], false))
 				return false;
 		}
+
 		return true;
 	case HIR_EXPR_NEW:
 		return hir_collect_expr(ctx, expr->val.new_.init, false);
 	case HIR_EXPR_CAPTURE:
 		if (!hir_collect_expr(ctx, expr->val.capture.expr, false))
 			return false;
+
 		return hir_record_scalar(ctx, expr->val.capture.symbol, true);
 	case HIR_EXPR_SELECT:
-		if (!hir_collect_expr(ctx, expr->val.select.cond, false) ||
-		    !hir_collect_expr(ctx, expr->val.select.if_true, false))
+		if (!hir_collect_expr(ctx, expr->val.select.cond, false))
 			return false;
+		if (!hir_collect_expr(ctx, expr->val.select.if_true, false))
+			return false;
+
 		return hir_collect_expr(ctx, expr->val.select.if_false, false);
 	case HIR_EXPR_PMASKSTORE32:
 		symbol = hir_term_symbol(expr->val.mask_store.base);
@@ -716,9 +1001,17 @@ hir_collect_expr(
 			hir_mark_unknown(ctx, HIR_PAR_REASON_UNKNOWN_MEMORY);
 			return true;
 		}
-		if (!hir_record_access(ctx, symbol, expr->val.mask_store.offset, true) ||
-		    !hir_collect_expr(ctx, expr->val.mask_store.offset, false))
+
+		if (!hir_record_access(
+			    ctx,
+			    symbol,
+			    expr->val.mask_store.offset,
+			    true)) {
 			return false;
+		}
+		if (!hir_collect_expr(ctx, expr->val.mask_store.offset, false))
+			return false;
+
 		return hir_collect_expr(ctx, expr->val.mask_store.mask, false);
 	case HIR_EXPR_PGATHER32:
 		symbol = hir_term_symbol(expr->val.gather.base);
@@ -726,9 +1019,17 @@ hir_collect_expr(
 			hir_mark_unknown(ctx, HIR_PAR_REASON_UNKNOWN_MEMORY);
 			return true;
 		}
-		if (!hir_record_access(ctx, symbol, expr->val.gather.index, false) ||
-		    !hir_collect_expr(ctx, expr->val.gather.index, false))
+
+		if (!hir_record_access(
+			    ctx,
+			    symbol,
+			    expr->val.gather.index,
+			    false)) {
 			return false;
+		}
+		if (!hir_collect_expr(ctx, expr->val.gather.index, false))
+			return false;
+
 		return true;
 	default:
 		hir_mark_unknown(ctx, HIR_PAR_REASON_INTERNAL);
@@ -741,11 +1042,14 @@ hir_block_within(
 	const struct hir_block *block,
 	const struct hir_block *loop)
 {
+
+	/* Walk from the block to each enclosing parent. */
 	while (block != NULL) {
 		if (block == loop)
 			return true;
 		block = block->parent;
 	}
+
 	return false;
 }
 
@@ -756,15 +1060,19 @@ hir_block_seen(
 {
 	uint32_t i;
 
+	/* Search the blocks already visited by this analysis. */
 	for (i = 0; i < ctx->visited_count; i++) {
 		if (ctx->visited[i] == block)
 			return true;
 	}
+
 	if (ctx->visited_count >= HIR_ANALYZE_MAX_VISITED) {
 		hir_mark_unknown(ctx, HIR_PAR_REASON_INTERNAL);
 		return true;
 	}
+
 	ctx->visited[ctx->visited_count++] = block;
+
 	return false;
 }
 
@@ -777,26 +1085,36 @@ hir_validate_affine_invariants(
 	uint32_t i;
 	uint32_t j;
 
+	/* Validate every invariant symbol used by a memory access. */
 	for (i = 0; i < ctx->summary->access_count; i++) {
 		access = &ctx->summary->access[i];
 		index = &access->index;
 		if (index->invariant_symbol == NULL)
 			continue;
+
+		/* Reject an invariant that is written inside the loop. */
 		for (j = 0; j < ctx->summary->scalar_count; j++) {
-			if (strcmp(ctx->summary->scalar[j].symbol,
-				   index->invariant_symbol) == 0 &&
-			    ctx->summary->scalar[j].writes != 0) {
+			if (strcmp(
+				    ctx->summary->scalar[j].symbol,
+				    index->invariant_symbol) != 0) {
+				continue;
+			}
+			if (ctx->summary->scalar[j].writes != 0) {
 				index->kind = HIR_AFFINE_UNKNOWN;
 				index->invariant_symbol = NULL;
 				index->invariant_sign = 1;
+
 				if (access->kind == HIR_MEMORY_WRITE ||
-				    !ctx->catalog->allow_non_affine_reads)
-					hir_mark_unknown(ctx,
-						 HIR_PAR_REASON_NON_AFFINE_INDEX);
+				    !ctx->catalog->allow_non_affine_reads) {
+					hir_mark_unknown(
+						ctx,
+						HIR_PAR_REASON_NON_AFFINE_INDEX);
+				}
 				break;
 			}
 		}
 	}
+
 	return true;
 }
 
@@ -808,47 +1126,69 @@ hir_collect_block(
 	struct hir_stmt *stmt;
 	struct hir_block *chain;
 
-	if (block == NULL || block == ctx->summary->loop ||
-	    !hir_block_within(block, ctx->summary->loop) ||
-	    hir_block_seen(ctx, block))
+	if (block == NULL)
 		return true;
+	if (block == ctx->summary->loop)
+		return true;
+	if (!hir_block_within(block, ctx->summary->loop))
+		return true;
+	if (hir_block_seen(ctx, block))
+		return true;
+
+	/* Collect the effects owned by this block shape. */
 	switch (block->type) {
 	case HIR_BLOCK_BASIC:
 		stmt = block->val.basic.stmt_list;
+
+		/* Collect both sides of every statement. */
 		while (stmt != NULL) {
 			ctx->stmt = stmt;
 			ctx->line = stmt->line;
-			if (!hir_collect_expr(ctx, stmt->rhs, false) ||
-			    !hir_collect_expr(ctx, stmt->lhs, true))
+
+			if (!hir_collect_expr(ctx, stmt->rhs, false))
 				return false;
+			if (!hir_collect_expr(ctx, stmt->lhs, true))
+				return false;
+
 			stmt = stmt->next;
 		}
 		break;
 	case HIR_BLOCK_IF:
 		chain = block;
+
+		/* Collect every arm in the conditional chain. */
 		while (chain != NULL) {
 			ctx->stmt = NULL;
 			ctx->line = chain->line;
-			if (!hir_collect_expr(ctx, chain->val.if_.cond, false) ||
-			    !hir_collect_block(ctx, chain->val.if_.inner))
+
+			if (!hir_collect_expr(ctx, chain->val.if_.cond, false))
 				return false;
+			if (!hir_collect_block(ctx, chain->val.if_.inner))
+				return false;
+
 			chain = chain->val.if_.chain_next;
 		}
 		break;
 	case HIR_BLOCK_FOR:
 		ctx->summary->has_nested_loop = true;
 		hir_mark_unknown(ctx, HIR_PAR_REASON_NESTED_LOOP);
-		if (!hir_collect_expr(ctx, block->val.for_.start, false) ||
-		    !hir_collect_expr(ctx, block->val.for_.stop, false) ||
-		    !hir_collect_expr(ctx, block->val.for_.collection, false) ||
-		    !hir_collect_block(ctx, block->val.for_.inner))
+
+		if (!hir_collect_expr(ctx, block->val.for_.start, false))
+			return false;
+		if (!hir_collect_expr(ctx, block->val.for_.stop, false))
+			return false;
+		if (!hir_collect_expr(ctx, block->val.for_.collection, false))
+			return false;
+		if (!hir_collect_block(ctx, block->val.for_.inner))
 			return false;
 		break;
 	case HIR_BLOCK_WHILE:
 		ctx->summary->has_while_loop = true;
 		hir_mark_unknown(ctx, HIR_PAR_REASON_WHILE_LOOP);
-		if (!hir_collect_expr(ctx, block->val.while_.cond, false) ||
-		    !hir_collect_block(ctx, block->val.while_.inner))
+
+		if (!hir_collect_expr(ctx, block->val.while_.cond, false))
+			return false;
+		if (!hir_collect_block(ctx, block->val.while_.inner))
 			return false;
 		break;
 	case HIR_BLOCK_FUNC:
@@ -859,7 +1199,10 @@ hir_collect_block(
 		hir_mark_unknown(ctx, HIR_PAR_REASON_INTERNAL);
 		break;
 	}
-	return hir_collect_block(ctx, block->succ);
+
+	return hir_collect_block(
+		ctx,
+		block->succ);
 }
 
 static bool
@@ -879,40 +1222,84 @@ hir_collect_top_loops(
 
 	if (block == NULL)
 		return true;
+
+	/* Stop when this traversal has already visited the block. */
 	for (i = 0; i < *visited_count; i++) {
 		if (visited[i] == block)
 			return true;
 	}
+
 	if (*visited_count >= HIR_ANALYZE_MAX_VISITED)
 		return false;
+
 	visited[(*visited_count)++] = block;
-	if (block->type == HIR_BLOCK_FOR && block->parent == func) {
-		if (*loop_count >= HIR_PARALLEL_MAX_LOOPS)
-			return false;
-		(*loop_count)++;
-		if (!hir_loop_analyze(func, block, catalog, &summary))
-			return false;
-		hir_loop_summary_dump(fp, summary, prefix);
-		hir_loop_summary_free(summary);
+
+	if (block->type == HIR_BLOCK_FOR) {
+		if (block->parent == func) {
+			if (*loop_count >= HIR_PARALLEL_MAX_LOOPS)
+				return false;
+
+			(*loop_count)++;
+
+			if (!hir_loop_analyze(func, block, catalog, &summary))
+				return false;
+
+			hir_loop_summary_dump(fp, summary, prefix);
+			hir_loop_summary_free(summary);
+		}
 	}
+
 	if (block->type == HIR_BLOCK_IF) {
 		chain = block;
+
+		/* Collect loops from every conditional arm. */
 		while (chain != NULL) {
-			if (!hir_collect_top_loops(func, chain->val.if_.inner,
-						   catalog, fp, prefix, visited,
-						   visited_count, loop_count))
+			if (!hir_collect_top_loops(
+				    func,
+				    chain->val.if_.inner,
+				    catalog,
+				    fp,
+				    prefix,
+				    visited,
+				    visited_count,
+				    loop_count)) {
 				return false;
+			}
 			chain = chain->val.if_.chain_next;
 		}
 	} else if (block->type == HIR_BLOCK_FOR) {
-		if (!hir_collect_top_loops(func, block->val.for_.inner, catalog,
-					   fp, prefix, visited, visited_count, loop_count))
+		if (!hir_collect_top_loops(
+			    func,
+			    block->val.for_.inner,
+			    catalog,
+			    fp,
+			    prefix,
+			    visited,
+			    visited_count,
+			    loop_count)) {
 			return false;
+		}
 	} else if (block->type == HIR_BLOCK_WHILE) {
-		if (!hir_collect_top_loops(func, block->val.while_.inner, catalog,
-					   fp, prefix, visited, visited_count, loop_count))
+		if (!hir_collect_top_loops(
+			    func,
+			    block->val.while_.inner,
+			    catalog,
+			    fp,
+			    prefix,
+			    visited,
+			    visited_count,
+			    loop_count)) {
 			return false;
+		}
 	}
-	return hir_collect_top_loops(func, block->succ, catalog, fp, prefix, visited,
-				     visited_count, loop_count);
+
+	return hir_collect_top_loops(
+		func,
+		block->succ,
+		catalog,
+		fp,
+		prefix,
+		visited,
+		visited_count,
+		loop_count);
 }

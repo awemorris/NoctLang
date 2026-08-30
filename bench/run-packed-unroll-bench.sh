@@ -48,5 +48,4 @@ run_one()
 }
 
 echo 'mode,best_ms,median_ms,worst_ms'
-run_one unroll4 env NOCT_UNROLL_ENABLE=1
-run_one disabled env NOCT_UNROLL_DISABLE=1
+run_one default env

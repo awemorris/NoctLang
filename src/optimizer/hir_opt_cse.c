@@ -116,8 +116,8 @@ struct cse_ctx {
 	int value_count;
 
 	/* Volatile state (reset between passes). */
-	int sym_vn[CSE_MAX_LOCALS];	/* -1 = not yet assigned; 0 is a
-					   valid VN (first table entry)  */
+	/* -1 is unassigned; 0 is the valid first value-number entry. */
+	int sym_vn[CSE_MAX_LOCALS];
 	int fresh_seq;
 	int mem_epoch;
 	int undo[CSE_MAX_UNDO];
@@ -161,8 +161,9 @@ static void cse_home_name(int home, char *buf, size_t size);
 static struct hir_expr *cse_mk_symbol_expr(struct cse_ctx *ctx, const char *name);
 
 /*
- * Run the CSE pass on one function.  (Level gating is done by the
- * driver hir_optimize_func() in hir.c.)
+ * Eliminates common subexpressions in one function.
+ *
+ * Level gating is done by the driver hir_optimize_func() in hir.c.
  */
 bool
 hir_opt_cse_func(
@@ -181,6 +182,8 @@ hir_opt_cse_func(
 	/* Count the locals (indices are dense: max index + 1). */
 	local_count = 0;
 	local = func_block->val.func.local;
+
+	/* Find the highest local index in the function. */
 	while (local != NULL) {
 		if (local->index + 1 > local_count)
 			local_count = local->index + 1;
@@ -212,11 +215,15 @@ hir_opt_cse_func(
 
 	ok = cse_run(&ctx);
 
-	if (getenv("NOCT_CSE_DEBUG") != NULL && ctx.capture_count > 0) {
-		fprintf(stderr, "[cse] %s:%s: %d captures, %d substitutions\n",
+	if (getenv("NOCT_CSE_DEBUG") != NULL &&
+	    ctx.capture_count > 0) {
+		fprintf(
+			stderr,
+			"[cse] %s:%s: %d captures, %d substitutions\n",
 			hir_file_name != NULL ? hir_file_name : "?",
 			func_block->val.func.name,
-			ctx.stat_captures, ctx.stat_substs);
+			ctx.stat_captures,
+			ctx.stat_substs);
 	}
 
 	return ok;
@@ -263,10 +270,14 @@ cse_reset_volatile(
 {
 	int i;
 
+	/* Clear every local value-number binding. */
 	for (i = 0; i < CSE_MAX_LOCALS; i++)
 		ctx->sym_vn[i] = -1;
+
+	/* Clear every value's availability flag. */
 	for (i = 0; i < ctx->value_count; i++)
 		ctx->values[i].avail = 0;
+
 	ctx->fresh_seq = 0;
 	ctx->mem_epoch = 0;
 	ctx->undo_top = 0;
@@ -287,12 +298,16 @@ cse_assign_homes(
 	int i;
 
 	ctx->capture_count = 0;
+
+	/* Assign homes to profitable values in first-occurrence order. */
 	for (i = 0; i < ctx->value_count; i++) {
 		struct cse_value *v;
 
 		v = &ctx->values[i];
-		if (!v->is_candidate || v->hits <= 0)
+		if (!v->is_candidate ||
+		    v->hits <= 0) {
 			continue;
+		}
 		if (ctx->capture_count >= ctx->capture_budget)
 			break;
 		v->home = ctx->capture_count++;
@@ -356,6 +371,8 @@ cse_scope_close(
 	} else {
 		mark = ctx->scope_mark[ctx->scope_top];
 	}
+
+	/* Undo every availability fact created in the closing scope. */
 	while (ctx->undo_top > mark) {
 		ctx->undo_top--;
 		ctx->values[ctx->undo[ctx->undo_top]].avail = 0;
@@ -370,8 +387,10 @@ cse_set_avail(
 {
 	if (ctx->undo_top >= CSE_MAX_UNDO)
 		return 0;
+
 	ctx->undo[ctx->undo_top++] = vn;
 	ctx->values[vn].avail = 1;
+
 	return 1;
 }
 
@@ -389,26 +408,34 @@ cse_intern(
 {
 	int i;
 
+	/* Find an existing value with the same key. */
 	for (i = 0; i < ctx->value_count; i++) {
 		struct cse_value *v;
 
 		v = &ctx->values[i];
-		if (v->op != key->op || v->vn0 != key->vn0 ||
-		    v->vn1 != key->vn1 || v->epoch != key->epoch)
+		if (v->op != key->op ||
+		    v->vn0 != key->vn0 ||
+		    v->vn1 != key->vn1 ||
+		    v->epoch != key->epoch) {
 			continue;
+		}
 		if (v->const_type != key->const_type)
 			continue;
 		if (v->bits_len != key->bits_len)
 			continue;
-		if (key->bits_len != 0 &&
-		    memcmp(v->bits, key->bits, key->bits_len) != 0)
-			continue;
+		if (key->bits_len != 0) {
+			if (memcmp(v->bits, key->bits, key->bits_len) != 0)
+				continue;
+		}
 		if ((v->aux == NULL) != (key->aux == NULL))
 			continue;
-		if (key->aux != NULL && strcmp(v->aux, key->aux) != 0)
-			continue;
+		if (key->aux != NULL) {
+			if (strcmp(v->aux, key->aux) != 0)
+				continue;
+		}
 		if (is_candidate)
 			v->is_candidate = 1;
+
 		return i;
 	}
 
@@ -421,6 +448,7 @@ cse_intern(
 	ctx->values[i].hits = 0;
 	ctx->values[i].home = -1;
 	ctx->values[i].avail = 0;
+
 	return i;
 }
 
@@ -436,6 +464,7 @@ cse_fresh(
 	key.vn0 = ctx->fresh_seq++;
 	key.vn1 = -1;
 	key.epoch = -1;
+
 	return cse_intern(ctx, &key, 0);
 }
 
@@ -448,11 +477,14 @@ cse_local_index(
 	struct hir_local *local;
 
 	local = ctx->func->val.func.local;
+
+	/* Find the local with the requested symbol. */
 	while (local != NULL) {
 		if (strcmp(local->symbol, symbol) == 0)
 			return local->index;
 		local = local->next;
 	}
+
 	return -1;
 }
 
@@ -465,8 +497,10 @@ cse_kill_local(
 	int index;
 
 	index = cse_local_index(ctx, symbol);
-	if (index >= 0 && index < CSE_MAX_LOCALS)
+	if (index >= 0 &&
+	    index < CSE_MAX_LOCALS) {
 		ctx->sym_vn[index] = cse_fresh(ctx);
+	}
 }
 
 /*
@@ -489,6 +523,8 @@ cse_count_expr(
 		return 0;
 
 	n = 1;
+
+	/* Count nodes according to the expression shape. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		break;
@@ -527,19 +563,27 @@ cse_count_expr(
 		break;
 	case HIR_EXPR_CALL:
 		n += cse_count_expr(e->val.call.func);
+
+		/* Count every ordinary call argument. */
 		for (i = 0; i < e->val.call.arg_count; i++)
 			n += cse_count_expr(e->val.call.arg[i]);
 		break;
 	case HIR_EXPR_THISCALL:
 		n += cse_count_expr(e->val.thiscall.obj);
+
+		/* Count every method-call argument. */
 		for (i = 0; i < e->val.thiscall.arg_count; i++)
 			n += cse_count_expr(e->val.thiscall.arg[i]);
 		break;
 	case HIR_EXPR_ARRAY:
+
+		/* Count every array element. */
 		for (j = 0; j < e->val.array.elem_count; j++)
 			n += cse_count_expr(e->val.array.elem[j]);
 		break;
 	case HIR_EXPR_DICT:
+
+		/* Count every dictionary value. */
 		for (j = 0; j < e->val.dict.kv_count; j++)
 			n += cse_count_expr(e->val.dict.value[j]);
 		break;
@@ -552,6 +596,7 @@ cse_count_expr(
 		n += cse_count_expr(e->val.binary.expr[1]);
 		break;
 	}
+
 	return n;
 }
 
@@ -568,13 +613,20 @@ cse_measure_chain(
 	int cost;
 
 	b = head;
+
+	/* Measure every block in the sibling chain. */
 	while (b != NULL) {
+
+		/* Measure the payload selected by the block shape. */
 		switch (b->type) {
 		case HIR_BLOCK_BASIC:
 			stmt = b->val.basic.stmt_list;
+
+			/* Measure every statement in the basic block. */
 			while (stmt != NULL) {
-				cost = base + cse_count_expr(stmt->rhs) +
-					cse_count_expr(stmt->lhs);
+				cost = base;
+				cost += cse_count_expr(stmt->rhs);
+				cost += cse_count_expr(stmt->lhs);
 				if (cost > *max_cost)
 					*max_cost = cost;
 				stmt = stmt->next;
@@ -582,6 +634,8 @@ cse_measure_chain(
 			break;
 		case HIR_BLOCK_IF:
 			c = b;
+
+			/* Measure every arm in the conditional chain. */
 			while (c != NULL) {
 				cost = base + cse_count_expr(c->val.if_.cond);
 				if (cost > *max_cost)
@@ -595,19 +649,26 @@ cse_measure_chain(
 			cost = base + cse_count_expr(b->val.while_.cond);
 			if (cost > *max_cost)
 				*max_cost = cost;
-			if (b->val.while_.inner != NULL)
-				cse_measure_chain(b->val.while_.inner,
-						  base + CSE_LOOP_TEMPS, max_cost);
+			if (b->val.while_.inner != NULL) {
+				cse_measure_chain(
+					b->val.while_.inner,
+					base + CSE_LOOP_TEMPS,
+					max_cost);
+			}
 			break;
 		case HIR_BLOCK_FOR:
-			cost = base + cse_count_expr(b->val.for_.start) +
-				cse_count_expr(b->val.for_.stop) +
-				cse_count_expr(b->val.for_.collection);
+			cost = base;
+			cost += cse_count_expr(b->val.for_.start);
+			cost += cse_count_expr(b->val.for_.stop);
+			cost += cse_count_expr(b->val.for_.collection);
 			if (cost > *max_cost)
 				*max_cost = cost;
-			if (b->val.for_.inner != NULL)
-				cse_measure_chain(b->val.for_.inner,
-						  base + CSE_LOOP_TEMPS, max_cost);
+			if (b->val.for_.inner != NULL) {
+				cse_measure_chain(
+					b->val.for_.inner,
+					base + CSE_LOOP_TEMPS,
+					max_cost);
+			}
 			break;
 		default:
 			break;
@@ -660,13 +721,16 @@ cse_visit_value(
 			cse_set_avail(ctx, vn);
 		return;
 	}
+
 	cse_home_name(v->home, name, sizeof(name));
+
 	if (v->avail) {
 		/* Reuse: replace the subtree with a home read. */
 		struct hir_expr *sym = cse_mk_symbol_expr(ctx, name);
 
 		if (sym == NULL)
 			return;
+
 		*slot = sym;
 		ctx->stat_substs++;
 	} else {
@@ -676,6 +740,7 @@ cse_visit_value(
 			ctx->oom = 1;
 			return;
 		}
+
 		memset(cap, 0, sizeof(*cap));
 		cap->type = HIR_EXPR_CAPTURE;
 		cap->val.capture.expr = *slot;
@@ -684,7 +749,9 @@ cse_visit_value(
 			ctx->oom = 1;
 			return;
 		}
+
 		*slot = cap;
+
 		if (!cse_set_avail(ctx, vn)) {
 			/*
 			 * The undo log is full, so the fact cannot be
@@ -692,6 +759,7 @@ cse_visit_value(
 			 * capture is a harmless extra MOVE.
 			 */
 		}
+
 		ctx->stat_captures++;
 	}
 }
@@ -706,12 +774,17 @@ cse_mk_symbol_expr(
 	struct hir_term *t;
 
 	e = hir_malloc(sizeof(struct hir_expr));
-	t = hir_malloc(sizeof(struct hir_term));
-	if (e == NULL || t == NULL) {
+	if (e == NULL) {
 		ctx->oom = 1;
 		return NULL;
 	}
-	memset(e, 0, sizeof(*e));
+
+	t = hir_malloc(sizeof(struct hir_term));
+	if (t == NULL) {
+		ctx->oom = 1;
+		return NULL;
+	}
+
 	memset(t, 0, sizeof(*t));
 	t->type = HIR_TERM_SYMBOL;
 	t->val.symbol = hir_strdup(name);
@@ -719,8 +792,11 @@ cse_mk_symbol_expr(
 		ctx->oom = 1;
 		return NULL;
 	}
+
+	memset(e, 0, sizeof(*e));
 	e->type = HIR_EXPR_TERM;
 	e->val.term.term = t;
+
 	return e;
 }
 
@@ -738,6 +814,7 @@ cse_term(
 	key.vn1 = -1;
 	key.epoch = -1;
 
+	/* Value-number the payload selected by the term type. */
 	switch (term->type) {
 	case HIR_TERM_SYMBOL:
 		if (strcmp(term->val.symbol, "$return") == 0)
@@ -824,6 +901,7 @@ cse_expr(
 	key.vn1 = -1;
 	key.epoch = -1;
 
+	/* Value-number the payload selected by the expression shape. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		return cse_term(ctx, e->val.term.term);
@@ -837,9 +915,11 @@ cse_expr(
 		return cse_expr(ctx, &e->val.capture.expr, weight);
 
 	case HIR_EXPR_SELECT:
-		/* SIMD SELECT evaluates all three inputs.  Traverse children so
-		   their bookkeeping remains valid, but do not value-number the
-		   ternary node itself. */
+		/*
+		 * SIMD SELECT evaluates all three inputs.  Traverse children so
+		 * their bookkeeping remains valid, but do not value-number the
+		 * ternary node itself.
+		 */
 		w = 0;
 		(void)cse_expr(ctx, &e->val.select.cond, &w);
 		(void)cse_expr(ctx, &e->val.select.if_true, &w);
@@ -905,8 +985,10 @@ cse_expr(
 		vn0 = cse_expr(ctx, &e->val.binary.expr[0], &w);
 		vn1 = cse_expr(ctx, &e->val.binary.expr[1], &w);
 		*weight += w + 1;
-		if (vn0 == CSE_NOVN || vn1 == CSE_NOVN)
+		if (vn0 == CSE_NOVN ||
+		    vn1 == CSE_NOVN) {
 			return CSE_NOVN;
+		}
 		key.op = e->type;
 		key.vn0 = vn0;
 		key.vn1 = vn1;
@@ -925,8 +1007,10 @@ cse_expr(
 		vn1 = cse_expr(ctx, &e->val.binary.expr[1], &w);
 		cse_scope_close(ctx);
 		*weight += w + 1;
-		if (vn0 == CSE_NOVN || vn1 == CSE_NOVN)
+		if (vn0 == CSE_NOVN ||
+		    vn1 == CSE_NOVN) {
 			return CSE_NOVN;
+		}
 		key.op = e->type;
 		key.vn0 = vn0;
 		key.vn1 = vn1;
@@ -965,8 +1049,10 @@ cse_expr(
 		vn0 = cse_expr(ctx, &e->val.binary.expr[0], &w);
 		vn1 = cse_expr(ctx, &e->val.binary.expr[1], &w);
 		*weight += w + 1;
-		if (vn0 == CSE_NOVN || vn1 == CSE_NOVN)
+		if (vn0 == CSE_NOVN ||
+		    vn1 == CSE_NOVN) {
 			return CSE_NOVN;
+		}
 		key.op = e->type;
 		key.vn0 = vn0;
 		key.vn1 = vn1;
@@ -979,6 +1065,8 @@ cse_expr(
 	case HIR_EXPR_CALL:
 		w = 0;
 		(void)cse_expr(ctx, &e->val.call.func, &w);
+
+		/* Visit every ordinary call argument. */
 		for (i = 0; i < e->val.call.arg_count; i++)
 			(void)cse_expr(ctx, &e->val.call.arg[i], &w);
 		ctx->mem_epoch++;
@@ -988,6 +1076,8 @@ cse_expr(
 	case HIR_EXPR_THISCALL:
 		w = 0;
 		(void)cse_expr(ctx, &e->val.thiscall.obj, &w);
+
+		/* Visit every method-call argument. */
 		for (i = 0; i < e->val.thiscall.arg_count; i++)
 			(void)cse_expr(ctx, &e->val.thiscall.arg[i], &w);
 		ctx->mem_epoch++;
@@ -1005,6 +1095,8 @@ cse_expr(
 	case HIR_EXPR_ARRAY:
 		/* Pure construction: no epoch bump, but a fresh object. */
 		w = 0;
+
+		/* Visit every array element. */
 		for (j = 0; j < e->val.array.elem_count; j++)
 			(void)cse_expr(ctx, &e->val.array.elem[j], &w);
 		*weight += w + 1;
@@ -1012,6 +1104,8 @@ cse_expr(
 
 	case HIR_EXPR_DICT:
 		w = 0;
+
+		/* Visit every dictionary value. */
 		for (j = 0; j < e->val.dict.kv_count; j++)
 			(void)cse_expr(ctx, &e->val.dict.value[j], &w);
 		*weight += w + 1;
@@ -1062,8 +1156,10 @@ cse_stmt(
 			if (rhs_vn != CSE_NOVN) {
 				int index = cse_local_index(ctx, symbol);
 
-				if (index >= 0 && index < CSE_MAX_LOCALS)
+				if (index >= 0 &&
+				    index < CSE_MAX_LOCALS) {
 					ctx->sym_vn[index] = rhs_vn;
+				}
 			}
 		} else {
 			/* Global store: kills global-read facts. */
@@ -1106,6 +1202,8 @@ cse_defs_stmt_list(
 	struct cse_ctx *ctx,
 	struct hir_stmt *stmt)
 {
+
+	/* Record every local assigned by the statement list. */
 	while (stmt != NULL) {
 		if (stmt->lhs != NULL &&
 		    stmt->lhs->type == HIR_EXPR_TERM &&
@@ -1128,13 +1226,19 @@ cse_defs_chain(
 	struct hir_block *c;
 
 	b = head;
+
+	/* Record definitions in every block of the sibling chain. */
 	while (b != NULL) {
+
+		/* Recurse according to the current block shape. */
 		switch (b->type) {
 		case HIR_BLOCK_BASIC:
 			cse_defs_stmt_list(ctx, b->val.basic.stmt_list);
 			break;
 		case HIR_BLOCK_IF:
 			c = b;
+
+			/* Record definitions in every conditional arm. */
 			while (c != NULL) {
 				if (c->val.if_.inner != NULL)
 					cse_defs_chain(ctx, c->val.if_.inner);
@@ -1189,8 +1293,11 @@ cse_walk_if(
 
 	cse_scope_open(ctx);
 	elem = b;
+
+	/* Walk every arm in the conditional chain. */
 	while (elem != NULL) {
-		if (elem != b && elem->val.if_.cond != NULL) {
+		if (elem != b &&
+		    elem->val.if_.cond != NULL) {
 			w = 0;
 			(void)cse_expr(ctx, &elem->val.if_.cond, &w);
 		}
@@ -1343,13 +1450,18 @@ cse_walk_chain(
 	struct hir_stmt *stmt;
 
 	b = head;
+
+	/* Walk every block in the sibling chain. */
 	while (b != NULL) {
 		if (ctx->oom)
 			return;
 
+		/* Visit the payload selected by the current block shape. */
 		switch (b->type) {
 		case HIR_BLOCK_BASIC:
 			stmt = b->val.basic.stmt_list;
+
+			/* Visit every statement in the basic block. */
 			while (stmt != NULL) {
 				cse_stmt(ctx, stmt);
 				stmt = stmt->next;

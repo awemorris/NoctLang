@@ -53,20 +53,19 @@ struct tp_ctx {
 static int tp_combine(int cur, int t);
 static bool tp_is_primitive(int t);
 static int tp_promote_numeric(int a, int b);
-static struct hir_local *tp_find_local(struct tp_ctx *ctx,
-	const char *symbol);
-static int tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e,
-	bool in_region);
+static struct hir_local *tp_find_local(struct tp_ctx *ctx, const char *symbol);
+static int tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region);
 static void tp_meet_symbol(struct tp_ctx *ctx, const char *symbol, int t);
-static void tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e,
-	bool in_region);
-static void tp_scan_stmt(struct tp_ctx *ctx, struct hir_stmt *stmt,
-	bool in_region);
-static void tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head,
-			  bool in_region);
+static void tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region);
+static void tp_scan_stmt(struct tp_ctx *ctx, struct hir_stmt *stmt, bool in_region);
+static void tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region);
 
+/*
+ * Infers primitive local types for one HIR function.
+ */
 bool
-hir_opt_typed_func(struct hir_block *func_block)
+hir_opt_typed_func(
+	struct hir_block *func_block)
 {
 	struct tp_ctx ctx;
 	struct hir_local *local;
@@ -86,17 +85,23 @@ hir_opt_typed_func(struct hir_block *func_block)
 	 * at UNKNOWN.  Parameters occupy local slots 0..param_count-1.
 	 */
 	local = func_block->val.func.local;
+
+	/* Seed every local with its initial lattice value. */
 	while (local != NULL) {
 		local->proven_type = TP_TOP;
-		if (!local->is_parameter && tp_is_primitive(local->declared_type)) {
+		if (!local->is_parameter &&
+		    tp_is_primitive(local->declared_type)) {
 			local->proven_type = local->declared_type;
 		} else if (local->index < (int)func_block->val.func.param_count) {
 			int seed = TP_UNKNOWN;
 
+			/* Find the parameter annotation for this local. */
 			for (k = 0; k < func_block->val.func.param_count; k++) {
-				if (strcmp(func_block->val.func.param_name[k],
-					   local->symbol) != 0)
+				if (strcmp(
+					    func_block->val.func.param_name[k],
+					    local->symbol) != 0)
 					continue;
+
 				if (func_block->val.func.param_type[k] == NOCT_VALUE_INT)
 					seed = TP_INT;
 				else if (func_block->val.func.param_type[k] == NOCT_VALUE_LONG)
@@ -107,6 +112,7 @@ hir_opt_typed_func(struct hir_block *func_block)
 					seed = TP_DOUBLE;
 				break;
 			}
+
 			local->proven_type = seed;
 		}
 		local = local->next;
@@ -118,6 +124,8 @@ hir_opt_typed_func(struct hir_block *func_block)
 	 * defensive backstop, and on overrun everything degrades to
 	 * UNKNOWN (never the other direction).
 	 */
+
+	/* Iterate until the lattice reaches a fixed point. */
 	for (pass = 0; pass < 64; pass++) {
 		ctx.changed = false;
 		if (func_block->val.func.inner != NULL)
@@ -125,12 +133,16 @@ hir_opt_typed_func(struct hir_block *func_block)
 		if (!ctx.changed)
 			break;
 	}
+
 	if (pass == 64) {
 		local = func_block->val.func.local;
+
+		/* Degrade every proof when the defensive cap is reached. */
 		while (local != NULL) {
 			local->proven_type = TP_UNKNOWN;
 			local = local->next;
 		}
+
 		return true;
 	}
 
@@ -139,6 +151,8 @@ hir_opt_typed_func(struct hir_block *func_block)
 	 * (integer 0) -> proven INT.
 	 */
 	local = func_block->val.func.local;
+
+	/* Convert never-assigned locals to their zero-initialized type. */
 	while (local != NULL) {
 		if (local->proven_type == TP_TOP)
 			local->proven_type = TP_INT;
@@ -150,7 +164,9 @@ hir_opt_typed_func(struct hir_block *func_block)
 
 /* Meet-into: returns the combined value of cur and incoming t. */
 static int
-tp_combine(int cur, int t)
+tp_combine(
+	int cur,
+	int t)
 {
 	if (t == TP_TOP)
 		return cur;	/* No information yet: keep. */
@@ -158,53 +174,82 @@ tp_combine(int cur, int t)
 		return t;
 	if (cur == t)
 		return cur;
+
 	return TP_UNKNOWN;
 }
 
 static bool
-tp_is_primitive(int t)
+tp_is_primitive(
+	int t)
 {
-	return t == TP_INT || t == TP_LONG ||
-		t == TP_FLOAT || t == TP_DOUBLE;
+	if (t == TP_INT)
+		return true;
+	if (t == TP_LONG)
+		return true;
+	if (t == TP_FLOAT)
+		return true;
+	if (t == TP_DOUBLE)
+		return true;
+
+	return false;
 }
 
 /* Match the generic numeric dispatch in execution.c. */
 static int
-tp_promote_numeric(int a, int b)
+tp_promote_numeric(
+	int a,
+	int b)
 {
-	if (!tp_is_primitive(a) || !tp_is_primitive(b))
+	if (!tp_is_primitive(a))
 		return TP_UNKNOWN;
-	if (a == TP_DOUBLE || b == TP_DOUBLE)
+	if (!tp_is_primitive(b))
+		return TP_UNKNOWN;
+	if (a == TP_DOUBLE ||
+	    b == TP_DOUBLE)
 		return TP_DOUBLE;
-	if (a == TP_FLOAT || b == TP_FLOAT)
+	if (a == TP_FLOAT ||
+	    b == TP_FLOAT)
 		return TP_FLOAT;
-	if (a == TP_LONG || b == TP_LONG)
+	if (a == TP_LONG ||
+	    b == TP_LONG)
 		return TP_LONG;
+
 	return TP_INT;
 }
 
 static struct hir_local *
-tp_find_local(struct tp_ctx *ctx, const char *symbol)
+tp_find_local(
+	struct tp_ctx *ctx,
+	const char *symbol)
 {
 	struct hir_local *local;
 
 	local = ctx->func->val.func.local;
+
+	/* Find the local with the requested symbol. */
 	while (local != NULL) {
 		if (strcmp(local->symbol, symbol) == 0)
 			return local;
 		local = local->next;
 	}
+
 	return NULL;
 }
 
 /* Evaluate an expression's proven tag under the current lattice. */
 static int
-tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
+tp_eval_expr(
+	struct tp_ctx *ctx,
+	struct hir_expr *e,
+	bool in_region)
 {
 	int a, b;
 
+	/* Evaluate the lattice value for this expression shape. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
+
+		/* Classify a literal or resolve a symbol proof. */
 		switch (e->val.term.term->type) {
 		case HIR_TERM_INT:
 			return TP_INT;
@@ -228,6 +273,7 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 			 */
 			if (in_region)
 				return TP_INT;
+
 			return local->proven_type;
 		}
 		default:
@@ -237,24 +283,35 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		return tp_eval_expr(ctx, e->val.unary.expr, in_region);
 	case HIR_EXPR_NEG:
 		a = tp_eval_expr(ctx, e->val.unary.expr, in_region);
-		return tp_is_primitive(a) ? a : TP_UNKNOWN;
+		if (!tp_is_primitive(a))
+			return TP_UNKNOWN;
+
+		return a;
 	case HIR_EXPR_NOT:
 		a = tp_eval_expr(ctx, e->val.unary.expr, in_region);
-		return a == TP_INT ? TP_INT : TP_UNKNOWN;
+		if (a != TP_INT)
+			return TP_UNKNOWN;
+
+		return TP_INT;
 	case HIR_EXPR_CAPTURE:
 		return tp_eval_expr(ctx, e->val.capture.expr, in_region);
 	case HIR_EXPR_SELECT:
 		a = tp_eval_expr(ctx, e->val.select.if_true, in_region);
 		b = tp_eval_expr(ctx, e->val.select.if_false, in_region);
-		return a == b ? a : tp_combine(a, b);
+		if (a == b)
+			return a;
+
+		return tp_combine(a, b);
 	case HIR_EXPR_PLUS:
 	case HIR_EXPR_MINUS:
 	case HIR_EXPR_MUL:
 	case HIR_EXPR_DIV:
 		a = tp_eval_expr(ctx, e->val.binary.expr[0], in_region);
 		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
-		if (a == TP_TOP || b == TP_TOP)
+		if (a == TP_TOP ||
+		    b == TP_TOP)
 			return TP_TOP;
+
 		return tp_promote_numeric(a, b);
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
@@ -264,11 +321,21 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 	case HIR_EXPR_SHR:
 		a = tp_eval_expr(ctx, e->val.binary.expr[0], in_region);
 		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
-		if (a == TP_TOP || b == TP_TOP)
+		if (a == TP_TOP ||
+		    b == TP_TOP)
 			return TP_TOP;
-		if ((a == TP_INT || a == TP_LONG) &&
-		    (b == TP_INT || b == TP_LONG))
-			return a == TP_LONG || b == TP_LONG ? TP_LONG : TP_INT;
+		if ((a == TP_INT ||
+		     a == TP_LONG) &&
+		    (b == TP_INT ||
+		     b == TP_LONG)) {
+			if (a == TP_LONG)
+				return TP_LONG;
+			if (b == TP_LONG)
+				return TP_LONG;
+
+			return TP_INT;
+		}
+
 		return TP_UNKNOWN;
 	case HIR_EXPR_LT:
 	case HIR_EXPR_LTE:
@@ -278,10 +345,13 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 	case HIR_EXPR_NEQ:
 		a = tp_eval_expr(ctx, e->val.binary.expr[0], in_region);
 		b = tp_eval_expr(ctx, e->val.binary.expr[1], in_region);
-		if (a == TP_TOP || b == TP_TOP)
+		if (a == TP_TOP ||
+		    b == TP_TOP)
 			return TP_TOP;
-		if (a != TP_UNKNOWN && b != TP_UNKNOWN)
+		if (a != TP_UNKNOWN &&
+		    b != TP_UNKNOWN)
 			return TP_INT;
+
 		return TP_UNKNOWN;
 	case HIR_EXPR_PLOAD8U:
 	case HIR_EXPR_PLOAD8S:
@@ -299,6 +369,8 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 	case HIR_EXPR_VINDUCTF32:
 		return TP_FLOAT;
 	case HIR_EXPR_CALL:
+
+		/* Classify the supported conversion intrinsics. */
 		switch (hir_get_intrinsic_call(e)) {
 		case HIR_INTRINSIC_INT_FROM:
 			return TP_INT;
@@ -318,7 +390,10 @@ tp_eval_expr(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 
 /* Meet an incoming tag into a local (by symbol; globals ignored). */
 static void
-tp_meet_symbol(struct tp_ctx *ctx, const char *symbol, int t)
+tp_meet_symbol(
+	struct tp_ctx *ctx,
+	const char *symbol,
+	int t)
 {
 	struct hir_local *local;
 	int merged;
@@ -334,7 +409,8 @@ tp_meet_symbol(struct tp_ctx *ctx, const char *symbol, int t)
 	 * checks only the incoming value, and a later reassignment must still
 	 * participate in the meet.
 	 */
-	if (!local->is_parameter && tp_is_primitive(local->declared_type)) {
+	if (!local->is_parameter &&
+	    tp_is_primitive(local->declared_type)) {
 		if (local->proven_type != local->declared_type) {
 			local->proven_type = local->declared_type;
 			ctx->changed = true;
@@ -354,13 +430,18 @@ tp_meet_symbol(struct tp_ctx *ctx, const char *symbol, int t)
  * the inner value to its home local wherever it appears).
  */
 static void
-tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
+tp_apply_captures(
+	struct tp_ctx *ctx,
+	struct hir_expr *e,
+	bool in_region)
 {
 	uint32_t i;
+	int type;
 
 	if (e == NULL)
 		return;
 
+	/* Apply capture edges for this expression shape. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		return;
@@ -383,8 +464,8 @@ tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		return;
 	case HIR_EXPR_CAPTURE:
 		tp_apply_captures(ctx, e->val.capture.expr, in_region);
-		tp_meet_symbol(ctx, e->val.capture.symbol,
-			       tp_eval_expr(ctx, e->val.capture.expr, in_region));
+		type = tp_eval_expr(ctx, e->val.capture.expr, in_region);
+		tp_meet_symbol(ctx, e->val.capture.symbol, type);
 		return;
 	case HIR_EXPR_SELECT:
 		tp_apply_captures(ctx, e->val.select.cond, in_region);
@@ -396,19 +477,27 @@ tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 		return;
 	case HIR_EXPR_CALL:
 		tp_apply_captures(ctx, e->val.call.func, in_region);
+
+		/* Apply captures from every ordinary call argument. */
 		for (i = 0; i < e->val.call.arg_count; i++)
 			tp_apply_captures(ctx, e->val.call.arg[i], in_region);
 		return;
 	case HIR_EXPR_THISCALL:
 		tp_apply_captures(ctx, e->val.thiscall.obj, in_region);
+
+		/* Apply captures from every method-call argument. */
 		for (i = 0; i < e->val.thiscall.arg_count; i++)
 			tp_apply_captures(ctx, e->val.thiscall.arg[i], in_region);
 		return;
 	case HIR_EXPR_ARRAY:
+
+		/* Apply captures from every array element. */
 		for (i = 0; i < e->val.array.elem_count; i++)
 			tp_apply_captures(ctx, e->val.array.elem[i], in_region);
 		return;
 	case HIR_EXPR_DICT:
+
+		/* Apply captures from every dictionary value. */
 		for (i = 0; i < e->val.dict.kv_count; i++)
 			tp_apply_captures(ctx, e->val.dict.value[i], in_region);
 		return;
@@ -424,32 +513,50 @@ tp_apply_captures(struct tp_ctx *ctx, struct hir_expr *e, bool in_region)
 }
 
 static void
-tp_scan_stmt(struct tp_ctx *ctx, struct hir_stmt *stmt, bool in_region)
+tp_scan_stmt(
+	struct tp_ctx *ctx,
+	struct hir_stmt *stmt,
+	bool in_region)
 {
+	int type;
+
 	tp_apply_captures(ctx, stmt->rhs, in_region);
+
 	if (stmt->lhs != NULL) {
 		tp_apply_captures(ctx, stmt->lhs, in_region);
+
 		if (stmt->lhs->type == HIR_EXPR_TERM &&
 		    stmt->lhs->val.term.term->type == HIR_TERM_SYMBOL) {
-			tp_meet_symbol(ctx,
-				       stmt->lhs->val.term.term->val.symbol,
-				       tp_eval_expr(ctx, stmt->rhs, in_region));
+			type = tp_eval_expr(ctx, stmt->rhs, in_region);
+			tp_meet_symbol(
+				ctx,
+				stmt->lhs->val.term.term->val.symbol,
+				type);
 		}
 	}
 }
 
 static void
-tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
+tp_scan_chain(
+	struct tp_ctx *ctx,
+	struct hir_block *head,
+	bool in_region)
 {
 	struct hir_block *b;
 	struct hir_block *c;
 	struct hir_stmt *stmt;
 
 	b = head;
+
+	/* Scan every block in the sibling chain. */
 	while (b != NULL) {
+
+		/* Apply the transfer function for this block shape. */
 		switch (b->type) {
 		case HIR_BLOCK_BASIC:
 			stmt = b->val.basic.stmt_list;
+
+			/* Scan every statement in the basic block. */
 			while (stmt != NULL) {
 				tp_scan_stmt(ctx, stmt, in_region);
 				stmt = stmt->next;
@@ -457,9 +564,12 @@ tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
 			break;
 		case HIR_BLOCK_IF:
 			c = b;
+
+			/* Scan every arm in the conditional chain. */
 			while (c != NULL) {
 				if (c->val.if_.cond != NULL)
 					tp_apply_captures(ctx, c->val.if_.cond, in_region);
+
 				if (c->val.if_.inner != NULL)
 					tp_scan_chain(ctx, c->val.if_.inner, in_region);
 				c = c->val.if_.chain_next;
@@ -468,6 +578,7 @@ tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
 		case HIR_BLOCK_FOR:
 		{
 			bool region;
+			int type;
 
 			region = in_region || b->val.for_.typed_int_region;
 			if (b->val.for_.is_ranged) {
@@ -475,19 +586,33 @@ tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
 				tp_apply_captures(ctx, b->val.for_.stop, in_region);
 				/* counter := start (OP_INC keeps the tag). */
 				if (b->val.for_.counter_symbol != NULL) {
-					tp_meet_symbol(ctx, b->val.for_.counter_symbol,
-						       tp_eval_expr(ctx, b->val.for_.start,
-								    in_region));
+					type = tp_eval_expr(
+						ctx,
+						b->val.for_.start,
+						in_region);
+					tp_meet_symbol(
+						ctx,
+						b->val.for_.counter_symbol,
+						type);
 				}
 			} else {
 				tp_apply_captures(ctx, b->val.for_.collection, in_region);
-				if (b->val.for_.key_symbol != NULL)
-					tp_meet_symbol(ctx, b->val.for_.key_symbol,
-						       TP_UNKNOWN);
-				if (b->val.for_.value_symbol != NULL)
-					tp_meet_symbol(ctx, b->val.for_.value_symbol,
-						       TP_UNKNOWN);
+
+				if (b->val.for_.key_symbol != NULL) {
+					tp_meet_symbol(
+						ctx,
+						b->val.for_.key_symbol,
+						TP_UNKNOWN);
+				}
+
+				if (b->val.for_.value_symbol != NULL) {
+					tp_meet_symbol(
+						ctx,
+						b->val.for_.value_symbol,
+						TP_UNKNOWN);
+				}
 			}
+
 			if (b->val.for_.inner != NULL)
 				tp_scan_chain(ctx, b->val.for_.inner, region);
 			break;
@@ -495,12 +620,14 @@ tp_scan_chain(struct tp_ctx *ctx, struct hir_block *head, bool in_region)
 		case HIR_BLOCK_WHILE:
 			if (b->val.while_.cond != NULL)
 				tp_apply_captures(ctx, b->val.while_.cond, in_region);
+
 			if (b->val.while_.inner != NULL)
 				tp_scan_chain(ctx, b->val.while_.inner, in_region);
 			break;
 		default:
 			break;
 		}
+
 		if (b->stop)
 			break;
 		b = b->succ;

@@ -205,8 +205,9 @@ static void abce_verify_fast(struct abce_ctx *ctx);
 static void abce_collect_loops(struct hir_block *head, struct hir_block **loops, int *count);
 
 /*
- * Run the ABCE pass on one function.  (Level gating is done by the
- * driver hir_optimize_func() in hir.c.)
+ * Runs the ABCE pass on one function.
+ *
+ * The driver hir_optimize_func() in hir.c performs level gating.
  */
 bool
 hir_opt_abce_func(
@@ -237,21 +238,32 @@ hir_opt_abce_func(
 		 * entry-checked before the body at this optimization
 		 * level, so they are sound seed facts.
 		 */
+
+		/* Seeds packed element-type facts from function parameters. */
 		for (i = 0; i < (int)func_block->val.func.param_count; i++) {
 			int packed_type;
 
 			packed_type = func_block->val.func.param_packed_type[i];
-			if (packed_type >= 0 && packed_type != NOCT_PACKED_ANY)
-				abce_fact_meet(&facts,
-					func_block->val.func.param_name[i], packed_type);
-		}
-		if (func_block->val.func.inner != NULL) {
-			abce_facts_scan_chain(
-				&facts, func_block->val.func.inner, 0);
-			abce_facts_scan_chain(
-				&facts, func_block->val.func.inner, 1);
+			if (packed_type >= 0 && packed_type != NOCT_PACKED_ANY) {
+				abce_fact_meet(
+					&facts,
+					func_block->val.func.param_name[i],
+					packed_type);
+			}
 		}
 
+		if (func_block->val.func.inner != NULL) {
+			abce_facts_scan_chain(
+				&facts,
+				func_block->val.func.inner,
+				0);
+			abce_facts_scan_chain(
+				&facts,
+				func_block->val.func.inner,
+				1);
+		}
+
+		/* Versions every eligible loop collected from the function. */
 		for (i = 0; i < loop_count; i++) {
 			ctx = hir_malloc(sizeof(struct abce_ctx));
 			if (ctx == NULL) {
@@ -279,10 +291,13 @@ hir_opt_abce_func(
 }
 
 static int
-abce_fact_find(struct abce_facts *f, const char *name)
+abce_fact_find(
+	struct abce_facts *f,
+	const char *name)
 {
 	int i;
 
+	/* Searches for the named fact. */
 	for (i = 0; i < f->count; i++) {
 		if (strcmp(f->name[i], name) == 0)
 			return i;
@@ -292,7 +307,10 @@ abce_fact_find(struct abce_facts *f, const char *name)
 }
 
 static void
-abce_fact_meet(struct abce_facts *f, const char *name, int type)
+abce_fact_meet(
+	struct abce_facts *f,
+	const char *name,
+	int type)
 {
 	int i;
 
@@ -349,14 +367,19 @@ abce_packed_ctor_type(
 	} else {
 		return -1;
 	}
-	if (fn == NULL || fn->type != HIR_EXPR_TERM ||
+
+	if (fn == NULL ||
+	    fn->type != HIR_EXPR_TERM ||
 	    fn->val.term.term->type != HIR_TERM_SYMBOL ||
 	    strcmp(fn->val.term.term->val.symbol, "Packed") != 0)
 		return -1;
+
+	/* Matches the constructor name to its Packed element type. */
 	for (i = 0; i < sizeof(tbl) / sizeof(tbl[0]); i++) {
 		if (strcmp(tbl[i].name, ctor) == 0)
 			return tbl[i].type;
 	}
+
 	return -1;
 }
 
@@ -372,10 +395,16 @@ abce_facts_scan_chain(
 	struct hir_stmt *stmt;
 
 	b = head;
+
+	/* Scans every block in the current control-flow chain. */
 	while (b != NULL) {
+
+		/* Classifies the block before scanning nested content. */
 		switch (b->type) {
 		case HIR_BLOCK_BASIC:
 			stmt = b->val.basic.stmt_list;
+
+			/* Collects facts from every statement in the basic block. */
 			while (stmt != NULL) {
 				if (stmt->lhs != NULL &&
 				    stmt->lhs->type == HIR_EXPR_TERM &&
@@ -390,14 +419,16 @@ abce_facts_scan_chain(
 					} else if (stmt->rhs != NULL &&
 						   stmt->rhs->type == HIR_EXPR_TERM &&
 						   stmt->rhs->val.term.term->type == HIR_TERM_SYMBOL) {
-						/* Copy propagation: x = y.
-						   Pass 0 leaves copies
-						   unresolved; pass 1 pulls
-						   the source's fact. */
+						/*
+						 * Copy propagation: x = y. Pass 0 leaves
+						 * copies unresolved; pass 1 pulls the
+						 * source's fact.
+						 */
 						if (pass == 1) {
 							int j;
 
-							j = abce_fact_find(f,
+							j = abce_fact_find(
+								f,
 								stmt->rhs->val.term.term->val.symbol);
 							if (j >= 0 && f->type[j] >= 0)
 								abce_fact_meet(f, x, f->type[j]);
@@ -411,6 +442,8 @@ abce_facts_scan_chain(
 			break;
 		case HIR_BLOCK_IF:
 			c = b;
+
+			/* Scans every branch in the conditional chain. */
 			while (c != NULL) {
 				if (c->val.if_.inner != NULL)
 					abce_facts_scan_chain(f, c->val.if_.inner, pass);
@@ -449,9 +482,11 @@ abce_mk_term_int(
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(t, 0, sizeof(struct hir_term));
 	t->type = HIR_TERM_INT;
 	t->val.i = v;
+
 	return t;
 }
 
@@ -492,9 +527,11 @@ abce_mk_expr_term(
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = HIR_EXPR_TERM;
 	e->val.term.term = t;
+
 	return e;
 }
 
@@ -502,14 +539,26 @@ static struct hir_expr *
 abce_mk_expr_int(
 	int v)
 {
-	return abce_mk_expr_term(abce_mk_term_int(v));
+	struct hir_term *term;
+
+	term = abce_mk_term_int(v);
+	if (term == NULL)
+		return NULL;
+
+	return abce_mk_expr_term(term);
 }
 
 static struct hir_expr *
 abce_mk_expr_symbol(
 	const char *name)
 {
-	return abce_mk_expr_term(abce_mk_term_symbol(name));
+	struct hir_term *term;
+
+	term = abce_mk_term_symbol(name);
+	if (term == NULL)
+		return NULL;
+
+	return abce_mk_expr_term(term);
 }
 
 static struct hir_expr *
@@ -522,15 +571,18 @@ abce_mk_binary(
 
 	if (e0 == NULL || e1 == NULL)
 		return NULL;
+
 	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = type;
 	e->val.binary.expr[0] = e0;
 	e->val.binary.expr[1] = e1;
+
 	return e;
 }
 
@@ -543,14 +595,17 @@ abce_mk_unary(
 
 	if (e0 == NULL)
 		return NULL;
+
 	e = hir_malloc(sizeof(struct hir_expr));
 	if (e == NULL) {
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(e, 0, sizeof(struct hir_expr));
 	e->type = type;
 	e->val.unary.expr = e0;
+
 	return e;
 }
 
@@ -564,16 +619,19 @@ abce_mk_assign_stmt(
 
 	if (rhs == NULL)
 		return NULL;
+
 	s = hir_malloc(sizeof(struct hir_stmt));
 	if (s == NULL) {
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(s, 0, sizeof(struct hir_stmt));
 	s->line = line;
 	s->lhs = lhs;
 	s->rhs = rhs;
 	s->next = NULL;
+
 	return s;
 }
 
@@ -590,11 +648,13 @@ abce_mk_block(
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(b, 0, sizeof(struct hir_block));
 	b->id = hir_next_block_id();
 	b->type = type;
 	b->line = line;
 	b->parent = parent;
+
 	return b;
 }
 
@@ -610,11 +670,14 @@ abce_is_local(
 	struct hir_local *local;
 
 	local = ctx->func_block->val.func.local;
+
+	/* Searches the function's local-symbol list. */
 	while (local != NULL) {
 		if (strcmp(local->symbol, name) == 0)
 			return true;
 		local = local->next;
 	}
+
 	return false;
 }
 
@@ -627,6 +690,7 @@ abce_add_guard(
 {
 	int i;
 
+	/* Merges the requested guard into an existing entry. */
 	for (i = 0; i < ctx->guard_count; i++) {
 		if (strcmp(ctx->guards[i], name) == 0) {
 			if (ctx->guard_type[i] != type)
@@ -635,12 +699,15 @@ abce_add_guard(
 			return true;
 		}
 	}
+
 	if (ctx->guard_count >= ABCE_MAX_GUARDS)
 		return false;	/* over the cap: ineligible */
+
 	ctx->guards[ctx->guard_count] = name;
 	ctx->guard_req[ctx->guard_count] = req;
 	ctx->guard_type[ctx->guard_count] = (uint8_t)type;
 	ctx->guard_count++;
+
 	return true;
 }
 
@@ -653,16 +720,20 @@ abce_local_type(
 	int i;
 
 	local = ctx->func_block->val.func.local;
+
+	/* Checks types established by assignments in the loop body. */
 	for (i = 0; i < ctx->assigned_count; i++) {
 		if (strcmp(ctx->assigned[i], name) == 0)
 			return ctx->assigned_type[i];
 	}
 
+	/* Falls back to the function's proven local types. */
 	while (local != NULL) {
 		if (strcmp(local->symbol, name) == 0)
 			return local->proven_type;
 		local = local->next;
 	}
+
 	return -1;
 }
 
@@ -676,9 +747,11 @@ abce_bet_for_symbol(
 
 	if (ctx->facts == NULL)
 		return NOCT_PACKED_UINT8;
+
 	k = abce_fact_find(ctx->facts, name);
 	if (k < 0 || ctx->facts->type[k] < 0)
 		return NOCT_PACKED_UINT8;
+
 	return ctx->facts->type[k];
 }
 
@@ -689,14 +762,18 @@ abce_add_assigned(
 {
 	int i;
 
+	/* Reuses an existing assignment entry for the local. */
 	for (i = 0; i < ctx->assigned_count; i++) {
 		if (strcmp(ctx->assigned[i], name) == 0)
 			return true;
 	}
+
 	if (ctx->assigned_count >= ABCE_MAX_ASSIGNED)
 		return false;
+
 	ctx->assigned[ctx->assigned_count] = name;
 	ctx->assigned_type[ctx->assigned_count++] = -1;
+
 	return true;
 }
 
@@ -708,6 +785,7 @@ abce_set_assigned_type(
 {
 	int i;
 
+	/* Updates the type of the matching assigned local. */
 	for (i = 0; i < ctx->assigned_count; i++) {
 		if (strcmp(ctx->assigned[i], name) == 0) {
 			ctx->assigned_type[i] = type;
@@ -723,10 +801,12 @@ abce_is_assigned(
 {
 	int i;
 
+	/* Searches for the local in the assigned-symbol set. */
 	for (i = 0; i < ctx->assigned_count; i++) {
 		if (strcmp(ctx->assigned[i], name) == 0)
 			return true;
 	}
+
 	return false;
 }
 
@@ -735,7 +815,9 @@ abce_expr_equal(
 	struct hir_expr *a,
 	struct hir_expr *b)
 {
-	if (a == NULL || b == NULL || a->type != b->type)
+	if (a == NULL ||
+	    b == NULL ||
+	    a->type != b->type)
 		return false;
 
 	if (a->type == HIR_EXPR_TERM) {
@@ -756,8 +838,12 @@ abce_expr_equal(
 	if (a->type == HIR_EXPR_PAR)
 		return abce_expr_equal(a->val.unary.expr, b->val.unary.expr);
 
-	return abce_expr_equal(a->val.binary.expr[0], b->val.binary.expr[0]) &&
-	       abce_expr_equal(a->val.binary.expr[1], b->val.binary.expr[1]);
+	if (!abce_expr_equal(a->val.binary.expr[0], b->val.binary.expr[0]))
+		return false;
+	if (!abce_expr_equal(a->val.binary.expr[1], b->val.binary.expr[1]))
+		return false;
+
+	return true;
 }
 
 /* Pure int expression whose local reads are invariant in this loop. */
@@ -771,25 +857,39 @@ abce_check_invariant_u(
 			return true;
 		if (e->val.term.term->type != HIR_TERM_SYMBOL)
 			return false;
-		if (strcmp(e->val.term.term->val.symbol, ctx->counter) == 0 ||
-		    !abce_is_local(ctx, e->val.term.term->val.symbol) ||
-		    abce_is_assigned(ctx, e->val.term.term->val.symbol))
+		if (strcmp(e->val.term.term->val.symbol, ctx->counter) == 0)
 			return false;
-		return abce_add_guard(ctx, e->val.term.term->val.symbol,
-				      ABCE_GUARD_INT, NOCT_VALUE_INT);
+		if (!abce_is_local(ctx, e->val.term.term->val.symbol))
+			return false;
+		if (abce_is_assigned(ctx, e->val.term.term->val.symbol))
+			return false;
+
+		return abce_add_guard(
+			ctx,
+			e->val.term.term->val.symbol,
+			ABCE_GUARD_INT,
+			NOCT_VALUE_INT);
 	}
 
 	if (e->type == HIR_EXPR_PAR)
 		return abce_check_invariant_u(ctx, e->val.unary.expr);
 
-	if (e->type != HIR_EXPR_PLUS && e->type != HIR_EXPR_MINUS &&
-	    e->type != HIR_EXPR_MUL && e->type != HIR_EXPR_AND &&
-	    e->type != HIR_EXPR_OR && e->type != HIR_EXPR_XOR &&
-	    e->type != HIR_EXPR_SHL && e->type != HIR_EXPR_SHR)
+	if (e->type != HIR_EXPR_PLUS &&
+	    e->type != HIR_EXPR_MINUS &&
+	    e->type != HIR_EXPR_MUL &&
+	    e->type != HIR_EXPR_AND &&
+	    e->type != HIR_EXPR_OR &&
+	    e->type != HIR_EXPR_XOR &&
+	    e->type != HIR_EXPR_SHL &&
+	    e->type != HIR_EXPR_SHR)
 		return false;
 
-	return abce_check_invariant_u(ctx, e->val.binary.expr[0]) &&
-	       abce_check_invariant_u(ctx, e->val.binary.expr[1]);
+	if (!abce_check_invariant_u(ctx, e->val.binary.expr[0]))
+		return false;
+	if (!abce_check_invariant_u(ctx, e->val.binary.expr[1]))
+		return false;
+
+	return true;
 }
 
 /* Register a subscript site; validate the affine shape. */
@@ -825,12 +925,19 @@ abce_check_site(
 	bet = abce_bet_for_symbol(ctx, sym);
 	if (bet == NOCT_PACKED_FLOAT64)
 		return false;
-	body_kind = bet == NOCT_PACKED_FLOAT32 ?
-		ABCE_BODY_F32 : ABCE_BODY_INT;
+
+	if (bet == NOCT_PACKED_FLOAT32)
+		body_kind = ABCE_BODY_F32;
+	else
+		body_kind = ABCE_BODY_INT;
+
 	if (ctx->body_kind != ABCE_BODY_UNKNOWN &&
 	    ctx->body_kind != body_kind)
 		return false;
+
 	ctx->body_kind = body_kind;
+
+	/* Finds or appends the Packed owner of this access. */
 	for (k = 0; k < ctx->packed_count; k++) {
 		if (strcmp(ctx->packed[k], sym) == 0)
 			break;
@@ -842,6 +949,7 @@ abce_check_site(
 		ctx->packed_bet[ctx->packed_count] = bet;
 		ctx->packed_count++;
 	}
+
 	memset(&site, 0, sizeof(site));
 	site.packed_index = k;
 
@@ -857,8 +965,11 @@ abce_check_site(
 		    a->val.term.term->type == HIR_TERM_SYMBOL &&
 		    strcmp(a->val.term.term->val.symbol, ctx->counter) == 0) {
 			/* i + u  or  i - u */
-			site.shape = (f->type == HIR_EXPR_PLUS) ?
-				ABCE_SHAPE_I_PLUS_U : ABCE_SHAPE_I_MINUS_U;
+			if (f->type == HIR_EXPR_PLUS)
+				site.shape = ABCE_SHAPE_I_PLUS_U;
+			else
+				site.shape = ABCE_SHAPE_I_MINUS_U;
+
 			if (b->type == HIR_EXPR_TERM &&
 			    b->val.term.term->type == HIR_TERM_INT) {
 				site.u_is_const = true;
@@ -893,21 +1004,26 @@ abce_check_site(
 				return false;	/* i+i: coefficient 2 */
 			if (!abce_is_local(ctx, site.u_name))
 				return false;	/* global: not invariant */
-			if (!abce_add_guard(ctx, site.u_name, ABCE_GUARD_INT,
-					    NOCT_VALUE_INT))
+			if (!abce_add_guard(
+				ctx,
+				site.u_name,
+				ABCE_GUARD_INT,
+				NOCT_VALUE_INT))
 				return false;
 		}
 	} else {
-		/* An indirect read is not range-proven by ABCE.  Keep it as an
-		   explicit checked gather in the fast body; its index expression
-		   must still be pure and otherwise legal for this loop. */
+		/*
+		 * An indirect read is not range-proven by ABCE. Keep it as an
+		 * explicit checked gather in the fast body; its index expression
+		 * must still be pure and otherwise legal for this loop.
+		 */
 		site.shape = ABCE_SHAPE_GATHER;
 		site.u_expr = f;
 		if (!abce_check_expr(ctx, f))
 			return false;
 	}
 
-	/* Dedup structurally-equal sites. */
+	/* Searches for a structurally equal site already in the context. */
 	for (i = 0; i < ctx->site_count; i++) {
 		struct abce_site *o;
 
@@ -920,22 +1036,29 @@ abce_check_site(
 			continue;
 		if (site.u_is_const && o->u_const == site.u_const)
 			return true;
-		if (!site.u_is_const && site.u_name != NULL &&
+		if (!site.u_is_const &&
+		    site.u_name != NULL &&
 		    o->u_name != NULL &&
 		    strcmp(o->u_name, site.u_name) == 0)
 			return true;
-		if (!site.u_is_const && site.u_expr != NULL &&
-		    o->u_expr != NULL && abce_expr_equal(o->u_expr, site.u_expr))
+		if (!site.u_is_const &&
+		    site.u_expr != NULL &&
+		    o->u_expr != NULL &&
+		    abce_expr_equal(o->u_expr, site.u_expr))
 			return true;
 		if (site.shape == ABCE_SHAPE_I)
 			return true;
-		if (site.shape == ABCE_SHAPE_GATHER && o->u_expr != NULL &&
+		if (site.shape == ABCE_SHAPE_GATHER &&
+		    o->u_expr != NULL &&
 		    abce_expr_equal(o->u_expr, site.u_expr))
 			return true;
 	}
+
 	if (ctx->site_count >= ABCE_MAX_SITES)
 		return false;
+
 	ctx->sites[ctx->site_count++] = site;
+
 	return true;
 }
 
@@ -947,9 +1070,12 @@ abce_check_expr(
 {
 	struct hir_term *t;
 
+	/* Classifies the expression while validating allocation safety. */
 	switch (expr->type) {
 	case HIR_EXPR_TERM:
 		t = expr->val.term.term;
+
+		/* Classifies the literal or symbol term. */
 		switch (t->type) {
 		case HIR_TERM_INT:
 			ctx->saw_int_term = true;
@@ -966,8 +1092,10 @@ abce_check_expr(
 				return true;
 			if (!abce_is_local(ctx, t->val.symbol))
 				return false;	/* global read */
-			/* A value defined earlier in this straight-line walk is
-			   re-established by the fast body and needs no entry guard. */
+			/*
+			 * A value defined earlier in this straight-line walk is
+			 * re-established by the fast body and needs no entry guard.
+			 */
 			if (abce_is_assigned(ctx, t->val.symbol))
 				return true;
 			{
@@ -978,8 +1106,12 @@ abce_check_expr(
 					return false;
 				if (type == NOCT_VALUE_FLOAT)
 					ctx->mixed_numeric = true;
-				return abce_add_guard(ctx, t->val.symbol,
-						      ABCE_GUARD_BODY, type);
+
+				return abce_add_guard(
+					ctx,
+					t->val.symbol,
+					ABCE_GUARD_BODY,
+					type);
 			}
 		default:
 			/* STRING / EMPTY_ARRAY / EMPTY_DICT allocate. */
@@ -992,10 +1124,13 @@ abce_check_expr(
 		ctx->saw_int_only_op = true;
 		return abce_check_expr(ctx, expr->val.unary.expr);
 	case HIR_EXPR_CALL:
-		if (expr->val.call.arg_count != 1 ||
-		    hir_get_intrinsic_call(expr) == HIR_INTRINSIC_NONE)
+		if (expr->val.call.arg_count != 1)
 			return false;
+		if (hir_get_intrinsic_call(expr) == HIR_INTRINSIC_NONE)
+			return false;
+
 		ctx->mixed_numeric = true;
+
 		return abce_check_expr(ctx, expr->val.call.arg[0]);
 	case HIR_EXPR_LT:
 	case HIR_EXPR_LTE:
@@ -1025,6 +1160,7 @@ abce_check_expr(
 			return false;
 		if (!abce_check_expr(ctx, expr->val.binary.expr[1]))
 			return false;
+
 		return true;
 	case HIR_EXPR_SUBSCR:
 		return abce_check_site(ctx, expr);
@@ -1042,21 +1178,30 @@ abce_expr_type(
 {
 	int a, b;
 
+	/* Determines the exact scalar result tag for the expression. */
 	switch (expr->type) {
 	case HIR_EXPR_TERM:
 		if (expr->val.term.term->type == HIR_TERM_INT)
 			return NOCT_VALUE_INT;
 		if (expr->val.term.term->type == HIR_TERM_FLOAT)
 			return NOCT_VALUE_FLOAT;
-		if (expr->val.term.term->type == HIR_TERM_SYMBOL)
-			return abce_local_type(ctx,
+		if (expr->val.term.term->type == HIR_TERM_SYMBOL) {
+			return abce_local_type(
+				ctx,
 				expr->val.term.term->val.symbol);
+		}
+
 		return -1;
 	case HIR_EXPR_PAR:
 		return abce_expr_type(ctx, expr->val.unary.expr);
 	case HIR_EXPR_NEG:
 		a = abce_expr_type(ctx, expr->val.unary.expr);
-		return a == NOCT_VALUE_INT || a == NOCT_VALUE_FLOAT ? a : -1;
+		if (a == NOCT_VALUE_INT)
+			return a;
+		if (a == NOCT_VALUE_FLOAT)
+			return a;
+
+		return -1;
 	case HIR_EXPR_PLOAD8U:
 	case HIR_EXPR_PLOAD8S:
 	case HIR_EXPR_PLOAD16U:
@@ -1071,17 +1216,26 @@ abce_expr_type(
 			HIR_TERM_SYMBOL) {
 			int bet;
 
-			bet = abce_bet_for_symbol(ctx,
+			bet = abce_bet_for_symbol(
+				ctx,
 				expr->val.binary.expr[0]->val.term.term->val.symbol);
-			return bet == NOCT_PACKED_FLOAT32 ?
-				NOCT_VALUE_FLOAT : NOCT_VALUE_INT;
+			if (bet == NOCT_PACKED_FLOAT32)
+				return NOCT_VALUE_FLOAT;
+
+			return NOCT_VALUE_INT;
 		}
+
 		return -1;
 	case HIR_EXPR_CALL:
+
+		/* Maps supported conversion intrinsics to their result tags. */
 		switch (hir_get_intrinsic_call(expr)) {
-		case HIR_INTRINSIC_INT_FROM: return NOCT_VALUE_INT;
-		case HIR_INTRINSIC_FLOAT_FROM: return NOCT_VALUE_FLOAT;
-		default: return -1;
+		case HIR_INTRINSIC_INT_FROM:
+			return NOCT_VALUE_INT;
+		case HIR_INTRINSIC_FLOAT_FROM:
+			return NOCT_VALUE_FLOAT;
+		default:
+			return -1;
 		}
 	case HIR_EXPR_PLUS:
 	case HIR_EXPR_MINUS:
@@ -1089,12 +1243,20 @@ abce_expr_type(
 	case HIR_EXPR_DIV:
 		a = abce_expr_type(ctx, expr->val.binary.expr[0]);
 		b = abce_expr_type(ctx, expr->val.binary.expr[1]);
-		if (a == NOCT_VALUE_FLOAT || b == NOCT_VALUE_FLOAT)
-			return (a == NOCT_VALUE_INT || a == NOCT_VALUE_FLOAT) &&
-			       (b == NOCT_VALUE_INT || b == NOCT_VALUE_FLOAT) ?
-			       NOCT_VALUE_FLOAT : -1;
-		return a == NOCT_VALUE_INT && b == NOCT_VALUE_INT ?
-			NOCT_VALUE_INT : -1;
+		if (a == NOCT_VALUE_FLOAT || b == NOCT_VALUE_FLOAT) {
+			if (a != NOCT_VALUE_INT && a != NOCT_VALUE_FLOAT)
+				return -1;
+			if (b != NOCT_VALUE_INT && b != NOCT_VALUE_FLOAT)
+				return -1;
+
+			return NOCT_VALUE_FLOAT;
+		}
+		if (a != NOCT_VALUE_INT)
+			return -1;
+		if (b != NOCT_VALUE_INT)
+			return -1;
+
+		return NOCT_VALUE_INT;
 	case HIR_EXPR_MOD:
 	case HIR_EXPR_AND:
 	case HIR_EXPR_OR:
@@ -1103,8 +1265,12 @@ abce_expr_type(
 	case HIR_EXPR_SHR:
 		a = abce_expr_type(ctx, expr->val.binary.expr[0]);
 		b = abce_expr_type(ctx, expr->val.binary.expr[1]);
-		return a == NOCT_VALUE_INT && b == NOCT_VALUE_INT ?
-			NOCT_VALUE_INT : -1;
+		if (a != NOCT_VALUE_INT)
+			return -1;
+		if (b != NOCT_VALUE_INT)
+			return -1;
+
+		return NOCT_VALUE_INT;
 	default:
 		return -1;
 	}
@@ -1116,6 +1282,7 @@ abce_check_stmt(
 	struct hir_stmt *stmt)
 {
 	const char *name;
+	int type;
 
 	if (stmt->lhs == NULL) {
 		/* Bare expression statement. */
@@ -1135,34 +1302,53 @@ abce_check_stmt(
 		}
 		if (!abce_check_expr(ctx, stmt->rhs))
 			return false;
-		abce_set_assigned_type(ctx, name,
-				       abce_expr_type(ctx, stmt->rhs));
+
+		type = abce_expr_type(ctx, stmt->rhs);
+		abce_set_assigned_type(ctx, name, type);
+
 		return true;
 	}
 	if (stmt->lhs->type == HIR_EXPR_SUBSCR) {
-		int k, si;
+		int k;
+		int si;
+		int expected_type;
 
 		if (!abce_check_site(ctx, stmt->lhs))
 			return false;
+
 		/* Scatter is deliberately out of scope. */
-		for (k = 0; k < ctx->packed_count; k++)
-			if (strcmp(ctx->packed[k], stmt->lhs->val.binary.expr[0]
-					->val.term.term->val.symbol) == 0)
+		for (k = 0; k < ctx->packed_count; k++) {
+			if (strcmp(
+				ctx->packed[k],
+				stmt->lhs->val.binary.expr[0]->val.term.term->val.symbol) == 0)
 				break;
-		for (si = 0; si < ctx->site_count; si++)
+		}
+
+		/* Rejects a store through any gathered subscript site. */
+		for (si = 0; si < ctx->site_count; si++) {
 			if (ctx->sites[si].packed_index == k &&
 			    ctx->sites[si].shape == ABCE_SHAPE_GATHER &&
-			    abce_expr_equal(ctx->sites[si].u_expr,
+			    abce_expr_equal(
+				ctx->sites[si].u_expr,
 				stmt->lhs->val.binary.expr[1]))
 				return false;
+		}
+
 		if (!abce_check_expr(ctx, stmt->rhs))
 			return false;
-		if (abce_expr_type(ctx, stmt->rhs) !=
-		    (ctx->body_kind == ABCE_BODY_F32 ?
-		     NOCT_VALUE_FLOAT : NOCT_VALUE_INT))
+
+		if (ctx->body_kind == ABCE_BODY_F32)
+			expected_type = NOCT_VALUE_FLOAT;
+		else
+			expected_type = NOCT_VALUE_INT;
+
+		type = abce_expr_type(ctx, stmt->rhs);
+		if (type != expected_type)
 			return false;
+
 		return true;
 	}
+
 	/* DOT store or anything else. */
 	return false;
 }
@@ -1178,6 +1364,8 @@ abce_scan_chain(
 	struct hir_stmt *stmt;
 
 	b = head;
+
+	/* Validates every block in the loop body's control-flow chain. */
 	while (b != NULL) {
 		/* A continue edge targets the loop inner from a nested block. */
 		if (b->stop &&
@@ -1185,9 +1373,12 @@ abce_scan_chain(
 		    b->parent != ctx->loop)
 			return false;
 
+		/* Validate the statements and children owned by this block shape. */
 		switch (b->type) {
 		case HIR_BLOCK_BASIC:
 			stmt = b->val.basic.stmt_list;
+
+			/* Validates every statement in the basic block. */
 			while (stmt != NULL) {
 				if (!abce_check_stmt(ctx, stmt))
 					return false;
@@ -1196,6 +1387,8 @@ abce_scan_chain(
 			break;
 		case HIR_BLOCK_IF:
 			c = b;
+
+			/* Validates every branch of the conditional chain. */
 			while (c != NULL) {
 				if (c->val.if_.cond != NULL) {
 					if (!abce_check_expr(ctx, c->val.if_.cond))
@@ -1217,6 +1410,7 @@ abce_scan_chain(
 			break;
 		b = b->succ;
 	}
+
 	return true;
 }
 
@@ -1248,11 +1442,13 @@ abce_check_eligibility(
 	if (ctx->packed_count == 0 || ctx->site_count == 0)
 		return false;
 
-	/* Every packed and every affine u must be loop-invariant. */
+	/* Rejects Packed owners assigned within the candidate loop. */
 	for (i = 0; i < ctx->packed_count; i++) {
 		if (abce_is_assigned(ctx, ctx->packed[i]))
 			return false;
 	}
+
+	/* Validates every affine offset used by a subscript site. */
 	for (i = 0; i < ctx->site_count; i++) {
 		if (ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
@@ -1277,6 +1473,8 @@ abce_check_eligibility(
 	 * dispatches on int/long).
 	 */
 	if (ctx->packed_count > 1) {
+
+		/* Rejects 64-bit element bets in multi-Packed loops. */
 		for (i = 0; i < ctx->packed_count; i++) {
 			if (ctx->packed_bet[i] == NOCT_PACKED_INT64 ||
 			    ctx->packed_bet[i] == NOCT_PACKED_UINT64)
@@ -1302,8 +1500,11 @@ abce_clone_term(
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(n, 0, sizeof(struct hir_term));
 	n->type = t->type;
+
+	/* Copies the payload according to the term kind. */
 	switch (t->type) {
 	case HIR_TERM_SYMBOL:
 		n->val.symbol = hir_strdup(t->val.symbol);
@@ -1319,6 +1520,7 @@ abce_clone_term(
 		n->val = t->val;
 		break;
 	}
+
 	return n;
 }
 
@@ -1336,8 +1538,11 @@ abce_clone_expr(
 		hir_out_of_memory();
 		return NULL;
 	}
+
 	memset(n, 0, sizeof(struct hir_expr));
 	n->type = e->type;
+
+	/* Recursively clones the payload for the expression kind. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		n->val.term.term = abce_clone_term(e->val.term.term);
@@ -1353,15 +1558,21 @@ abce_clone_expr(
 		break;
 	case HIR_EXPR_DOT:
 		n->val.dot.obj = abce_clone_expr(e->val.dot.obj);
+		if (n->val.dot.obj == NULL)
+			return NULL;
+
 		n->val.dot.symbol = hir_strdup(e->val.dot.symbol);
-		if (n->val.dot.obj == NULL || n->val.dot.symbol == NULL)
+		if (n->val.dot.symbol == NULL)
 			return NULL;
 		break;
 	case HIR_EXPR_CALL:
 		n->val.call.func = abce_clone_expr(e->val.call.func);
 		if (n->val.call.func == NULL)
 			return NULL;
+
 		n->val.call.arg_count = e->val.call.arg_count;
+
+		/* Clones every ordinary-call argument in source order. */
 		for (i = 0; i < e->val.call.arg_count; i++) {
 			n->val.call.arg[i] = abce_clone_expr(e->val.call.arg[i]);
 			if (n->val.call.arg[i] == NULL)
@@ -1370,10 +1581,16 @@ abce_clone_expr(
 		break;
 	case HIR_EXPR_THISCALL:
 		n->val.thiscall.obj = abce_clone_expr(e->val.thiscall.obj);
-		n->val.thiscall.func = hir_strdup(e->val.thiscall.func);
-		if (n->val.thiscall.obj == NULL || n->val.thiscall.func == NULL)
+		if (n->val.thiscall.obj == NULL)
 			return NULL;
+
+		n->val.thiscall.func = hir_strdup(e->val.thiscall.func);
+		if (n->val.thiscall.func == NULL)
+			return NULL;
+
 		n->val.thiscall.arg_count = e->val.thiscall.arg_count;
+
+		/* Clones every method-call argument in source order. */
 		for (i = 0; i < e->val.thiscall.arg_count; i++) {
 			n->val.thiscall.arg[i] = abce_clone_expr(e->val.thiscall.arg[i]);
 			if (n->val.thiscall.arg[i] == NULL)
@@ -1383,12 +1600,15 @@ abce_clone_expr(
 	default:
 		/* Binary operators (incl. SUBSCR, LAND, LOR). */
 		n->val.binary.expr[0] = abce_clone_expr(e->val.binary.expr[0]);
+		if (n->val.binary.expr[0] == NULL)
+			return NULL;
+
 		n->val.binary.expr[1] = abce_clone_expr(e->val.binary.expr[1]);
-		if (n->val.binary.expr[0] == NULL ||
-		    n->val.binary.expr[1] == NULL)
+		if (n->val.binary.expr[1] == NULL)
 			return NULL;
 		break;
 	}
+
 	return n;
 }
 
@@ -1404,14 +1624,18 @@ abce_clone_stmt_list(
 	n_head = NULL;
 	n_tail = NULL;
 	s = head;
+
+	/* Clones each statement and appends it to the new list. */
 	while (s != NULL) {
 		n = hir_malloc(sizeof(struct hir_stmt));
 		if (n == NULL) {
 			hir_out_of_memory();
 			return NULL;
 		}
+
 		memset(n, 0, sizeof(struct hir_stmt));
 		n->line = s->line;
+
 		if (s->lhs != NULL) {
 			n->lhs = abce_clone_expr(s->lhs);
 			if (n->lhs == NULL)
@@ -1420,6 +1644,7 @@ abce_clone_stmt_list(
 		n->rhs = abce_clone_expr(s->rhs);
 		if (n->rhs == NULL)
 			return NULL;
+
 		if (n_head == NULL)
 			n_head = n;
 		else
@@ -1427,6 +1652,7 @@ abce_clone_stmt_list(
 		n_tail = n;
 		s = s->next;
 	}
+
 	return n_head;
 }
 
@@ -1440,6 +1666,8 @@ abce_collect_blocks(
 	struct hir_block *c;
 
 	b = head;
+
+	/* Collects every block reachable through the body chain. */
 	while (b != NULL) {
 		if (ctx->map_count >= ABCE_MAX_BLOCKS)
 			return false;
@@ -1450,6 +1678,8 @@ abce_collect_blocks(
 
 		if (b->type == HIR_BLOCK_IF) {
 			c = b;
+
+			/* Collects every branch block and its nested body. */
 			while (c != NULL) {
 				if (c != b) {
 					if (ctx->map_count >= ABCE_MAX_BLOCKS)
@@ -1470,6 +1700,7 @@ abce_collect_blocks(
 			break;
 		b = b->succ;
 	}
+
 	return true;
 }
 
@@ -1482,10 +1713,13 @@ abce_map_block(
 
 	if (old == NULL)
 		return NULL;
+
+	/* Finds the cloned block corresponding to the old block. */
 	for (i = 0; i < ctx->map_count; i++) {
 		if (ctx->map_old[i] == old)
 			return ctx->map_new[i];
 	}
+
 	return NULL;
 }
 
@@ -1498,12 +1732,16 @@ abce_clone_blocks(
 	struct hir_block *n;
 	int i;
 
+	/* Allocates and fills every block in the clone map. */
 	for (i = 0; i < ctx->map_count; i++) {
 		o = ctx->map_old[i];
 		n = abce_mk_block(o->type, o->line, NULL);
 		if (n == NULL)
 			return false;
+
 		n->stop = o->stop;
+
+		/* Clones the fields owned by this block kind. */
 		switch (o->type) {
 		case HIR_BLOCK_BASIC:
 			n->val.basic.stmt_list =
@@ -1525,7 +1763,7 @@ abce_clone_blocks(
 		ctx->map_new[i] = n;
 	}
 
-	/* Fix up graph pointers. */
+	/* Reconnects parent, successor, and conditional-chain pointers. */
 	for (i = 0; i < ctx->map_count; i++) {
 		struct hir_block *mapped;
 
@@ -1542,11 +1780,18 @@ abce_clone_blocks(
 			n->succ = o->succ;	/* exit/back/END edge; set later */
 
 		if (o->type == HIR_BLOCK_IF) {
-			n->val.if_.inner = abce_map_block(ctx, o->val.if_.inner);
-			n->val.if_.chain_next = abce_map_block(ctx, o->val.if_.chain_next);
-			n->val.if_.chain_prev = abce_map_block(ctx, o->val.if_.chain_prev);
+			n->val.if_.inner = abce_map_block(
+				ctx,
+				o->val.if_.inner);
+			n->val.if_.chain_next = abce_map_block(
+				ctx,
+				o->val.if_.chain_next);
+			n->val.if_.chain_prev = abce_map_block(
+				ctx,
+				o->val.if_.chain_prev);
 		}
 	}
+
 	return true;
 }
 
@@ -1559,6 +1804,8 @@ static int
 abce_load_kind(
 	int bet)
 {
+
+	/* Selects the raw load operation for the Packed element type. */
 	switch (bet) {
 	case NOCT_PACKED_INT8:
 		return HIR_EXPR_PLOAD8S;
@@ -1587,6 +1834,8 @@ static int
 abce_store_kind(
 	int bet)
 {
+
+	/* Selects the raw store operation for the Packed element type. */
 	switch (bet) {
 	case NOCT_PACKED_INT8:
 		return HIR_EXPR_PSTORE8;
@@ -1626,11 +1875,15 @@ abce_packed_subscr_index(
 		return -1;
 	if (e->val.binary.expr[0]->val.term.term->type != HIR_TERM_SYMBOL)
 		return -1;
+
 	sym = e->val.binary.expr[0]->val.term.term->val.symbol;
+
+	/* Finds the Packed owner named by the subscript base. */
 	for (k = 0; k < ctx->packed_count; k++) {
 		if (strcmp(ctx->packed[k], sym) == 0)
 			return k;
 	}
+
 	return -1;
 }
 
@@ -1642,12 +1895,14 @@ abce_is_gather_site(
 {
 	int i;
 
+	/* Searches for the matching checked-gather site. */
 	for (i = 0; i < ctx->site_count; i++) {
 		if (ctx->sites[i].packed_index == packed_index &&
 		    ctx->sites[i].shape == ABCE_SHAPE_GATHER &&
 		    abce_expr_equal(ctx->sites[i].u_expr, index))
 			return true;
 	}
+
 	return false;
 }
 
@@ -1659,9 +1914,12 @@ abce_canonicalize_index(
 {
 	int i;
 
+	/* Replaces a repeated invariant offset with its hoisted local. */
 	for (i = 0; i < ctx->site_count; i++) {
 		struct abce_site *site;
 		struct hir_expr *u;
+		struct hir_expr *left;
+		struct hir_expr *right;
 		struct hir_expr *n;
 
 		site = &ctx->sites[i];
@@ -1676,21 +1934,40 @@ abce_canonicalize_index(
 			u = f->val.binary.expr[1];
 		else if (site->shape == ABCE_SHAPE_U_PLUS_I)
 			u = f->val.binary.expr[0];
-		if (u == NULL || !abce_expr_equal(u, site->u_expr))
+		if (u == NULL)
 			continue;
-		if (site->shape == ABCE_SHAPE_U_PLUS_I)
-			n = abce_mk_binary(HIR_EXPR_PLUS,
-				abce_mk_expr_symbol(site->hoist_name),
-				abce_mk_expr_symbol(ctx->counter));
-		else
-			n = abce_mk_binary(f->type,
-				abce_mk_expr_symbol(ctx->counter),
-				abce_mk_expr_symbol(site->hoist_name));
+		if (!abce_expr_equal(u, site->u_expr))
+			continue;
+
+		if (site->shape == ABCE_SHAPE_U_PLUS_I) {
+			left = abce_mk_expr_symbol(site->hoist_name);
+			if (left == NULL)
+				return false;
+
+			right = abce_mk_expr_symbol(ctx->counter);
+			if (right == NULL)
+				return false;
+
+			n = abce_mk_binary(HIR_EXPR_PLUS, left, right);
+		} else {
+			left = abce_mk_expr_symbol(ctx->counter);
+			if (left == NULL)
+				return false;
+
+			right = abce_mk_expr_symbol(site->hoist_name);
+			if (right == NULL)
+				return false;
+
+			n = abce_mk_binary(f->type, left, right);
+		}
 		if (n == NULL)
 			return false;
+
 		*f = *n;
+
 		return true;
 	}
+
 	return true;
 }
 
@@ -1721,8 +1998,12 @@ abce_rewrite_expr(
 			struct hir_expr *length;
 
 			length = abce_mk_expr_symbol(ctx->len_name[k]);
-			if (length == NULL || !abce_rewrite_expr(ctx, index))
+			if (length == NULL)
 				return false;
+
+			if (!abce_rewrite_expr(ctx, index))
+				return false;
+
 			e->type = HIR_EXPR_PGATHER32;
 			e->val.gather.base = base_term;
 			e->val.gather.length = length;
@@ -1731,17 +2012,23 @@ abce_rewrite_expr(
 				abce_mk_expr_symbol(ctx->packed[k]);
 			if (e->val.gather.packed == NULL)
 				return false;
+
 			return true;
 		}
+
 		e->type = abce_load_kind(ctx->packed_bet[k]);
 		e->val.binary.expr[0] = base_term;
 		/* expr[1] (the offset) stays. */
-		if (!abce_canonicalize_index(ctx, k,
-					     e->val.binary.expr[1]))
+		if (!abce_canonicalize_index(
+			ctx,
+			k,
+			e->val.binary.expr[1]))
 			return false;
+
 		return abce_rewrite_expr(ctx, e->val.binary.expr[1]);
 	}
 
+	/* Rewrites child expressions according to the expression kind. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		return true;
@@ -1754,6 +2041,8 @@ abce_rewrite_expr(
 	case HIR_EXPR_CALL:
 		if (!abce_rewrite_expr(ctx, e->val.call.func))
 			return false;
+
+		/* Rewrites every ordinary-call argument. */
 		for (i = 0; i < e->val.call.arg_count; i++) {
 			if (!abce_rewrite_expr(ctx, e->val.call.arg[i]))
 				return false;
@@ -1762,6 +2051,8 @@ abce_rewrite_expr(
 	case HIR_EXPR_THISCALL:
 		if (!abce_rewrite_expr(ctx, e->val.thiscall.obj))
 			return false;
+
+		/* Rewrites every method-call argument. */
 		for (i = 0; i < e->val.thiscall.arg_count; i++) {
 			if (!abce_rewrite_expr(ctx, e->val.thiscall.arg[i]))
 				return false;
@@ -1781,31 +2072,43 @@ abce_rewrite_block(
 {
 	struct hir_stmt *stmt;
 
+	/* Rewrites the expressions owned by this cloned block. */
 	switch (b->type) {
 	case HIR_BLOCK_BASIC:
 		stmt = b->val.basic.stmt_list;
+
+		/* Rewrites every statement in the basic block. */
 		while (stmt != NULL) {
 			int k;
 
-			if (stmt->lhs != NULL &&
-			    (k = abce_packed_subscr_index(ctx, stmt->lhs)) >= 0) {
+			if (stmt->lhs != NULL)
+				k = abce_packed_subscr_index(ctx, stmt->lhs);
+			else
+				k = -1;
+
+			if (k >= 0) {
 				/* p[f] = x  ->  PSTORE*($baseK, f) = x */
 				struct hir_expr *base_term;
 
 				base_term = abce_mk_expr_symbol(ctx->base_name[k]);
 				if (base_term == NULL)
 					return false;
+
 				stmt->lhs->type = abce_store_kind(ctx->packed_bet[k]);
 				stmt->lhs->val.binary.expr[0] = base_term;
-				if (!abce_canonicalize_index(ctx, k,
-							      stmt->lhs->val.binary.expr[1]))
+				if (!abce_canonicalize_index(
+					ctx,
+					k,
+					stmt->lhs->val.binary.expr[1]))
 					return false;
+
 				if (!abce_rewrite_expr(ctx, stmt->lhs->val.binary.expr[1]))
 					return false;
 			} else if (stmt->lhs != NULL) {
 				if (!abce_rewrite_expr(ctx, stmt->lhs))
 					return false;
 			}
+
 			if (!abce_rewrite_expr(ctx, stmt->rhs))
 				return false;
 			stmt = stmt->next;
@@ -1820,6 +2123,7 @@ abce_rewrite_block(
 	default:
 		break;
 	}
+
 	return true;
 }
 
@@ -1835,31 +2139,46 @@ abce_mk_endpoint(
 {
 	struct hir_expr *iexpr;
 	struct hir_expr *uexpr;
+	struct hir_expr *left;
+	struct hir_expr *right;
 
 	/* i at the endpoint: $lo, or $hi - 1. */
 	if (at_hi) {
-		iexpr = abce_mk_binary(HIR_EXPR_MINUS,
-				       abce_mk_expr_symbol(ctx->hi_name),
-				       abce_mk_expr_int(1));
+		left = abce_mk_expr_symbol(ctx->hi_name);
+		if (left == NULL)
+			return NULL;
+
+		right = abce_mk_expr_int(1);
+		if (right == NULL)
+			return NULL;
+
+		iexpr = abce_mk_binary(HIR_EXPR_MINUS, left, right);
+		if (iexpr == NULL)
+			return NULL;
 	} else {
 		iexpr = abce_mk_expr_symbol(ctx->lo_name);
+		if (iexpr == NULL)
+			return NULL;
 	}
-
-	if (iexpr == NULL)
-		return NULL;
 
 	if (site->shape == ABCE_SHAPE_I)
 		return iexpr;
 
-	if (site->u_is_const)
+	if (site->u_is_const) {
 		uexpr = abce_mk_expr_int(site->u_const);
-	else if (site->u_expr != NULL)
+		if (uexpr == NULL)
+			return NULL;
+	} else if (site->u_expr != NULL) {
 		uexpr = abce_clone_expr(site->u_expr);
-	else
+		if (uexpr == NULL)
+			return NULL;
+	} else {
 		uexpr = abce_mk_expr_symbol(site->u_name);
-	if (uexpr == NULL)
-		return NULL;
+		if (uexpr == NULL)
+			return NULL;
+	}
 
+	/* Combines the endpoint induction value with its affine offset. */
 	switch (site->shape) {
 	case ABCE_SHAPE_I_PLUS_U:
 		return abce_mk_binary(HIR_EXPR_PLUS, iexpr, uexpr);
@@ -1878,40 +2197,99 @@ abce_mk_guard(
 {
 	struct hir_expr *g;
 	struct hir_expr *e;
+	struct hir_expr *left;
+	struct hir_expr *right;
+	struct hir_expr *endpoint;
+	struct hir_expr *packed;
+	struct hir_expr *length;
 	int i;
 
 	/* TYPEIS($lo, int) && TYPEIS($hi, int) -- FIRST: never error. */
-	g = abce_mk_binary(HIR_EXPR_TYPEIS,
-			   abce_mk_expr_symbol(ctx->lo_name),
-			   abce_mk_expr_int(NOCT_VALUE_INT));
-	e = abce_mk_binary(HIR_EXPR_TYPEIS,
-			   abce_mk_expr_symbol(ctx->hi_name),
-			   abce_mk_expr_int(NOCT_VALUE_INT));
+	left = abce_mk_expr_symbol(ctx->lo_name);
+	if (left == NULL)
+		return NULL;
+
+	right = abce_mk_expr_int(NOCT_VALUE_INT);
+	if (right == NULL)
+		return NULL;
+
+	g = abce_mk_binary(HIR_EXPR_TYPEIS, left, right);
+	if (g == NULL)
+		return NULL;
+
+	left = abce_mk_expr_symbol(ctx->hi_name);
+	if (left == NULL)
+		return NULL;
+
+	right = abce_mk_expr_int(NOCT_VALUE_INT);
+	if (right == NULL)
+		return NULL;
+
+	e = abce_mk_binary(HIR_EXPR_TYPEIS, left, right);
+	if (e == NULL)
+		return NULL;
+
 	g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+	if (g == NULL)
+		return NULL;
 
 	/* TYPEIS(v, int/float) for every guarded local. */
 	for (i = 0; i < ctx->guard_count; i++) {
 		int type;
 
 		type = ctx->guard_type[i];
-		e = abce_mk_binary(HIR_EXPR_TYPEIS,
-				   abce_mk_expr_symbol(ctx->guards[i]),
-				   abce_mk_expr_int(type));
+
+		left = abce_mk_expr_symbol(ctx->guards[i]);
+		if (left == NULL)
+			return NULL;
+
+		right = abce_mk_expr_int(type);
+		if (right == NULL)
+			return NULL;
+
+		e = abce_mk_binary(HIR_EXPR_TYPEIS, left, right);
+		if (e == NULL)
+			return NULL;
+
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+		if (g == NULL)
+			return NULL;
 	}
 
 	/* $lo < $hi */
-	e = abce_mk_binary(HIR_EXPR_LT,
-			   abce_mk_expr_symbol(ctx->lo_name),
-			   abce_mk_expr_symbol(ctx->hi_name));
+	left = abce_mk_expr_symbol(ctx->lo_name);
+	if (left == NULL)
+		return NULL;
+
+	right = abce_mk_expr_symbol(ctx->hi_name);
+	if (right == NULL)
+		return NULL;
+
+	e = abce_mk_binary(HIR_EXPR_LT, left, right);
+	if (e == NULL)
+		return NULL;
+
 	g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+	if (g == NULL)
+		return NULL;
 
 	/* PCHECK(p_k, <bet_k>) for every packed. */
 	for (i = 0; i < ctx->packed_count; i++) {
-		e = abce_mk_binary(HIR_EXPR_PCHECK,
-				   abce_mk_expr_symbol(ctx->packed[i]),
-				   abce_mk_expr_int(ctx->packed_bet[i]));
+		left = abce_mk_expr_symbol(ctx->packed[i]);
+		if (left == NULL)
+			return NULL;
+
+		right = abce_mk_expr_int(ctx->packed_bet[i]);
+		if (right == NULL)
+			return NULL;
+
+		e = abce_mk_binary(HIR_EXPR_PCHECK, left, right);
+		if (e == NULL)
+			return NULL;
+
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+		if (g == NULL)
+			return NULL;
 	}
 
 	/*
@@ -1925,38 +2303,87 @@ abce_mk_guard(
 	 * loop body's arithmetic, and a mixed-wrap range always leaves
 	 * one endpoint outside [0, len).
 	 */
+
+	/* Adds lower and upper endpoint checks for every affine site. */
 	for (i = 0; i < ctx->site_count; i++) {
 		if (ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue; /* checked lane-by-lane by the gather opcode */
 
 		/* f(lo) >= 0 && f(lo) < PLEN(p) */
-		e = abce_mk_binary(HIR_EXPR_GTE,
-				   abce_mk_endpoint(ctx, &ctx->sites[i], false),
-				   abce_mk_expr_int(0));
+		endpoint = abce_mk_endpoint(ctx, &ctx->sites[i], false);
+		if (endpoint == NULL)
+			return NULL;
+
+		right = abce_mk_expr_int(0);
+		if (right == NULL)
+			return NULL;
+
+		e = abce_mk_binary(HIR_EXPR_GTE, endpoint, right);
+		if (e == NULL)
+			return NULL;
+
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
-		e = abce_mk_binary(
-			HIR_EXPR_LT,
-			abce_mk_endpoint(ctx, &ctx->sites[i], false),
-			abce_mk_unary(
-				HIR_EXPR_PLEN,
-				abce_mk_expr_symbol(
-					ctx->packed[ctx->sites[i].packed_index])));
+		if (g == NULL)
+			return NULL;
+
+		endpoint = abce_mk_endpoint(ctx, &ctx->sites[i], false);
+		if (endpoint == NULL)
+			return NULL;
+
+		packed = abce_mk_expr_symbol(
+			ctx->packed[ctx->sites[i].packed_index]);
+		if (packed == NULL)
+			return NULL;
+
+		length = abce_mk_unary(HIR_EXPR_PLEN, packed);
+		if (length == NULL)
+			return NULL;
+
+		e = abce_mk_binary(HIR_EXPR_LT, endpoint, length);
+		if (e == NULL)
+			return NULL;
+
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+		if (g == NULL)
+			return NULL;
 
 		/* f(hi-1) >= 0 && f(hi-1) < PLEN(p) */
-		e = abce_mk_binary(HIR_EXPR_GTE,
-				   abce_mk_endpoint(ctx, &ctx->sites[i], true),
-				   abce_mk_expr_int(0));
+		endpoint = abce_mk_endpoint(ctx, &ctx->sites[i], true);
+		if (endpoint == NULL)
+			return NULL;
+
+		right = abce_mk_expr_int(0);
+		if (right == NULL)
+			return NULL;
+
+		e = abce_mk_binary(HIR_EXPR_GTE, endpoint, right);
+		if (e == NULL)
+			return NULL;
 
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
-		e = abce_mk_binary(
-			HIR_EXPR_LT,
-			abce_mk_endpoint(ctx, &ctx->sites[i], true),
-			abce_mk_unary(
-				HIR_EXPR_PLEN,
-				abce_mk_expr_symbol(
-					ctx->packed[ctx->sites[i].packed_index])));
+		if (g == NULL)
+			return NULL;
+
+		endpoint = abce_mk_endpoint(ctx, &ctx->sites[i], true);
+		if (endpoint == NULL)
+			return NULL;
+
+		packed = abce_mk_expr_symbol(
+			ctx->packed[ctx->sites[i].packed_index]);
+		if (packed == NULL)
+			return NULL;
+
+		length = abce_mk_unary(HIR_EXPR_PLEN, packed);
+		if (length == NULL)
+			return NULL;
+
+		e = abce_mk_binary(HIR_EXPR_LT, endpoint, length);
+		if (e == NULL)
+			return NULL;
+
 		g = abce_mk_binary(HIR_EXPR_LAND, g, e);
+		if (g == NULL)
+			return NULL;
 	}
 
 	return g;
@@ -1988,6 +2415,8 @@ abce_version_loop(
 	struct hir_stmt *s_base;
 	struct hir_expr *guard;
 	struct hir_expr *pbase;
+	struct hir_expr *condition;
+	struct hir_expr *lhs;
 	struct hir_stmt *tail;
 	int line;
 	int i;
@@ -1998,59 +2427,104 @@ abce_version_loop(
 	line = F->line;
 
 	/* Unique hoist-local names. */
-	snprintf(ctx->lo_name, sizeof(ctx->lo_name), "$abce%d_lo", abce_loop_seq);
-	snprintf(ctx->hi_name, sizeof(ctx->hi_name), "$abce%d_hi", abce_loop_seq);
+	snprintf(
+		ctx->lo_name,
+		sizeof(ctx->lo_name),
+		"$abce%d_lo",
+		abce_loop_seq);
+	snprintf(
+		ctx->hi_name,
+		sizeof(ctx->hi_name),
+		"$abce%d_hi",
+		abce_loop_seq);
+
+	/* Creates raw-base and length local names for every Packed owner. */
 	for (i = 0; i < ctx->packed_count; i++) {
-		snprintf(ctx->base_name[i], sizeof(ctx->base_name[i]),
-			 "$abce%d_base%d", abce_loop_seq, i);
-		snprintf(ctx->len_name[i], sizeof(ctx->len_name[i]),
-			 "$abce%d_len%d", abce_loop_seq, i);
+		snprintf(
+			ctx->base_name[i],
+			sizeof(ctx->base_name[i]),
+			"$abce%d_base%d",
+			abce_loop_seq,
+			i);
+		snprintf(
+			ctx->len_name[i],
+			sizeof(ctx->len_name[i]),
+			"$abce%d_len%d",
+			abce_loop_seq,
+			i);
 	}
+
+	/* Assigns one local name to each distinct invariant offset. */
 	for (i = 0; i < ctx->site_count; i++) {
 		int j;
 
 		if (ctx->sites[i].u_expr == NULL ||
 		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
+
+		/* Reuses a name from an earlier equivalent offset expression. */
 		for (j = 0; j < i; j++) {
 			if (ctx->sites[j].u_expr != NULL &&
-			    abce_expr_equal(ctx->sites[j].u_expr,
-					    ctx->sites[i].u_expr)) {
-				strcpy(ctx->sites[i].hoist_name,
-				       ctx->sites[j].hoist_name);
+			    abce_expr_equal(
+				ctx->sites[j].u_expr,
+				ctx->sites[i].u_expr)) {
+				strcpy(
+					ctx->sites[i].hoist_name,
+					ctx->sites[j].hoist_name);
 				break;
 			}
 		}
-		if (j == i)
-			snprintf(ctx->sites[i].hoist_name,
-				 sizeof(ctx->sites[i].hoist_name),
-				 "$abce%d_off%d", abce_loop_seq, i);
+
+		if (j == i) {
+			snprintf(
+				ctx->sites[i].hoist_name,
+				sizeof(ctx->sites[i].hoist_name),
+				"$abce%d_off%d",
+				abce_loop_seq,
+				i);
+		}
 	}
-	snprintf(ctx->g_name, sizeof(ctx->g_name), "$abce%d_g", abce_loop_seq);
+
+	snprintf(
+		ctx->g_name,
+		sizeof(ctx->g_name),
+		"$abce%d_g",
+		abce_loop_seq);
 	abce_loop_seq++;
+
 	if (!hir_add_local(F, ctx->lo_name))
 		return false;
 	if (!hir_add_local(F, ctx->hi_name))
 		return false;
+
+	/* Registers raw-base and length locals for every Packed owner. */
 	for (i = 0; i < ctx->packed_count; i++) {
 		if (!hir_add_local(F, ctx->base_name[i]))
 			return false;
 		if (!hir_add_local(F, ctx->len_name[i]))
 			return false;
 	}
+
+	/* Registers one local for each distinct invariant offset. */
 	for (i = 0; i < ctx->site_count; i++) {
 		int j;
 
 		if (ctx->sites[i].u_expr == NULL ||
 		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
+
+		/* Detects an equivalent offset local registered earlier. */
 		for (j = 0; j < i; j++) {
-			if (strcmp(ctx->sites[j].hoist_name,
-				   ctx->sites[i].hoist_name) == 0)
+			if (strcmp(
+				ctx->sites[j].hoist_name,
+				ctx->sites[i].hoist_name) == 0)
 				break;
 		}
-		if (j == i && !hir_add_local(F, ctx->sites[i].hoist_name))
-			return false;
+
+		if (j == i) {
+			if (!hir_add_local(F, ctx->sites[i].hoist_name))
+				return false;
+		}
 	}
 	if (!hir_add_local(F, ctx->g_name))
 		return false;
@@ -2064,27 +2538,55 @@ abce_version_loop(
 
 	/* Build the sibling chain blocks. */
 	G1 = abce_mk_block(HIR_BLOCK_IF, line, P);
+	if (G1 == NULL)
+		return false;
+
 	X1 = abce_mk_block(HIR_BLOCK_BASIC, line, P);
+	if (X1 == NULL)
+		return false;
+
 	G2 = abce_mk_block(HIR_BLOCK_IF, line, P);
+	if (G2 == NULL)
+		return false;
+
 	X2 = abce_mk_block(HIR_BLOCK_BASIC, line, P);
+	if (X2 == NULL)
+		return false;
+
 	B1 = abce_mk_block(HIR_BLOCK_BASIC, line, G1);
+	if (B1 == NULL)
+		return false;
+
 	FAST = abce_mk_block(HIR_BLOCK_FOR, line, G1);
+	if (FAST == NULL)
+		return false;
+
 	FEXIT = abce_mk_block(HIR_BLOCK_BASIC, line, G1);
+	if (FEXIT == NULL)
+		return false;
+
 	SLOW = abce_mk_block(HIR_BLOCK_FOR, line, G2);
+	if (SLOW == NULL)
+		return false;
+
 	SEXIT = abce_mk_block(HIR_BLOCK_BASIC, line, G2);
-	if (G1 == NULL || X1 == NULL || G2 == NULL || X2 == NULL ||
-	    B1 == NULL || FAST == NULL || FEXIT == NULL ||
-	    SLOW == NULL || SEXIT == NULL)
+	if (SEXIT == NULL)
 		return false;
 
 	/* SLOW takes over the original loop payload and body. */
 	SLOW->val.for_ = F->val.for_;
 	SLOW->val.for_.start = abce_mk_expr_symbol(ctx->lo_name);
-	SLOW->val.for_.stop = abce_mk_expr_symbol(ctx->hi_name);
-	if (SLOW->val.for_.start == NULL || SLOW->val.for_.stop == NULL)
+	if (SLOW->val.for_.start == NULL)
 		return false;
+
+	SLOW->val.for_.stop = abce_mk_expr_symbol(ctx->hi_name);
+	if (SLOW->val.for_.stop == NULL)
+		return false;
+
 	/* Reparent the original body's direct children. */
 	b = SLOW->val.for_.inner;
+
+	/* Reparents every direct child in the original body chain. */
 	while (b != NULL) {
 		if (b->parent == F)
 			b->parent = SLOW;
@@ -2092,11 +2594,13 @@ abce_version_loop(
 			break;
 		b = b->succ;
 	}
-	/* Also nested blocks whose parent was F (if-exit blocks). */
+
+	/* Reparents collected nested blocks that belonged directly to F. */
 	for (i = 0; i < ctx->map_count; i++) {
 		if (ctx->map_old[i]->parent == F)
 			ctx->map_old[i]->parent = SLOW;
 	}
+
 	SLOW->succ = SEXIT;
 	SEXIT->stop = true;
 	SEXIT->succ = X2;
@@ -2115,6 +2619,8 @@ abce_version_loop(
 	 */
 	FAST->val.for_.typed_int_region =
 		ctx->body_kind == ABCE_BODY_INT && !ctx->mixed_numeric;
+
+	/* Disables the typed-int region for every 64-bit Packed owner. */
 	for (i = 0; i < ctx->packed_count; i++) {
 		if (ctx->packed_bet[i] == NOCT_PACKED_INT64 ||
 		    ctx->packed_bet[i] == NOCT_PACKED_UINT64)
@@ -2128,14 +2634,18 @@ abce_version_loop(
 	FAST->val.for_.value_symbol = NULL;
 	FAST->val.for_.collection = NULL;
 	FAST->val.for_.start = abce_mk_expr_symbol(ctx->lo_name);
-	FAST->val.for_.stop = abce_mk_expr_symbol(ctx->hi_name);
-	if (FAST->val.for_.start == NULL || FAST->val.for_.stop == NULL)
+	if (FAST->val.for_.start == NULL)
 		return false;
+
+	FAST->val.for_.stop = abce_mk_expr_symbol(ctx->hi_name);
+	if (FAST->val.for_.stop == NULL)
+		return false;
+
 	FAST->val.for_.inner = abce_map_block(ctx, F->val.for_.inner);
 	if (FAST->val.for_.inner == NULL)
 		return false;
 
-	/* Fix clone edges that referenced the original loop. */
+	/* Reparents every cloned block and retains its original exit edge. */
 	for (i = 0; i < ctx->map_count; i++) {
 		struct hir_block *n;
 
@@ -2155,7 +2665,7 @@ abce_version_loop(
 	FEXIT->stop = true;
 	FEXIT->succ = X1;
 
-	/* Rewrite packed accesses in the fast body. */
+	/* Rewrites every cloned block in the fast body. */
 	for (i = 0; i < ctx->map_count; i++) {
 		if (!abce_rewrite_block(ctx, ctx->map_new[i]))
 			return false;
@@ -2163,51 +2673,91 @@ abce_version_loop(
 
 	/* B1: hoist both raw base and element count for checked gathers. */
 	tail = NULL;
+
+	/* Hoists the raw base and element count of every Packed owner. */
 	for (i = 0; i < ctx->packed_count; i++) {
 		struct hir_stmt *s_len;
+		struct hir_expr *packed_expr;
+		struct hir_expr *base_lhs;
+		struct hir_expr *len_lhs;
+		struct hir_expr *plen;
 
-		pbase = abce_mk_unary(HIR_EXPR_PBASE,
-				      abce_mk_expr_symbol(ctx->packed[i]));
-		s_base = abce_mk_assign_stmt(line,
-					     abce_mk_expr_symbol(ctx->base_name[i]),
-					     pbase);
+		packed_expr = abce_mk_expr_symbol(ctx->packed[i]);
+		if (packed_expr == NULL)
+			return false;
+
+		pbase = abce_mk_unary(HIR_EXPR_PBASE, packed_expr);
+		if (pbase == NULL)
+			return false;
+
+		base_lhs = abce_mk_expr_symbol(ctx->base_name[i]);
+		if (base_lhs == NULL)
+			return false;
+
+		s_base = abce_mk_assign_stmt(line, base_lhs, pbase);
 		if (s_base == NULL)
 			return false;
+
 		if (tail == NULL)
 			B1->val.basic.stmt_list = s_base;
 		else
 			tail->next = s_base;
 		tail = s_base;
-		s_len = abce_mk_assign_stmt(line,
-					    abce_mk_expr_symbol(ctx->len_name[i]),
-					    abce_mk_unary(HIR_EXPR_PLEN,
-							  abce_mk_expr_symbol(ctx->packed[i])));
+
+		len_lhs = abce_mk_expr_symbol(ctx->len_name[i]);
+		if (len_lhs == NULL)
+			return false;
+
+		packed_expr = abce_mk_expr_symbol(ctx->packed[i]);
+		if (packed_expr == NULL)
+			return false;
+
+		plen = abce_mk_unary(HIR_EXPR_PLEN, packed_expr);
+		if (plen == NULL)
+			return false;
+
+		s_len = abce_mk_assign_stmt(line, len_lhs, plen);
 		if (s_len == NULL)
 			return false;
+
 		tail->next = s_len;
 		tail = s_len;
 	}
-	/* Canonicalize non-trivial invariant offsets only after the
-	   TYPEIS guard has succeeded. */
+
+	/* Hoists each distinct invariant offset after TYPEIS succeeds. */
 	for (i = 0; i < ctx->site_count; i++) {
 		struct hir_stmt *s_off;
+		struct hir_expr *lhs;
+		struct hir_expr *rhs;
 		int j;
 
 		if (ctx->sites[i].u_expr == NULL ||
 		    ctx->sites[i].shape == ABCE_SHAPE_GATHER)
 			continue;
+
+		/* Detects an equivalent offset already hoisted by this block. */
 		for (j = 0; j < i; j++) {
-			if (strcmp(ctx->sites[j].hoist_name,
-				   ctx->sites[i].hoist_name) == 0)
+			if (strcmp(
+				ctx->sites[j].hoist_name,
+				ctx->sites[i].hoist_name) == 0)
 				break;
 		}
+
 		if (j != i)
 			continue;
-		s_off = abce_mk_assign_stmt(line,
-					    abce_mk_expr_symbol(ctx->sites[i].hoist_name),
-					    abce_clone_expr(ctx->sites[i].u_expr));
+
+		lhs = abce_mk_expr_symbol(ctx->sites[i].hoist_name);
+		if (lhs == NULL)
+			return false;
+
+		rhs = abce_clone_expr(ctx->sites[i].u_expr);
+		if (rhs == NULL)
+			return false;
+
+		s_off = abce_mk_assign_stmt(line, lhs, rhs);
 		if (s_off == NULL)
 			return false;
+
 		tail->next = s_off;
 		tail = s_off;
 	}
@@ -2232,10 +2782,14 @@ abce_version_loop(
 	G1->succ = X1;
 
 	/* G2: if (!$g) { slow-for } */
-	G2->val.if_.cond = abce_mk_unary(HIR_EXPR_NOT,
-					 abce_mk_expr_symbol(ctx->g_name));
+	condition = abce_mk_expr_symbol(ctx->g_name);
+	if (condition == NULL)
+		return false;
+
+	G2->val.if_.cond = abce_mk_unary(HIR_EXPR_NOT, condition);
 	if (G2->val.if_.cond == NULL)
 		return false;
+
 	G2->val.if_.inner = SLOW;
 	G2->succ = X2;
 
@@ -2247,23 +2801,38 @@ abce_version_loop(
 	 * place, so every predecessor pointing at it stays valid:
 	 *   $lo = <start>; $hi = <stop>;
 	 */
-	s_lo = abce_mk_assign_stmt(line, abce_mk_expr_symbol(ctx->lo_name),
-				   F->val.for_.start);
-	s_hi = abce_mk_assign_stmt(line, abce_mk_expr_symbol(ctx->hi_name),
-				   F->val.for_.stop);
-	if (s_lo == NULL || s_hi == NULL)
+	lhs = abce_mk_expr_symbol(ctx->lo_name);
+	if (lhs == NULL)
 		return false;
+
+	s_lo = abce_mk_assign_stmt(line, lhs, F->val.for_.start);
+	if (s_lo == NULL)
+		return false;
+
+	lhs = abce_mk_expr_symbol(ctx->hi_name);
+	if (lhs == NULL)
+		return false;
+
+	s_hi = abce_mk_assign_stmt(line, lhs, F->val.for_.stop);
+	if (s_hi == NULL)
+		return false;
+
 	{
 		struct hir_stmt *s_g;
+		struct hir_expr *g_lhs;
 
-		s_g = abce_mk_assign_stmt(line,
-					  abce_mk_expr_symbol(ctx->g_name),
-					  guard);
+		g_lhs = abce_mk_expr_symbol(ctx->g_name);
+		if (g_lhs == NULL)
+			return false;
+
+		s_g = abce_mk_assign_stmt(line, g_lhs, guard);
 		if (s_g == NULL)
 			return false;
+
 		s_lo->next = s_hi;
 		s_hi->next = s_g;
 	}
+
 	memset(&F->val, 0, sizeof(F->val));
 	F->type = HIR_BLOCK_BASIC;
 	F->val.basic.stmt_list = s_lo;
@@ -2281,6 +2850,8 @@ abce_verify_fast_expr(
 {
 	if (e == NULL)
 		return;
+
+	/* Verifies the allocation behavior of each expression kind. */
 	switch (e->type) {
 	case HIR_EXPR_TERM:
 		assert(e->val.term.term->type != HIR_TERM_STRING);
@@ -2306,8 +2877,10 @@ abce_verify_fast_expr(
 		abce_verify_fast_expr(e->val.unary.expr);
 		break;
 	case HIR_EXPR_CAPTURE:
-		/* CSE runs after ABCE, so this cannot appear today; keep
-		   the walk correct in case the pass order ever changes. */
+		/*
+		 * CSE runs after ABCE, so this cannot appear today. Keep the
+		 * walk correct in case the pass order ever changes.
+		 */
 		abce_verify_fast_expr(e->val.capture.expr);
 		break;
 	case HIR_EXPR_PGATHER32:
@@ -2330,6 +2903,7 @@ abce_verify_fast(
 	struct hir_stmt *stmt;
 	int i;
 
+	/* Verifies every cloned block in the fast subtree. */
 	for (i = 0; i < ctx->map_count; i++) {
 		struct hir_block *b;
 
@@ -2338,6 +2912,8 @@ abce_verify_fast(
 		assert(b->type == HIR_BLOCK_BASIC || b->type == HIR_BLOCK_IF);
 		if (b->type == HIR_BLOCK_BASIC) {
 			stmt = b->val.basic.stmt_list;
+
+			/* Verifies every statement expression in the basic block. */
 			while (stmt != NULL) {
 				abce_verify_fast_expr(stmt->lhs);
 				abce_verify_fast_expr(stmt->rhs);
@@ -2361,7 +2937,11 @@ abce_collect_loops(
 	struct hir_block *c;
 
 	b = head;
+
+	/* Collects candidate loops from every block in the chain. */
 	while (b != NULL) {
+
+		/* Descends according to the current block kind. */
 		switch (b->type) {
 		case HIR_BLOCK_FOR:
 			if (b->val.for_.is_ranged && *count < ABCE_MAX_LOOPS)
@@ -2375,6 +2955,8 @@ abce_collect_loops(
 			break;
 		case HIR_BLOCK_IF:
 			c = b;
+
+			/* Visits every branch in the conditional chain. */
 			while (c != NULL) {
 				if (c->val.if_.inner != NULL)
 					abce_collect_loops(c->val.if_.inner, loops, count);

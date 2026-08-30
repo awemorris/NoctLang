@@ -221,7 +221,8 @@ hir_memory_catalog_init(
 
 bool
 hir_memory_catalog_add(
-	struct hir_memory_catalog *catalog, const struct hir_memory_object *object);
+	struct hir_memory_catalog *catalog,
+	const struct hir_memory_object *object);
 
 const struct hir_memory_object *
 hir_memory_catalog_find(
@@ -280,7 +281,7 @@ hir_dosum_classify(
 	const struct hir_loop_summary *summary,
 	struct hir_dosum_result *result);
 
-/* Developer-only diagnostics.  This never changes compilation semantics. */
+/* Developer-only diagnostics; does not mutate the input HIR. */
 bool
 hir_parallel_diagnose_func(
 	struct hir_block *func,

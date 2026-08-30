@@ -29,7 +29,7 @@ trap 'rm -f -- noct-arch out "$log" "$blend_copy_nb" "$blend_copy_nb.out" "$blen
 "$NOCT" --compile -O2 simd/drawimage/blend-copy.noct >/dev/null 2>&1
 "$NOCT" --compile -O2 simd/drawimage/blend-add.noct >/dev/null 2>&1
 "$NOCT" --compile -O2 packed-loop/regcache.noct >/dev/null 2>&1
-NOCT_UNROLL_ENABLE=1 "$NOCT" --compile -O2 \
+"$NOCT" --compile -O2 \
     packed-loop/unroll-width16.noct >/dev/null 2>&1
 cp simd/drawimage/blend-copy.noct.out "$blend_copy_nb.out"
 cp simd/drawimage/blend-add.noct.out "$blend_add_nb.out"
