@@ -7,9 +7,9 @@
 # the JIT.  All four runs must match the golden output byte-for-byte:
 # vectorization must never change observable behavior.
 #
-# Cases in MUST_VECTORIZE must report a "vectorized" line under
-# NOCT_SIMD_DEBUG at level 2 (a golden test alone cannot catch the
-# pass silently dying); cases in MUST_NOT must not.
+# Cases in MUST_VECTORIZE must report a stable --simd-info line at level 2
+# (a golden test alone cannot catch the pass silently dying); cases in
+# MUST_NOT must not.
 #
 
 NOCT=${NOCT:-../../build-static/noct}
@@ -153,7 +153,7 @@ fi
 
 for name in $MUST_VECTORIZE; do
     tc="simd/$name.noct"
-    n=$(NOCT_SIMD_DEBUG=1 $NOCT -j0 -O2 "$tc" 2>&1 \
+    n=$($NOCT --simd-info -j0 -O2 "$tc" 2>&1 \
         | grep -c 'vectorized')
     if [ "$n" -eq 0 ]; then
         echo "FAIL $tc (did not vectorize)"
@@ -165,7 +165,7 @@ done
 
 for name in $MUST_NOT; do
     tc="simd/$name.noct"
-    n=$(NOCT_SIMD_DEBUG=1 $NOCT -j0 -O2 "$tc" 2>&1 \
+    n=$($NOCT --simd-info -j0 -O2 "$tc" 2>&1 \
         | grep -c 'vectorized')
     if [ "$n" -ne 0 ]; then
         echo "FAIL $tc (vectorized unexpectedly)"
@@ -227,11 +227,11 @@ compile_info=$($NOCT_META --compile --simd-info -O2 \
     "$tmp_dir/f32.noct" 2>&1)
 if ! printf '%s\n' "$compile_info" | grep -q \
        "^SIMD: $tmp_dir/f32.noct:6: vectorized (f32x4)$" ||
-   ! grep -a -q '^Vector Ops$' "$tmp_dir/f32.nb"; then
+   ! grep -a -q '^Vector Ops$' "$tmp_dir/f32.nbc"; then
     echo "FAIL SIMD bytecode vector metadata/info"
     FAILED=1
 else
-    $NOCT_META -j "$tmp_dir/f32.nb" > "$tmp_dir/out" 2>&1
+    $NOCT_META -j "$tmp_dir/f32.nbc" > "$tmp_dir/out" 2>&1
     if ! diff -q simd/f32.noct.out "$tmp_dir/out" > /dev/null 2>&1; then
         echo "FAIL SIMD bytecode round trip"
         diff simd/f32.noct.out "$tmp_dir/out" | head -5
@@ -245,19 +245,19 @@ fi
 # not acquire that metadata, and the persisted O3 image must round-trip.
 cp simd/drawimage/blend-alpha.noct "$tmp_dir/blend-alpha.noct"
 $NOCT_META --compile -O2 "$tmp_dir/blend-alpha.noct" > /dev/null 2>&1
-if grep -a -q '^FMA Ops$' "$tmp_dir/blend-alpha.nb"; then
+if grep -a -q '^FMA Ops$' "$tmp_dir/blend-alpha.nbc"; then
     echo "FAIL O2 bytecode unexpectedly contains FMA metadata"
     FAILED=1
 else
     echo "PASS O2 bytecode has no FMA metadata"
 fi
 $NOCT_META --compile -O3 "$tmp_dir/blend-alpha.noct" > /dev/null 2>&1
-if ! grep -a -q '^FMA Ops$' "$tmp_dir/blend-alpha.nb"; then
+if ! grep -a -q '^FMA Ops$' "$tmp_dir/blend-alpha.nbc"; then
     echo "FAIL O3 bytecode missing FMA metadata"
     FAILED=1
 else
     NOCT_JIT_SIMD_MAX=sse41 $NOCT_META -j \
-        "$tmp_dir/blend-alpha.nb" > "$tmp_dir/blend-alpha.out" 2>&1
+        "$tmp_dir/blend-alpha.nbc" > "$tmp_dir/blend-alpha.out" 2>&1
     if ! diff -q simd/drawimage/blend-alpha.noct.out \
         "$tmp_dir/blend-alpha.out" > /dev/null 2>&1; then
         echo "FAIL O3 FMA bytecode portable round trip"
@@ -271,7 +271,7 @@ fi
 # bytecode, not an optimizer-runtime side channel.
 cp simd/drawimage/gather-checked.noct "$tmp_dir/gather-checked.noct"
 $NOCT_META --compile -O2 "$tmp_dir/gather-checked.noct" > /dev/null 2>&1
-$NOCT_META -j "$tmp_dir/gather-checked.nb" > "$tmp_dir/gather.out" 2>&1
+$NOCT_META -j "$tmp_dir/gather-checked.nbc" > "$tmp_dir/gather.out" 2>&1
 $NOCT_META -j0 -O0 simd/drawimage/gather-checked.noct \
     > "$tmp_dir/gather.ref" 2>&1
 if ! diff -q "$tmp_dir/gather.ref" "$tmp_dir/gather.out" > /dev/null 2>&1; then

@@ -26,12 +26,11 @@ done
 
 if [ "$PARALLEL_EXPECT_SIMD" -ne 0 ]; then
     echo 'SIMD/common-analysis integration:'
-    NOCT_SIMD_ANALYSIS_COMPARE=1 LC_ALL=C "$NOCT" -j0 -O2 \
+    LC_ALL=C "$NOCT" --simd-info -j0 -O2 \
         "$case_dir/simd/blend.noct" >"$tmp/simd.stdout" 2>"$tmp/simd.stderr"
-    grep 'SIMD-COMMON: .*blend.noct:11 legacy=accept common=accept reason=runtime-alias-guard .*alias-guards=1$' \
+    grep 'SIMD: .*blend.noct:11: vectorized (i32x4)$' \
         "$tmp/simd.stderr" >/dev/null
-    grep 'SIMD-COMMON: .*blend.noct:22 legacy=accept common=reject reason=scalar-carried ' \
-        "$tmp/simd.stderr" >/dev/null
+    diff "$case_dir/simd/blend.noct.out" "$tmp/simd.stdout"
 else
     echo 'SKIP SIMD/common-analysis integration (optimizer disabled)'
 fi

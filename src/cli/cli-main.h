@@ -10,6 +10,8 @@
 
 #include <noct/noct.h>
 
+#include "module.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -30,10 +32,6 @@ enum cli_optimize_level_result parse_optimize_level_option(
 bool load_file_content(const char *fname, char **data, size_t *size);
 int wide_printf(const char *format, ...);
 bool add_file(const char *fname, bool (*add_file_hook)(const char *));
-
-void cli_module_reset(void);
-bool cli_module_add_path(const char *path_list);
-char *cli_module_resolve(const char *module_name);
 
 int command_compile(int argc, char *argv[]);
 int command_transpile_c(int argc, char *argv[]);

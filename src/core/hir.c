@@ -283,6 +283,7 @@ hir_build(
 		afunc.is_static = false;
 		afunc.is_inline = false;
 		afunc.is_fast = false;
+		afunc.is_accel = false;
 		afunc.stmt_list = hir_anon_func_stmt_list[i];
 		afunc.next = NULL;
 		if (!hir_visit_func(&afunc))
@@ -549,15 +550,24 @@ bool
 hir_optimize_func(
 	struct hir_block *func_block,
 	int optimize_level,
-	bool print_simd_info)
+	bool print_simd_info,
+	bool (*accel_optimize_func)(struct hir_block *func_block,
+				    void *userdata),
+	void *accel_optimize_userdata)
 {
 #if !defined(NOCT_USE_OPTIMIZER)
 	UNUSED_PARAMETER(optimize_level);
 	UNUSED_PARAMETER(print_simd_info);
+	UNUSED_PARAMETER(accel_optimize_func);
+	UNUSED_PARAMETER(accel_optimize_userdata);
 #endif
 
 	assert(func_block != NULL);
 	assert(func_block->type == HIR_BLOCK_FUNC);
+	assert((accel_optimize_func == NULL &&
+		accel_optimize_userdata == NULL) ||
+	       (accel_optimize_func != NULL &&
+		accel_optimize_userdata != NULL));
 
 #if !defined(NOCT_USE_OPTIMIZER)
 	return true;
@@ -578,6 +588,23 @@ hir_optimize_func(
 		/* Typed ops. */
 		if (!hir_opt_typed_func(func_block))
 			return false;
+
+		/* Offer marked functions to the optional accelerator optimizer. */
+		if (func_block->val.func.is_accel &&
+		    accel_optimize_func != NULL) {
+			if (!accel_optimize_func(
+				func_block,
+				accel_optimize_userdata))
+				return false;
+
+			/* A consumed hint denotes a committed accelerator rewrite. */
+			if (!func_block->val.func.is_accel) {
+				if (!hir_opt_typed_func(func_block))
+					return false;
+
+				return true;
+			}
+		}
 
 		/* Remove only statically proven fast index checks. */
 		if (!hir_fast_func_pass(func_block))
@@ -711,6 +738,7 @@ hir_visit_func(
 		func_block->val.func.is_static = afunc->is_static;
 		func_block->val.func.is_inline = afunc->is_inline;
 		func_block->val.func.is_fast = afunc->is_fast;
+		func_block->val.func.is_accel = afunc->is_accel;
 
 		/* Parse the parameters. */
 		if (!hir_visit_param_list(func_block, afunc))

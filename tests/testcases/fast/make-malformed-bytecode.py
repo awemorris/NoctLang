@@ -12,7 +12,7 @@ output_dir.mkdir(parents=True, exist_ok=True)
 def replace_one(name, old, new):
     if old not in source:
         raise RuntimeError("bytecode pattern not found: " + name)
-    (output_dir / (name + ".nb")).write_bytes(source.replace(old, new, 1))
+    (output_dir / (name + ".nbc")).write_bytes(source.replace(old, new, 1))
 
 
 signature = (
@@ -99,4 +99,4 @@ replace_one(
 )
 
 truncated = source.index(b"Fast Signature\n") + len(b"Fast Signature\n1\n1\n2\n")
-(output_dir / "truncated.nb").write_bytes(source[:truncated])
+(output_dir / "truncated.nbc").write_bytes(source[:truncated])

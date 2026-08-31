@@ -82,26 +82,6 @@ int main(int argc, char *argv[])
 }
 
 /*
- * Windows Main
- */
-#ifdef _WIN32
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
-{
-    /* Dispatch to main(). */
-    int argc, i;
-    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    char **argv = malloc(sizeof(char *) * argc);
-    for (i = 0; i < argc; i++)
-    {
-        char tmp[1024];
-	WideCharToMultiByte(CP_ACP, 0, wargv[i], -1, tmp, sizeof(tmp) - 1, NULL, NULL);
-        argv[i] = strdup(tmp);
-    }
-    return main(argc, argv);
-}
-#endif
-
-/*
  * Show the usage message.
  */
 void show_usage(void)
@@ -129,6 +109,7 @@ void show_usage(void)
 	wide_printf(N_TR("  -O, -O0..-O3, -O9    ... optimization preset\n"));
 	wide_printf(N_TR("  --simd-info          ... report successfully vectorized loops\n"));
 	wide_printf(N_TR("  --path=DIR1:DIR2     ... append source-module search paths\n"));
+	wide_printf(N_TR("  --gpu[=NAME]         ... use Vulkan acceleration for source execution\n"));
 	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-graduate-size=N ... second GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-tenure-size=N   ... final GC space size in bytes\n"));

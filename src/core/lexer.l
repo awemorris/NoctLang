@@ -613,11 +613,20 @@ lexer_parse_decimal(
 			return TOKEN_INT;
 		}
 [a-zA-Z_0-9]+	{
-			ast_yylval.sval = ast_strdup(yytext);
+			int token;
+
+			/* Reserve the exact accelerator spellings. */
+			token = TOKEN_SYMBOL;
+			if (strcmp(yytext, "__accel") == 0)
+				token = TOKEN_DUNDER_ACCEL;
+			else if (strcmp(yytext, "__Accel") == 0)
+				token = TOKEN_INTERNAL_ACCEL_PACKAGE;
+			else
+				ast_yylval.sval = ast_strdup(yytext);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
-			return TOKEN_SYMBOL;
+			return token;
 		}
 %%
 

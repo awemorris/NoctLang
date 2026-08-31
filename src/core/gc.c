@@ -109,7 +109,6 @@ static void rt_gc_young_gc(struct rt_env *env);
 static void rt_gc_young_gc_body(struct rt_env *env);
 static bool rt_gc_copy_young_object(struct rt_env *env, struct rt_gc_object **obj);
 static bool rt_gc_work_push(struct rt_env *env, struct rt_gc_object **slot);
-static void rt_gc_verify_young(struct rt_env *env);
 static bool rt_gc_promoted_push(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_note_promoted_cross_refs(struct rt_env *env, struct rt_gc_object *obj);
 static void rt_gc_array_dict_follow_newer(struct rt_env *env, struct rt_gc_object **obj);

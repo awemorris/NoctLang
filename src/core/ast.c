@@ -34,6 +34,7 @@
 #define AST_FUNC_STATIC 1
 #define AST_FUNC_INLINE 2
 #define AST_FUNC_FAST   4
+#define AST_FUNC_ACCEL  8
 
 /* List operation. */
 #define AST_ADD_TO_LAST(type, list, p)			\
@@ -778,6 +779,7 @@ ast_accept_func(
 	f->is_static = (flags & AST_FUNC_STATIC) != 0;
 	f->is_inline = (flags & AST_FUNC_INLINE) != 0;
 	f->is_fast = (flags & AST_FUNC_FAST) != 0;
+	f->is_accel = (flags & AST_FUNC_ACCEL) != 0;
 	f->stmt_list = stmt_list;
 
 	return f;

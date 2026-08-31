@@ -759,97 +759,55 @@ Executes a compact GC.
 GC.compactGC();
 ```
 
-## Managed GPU accelerator functions
+## `__accel func`
 
-`__accel func` declares a synchronous GPU-only orchestration function.  It must
-return `void`, is invoked only through `Accel.call`, and has no executable CPU
-fallback.  A disabled or unavailable accelerator backend is therefore a
-runtime error.  ANSI C, Emacs Lisp, and Scheme translation reject managed
-accelerator functions.
+`__accel` is an optional function-optimization hint.  It does not change the
+meaning of the function: a compiler may ignore the hint and execute the normal,
+checked CPU body.  Parameters, return values, and control flow follow the same
+rules as an ordinary function.  This is also the behavior at optimization
+level 0, in a build without the optimizer, without `--gpu`, or when the GPU
+optimizer declines the function.
 
-Buffer parameters use typed restricted transport annotations:
-
-- `_in`, for example `rpackedfloat_in`, receives read-only host Packed data;
-- `_out`, for example `rpackedfloat_out`, receives write-only host Packed
-  data; and
-- `_ptr`, for example `rpackedfloat_ptr`, receives an existing `Accel.*`
-  resource and may be read or written as inferred from the function body.
-
-Restricted buffer arguments must not alias.  `_in` and `_out` are transferred
-once at the managed program boundary; device-local intermediates and `_ptr`
-data remain on the GPU between generated kernels.
-
-The accepted initial body is an ordered sequence of zero-based, unit-step
-ranged loops.  Independent loops become DOALL kernels.  Canonical typed
-additive reductions may occur before, between, or after those loops.  Each is
-published by the immediately following `_out[0] = accumulator` or
-`_ptr[0] = accumulator` store and owns distinct scratch buffers.  Unsupported
-dependence, calls, loop forms, or reduction forms are compile errors.
-
-Local typed Packed construction declares a logical device buffer rather than
-performing a host allocation:
+The accepted forms are:
 
 ```noct
-__accel func square_sum(input: rpackedfloat_in,
-                      output: rpackedfloat_out,
-                      count: int): void {
-    let squared = Packed.float32(count);
-    for (i in 0..count) {
-        squared[i] = input[i] * input[i];
-    }
-    var sum: float = 0.0;
-    for (i in 0..count) {
-        sum += squared[i];
-    }
-    output[0] = sum;
+__accel func transform(value: int): int {
+    return value * 2;
 }
 
-func main() {
-    let input = Packed.float32(65);
-    let output = Packed.float32(1);
-    Accel.call(square_sum, input, output, 65);
+static __accel func helper(value) {
+    return value + 1;
 }
 ```
 
-Persistent device storage is declared at top level with `__accel var` or
-`__accel let`, for example `__accel let state = Accel.float32(1024);`, and
-passed explicitly through an `_ptr` parameter. Host code cannot subscript an
-accelerator resource. `__accel let` prevents rebinding the resource name; it
-does not make the GPU buffer contents immutable.
+`__accel var`, `__accel let`, `__gpu func`, accelerator-specific parameter
+suffixes, and source access to the internal `__Accel` package are not language
+features.  There is no public `Accel.*` package: an accelerator function is
+called by its ordinary function name.
 
-Managed programs, generated kernels, buffer expressions, bindings, and step
-order survive `.nb` and `.nap` serialization.  OpenGL ES is the complete
-validated Linux execution backend. Vulkan is validated for synchronous
-managed programs containing multiple ordered DOALL and additive DOSUM steps,
-including local intermediates, persistent `_ptr` resources, and serialized
-`.nb`/`.nap` input. Raw GPU dispatch remains OpenGL ES-only.
+The initial GPU optimization subset is deliberately narrow.  Its primary
+buffer parameters are exact `rpackedint32`, `rpackeduint32`, and
+`rpackedfloat` annotations.  It accepts typed `int` and `float` scalar
+parameters and suitable top-level one-dimensional ranged loops whose
+iterations are independent.  Straight-line arithmetic, comparisons, and
+Packed loads and stores within such loops may be moved to Vulkan.  Multiple
+eligible loops in one region may share one synchronous GPU session.
 
-## Raw GPU functions
+Code outside that subset remains valid CPU code; unsupported control flow,
+calls, types, or dependence patterns do not make the source invalid.  Local
+buffers use ordinary declarations and constructors such as
+`let temporary: packedfloat = Packed.float32(count)`.  For an eligible
+synchronous region, a typed local remains an ordinary CPU-owned Packed object;
+the optimizer adds whole-buffer transfers around the GPU session.  It does not
+turn the local into an opaque GPU object.  Device-only local storage,
+reductions, and device persistence require additional proof and are not part
+of the initial contract.
 
-`__gpu func` declares a GPU-required raw kernel.  It must return `void`; host
-code launches it with `kernel<<<grid, block>>>(...)` or the explicit
-accelerator dispatch API.  A raw kernel cannot execute on the CPU.  Its buffer
-parameters use typed restricted pointers such as `rpackedfloat_ptr`, and one
-accelerator resource must not be passed through two restricted parameters in
-the same launch.
-
-The checked source subset supports constant nonnegative ranged `for` loops,
-scoped scalar locals and reassignment, conditionals, raw buffer indexing,
-`globalIdx`, shared storage, and uniform `syncthreads()`.  Loop bounds and
-specialized tensor sizes are compile-time integers.  The compiler rejects
-dynamic bounds, host resource subscripting, divergent barriers, early return
-around a barrier, unsupported calls, or output ranges exceeding descriptor
-metadata.
-
-Inside `__gpu func` only, `Accel.sigmoid`, `Accel.tanh`, `Accel.exp`,
-`Accel.log`, and `Accel.sqrt` are compiler-recognized scalar math calls.
-`Accel.float32FromBits(bits)` constructs the exact float32 bit pattern.  These
-names are not ordinary runtime functions, dictionary members, first-class
-values, or VM opcodes; using them outside `__gpu func` is a compile error.
-
-Raw GPU source and its descriptor survive `.nb` and `.nap` serialization.
-The ANSI C, Emacs Lisp, and Scheme transpilers reject `__gpu func` explicitly;
-use the Noct VM with an enabled accelerator backend.
+GPU optimization is available only while compiling source for an explicit
+`--gpu` run.  `.nbc` and `.nap` preserve the ordinary CPU body and contain no
+GPU program.  Once an eligible loop has been replaced and GPU execution has
+started, a GPU error terminates that invocation; the removed CPU loop is not
+replayed.
 
 # `__fast func`
 

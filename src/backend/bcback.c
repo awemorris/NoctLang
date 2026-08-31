@@ -5,107 +5,590 @@
  * Copyright (c) 2025, 2026, Awe Morris
  */
 
-/* Bytecode backend. */
+/*
+ * Bytecode backend.
+ */
 
 #include <noct/noct.h>
-#include "ast.h"
-#include "hir.h"
-#include "fast.h"
-#include "lir.h"
-#include "bytecode.h"
 
+#include "ast.h"
+#include "bcback_file.h"
+#include "bcback_private.h"
+#include "fast.h"
+#include "hir.h"
+#include "lir.h"
+
+#include <assert.h>
 #include <stdio.h>
-#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 enum bcback_func_kind {
 	BCBACK_FUNC_NORMAL = 0,
 	BCBACK_FUNC_FAST = 1
 };
 
-static FILE *fp;
+enum bcback_state {
+	BCBACK_IDLE,
+	BCBACK_TEMP_OPEN,
+	BCBACK_FAILED
+};
+
 static int bcback_optimize_level = 1;
 static bool bcback_lineinfo = true;
 static bool bcback_simd_info;
+static enum bcback_state bcback_current_state;
+static bool bcback_translated;
+static struct bcback_output bcback_current_output;
 
-static bool bcback_write_header(FILE *out, const char *source, uint32_t count);
-static bool bcback_write_fast_signature(FILE *out, const struct lir_func *func);
-static bool bcback_write_function(FILE *out, const struct lir_func *func);
+static bool bcback_metadata_valid(const char *text, bool allow_empty);
+static bool bcback_array_size_valid(uint32_t count, size_t item_size);
+static bool bcback_write_header(FILE *stream, const char *source, uint32_t require_count, char *const require_name[], uint32_t function_count);
+static bool bcback_write_fast_signature(FILE *stream, const struct fast_signature *signature);
+static bool bcback_write_lir_function(FILE *stream, const struct lir_func *function);
+static bool bcback_write_inspected_function(FILE *stream, const struct bytecode_file_function *function, const char *source, const char *module_source, bool rewrite_source);
+static bool bcback_write_module_stream(FILE *stream, const struct bcback_module *module);
+static bool bcback_write_inspected_module_stream(FILE *stream, const struct bytecode_file_module *module, const char *logical_source);
+static bool bcback_stream_to_blob(FILE *stream, uint8_t **data, uint32_t *size);
+static bool bcback_contains_bytes(const uint8_t *data, uint32_t size, const char *needle);
+static bool bcback_inspected_needs_rewrite(const struct bytecode_file_module *module, const char *logical_source);
+static bool bcback_inspected_safe_to_rewrite(const struct bytecode_file_module *module);
 
-static bool
-bcback_write_header(FILE *out, const char *source, uint32_t count)
+/*
+ * Sets the optimization level used by subsequent bytecode translations.
+ */
+NOCT_DLL
+void
+noct_bcback_set_optimize_level(
+	int level)
 {
-	return fprintf(out, "Noct Bytecode 1.0\nSource\n%s\n"
-		       "Number Of Functions\n%u\n", source, count) >= 0;
+	bcback_optimize_level = level;
+	bcback_lineinfo = level == 0;
+}
+
+/*
+ * Selects whether subsequent bytecode contains source-line metadata.
+ */
+NOCT_DLL
+void
+noct_bcback_set_lineinfo(
+	bool enable)
+{
+	bcback_lineinfo = enable;
+}
+
+/*
+ * Selects vectorization diagnostics for subsequent bytecode translations.
+ */
+NOCT_DLL
+void
+noct_bcback_set_simd_info(
+	bool enable)
+{
+	bcback_simd_info = enable;
+}
+
+/*
+ * Starts one transactional standalone bytecode output.
+ */
+NOCT_DLL
+bool
+noct_bcback_start(
+	const char *out_file_name)
+{
+	if (bcback_current_state != BCBACK_IDLE)
+		return false;
+
+	if (!bcback_output_open(&bcback_current_output, out_file_name)) {
+		printf("Failed to open file \"%s\".\n", out_file_name);
+		return false;
+	}
+
+	bcback_current_state = BCBACK_TEMP_OPEN;
+	bcback_translated = false;
+
+	return true;
+}
+
+/*
+ * Translates one source module into the open standalone output.
+ */
+NOCT_DLL
+bool
+noct_bcback_translate(
+	const char *source_file_name,
+	const char *source_data)
+{
+	struct bcback_module module;
+	FILE *stream;
+	bool succeeded;
+
+	memset(&module, 0, sizeof(module));
+
+	if (bcback_current_state != BCBACK_TEMP_OPEN)
+		return false;
+	if (bcback_translated)
+		return false;
+
+	succeeded = bcback_build_module(
+		source_file_name,
+		source_data,
+		&module);
+	if (succeeded) {
+		stream = bcback_output_get_stream(&bcback_current_output);
+		succeeded = bcback_write_module_stream(stream, &module);
+	}
+
+	bcback_cleanup_module(&module);
+
+	if (!succeeded) {
+		bcback_current_state = BCBACK_FAILED;
+		return false;
+	}
+
+	bcback_translated = true;
+
+	return true;
+}
+
+/*
+ * Commits one complete standalone bytecode output.
+ */
+NOCT_DLL
+bool
+noct_bcback_finalize(
+	void)
+{
+	bool succeeded;
+
+	if (bcback_current_state == BCBACK_FAILED) {
+		bcback_abort();
+		return false;
+	}
+	if (bcback_current_state != BCBACK_TEMP_OPEN)
+		return false;
+	if (!bcback_translated) {
+		bcback_abort();
+		return false;
+	}
+
+	succeeded = bcback_output_commit(&bcback_current_output);
+	bcback_current_state = BCBACK_IDLE;
+	bcback_translated = false;
+
+	return succeeded;
+}
+
+/*
+ * Builds one detached CPU bytecode module from source text.
+ */
+bool
+bcback_build_module(
+	const char *source_name,
+	const char *source_text,
+	struct bcback_module *module)
+{
+	struct hir_block *hir_function;
+	struct lir_func *lir_function;
+	uint32_t i;
+	bool hir_started;
+	bool succeeded;
+
+	assert(module != NULL);
+
+	memset(module, 0, sizeof(*module));
+	hir_started = false;
+	succeeded = false;
+
+	if (!bcback_metadata_valid(source_name, false)) {
+		printf("Error: Invalid bytecode source name.\n");
+		return false;
+	}
+	if (source_text == NULL)
+		return false;
+
+	if (!ast_build(source_name, source_text)) {
+		printf(
+			N_TR("Error: %s:%d: %s\n"),
+			ast_get_file_name(),
+			ast_get_error_line(),
+			ast_get_error_message());
+		ast_cleanup();
+		return false;
+	}
+
+	module->source = noct_strdup(source_name);
+	if (module->source == NULL)
+		goto cleanup;
+
+	module->require_count = ast_get_require_count();
+	if (module->require_count > 0) {
+		if (!bcback_array_size_valid(
+			module->require_count,
+			sizeof(*module->require_name))) {
+			goto cleanup;
+		}
+
+		module->require_name = noct_calloc(
+			(size_t)module->require_count,
+			sizeof(*module->require_name));
+		if (module->require_name == NULL)
+			goto cleanup;
+	}
+
+	/* Retain require names before the AST arena is released. */
+	for (i = 0; i < module->require_count; i++) {
+		module->require_name[i] = noct_strdup(ast_get_require_name(i));
+		if (module->require_name[i] == NULL)
+			goto cleanup;
+	}
+
+	hir_started = true;
+	if (!hir_build()) {
+		printf(
+			N_TR("Error: %s:%d: %s\n"),
+			hir_get_file_name(),
+			hir_get_error_line(),
+			hir_get_error_message());
+		goto cleanup;
+	}
+	module->function_count = hir_get_function_count();
+	if (module->function_count > 0) {
+		if (!bcback_array_size_valid(
+			module->function_count,
+			sizeof(*module->function))) {
+			goto cleanup;
+		}
+
+		module->function = noct_calloc(
+			(size_t)module->function_count,
+			sizeof(*module->function));
+		if (module->function == NULL)
+			goto cleanup;
+	}
+
+	lir_set_optimize_level(bcback_optimize_level);
+	lir_set_lineinfo(bcback_lineinfo);
+
+	/* Lower every HIR function into an independently owned LIR function. */
+	for (i = 0; i < module->function_count; i++) {
+		hir_function = hir_get_function(i);
+		if (!hir_optimize_func(
+			hir_function,
+			bcback_optimize_level,
+			bcback_simd_info,
+			NULL,
+			NULL)) {
+			printf(N_TR("Error: %s\n"), hir_get_error_message());
+			goto cleanup;
+		}
+
+		lir_function = NULL;
+		if (!lir_build(hir_function, &lir_function)) {
+			printf(
+				N_TR("Error: %s:%d: %s\n"),
+				lir_get_file_name(),
+				lir_get_error_line(),
+				lir_get_error_message());
+			goto cleanup;
+		}
+		module->function[i] = lir_function;
+	}
+
+	succeeded = true;
+
+cleanup:
+	if (hir_started)
+		hir_cleanup();
+	ast_cleanup();
+
+	if (!succeeded)
+		bcback_cleanup_module(module);
+
+	return succeeded;
+}
+
+/*
+ * Releases one detached CPU bytecode module.
+ */
+void
+bcback_cleanup_module(
+	struct bcback_module *module)
+{
+	uint32_t i;
+
+	if (module == NULL)
+		return;
+
+	/* Release every detached LIR function. */
+	if (module->function != NULL) {
+		/* Release each successfully lowered function exactly once. */
+		for (i = 0; i < module->function_count; i++) {
+			if (module->function[i] != NULL)
+				lir_cleanup(module->function[i]);
+		}
+	}
+	noct_free(module->function);
+
+	/* Release every copied require name. */
+	if (module->require_name != NULL) {
+		/* Release each name copied before any partial failure. */
+		for (i = 0; i < module->require_count; i++)
+			noct_free(module->require_name[i]);
+	}
+	noct_free(module->require_name);
+	noct_free(module->source);
+
+	memset(module, 0, sizeof(*module));
+}
+
+/*
+ * Serializes one detached source module into an owned canonical 1.1 blob.
+ */
+bool
+bcback_serialize_module(
+	const struct bcback_module *module,
+	const char *temporary_base,
+	uint8_t **data,
+	uint32_t *size)
+{
+	struct bcback_output output;
+	FILE *stream;
+	bool succeeded;
+
+	memset(&output, 0, sizeof(output));
+
+	assert(module != NULL);
+	assert(temporary_base != NULL);
+	assert(data != NULL);
+	assert(size != NULL);
+
+	*data = NULL;
+	*size = 0;
+
+	if (!bcback_output_open(&output, temporary_base))
+		return false;
+	stream = bcback_output_get_stream(&output);
+
+	succeeded = bcback_write_module_stream(stream, module);
+	if (succeeded)
+		succeeded = bcback_stream_to_blob(stream, data, size);
+	bcback_output_abort(&output);
+
+	if (!succeeded) {
+		noct_free(*data);
+		*data = NULL;
+		*size = 0;
+	}
+
+	return succeeded;
+}
+
+/*
+ * Canonically serializes one inspected module with a portable source identity.
+ */
+bool
+bcback_serialize_inspected_module(
+	const struct bytecode_file_module *module,
+	const char *logical_source,
+	const char *temporary_base,
+	uint8_t **data,
+	uint32_t *size)
+{
+	struct bcback_output output;
+	FILE *stream;
+	bool succeeded;
+
+	memset(&output, 0, sizeof(output));
+
+	assert(module != NULL);
+	assert(logical_source != NULL);
+	assert(temporary_base != NULL);
+	assert(data != NULL);
+	assert(size != NULL);
+
+	*data = NULL;
+	*size = 0;
+
+	if (!bcback_output_open(&output, temporary_base))
+		return false;
+	stream = bcback_output_get_stream(&output);
+
+	succeeded = bcback_write_inspected_module_stream(
+		stream,
+		module,
+		logical_source);
+	if (succeeded)
+		succeeded = bcback_stream_to_blob(stream, data, size);
+	bcback_output_abort(&output);
+
+	if (!succeeded) {
+		noct_free(*data);
+		*data = NULL;
+		*size = 0;
+	}
+
+	return succeeded;
+}
+
+/*
+ * Aborts the current standalone output transaction.
+ */
+void
+bcback_abort(
+	void)
+{
+	bcback_output_abort(&bcback_current_output);
+	bcback_current_state = BCBACK_IDLE;
+	bcback_translated = false;
+}
+
+/* Check one string against the unescaped metadata-line contract. */
+static bool
+bcback_metadata_valid(
+	const char *text,
+	bool allow_empty)
+{
+	size_t length;
+
+	if (text == NULL)
+		return false;
+	if (!allow_empty && text[0] == '\0')
+		return false;
+
+	length = strlen(text);
+	if (length >= 1024)
+		return false;
+	if (strchr(text, '\n') != NULL)
+		return false;
+	if (strchr(text, '\r') != NULL)
+		return false;
+
+	return true;
+}
+
+/* Check one count-sized table without overflowing size_t. */
+static bool
+bcback_array_size_valid(
+	uint32_t count,
+	size_t item_size)
+{
+	if (count == 0)
+		return true;
+	if (item_size > SIZE_MAX / (size_t)count)
+		return false;
+
+	return true;
+}
+
+/* Write the canonical 1.1 module header and require list. */
+static bool
+bcback_write_header(
+	FILE *stream,
+	const char *source,
+	uint32_t require_count,
+	char *const require_name[],
+	uint32_t function_count)
+{
+	uint32_t i;
+
+	if (!bcback_metadata_valid(source, false))
+		return false;
+	if (require_count > 0 && require_name == NULL)
+		return false;
+
+	if (fprintf(
+		stream,
+		"Noct Bytecode 1.1\nSource\n%s\nNumber Of Requires\n%u\n",
+		source,
+		require_count) < 0) {
+		return false;
+	}
+
+	/* Write require names in their source declaration order. */
+	for (i = 0; i < require_count; i++) {
+		if (!bcback_metadata_valid(require_name[i], false))
+			return false;
+		if (fprintf(stream, "%s\n", require_name[i]) < 0)
+			return false;
+	}
+
+	if (fprintf(
+		stream,
+		"Number Of Functions\n%u\n",
+		function_count) < 0) {
+		return false;
+	}
+
+	return true;
 }
 
 /* Write one exact sparse fast-function signature. */
 static bool
 bcback_write_fast_signature(
-	FILE *out,
-	const struct lir_func *func)
+	FILE *stream,
+	const struct fast_signature *signature)
 {
-	const struct fast_signature *signature;
-	const struct fast_param_contract *param;
+	const struct fast_param_contract *parameter;
 	const struct fast_extent *extent;
-	uint32_t param_index;
+	uint32_t parameter_index;
 	uint32_t axis;
 
-	signature = &func->fast_signature;
 	if (!signature->valid)
 		return false;
 	if (signature->version != NOCT_FAST_SIGNATURE_VERSION)
 		return false;
 	if (!fast_signature_valid(signature))
 		return false;
-	if (signature->param_count != func->param_count)
-		return false;
 	if (signature->param_count != 0 && signature->param == NULL)
 		return false;
 
 	if (fprintf(
-		out,
+		stream,
 		"Fast Signature\n%u\n%d\n%u\n%d\n",
 		signature->version,
 		signature->valid ? 1 : 0,
 		signature->param_count,
-		signature->return_type) < 0)
+		signature->return_type) < 0) {
 		return false;
+	}
 
 	/* Write every parameter contract in declaration order. */
-	for (param_index = 0;
-	     param_index < signature->param_count;
-	     param_index++) {
-		param = &signature->param[param_index];
-		if (param->rank > NOCT_FAST_RANK_MAX)
+	for (parameter_index = 0;
+	     parameter_index < signature->param_count;
+	     parameter_index++) {
+		parameter = &signature->param[parameter_index];
+		if (parameter->rank > NOCT_FAST_RANK_MAX)
 			return false;
-		if (param->rank != 0 && param->extent == NULL)
+		if (parameter->rank != 0 && parameter->extent == NULL)
 			return false;
 
 		if (fprintf(
-			out,
+			stream,
 			"%d\n%d\n%d\n%u\n",
-			param->value_type,
-			param->packed_type,
-			param->restricted ? 1 : 0,
-			param->rank) < 0)
+			parameter->value_type,
+			parameter->packed_type,
+			parameter->restricted ? 1 : 0,
+			parameter->rank) < 0) {
 			return false;
+		}
 
-		/* Write the exact extent expression for every shaped axis. */
-		for (axis = 0; axis < param->rank; axis++) {
-			extent = &param->extent[axis];
-			if (fprintf(out, "%d\n", extent->kind) < 0)
+		/* Write the exact expression for every shaped axis. */
+		for (axis = 0; axis < parameter->rank; axis++) {
+			extent = &parameter->extent[axis];
+			if (fprintf(stream, "%d\n", extent->kind) < 0)
 				return false;
 
 			if (extent->kind == FAST_EXTENT_CONST) {
 				if (fprintf(
-					out,
+					stream,
 					"%lld\n",
 					(long long)extent->value.constant) < 0) {
 					return false;
 				}
 			} else if (extent->kind == FAST_EXTENT_PARAM) {
 				if (fprintf(
-					out,
+					stream,
 					"%u\n",
 					extent->value.param_index) < 0) {
 					return false;
@@ -119,157 +602,398 @@ bcback_write_fast_signature(
 	return true;
 }
 
+/* Write one canonical function from an owned LIR descriptor. */
 static bool
-bcback_write_function(FILE *out, const struct lir_func *f)
+bcback_write_lir_function(
+	FILE *stream,
+	const struct lir_func *function)
 {
-	uint32_t j;
-	int any;
+	uint32_t i;
+	bool any;
 
-	if (fprintf(out, "Begin Function\nName\n%s\nSource\n%s\nParameters\n%u\n",
-		    f->func_name, f->file_name, f->param_count) < 0)
+	if (!bcback_metadata_valid(function->func_name, false))
 		return false;
-	for (j = 0; j < f->param_count; j++)
-		if (fprintf(out, "%s\n", f->param_name[j]) < 0) return false;
-	any = 0;
-	for (j = 0; j < f->param_count; j++)
-		if (f->param_type[j] >= 0) any = 1;
-	if (any) {
-		if (fprintf(out, "Parameter Types\n") < 0) return false;
-		for (j = 0; j < f->param_count; j++)
-			if (fprintf(out, "%d\n", f->param_type[j]) < 0) return false;
+	if (!bcback_metadata_valid(function->file_name, false))
+		return false;
+	if (function->param_count > NOCT_ARG_MAX)
+		return false;
+
+	if (fprintf(
+		stream,
+		"Begin Function\nName\n%s\nSource\n%s\nParameters\n%u\n",
+		function->func_name,
+		function->file_name,
+		function->param_count) < 0) {
+		return false;
 	}
-	any = 0;
-	for (j = 0; j < f->param_count; j++)
-		if (f->param_packed_type[j] >= 0) any = 1;
-	if (any) {
-		if (fprintf(out, "Parameter Packed Types\n") < 0) return false;
-		for (j = 0; j < f->param_count; j++)
-			if (fprintf(out, "%d\n", f->param_packed_type[j]) < 0) return false;
+
+	/* Write every parameter name in declaration order. */
+	for (i = 0; i < function->param_count; i++) {
+		if (!bcback_metadata_valid(function->param_name[i], false))
+			return false;
+		if (fprintf(stream, "%s\n", function->param_name[i]) < 0)
+			return false;
 	}
-	any = 0;
-	for (j = 0; j < f->param_count; j++)
-		if (f->param_restricted[j]) any = 1;
+
+	any = false;
+
+	/* Detect whether ordinary parameter types carry any information. */
+	for (i = 0; i < function->param_count; i++) {
+		if (function->param_type[i] >= 0)
+			any = true;
+	}
 	if (any) {
-		if (fprintf(out, "Parameter Restricted\n") < 0) return false;
-		for (j = 0; j < f->param_count; j++)
-			if (fprintf(out, "%d\n", f->param_restricted[j] ? 1 : 0) < 0)
+		if (fprintf(stream, "Parameter Types\n") < 0)
+			return false;
+
+		/* Write one ordinary type for every parameter. */
+		for (i = 0; i < function->param_count; i++) {
+			if (fprintf(stream, "%d\n", function->param_type[i]) < 0)
 				return false;
+		}
 	}
-	if ((f->return_type >= 0 || f->is_fast) &&
-	    fprintf(out, "Return Type\n%d\n%d\n%d\n", f->return_type,
-		    f->return_packed_type, f->return_type_checked ? 1 : 0) < 0)
-		return false;
-	if (f->has_vector_ops && fprintf(out, "Vector Ops\n1\n") < 0)
-		return false;
-	if (f->is_fast) {
-		if (fprintf(out, "Function Kind\n%d\n", BCBACK_FUNC_FAST) < 0)
+
+	any = false;
+
+	/* Detect whether Packed parameter types carry any information. */
+	for (i = 0; i < function->param_count; i++) {
+		if (function->param_packed_type[i] >= 0)
+			any = true;
+	}
+	if (any) {
+		if (fprintf(stream, "Parameter Packed Types\n") < 0)
 			return false;
-		if (!bcback_write_fast_signature(out, f))
+
+		/* Write one Packed type for every parameter. */
+		for (i = 0; i < function->param_count; i++) {
+			if (fprintf(
+				stream,
+				"%d\n",
+				function->param_packed_type[i]) < 0) {
+				return false;
+			}
+		}
+	}
+
+	any = false;
+
+	/* Detect whether any parameter carries the restricted contract. */
+	for (i = 0; i < function->param_count; i++) {
+		if (function->param_restricted[i])
+			any = true;
+	}
+	if (any) {
+		if (fprintf(stream, "Parameter Restricted\n") < 0)
+			return false;
+
+		/* Write one restricted flag for every parameter. */
+		for (i = 0; i < function->param_count; i++) {
+			if (fprintf(
+				stream,
+				"%d\n",
+				function->param_restricted[i] ? 1 : 0) < 0) {
+				return false;
+			}
+		}
+	}
+
+	if (function->return_type >= 0 || function->is_fast) {
+		if (fprintf(
+			stream,
+			"Return Type\n%d\n%d\n%d\n",
+			function->return_type,
+			function->return_packed_type,
+			function->return_type_checked ? 1 : 0) < 0) {
+			return false;
+		}
+	}
+	if (function->has_vector_ops) {
+		if (fprintf(stream, "Vector Ops\n1\n") < 0)
 			return false;
 	}
-	if (f->has_fma_ops && fprintf(out, "FMA Ops\n1\n") < 0)
-		return false;
-	if (fprintf(out, "Temporary Size\n%u\nBytecode Size\n%u\n",
-		    f->tmpvar_size, f->bytecode_size) < 0)
-		return false;
-	if (f->bytecode_size != 0 &&
-	    fwrite(f->bytecode, 1, f->bytecode_size, out) != f->bytecode_size)
-		return false;
-	return fprintf(out, "\nEnd Function\n") >= 0;
-}
+	if (function->is_fast) {
+		if (fprintf(
+			stream,
+			"Function Kind\n%d\n",
+			BCBACK_FUNC_FAST) < 0) {
+			return false;
+		}
+		if (!bcback_write_fast_signature(
+			stream,
+			&function->fast_signature)) {
+			return false;
+		}
+	}
+	if (function->has_fma_ops) {
+		if (fprintf(stream, "FMA Ops\n1\n") < 0)
+			return false;
+	}
 
-NOCT_DLL void
-noct_bcback_set_optimize_level(int level)
-{
-	bcback_optimize_level = level;
-	bcback_lineinfo = level == 0;
-}
-
-NOCT_DLL void
-noct_bcback_set_lineinfo(bool enable)
-{
-	bcback_lineinfo = enable;
-}
-
-NOCT_DLL void
-noct_bcback_set_simd_info(bool enable)
-{
-	bcback_simd_info = enable;
-}
-
-NOCT_DLL bool
-noct_bcback_start(const char *out_file_name)
-{
-	fp = fopen(out_file_name, "wb");
-	if (fp == NULL) {
-		printf("Failed to open file \"%s\".\n", out_file_name);
+	if (fprintf(
+		stream,
+		"Temporary Size\n%u\nBytecode Size\n%u\n",
+		function->tmpvar_size,
+		function->bytecode_size) < 0) {
 		return false;
 	}
+	if (function->bytecode_size != 0) {
+		if (fwrite(
+			function->bytecode,
+			1,
+			function->bytecode_size,
+			stream) != function->bytecode_size) {
+			return false;
+		}
+	}
+	if (fprintf(stream, "\nEnd Function\n") < 0)
+		return false;
+
 	return true;
 }
 
-NOCT_DLL bool
-noct_bcback_translate(const char *source_file_name, const char *source_data)
+/* Write one canonical function from a strict inspector descriptor. */
+static bool
+bcback_write_inspected_function(
+	FILE *stream,
+	const struct bytecode_file_function *function,
+	const char *source,
+	const char *module_source,
+	bool rewrite_source)
 {
-	uint32_t count;
+	struct lir_func candidate;
+	char *rewritten_name;
+	size_t source_size;
 	uint32_t i;
-	bool ok = false;
+	bool succeeded;
 
-	if (!ast_build(source_file_name, source_data)) {
-		printf(N_TR("Error: %s:%d: %s\n"), ast_get_file_name(),
-		       ast_get_error_line(), ast_get_error_message());
-		ast_cleanup();
+	memset(&candidate, 0, sizeof(candidate));
+	rewritten_name = NULL;
+
+	if (function->param_count > LIR_PARAM_SIZE)
 		return false;
+
+	if (rewrite_source && strncmp(function->name, "$init.", 6) == 0) {
+		if (strcmp(function->name + 6, module_source) != 0)
+			return false;
+
+		source_size = strlen(source);
+		if (source_size > SIZE_MAX - 7)
+			return false;
+
+		rewritten_name = noct_malloc(source_size + 7);
+		if (rewritten_name == NULL)
+			return false;
+		memcpy(rewritten_name, "$init.", 6);
+		memcpy(rewritten_name + 6, source, source_size + 1);
+		candidate.func_name = rewritten_name;
+	} else {
+		candidate.func_name = function->name;
 	}
-	if (ast_get_require_count() != 0) {
-		printf("%s", N_TR("Error: require is not supported by the bytecode backend.\n"));
-		ast_cleanup();
-		return false;
+
+	candidate.file_name = (char *)source;
+	candidate.param_count = function->param_count;
+
+	/* Copy every inspected parameter entry into the fixed LIR descriptor. */
+	for (i = 0; i < function->param_count; i++) {
+		candidate.param_name[i] = function->param_name[i];
+		candidate.param_type[i] = function->param_type[i];
+		candidate.param_packed_type[i] = function->param_packed_type[i];
+		candidate.param_restricted[i] = function->param_restricted[i];
 	}
-	if (!hir_build()) {
-		printf(N_TR("Error: %s:%d: %s\n"), hir_get_file_name(),
-		       hir_get_error_line(), hir_get_error_message());
-		ast_cleanup();
-		return false;
-	}
-	lir_set_optimize_level(bcback_optimize_level);
-	lir_set_lineinfo(bcback_lineinfo);
-	count = hir_get_function_count();
-	if (!bcback_write_header(fp, source_file_name, count))
-		goto cleanup;
-	for (i = 0; i < count; i++) {
-		struct hir_block *hfunc = hir_get_function(i);
-		struct lir_func *lfunc;
-		if (!hir_optimize_func(hfunc, bcback_optimize_level,
-				       bcback_simd_info)) {
-			printf(N_TR("Error: %s\n"), hir_get_error_message());
-			goto cleanup;
-		}
-		if (!lir_build(hfunc, &lfunc)) {
-			printf(N_TR("Error: %s:%d: %s\n"), lir_get_file_name(),
-			       lir_get_error_line(), lir_get_error_message());
-			goto cleanup;
-		}
-		if (!bcback_write_function(fp, lfunc)) {
-			lir_cleanup(lfunc);
-			goto cleanup;
-		}
-		lir_cleanup(lfunc);
-	}
-	ok = true;
-cleanup:
-	hir_cleanup();
-	ast_cleanup();
-	return ok;
+
+	candidate.return_type = function->return_type;
+	candidate.return_packed_type = function->return_packed_type;
+	candidate.return_type_checked = function->return_type_checked;
+	candidate.has_vector_ops = function->has_vector_ops;
+	candidate.has_fma_ops = function->has_fma_ops;
+	candidate.is_fast = function->is_fast;
+	candidate.fast_signature = function->fast_signature;
+	candidate.tmpvar_size = function->tmpvar_size;
+	candidate.bytecode = (uint8_t *)function->bytecode.data;
+	candidate.bytecode_size = function->bytecode.size;
+
+	succeeded = bcback_write_lir_function(stream, &candidate);
+	noct_free(rewritten_name);
+
+	return succeeded;
 }
 
-NOCT_DLL bool
-noct_bcback_finalize(void)
+/* Write one detached source module in canonical 1.1 form. */
+static bool
+bcback_write_module_stream(
+	FILE *stream,
+	const struct bcback_module *module)
 {
-	bool ok;
-	if (fp == NULL)
+	uint32_t i;
+
+	if (!bcback_write_header(
+		stream,
+		module->source,
+		module->require_count,
+		module->require_name,
+		module->function_count)) {
 		return false;
-	ok = fclose(fp) == 0;
-	fp = NULL;
-	return ok;
+	}
+
+	/* Write every lowered function in source order. */
+	for (i = 0; i < module->function_count; i++) {
+		if (!bcback_write_lir_function(stream, module->function[i]))
+			return false;
+	}
+
+	return ferror(stream) == 0;
+}
+
+/* Write one inspected module in canonical portable 1.1 form. */
+static bool
+bcback_write_inspected_module_stream(
+	FILE *stream,
+	const struct bytecode_file_module *module,
+	const char *logical_source)
+{
+	bool rewrite_source;
+	uint32_t i;
+
+	if (module->kind != BYTECODE_FILE_MODULE_1_1)
+		return false;
+	if (!bcback_metadata_valid(logical_source, false))
+		return false;
+
+	rewrite_source = bcback_inspected_needs_rewrite(
+		module,
+		logical_source);
+	if (rewrite_source && !bcback_inspected_safe_to_rewrite(module))
+		return false;
+
+	if (!bcback_write_header(
+		stream,
+		logical_source,
+		module->require_count,
+		module->require_name,
+		module->function_count)) {
+		return false;
+	}
+
+	/* Canonically rewrite every inspected function descriptor. */
+	for (i = 0; i < module->function_count; i++) {
+		if (!bcback_write_inspected_function(
+			stream,
+			&module->function[i],
+			logical_source,
+			module->source,
+			rewrite_source)) {
+			return false;
+		}
+	}
+
+	return ferror(stream) == 0;
+}
+
+/* Copy one complete temporary stream into a checked owned byte blob. */
+static bool
+bcback_stream_to_blob(
+	FILE *stream,
+	uint8_t **data,
+	uint32_t *size)
+{
+	long stream_size;
+	size_t read_size;
+
+	if (fflush(stream) != 0)
+		return false;
+	if (ferror(stream) != 0)
+		return false;
+
+	stream_size = ftell(stream);
+	if (stream_size <= 0)
+		return false;
+	if ((unsigned long)stream_size > (unsigned long)UINT32_MAX)
+		return false;
+	if (fseek(stream, 0, SEEK_SET) != 0)
+		return false;
+
+	read_size = (size_t)stream_size;
+	*data = noct_malloc(read_size);
+	if (*data == NULL)
+		return false;
+
+	if (fread(*data, 1, read_size, stream) != read_size)
+		return false;
+
+	*size = (uint32_t)read_size;
+
+	return true;
+}
+
+/* Search one raw byte span for a fixed non-empty ASCII token. */
+static bool
+bcback_contains_bytes(
+	const uint8_t *data,
+	uint32_t size,
+	const char *needle)
+{
+	size_t needle_size;
+	uint32_t i;
+
+	needle_size = strlen(needle);
+	if (needle_size == 0)
+		return true;
+	if ((size_t)size < needle_size)
+		return false;
+
+	/* Compare the token at every possible byte offset. */
+	for (i = 0; (size_t)i <= (size_t)size - needle_size; i++) {
+		if (memcmp(data + i, needle, needle_size) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+/* Test whether any serialized source identity must be canonicalized. */
+static bool
+bcback_inspected_needs_rewrite(
+	const struct bytecode_file_module *module,
+	const char *logical_source)
+{
+	uint32_t i;
+
+	if (strcmp(module->source, logical_source) != 0)
+		return true;
+
+	/* Compare every function source identity with the portable identity. */
+	for (i = 0; i < module->function_count; i++) {
+		if (strcmp(module->function[i].source, logical_source) != 0)
+			return true;
+	}
+
+	return false;
+}
+
+/* Reject source rewrites that would require a bytecode symbol relinker. */
+static bool
+bcback_inspected_safe_to_rewrite(
+	const struct bytecode_file_module *module)
+{
+	const struct bytecode_file_function *function;
+	uint32_t i;
+
+	/* Inspect every link name and raw opcode span conservatively. */
+	for (i = 0; i < module->function_count; i++) {
+		function = &module->function[i];
+		if (strstr(function->name, "$static.") != NULL)
+			return false;
+		if (bcback_contains_bytes(
+			function->bytecode.data,
+			function->bytecode.size,
+			"$static.")) {
+			return false;
+		}
+		if (strncmp(function->name, "$init.", 6) == 0 &&
+		    strcmp(function->name + 6, module->source) != 0) {
+			return false;
+		}
+	}
+
+	return true;
 }

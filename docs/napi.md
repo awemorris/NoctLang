@@ -89,6 +89,22 @@ Most operations to virtual machines are done through `NoctEnv *` handles.
 The type `NoctConfig` holds VM configuration. Initialize it with
 `noct_set_default_config()` before changing individual fields.
 
+The nullable `require_resolver` field assigns module-location policy to the
+embedding host:
+
+```
+char *(*require_resolver)(const char *module_name);
+```
+
+When source or standalone module bytecode declares `require name;`, the VM
+passes the logical name to this callback.  On success, the callback returns an
+exact path in a newly allocated `malloc()`/`strdup()`-compatible string.  The
+VM owns and frees that string.  The VM reads the returned artifact but does not
+normalize the path, add a suffix, choose a directory, or define a search
+order.  Returning `NULL`, or leaving the callback unset when requirements are
+present, makes the load fail.  A self-contained `.nap` uses its embedded
+bindings and does not call this resolver.
+
 ### NoctValue
 
 The type `NoctValue` represents a value in Noct.
@@ -202,9 +218,17 @@ noct_register_source(
 
 ### noct_register_bytecode()
 
-This API registers functions from raw `.nb` bytecode data or a complete
-shebang-prefixed `.nap` buffer.  In a `.nap`, all functions are registered
-before its aggregate initializer is called.
+This API registers functions from a raw `Noct Bytecode 1.0`,
+`Noct Bytecode 1.1`, or `Noct App 1.0` payload.  Version 1.1 is the canonical
+`.nbc` format and records logical require names; version 1.0 remains readable
+as a module with no requirements.  An App payload contains the complete module
+closure and bindings, registers modules in dependency order, and runs each
+module initializer at most once.
+
+The buffer must begin with the format magic.  A shebang such as the executable
+prefix on a `.nap` is transport metadata and must be stripped by the host
+before calling this API.  `size` is the exact binary byte count; callers must
+not derive it with `strlen()` because function bytecode may contain NUL bytes.
 
 The given bytecode will be translated to machine code.
 
@@ -1439,18 +1463,15 @@ extern size_t noct_conf_gc_lop_threshold = 32 * 1024;
 size_t noct_conf_gc_promotion_threshold = 2;
 ```
 
-## Raw GPU model execution
+## Accelerator Integration
 
-`NoctConfig` selects accelerator execution with `accel_enable` and
-`accel_backend`.  Backend constants are `NOCT_ACCEL_BACKEND_NONE`,
-`NOCT_ACCEL_BACKEND_VULKAN`, and `NOCT_ACCEL_BACKEND_OPENGL`.  The completed
-ONNX model gate is OpenGL; selecting a constant does not imply that an optional
-backend has passed the raw-model ladder.
+The public Native API has no accelerator enable flag, backend selector, GPU
+resource type, or public `Accel.*` package.  `__accel` is an ordinary
+CPU-executable source function with an optimization hint; registering source
+through the public API therefore preserves its checked CPU behavior.
 
-Generated ONNX packages are ordinary Noct modules/apps and use the public
-model functions documented in `docs/library.md`.  A host embedding the VM must
-provide the explicit external NWT1 path to `modelInitialize`, keep input and
-output as distinct exact-size `Packed.float32` values, and treat inference as
-synchronous and non-reentrant.  Backend failure is returned as a VM error;
-there is no generated C inference path, DNN runtime, or CPU replay.  The C,
-Elisp, and Scheme source translators reject raw `__gpu func` model source.
+The optional CLI accelerator is a private integration owned by the executable.
+It attaches a source-time optimizer and its matching private runtime helpers
+only for an explicit source-only `--gpu` run.  Accelerator IR, shader objects,
+and device selection are not part of `NoctConfig`, `.nbc`, `.nap`, or the
+public NAPI contract.

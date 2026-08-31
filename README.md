@@ -277,14 +277,31 @@ session API for embedded hosts is documented in [docs/repl.md](docs/repl.md).
 
 ### Compile into Bytecode
 
-To compile a script into a sibling `.nb` bytecode file:
+To compile a script into a sibling `.nbc` bytecode file:
 
 ```
 noct --compile script.noct
 ```
 
-Source files can load a module from the current directory or a colon-separated
-search path. `framework.noct` is preferred over `framework.nct`:
+The `.nbc` file contains the module's CPU bytecode and its declared `require`
+module-name list.  Required module bodies remain separate and are resolved by
+the host when the bytecode is loaded.  Noct continues to read legacy
+`Noct Bytecode 1.0` input, but the compiler writes `Noct Bytecode 1.1` and does
+not create new `.nb` files.
+
+To create one self-contained CPU application containing every root module and
+its transitive dependencies:
+
+```
+noct --compile --app --path=lib:vendor application.nap main.noct
+```
+
+A `.nap` application does not need source files, sidecar `.nbc` files, or a
+module resolver at run time.
+
+Source and `.nbc` files can load a module from the current directory or a
+colon-separated search path.  In each directory, `framework.noct` is preferred
+over `framework.nct`, which is preferred over `framework.nbc`:
 
 ```noct
 require framework;
@@ -301,6 +318,27 @@ noct --path=lib:vendor main.noct
 Required modules are loaded once, and their initializers run in dependency
 order. Module discovery is a CLI policy; embedded hosts choose their own source
 resolver through `NoctConfig.require_resolver`.
+
+### Optional GPU Optimization
+
+`__accel func` marks an ordinary CPU-executable function as a candidate for
+accelerator optimization.  Without `--gpu`, at `-O0`, in a build without the
+accelerator, or when a function is not eligible, its checked CPU body runs
+normally.
+
+An accelerator-enabled static build uses Vulkan as its initial GPU backend:
+
+```
+noct --gpu program.noct
+noct --gpu=EXACT_DEVICE_NAME program.noct
+```
+
+`--gpu` is valid only when running source, including source supplied with
+`-e`.  It cannot be combined with `.nbc`, `.nap`, `--compile`, or
+`--compile --app`.  Source is the GPU distribution format: bytecode and app
+files contain neither GPU code nor backend metadata.  If a committed GPU
+execution fails, that invocation reports an error instead of replaying the
+removed loop on the CPU.
 
 ### Compile into Emacs Lisp
 

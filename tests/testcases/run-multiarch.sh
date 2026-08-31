@@ -17,10 +17,10 @@ fi
 case_dir="$root/tests/testcases"
 cd "$case_dir"
 log=$(mktemp)
-blend_copy_nb=simd/drawimage/blend-copy.nb
-blend_add_nb=simd/drawimage/blend-add.nb
-packed_loop_nb=packed-loop/regcache.nb
-unroll_nb=packed-loop/unroll-width16.nb
+blend_copy_nb=simd/drawimage/blend-copy.nbc
+blend_add_nb=simd/drawimage/blend-add.nbc
+packed_loop_nb=packed-loop/regcache.nbc
+unroll_nb=packed-loop/unroll-width16.nbc
 trap 'rm -f -- noct-arch out "$log" "$blend_copy_nb" "$blend_copy_nb.out" "$blend_add_nb" "$blend_add_nb.out" "$packed_loop_nb" "$packed_loop_nb.out" "$unroll_nb" "$unroll_nb.out"' EXIT HUP INT TERM
 
 # Cross builds intentionally do not link the optimizer.  Produce optimized,

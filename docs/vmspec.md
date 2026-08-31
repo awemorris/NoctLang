@@ -186,39 +186,38 @@ by local variables (if any).
 
 ---
 
-# 3. Bytecode File Format
+# 3. Bytecode and Application File Formats
 
-A Noct bytecode file is a **text-based**, line-oriented format that
-encodes one or more function definitions. Each function is compiled
-separately and is automatically bound to a global variable with the
-same name as the function upon loading. This enables runtime lookup
-and invocation via the global symbol table.
+A Noct module bytecode file uses line-oriented textual metadata around raw
+binary function bodies.  The canonical filename extension is `.nbc`.  Each
+function is compiled separately and is bound to a global variable with the
+same link name when the module is loaded.
 
-## 3.1 Format Overview
+## 3.1 `Noct Bytecode 1.1`
 
-The file begins with a version header and source information, followed
-by one or more function blocks. Each function includes metadata and a
-binary bytecode payload.
-
-An executable `.nap` uses the exact transport prefix
-`#!/usr/bin/noct\n` immediately before this same bytecode format.  It
-contains one `Source` field and one function count for the complete bundle;
-it is not a concatenation of `.nb` files.  Its sole `$init.` function is an
-aggregate initializer that explicitly invokes per-source initializers in
-command-line input order after the loader has registered every function.
+Version 1.1 adds the module's source-level `require` names to the module
+record.  Names are stored in declaration order; they are logical module names,
+not resolved paths or filenames.
 
 ```
-Noct Bytecode 1.0
+Noct Bytecode 1.1
 Source
-<FILE NAME>
+<LOGICAL SOURCE NAME>
+Number Of Requires
+<REQUIRE COUNT>
+<REQUIRE NAME 0>
+...
 Number Of Functions
 <FUNCTION COUNT>
 Begin Function
 Name
 <FUNCTION NAME>
+Source
+<FUNCTION SOURCE NAME>
 Parameters
 <PARAMETER COUNT>
 <PARAMETER NAME...>
+<OPTIONAL FUNCTION METADATA...>
 Temporary Size
 <TEMPORARY VARIABLE COUNT>
 Bytecode Size
@@ -227,19 +226,65 @@ Bytecode Size
 End Function
 ```
 
-## 3.2 Notes
+The bytecode compiler writes version 1.1.  The reader also accepts legacy
+`Noct Bytecode 1.0`; a 1.0 record has no require section and is interpreted as
+declaring zero requirements.  This is read-only compatibility: new `.nb`
+files are neither generated nor found by the CLI module resolver.
 
-- All section headers (e.g., `Begin Function`, `Name`, `Parameters`)  
-  are **case-sensitive** and must match exactly.
-- Parameter names are used only for **debugging purposes**; the VM  
-  does not use them at runtime.
-- `Bytecode Size` indicates the number of bytes to read as raw binary  
-  following the line.
-- `RAW BYTECODE` is not newline-terminated and may contain null bytes  
-  or non-printable characters.
-- The VM assumes all bytecode files are encoded in **UTF-8**.
-- Additional sections (e.g., metadata or debug information) may be  
-  supported in future versions.
+## 3.2 `Noct App 1.0`
+
+A `.nap` is a self-contained CPU application container.  On disk it normally
+starts with the exact executable transport prefix `#!/usr/bin/noct\n`, followed
+by this raw payload:
+
+```
+Noct App 1.0
+Number Of Modules
+<MODULE COUNT>
+Number Of Bindings
+<BINDING COUNT>
+<REQUIRE NAME 0>
+<MODULE INDEX 0>
+...
+Number Of Roots
+<ROOT COUNT>
+<ROOT MODULE INDEX 0>
+...
+Modules
+Module Bytecode Size
+<MODULE BYTE LENGTH 0>
+<EXACT Noct Bytecode 1.1 MODULE RECORD 0>
+...
+End App
+```
+
+Every embedded module is an independent, complete version 1.1 record with its
+own `Source`, require list, function metadata, and bytecode.  The binding table
+maps each logical require name to a zero-based module index, and the root list
+preserves the CLI's explicit root order.  Physical paths are not stored.
+
+The loader validates every module, binding, root, dependency, and function
+name before publishing VM state.  It then registers and initializes modules in
+dependency-first order.  There is no aggregate initializer, and a `.nap`
+never consults `require_resolver` or the filesystem for an embedded
+dependency.
+
+## 3.3 Common Rules
+
+- Section headers are case-sensitive and must match exactly.
+- Text metadata is UTF-8 and LF-terminated.  Metadata lines cannot contain
+  NUL or CR bytes.
+- Parameter names are used for debugging; the VM does not use them to bind
+  arguments at run time.
+- `Bytecode Size` and `Module Bytecode Size` are exact byte counts.  Raw
+  bytecode may contain NUL and other non-printable bytes and is not located by
+  delimiter scanning.
+- Trailing data after a complete module or `End App` is invalid.
+- The public bytecode registration API receives a raw Bytecode or App payload.
+  A host that reads an executable `.nap` strips its shebang before
+  registration.
+- `.nbc` and `.nap` contain CPU bytecode only.  They contain no accelerator
+  IR, shader source, GPU object, device descriptor, or accelerator opcode.
 
 ---
 
@@ -683,13 +728,14 @@ the NoctVM architecture.
 - Reserved opcodes must not be emitted or interpreted.
 - This ensures forward compatibility for potential new instructions.
 
-### 9.2 Modules
+### 9.2 Modules and Resolution
 
-- The current version does **not support modules**.
-- However, the file format and symbol system are designed to  
-  accommodate future modularity.
-- Future extensions may introduce module namespacing and import/export  
-  metadata.
+- Version 1.1 module records contain logical require names but no search-path
+  policy or physical filenames.
+- A host resolves each required name to an exact module artifact.  This policy
+  is outside the VM; the CLI implements it with `--path`.
+- An App 1.0 container carries a complete logical binding table, so its module
+  closure is loaded without a host resolver.
 
 ### 9.3 Exceptions
 
@@ -705,18 +751,12 @@ the NoctVM architecture.
 
 ## 10. Appendix: Opcode List
 
-Raw `__gpu func` math calls do not add VM opcodes.  The compiler classifies
-GPU-only `Accel.*` scalar math operations while lowering the raw function, and
-stores backend-independent raw-kernel descriptor metadata alongside ordinary
-bytecode/application data.  The descriptor includes typed parameters,
-restricted resource ranges, launch requirements, and generated backend source;
-the bytecode loader validates all lengths and ranges before exposing it.
-
-`.nb` and `.nap` may therefore contain raw accelerator descriptors, but an
-ordinary VM instruction never represents `ACCEL_MATH`, `ACCEL_REDUCE`, or
-`ACCEL_TENSOR`.  Disabled or unavailable GPU execution is a runtime error, not
-an instruction-level CPU fallback.  C, Elisp, and Scheme translation of raw
-GPU functions is explicitly unsupported.
+Accelerator optimization does not extend this opcode table.  It is a
+source-only optimization performed by an explicitly selected runtime backend.
+The optimizer rewrites eligible HIR into ordinary calls to private native
+helpers; the interpreter and JIT execute those calls without accelerator-aware
+instructions.  Bytecode and application writers do not run this pass, so
+`.nbc` and `.nap` contain the ordinary CPU body and no GPU artifacts.
 
 | Mnemonic            | Opcode | Description                               |
 |---------------------|--------|-------------------------------------------|

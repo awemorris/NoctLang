@@ -242,6 +242,9 @@ struct hir_block {
 			/* Statically constrained CPU function. */
 			bool is_fast;
 
+			/* Accelerator optimization hint. */
+			bool is_accel;
+
 			/* Exact entry contract for a fast function. */
 			struct fast_signature *fast_signature;
 
@@ -585,7 +588,10 @@ bool
 hir_optimize_func(
 	struct hir_block *func_block,
 	int optimize_level,
-	bool print_simd_info);
+	bool print_simd_info,
+	bool (*accel_optimize_func)(struct hir_block *func_block,
+				    void *userdata),
+	void *accel_optimize_userdata);
 
 /*
  * Replace a function's link name while the HIR arena is alive.

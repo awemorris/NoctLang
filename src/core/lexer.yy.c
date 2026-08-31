@@ -2073,19 +2073,28 @@ case 79:
 YY_RULE_SETUP
 #line 615 "lexer.l"
 {
-			ast_yylval.sval = ast_strdup(yytext);
+			int token;
+
+			/* Reserve the exact accelerator spellings. */
+			token = TOKEN_SYMBOL;
+			if (strcmp(yytext, "__accel") == 0)
+				token = TOKEN_DUNDER_ACCEL;
+			else if (strcmp(yytext, "__Accel") == 0)
+				token = TOKEN_INTERNAL_ACCEL_PACKAGE;
+			else
+				ast_yylval.sval = ast_strdup(yytext);
 			ast_yylloc.first_line = ast_yylloc.last_line;
 			ast_yylloc.first_column = ast_yylloc.last_column + 1;
 			ast_yylloc.last_column += yyleng;
-			return TOKEN_SYMBOL;
+			return token;
 		}
 	YY_BREAK
 case 80:
 YY_RULE_SETUP
-#line 622 "lexer.l"
+#line 631 "lexer.l"
 ECHO;
 	YY_BREAK
-#line 2086 "lexer.yy.c"
+#line 2095 "lexer.yy.c"
 case YY_STATE_EOF(INITIAL):
 	yyterminate();
 
@@ -3255,7 +3264,7 @@ void yyfree (void * ptr , yyscan_t yyscanner)
 
 #define YYTABLES_NAME "yytables"
 
-#line 622 "lexer.l"
+#line 631 "lexer.l"
 
 
 int ast_yywrap(yyscan_t scanner)

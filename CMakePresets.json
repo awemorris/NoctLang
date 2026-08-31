@@ -28,6 +28,7 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
+                "NOCT_ENABLE_API_PROCESS": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
                 "NOCT_ENABLE_CBACKEND": "ON",
                 "NOCT_ENABLE_ELBACKEND": "ON",
@@ -35,18 +36,20 @@
             }
         },
         {
-            "name": "shared",
-            "displayName": "shared build",
+            "name": "static-accel",
+            "displayName": "static accel build",
             "generator": "Unix Makefiles",
-            "binaryDir": "${sourceDir}/build-shared",
+            "binaryDir": "${sourceDir}/build-static-accel",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "NOCT_ENABLE_SHARED": "ON",
+                "NOCT_ENABLE_INSTALL": "ON",
+                "NOCT_ENABLE_STATIC": "ON",
                 "NOCT_ENABLE_CLI": "ON",
                 "NOCT_ENABLE_REPL": "ON",
                 "NOCT_ENABLE_JIT": "ON",
                 "NOCT_ENABLE_MULTITHREAD": "ON",
                 "NOCT_ENABLE_OPTIMIZER": "ON",
+                "NOCT_ENABLE_ACCEL": "ON",
                 "NOCT_ENABLE_I18N": "ON",
                 "NOCT_ENABLE_API": "ON",
                 "NOCT_ENABLE_API_SYSTEM": "ON",
@@ -55,6 +58,7 @@
                 "NOCT_ENABLE_API_THREAD": "ON",
                 "NOCT_ENABLE_API_TERM": "ON",
                 "NOCT_ENABLE_API_HTTPSERVER": "ON",
+                "NOCT_ENABLE_API_PROCESS": "ON",
                 "NOCT_ENABLE_BCBACKEND": "ON",
                 "NOCT_ENABLE_CBACKEND": "ON",
                 "NOCT_ENABLE_ELBACKEND": "ON",
@@ -95,34 +99,6 @@
             "binaryDir": "${sourceDir}/build-debug-mt",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "NOCT_ENABLE_STATIC": "ON",
-                "NOCT_ENABLE_CLI": "ON",
-                "NOCT_ENABLE_REPL": "ON",
-                "NOCT_ENABLE_JIT": "ON",
-                "NOCT_ENABLE_MULTITHREAD": "ON",
-                "NOCT_ENABLE_OPTIMIZER": "ON",
-                "NOCT_ENABLE_I18N": "ON",
-                "NOCT_ENABLE_API": "ON",
-                "NOCT_ENABLE_API_SYSTEM": "ON",
-                "NOCT_ENABLE_API_CONSOLE": "ON",
-                "NOCT_ENABLE_API_FILE": "ON",
-                "NOCT_ENABLE_API_THREAD": "ON",
-                "NOCT_ENABLE_API_TERM": "ON",
-                "NOCT_ENABLE_API_HTTPSERVER": "ON",
-                "NOCT_ENABLE_BCBACKEND": "ON",
-                "NOCT_ENABLE_CBACKEND": "ON",
-                "NOCT_ENABLE_ELBACKEND": "ON",
-                "NOCT_ENABLE_SCMBACKEND": "ON"
-            }
-        },
-        {
-            "name": "linux",
-            "displayName": "static build",
-            "generator": "Unix Makefiles",
-            "binaryDir": "${sourceDir}/build-linux",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "NOCT_ENABLE_INSTALL": "ON",
                 "NOCT_ENABLE_STATIC": "ON",
                 "NOCT_ENABLE_CLI": "ON",
                 "NOCT_ENABLE_REPL": "ON",
@@ -909,7 +885,7 @@
                 "NOCT_ENABLE_ELBACKEND": "ON",
                 "NOCT_ENABLE_SCMBACKEND": "ON"
             }
-        }
+	}
     ],
     "buildPresets": [
         {
@@ -917,8 +893,8 @@
             "configurePreset": "static"
         },
         {
-            "name": "shared",
-            "configurePreset": "shared"
+            "name": "static-accel",
+            "configurePreset": "static-accel"
         },
         {
             "name": "debug-st",
@@ -927,10 +903,6 @@
         {
             "name": "debug-mt",
             "configurePreset": "debug-mt"
-        },
-        {
-            "name": "linux",
-            "configurePreset": "linux"
         },
         {
             "name": "windows-vs2026-x86",

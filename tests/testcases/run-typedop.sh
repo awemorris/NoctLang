@@ -85,7 +85,7 @@ mkdir "$work"
 cp typedop/checked_div.noct "$work/checked_div.noct"
 $NOCT --compile -O1 "$work/checked_div.noct" >/dev/null
 for jit in -j0 -j; do
-    $NOCT "$jit" "$work/checked_div.nb" > "$work/out" 2>&1
+    $NOCT "$jit" "$work/checked_div.nbc" > "$work/out" 2>&1
     if ! diff -q typedop/checked_div.noct.out "$work/out" >/dev/null 2>&1; then
         echo "FAIL typedop/checked_div.noct (persisted opcode, $jit)"
         diff typedop/checked_div.noct.out "$work/out" | head -5
@@ -102,7 +102,7 @@ mkdir "$work"
 cp typedop/tag-materialize.noct "$work/tag-materialize.noct"
 $NOCT --compile -O1 "$work/tag-materialize.noct" >/dev/null
 for jit in -j0 -j; do
-    $NOCT "$jit" "$work/tag-materialize.nb" > "$work/out" 2>&1
+    $NOCT "$jit" "$work/tag-materialize.nbc" > "$work/out" 2>&1
     if ! diff -q typedop/tag-materialize.noct.out2 "$work/out" >/dev/null 2>&1; then
         echo "FAIL typedop/tag-materialize.noct (persisted materialize, $jit)"
         diff typedop/tag-materialize.noct.out2 "$work/out" | head -5

@@ -54,7 +54,7 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf -- "$tmp_dir"' EXIT HUP INT TERM
 cp simd/drawimage/blend-alpha.noct "$tmp_dir/blend-alpha.noct"
 "$host_noct" --compile -O2 "$tmp_dir/blend-alpha.noct" >/dev/null 2>&1
-alpha_nb="$tmp_dir/blend-alpha.nb"
+alpha_nb="$tmp_dir/blend-alpha.nbc"
 
 run_case() {
     ceiling=$1

@@ -115,6 +115,9 @@ struct ast_func {
 	/* Statically constrained CPU function. */
 	bool is_fast;
 
+	/* Accelerator optimization hint. */
+	bool is_accel;
+
 	/* Statement list */
 	struct ast_stmt_list *stmt_list;
 

@@ -37,7 +37,7 @@ echo 'PASS packed-loop/regcache.noct (cursor and GPR cache accepted)'
 
 cp packed-loop/regcache.noct "$tmp_dir/regcache.noct"
 "$NOCT" --compile -O2 "$tmp_dir/regcache.noct" >/dev/null
-"$NOCT" -j "$tmp_dir/regcache.nb" >"$tmp_dir/roundtrip.out"
+"$NOCT" -j "$tmp_dir/regcache.nbc" >"$tmp_dir/roundtrip.out"
 diff packed-loop/regcache.noct.out "$tmp_dir/roundtrip.out"
 echo 'PASS packed-loop/regcache.noct (optimized bytecode round trip)'
 
@@ -68,7 +68,7 @@ for tc in unroll-width16 unroll-offset-tail; do
     cp "packed-loop/$tc.noct" "$tmp_dir/$tc.noct"
     "$NOCT" --compile -O2 \
         "$tmp_dir/$tc.noct" >/dev/null
-    "$NOCT" -j "$tmp_dir/$tc.nb" >"$tmp_dir/$tc-roundtrip"
+    "$NOCT" -j "$tmp_dir/$tc.nbc" >"$tmp_dir/$tc-roundtrip"
     diff "packed-loop/$tc.noct.out" "$tmp_dir/$tc-roundtrip"
     echo "PASS packed-loop/$tc.noct (unroll4 interpreter/JIT/roundtrip)"
 done

@@ -49,20 +49,6 @@ NOCT_DLL
 bool
 noct_bcback_finalize(void);
 
-/* Collect multiple sources into one executable Noct App (.nap). */
-NOCT_DLL bool noct_bcback_app_start(const char *out_file_name);
-NOCT_DLL bool noct_bcback_app_add_require_path(const char *path_list);
-NOCT_DLL bool noct_bcback_app_scan_source(const char *source_file_name,
-					  const char *source_data);
-NOCT_DLL bool noct_bcback_app_add_source(const char *source_file_name,
-					 const char *source_data);
-NOCT_DLL bool noct_bcback_app_finalize(void);
-NOCT_DLL void noct_bcback_app_abort(void);
-
-/* Internal package-cache container writer (non-executable, main optional). */
-NOCT_DLL bool noct_bcback_package_start(const char *physical_output,
-					const char *logical_output);
-
 /*
  * C Backend
  */

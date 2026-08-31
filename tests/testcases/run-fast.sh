@@ -258,7 +258,7 @@ run_bytecode_suite()
             restricted-distinct.noct)
 
     sed -n '1,/^Temporary Size$/p' \
-        "$bytecode_dir/exact-shape.nb" > "$metadata"
+        "$bytecode_dir/exact-shape.nbc" > "$metadata"
     function_kind=$(awk \
         'previous == "Function Kind" { print; exit } { previous = $0 }' \
         "$metadata")
@@ -273,15 +273,15 @@ run_bytecode_suite()
 
     void_return=$(awk \
         'previous == "Return Type" { print; exit } { previous = $0 }' \
-        "$bytecode_dir/restricted-distinct.nb")
+        "$bytecode_dir/restricted-distinct.nbc")
     if [ "$void_return" != -2 ]; then
         echo 'Fast void bytecode does not contain canonical return metadata.' >&2
         exit 1
     fi
 
-    "$test_noct" -j0 "$bytecode_dir/exact-shape.nb" > "$TMP/exact.out"
-    "$test_noct" -j0 "$bytecode_dir/intrinsics.nb" > "$TMP/intrinsics.out"
-    "$test_noct" -j0 "$bytecode_dir/restricted-distinct.nb" \
+    "$test_noct" -j0 "$bytecode_dir/exact-shape.nbc" > "$TMP/exact.out"
+    "$test_noct" -j0 "$bytecode_dir/intrinsics.nbc" > "$TMP/intrinsics.out"
+    "$test_noct" -j0 "$bytecode_dir/restricted-distinct.nbc" \
         > "$TMP/restricted.out"
     diff -u fast/exact-shape.noct.out "$TMP/exact.out"
     diff -u fast/intrinsics.noct.out "$TMP/intrinsics.out"
@@ -289,10 +289,10 @@ run_bytecode_suite()
 
     malformed_dir="$bytecode_dir/malformed"
     python3 fast/make-malformed-bytecode.py \
-        "$bytecode_dir/exact-shape.nb" \
+        "$bytecode_dir/exact-shape.nbc" \
         "$malformed_dir"
 
-    for malformed in "$malformed_dir"/*.nb; do
+    for malformed in "$malformed_dir"/*.nbc; do
         check_bytecode_rejected "$test_noct" "$malformed"
     done
 

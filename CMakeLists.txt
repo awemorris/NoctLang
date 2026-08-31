@@ -14,6 +14,11 @@ option(NOCT_ENABLE_OBJECT         "Build objects only"                    OFF)
 option(NOCT_ENABLE_JIT            "Enable JIT compilation"                OFF)
 option(NOCT_ENABLE_OPTIMIZER      "Enable optimizer"                      OFF)
 option(NOCT_ENABLE_MULTITHREAD    "Enable multithread support"            OFF)
+option(NOCT_ENABLE_ACCEL          "Enable the Vulkan accelerator"          OFF)
+
+# Focused host tests for target-neutral accelerator components.
+option(NOCT_ENABLE_ACCEL_COMMON_TESTS
+       "Enable accelerator common-component tests"                       OFF)
 
 # Program config options.
 option(NOCT_ENABLE_CLI            "Enable CLI"                            OFF)
@@ -158,6 +163,40 @@ else()
   set(NOCT_LIB_TYPE STATIC)
 endif()
 
+if(NOCT_ENABLE_CLI AND NOT NOCT_LIB_TYPE STREQUAL "STATIC")
+  message(FATAL_ERROR "NOCT_ENABLE_CLI requires a static Noct library")
+endif()
+
+if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
+  if(NOT NOCT_LIB_TYPE STREQUAL "STATIC")
+    message(FATAL_ERROR
+      "NOCT_ENABLE_ACCEL_COMMON_TESTS requires a static Noct library")
+  endif()
+  if(NOT NOCT_ENABLE_OPTIMIZER)
+    message(FATAL_ERROR
+      "NOCT_ENABLE_ACCEL_COMMON_TESTS requires NOCT_ENABLE_OPTIMIZER")
+  endif()
+  if(CMAKE_CROSSCOMPILING)
+    message(FATAL_ERROR
+      "NOCT_ENABLE_ACCEL_COMMON_TESTS requires a host-native build")
+  endif()
+endif()
+
+if(NOCT_ENABLE_ACCEL)
+  if(NOT NOCT_LIB_TYPE STREQUAL "STATIC")
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires a static Noct library")
+  endif()
+  if(NOT NOCT_ENABLE_CLI)
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_CLI")
+  endif()
+  if(NOT NOCT_ENABLE_API)
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_API")
+  endif()
+  if(NOT NOCT_ENABLE_OPTIMIZER)
+    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_OPTIMIZER")
+  endif()
+endif()
+
 # Determine the base files.
 set(
   NOCT_BASE_SOURCE
@@ -174,6 +213,7 @@ set(
   src/core/jit.c                # Runtime JIT part
   src/core/gc.c                 # Runtime GC part
   src/core/runtime.c            # Runtime main part
+  src/core/bytecode_file.c      # Bytecode/application file inspection
   src/core/noct.c               # Public functions
   src/core/intrinsics.c         # Intrinsics
 )
@@ -224,6 +264,8 @@ if(NOCT_ENABLE_BCBACKEND)
   set(
     NOCT_BCBE_SOURCE
     src/backend/bcback.c
+    src/backend/bcback_file.c
+    src/backend/bcback_app.c
   )
 endif()
 
@@ -574,12 +616,17 @@ endif()
 # LDFLAGS
 #
 
+if(NOT WIN32)
+   if(NOCT_ENABLE_API AND NOCT_ENABLE_MULTITHREAD)
+     set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+     find_package(Threads REQUIRED)
+   endif()
+endif()
+
 if(    NOCT_ENABLE_API
    AND NOCT_ENABLE_API_THREAD
    AND NOCT_ENABLE_MULTITHREAD
    AND NOT WIN32)
-  set(THREADS_PREFER_PTHREAD_FLAG TRUE)
-  find_package(Threads REQUIRED)
   target_link_libraries(noctapi PUBLIC Threads::Threads)
 endif()
 
@@ -626,6 +673,278 @@ set(NOCT_LIBRARIES    ${NOCT_LIBRARY})
 # ---
 
 #
+# Host bytecode resolver test
+#
+
+if(NOCT_LIB_TYPE STREQUAL "STATIC" AND NOT CMAKE_CROSSCOMPILING)
+  add_executable(
+    noct-test-bytecode-require-host
+    EXCLUDE_FROM_ALL
+    tests/testcases/bytecode-require-host-test.c
+  )
+  target_compile_definitions(
+    noct-test-bytecode-require-host
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-test-bytecode-require-host
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+  )
+  target_link_libraries(noct-test-bytecode-require-host PRIVATE noct)
+  if(NOT WIN32 AND NOCT_ENABLE_MULTITHREAD)
+    target_link_libraries(
+      noct-test-bytecode-require-host
+      PRIVATE
+      Threads::Threads
+    )
+  endif()
+endif()
+
+# ---
+
+#
+# Optional Vulkan accelerator
+#
+
+if(NOCT_ENABLE_ACCEL)
+  enable_language(CXX)
+  find_package(Vulkan REQUIRED)
+  find_package(shaderc CONFIG QUIET)
+
+  if(TARGET shaderc::shaderc)
+    set(NOCT_SHADERC_TARGET shaderc::shaderc)
+  elseif(TARGET shaderc::shaderc_combined)
+    set(NOCT_SHADERC_TARGET shaderc::shaderc_combined)
+  elseif(TARGET shaderc_combined)
+    set(NOCT_SHADERC_TARGET shaderc_combined)
+  else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+    set(NOCT_SHADERC_TARGET PkgConfig::SHADERC)
+  endif()
+
+  add_library(
+    noctaccel
+    STATIC
+    src/accel/accel_ir.c
+    src/accel/accel_program.c
+    src/accel/accel_residency.c
+    src/accel/accel_compile.c
+    src/accel/accel_context.c
+    src/accel/accel_mutex.c
+    src/accel/accel_rewrite.c
+    src/accel/accel_lir_budget.c
+    src/accel/accel_callback.c
+    src/accel/accel.c
+    src/accel/accel_vulkan.c
+    src/accel/accel_vulkan_shader.c
+  )
+  target_compile_definitions(
+    noctaccel
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noctaccel
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+  )
+  target_link_libraries(
+    noctaccel
+    PRIVATE
+    noct
+    Vulkan::Vulkan
+    ${NOCT_SHADERC_TARGET}
+  )
+  if(NOT WIN32)
+    target_link_libraries(noctaccel PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(
+    noct-test-accel-vulkan-plan
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel-vulkan-test.c
+  )
+  target_compile_definitions(
+    noct-test-accel-vulkan-plan
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-test-accel-vulkan-plan
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+  )
+  target_link_libraries(
+    noct-test-accel-vulkan-plan
+    PRIVATE
+    noctaccel
+    noct
+    Vulkan::Vulkan
+    ${NOCT_SHADERC_TARGET}
+  )
+  if(NOT WIN32)
+    target_link_libraries(
+      noct-test-accel-vulkan-plan
+      PRIVATE
+      Threads::Threads
+    )
+  endif()
+  set_target_properties(
+    noct-test-accel-vulkan-plan
+    PROPERTIES
+    LINKER_LANGUAGE CXX
+  )
+endif()
+
+# ---
+
+#
+# Target-neutral accelerator tests
+#
+
+if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
+  add_library(
+    noct-accel-test-common
+    STATIC
+    EXCLUDE_FROM_ALL
+    src/accel/accel_ir.c
+    src/accel/accel_program.c
+    src/accel/accel_residency.c
+    src/accel/accel_compile.c
+    src/accel/accel_context.c
+    src/accel/accel_mutex.c
+    src/accel/accel_rewrite.c
+    src/accel/accel_lir_budget.c
+    src/accel/accel_callback.c
+  )
+  target_compile_definitions(
+    noct-accel-test-common
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-accel-test-common
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+  )
+  target_link_libraries(noct-accel-test-common PRIVATE noct)
+  if(NOT WIN32)
+    target_link_libraries(noct-accel-test-common PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(
+    noct-test-accel-plan
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel-plan-test.c
+  )
+  target_compile_definitions(
+    noct-test-accel-plan
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-test-accel-plan
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+  )
+  target_link_libraries(
+    noct-test-accel-plan
+    PRIVATE
+    noct-accel-test-common
+    noct
+  )
+
+  add_library(
+    noct-accel-test-backend
+    STATIC
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel_test_backend.c
+  )
+  target_compile_definitions(
+    noct-accel-test-backend
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-accel-test-backend
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/testcases
+  )
+  target_link_libraries(
+    noct-accel-test-backend
+    PRIVATE
+    noct-accel-test-common
+    noct
+  )
+
+  add_executable(
+    noct-test-accel-rewrite
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel-rewrite-test.c
+  )
+  target_compile_definitions(
+    noct-test-accel-rewrite
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-test-accel-rewrite
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/testcases
+  )
+  target_link_libraries(
+    noct-test-accel-rewrite
+    PRIVATE
+    noct-accel-test-common
+    noct-accel-test-backend
+    noct
+  )
+  if(NOT WIN32)
+    target_link_libraries(noct-test-accel-rewrite PRIVATE Threads::Threads)
+  endif()
+endif()
+
+# ---
+
+#
 # CLI Target
 #
 
@@ -662,6 +981,10 @@ if(NOCT_ENABLE_CLI)
     ${CLI_SCMBACK_SOURCES}
     ${CLI_REPL_SOURCES}
   )
+
+  if(WIN32)
+    target_sources(noctcli PRIVATE src/cli/cli-win32.c)
+  endif()
 
   # Set the executable name.
   set_target_properties(noctcli PROPERTIES OUTPUT_NAME "noct")
@@ -713,6 +1036,19 @@ if(NOCT_ENABLE_CLI)
 
   # Link libnoct and libnoctapi.
   target_link_libraries(noctcli PRIVATE noct noctapi)
+  if(NOCT_ENABLE_ACCEL)
+    target_compile_definitions(noctcli PRIVATE NOCT_USE_ACCEL)
+    target_include_directories(
+      noctcli
+      PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+    )
+    target_link_libraries(noctcli PRIVATE noctaccel)
+    set_target_properties(noctcli PROPERTIES LINKER_LANGUAGE CXX)
+  endif()
+  if(WIN32)
+    target_link_libraries(noctcli PRIVATE shell32)
+  endif()
 
   # Add -lm on UNIX.
   if(UNIX AND NOT NOCT_TARGET_ZEDBSD)
@@ -729,9 +1065,89 @@ if(NOCT_ENABLE_CLI)
     if(MSVC)
       target_compile_options(noctcli PRIVATE /utf-8)
     elseif(CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "GNU")
-      target_compile_options(noctcli PRIVATE -municode -finput-charset=utf-8 -fexec-charset=utf-8)
+      target_compile_options(noctcli PRIVATE -finput-charset=utf-8 -fexec-charset=utf-8)
     endif()
   endif()
+endif()
+
+if(WIN32 AND NOCT_ENABLE_CLI)
+  add_executable(
+    noct-test-cli-win32-gpu-name
+    EXCLUDE_FROM_ALL
+    src/cli/cli-win32.c
+    tests/testcases/cli-win32-gpu-name-test.c
+  )
+  target_compile_definitions(
+    noct-test-cli-win32-gpu-name
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-test-cli-win32-gpu-name
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cli
+  )
+  target_link_libraries(noct-test-cli-win32-gpu-name PRIVATE shell32)
+  set_target_properties(
+    noct-test-cli-win32-gpu-name
+    PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-bin"
+  )
+  foreach(NOCT_TEST_CONFIG IN LISTS CMAKE_CONFIGURATION_TYPES)
+    string(TOUPPER "${NOCT_TEST_CONFIG}" NOCT_TEST_CONFIG_UPPER)
+    set_target_properties(
+      noct-test-cli-win32-gpu-name
+      PROPERTIES
+      "RUNTIME_OUTPUT_DIRECTORY_${NOCT_TEST_CONFIG_UPPER}"
+      "${CMAKE_CURRENT_BINARY_DIR}/test-bin"
+    )
+  endforeach()
+endif()
+
+if(NOCT_LIB_TYPE STREQUAL "STATIC" AND NOT CMAKE_CROSSCOMPILING)
+  add_executable(
+    noct-test-accel-hint-cpu
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel-hint-cpu-test.c
+  )
+  target_compile_definitions(
+    noct-test-accel-hint-cpu
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-test-accel-hint-cpu
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+  )
+  target_link_libraries(noct-test-accel-hint-cpu PRIVATE noct)
+
+  add_executable(
+    noct-test-optimizer-callback
+    EXCLUDE_FROM_ALL
+    tests/testcases/optimizer-callback-test.c
+  )
+  target_compile_definitions(
+    noct-test-optimizer-callback
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
+  target_include_directories(
+    noct-test-optimizer-callback
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+  )
+  target_link_libraries(noct-test-optimizer-callback PRIVATE noct)
 endif()
 
 # ---

@@ -173,8 +173,12 @@ noct_cback_translate(
 
 		/* Run the HIR optimizer (ABCE; no-op below level 2). */
 		hfunc = hir_get_function(i);
-		if (!hir_optimize_func(hfunc, cback_optimize_level,
-				       cback_simd_info)) {
+		if (!hir_optimize_func(
+			hfunc,
+			cback_optimize_level,
+			cback_simd_info,
+			NULL,
+			NULL)) {
 			printf(N_TR("Error: %s\n"), hir_get_error_message());
 			return false;
 		}

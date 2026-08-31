@@ -49,6 +49,7 @@ struct rt_bindglobal;
 struct rt_vm_finalizer;
 struct rt_required_source;
 struct jit_slab;
+struct hir_block;
 
 /*
  * String object.
@@ -202,6 +203,8 @@ struct rt_func {
 
 	/* Function pointer. (if a cfunc) */
 	bool (*cfunc)(struct rt_env *env);
+	bool (*cfunc_with_data)(struct rt_env *env, void *userdata);
+	void *cfunc_userdata;
 
 	/* Bytecode for a function. (if not a cfunc) */
 	uint32_t bytecode_size;
@@ -419,6 +422,11 @@ struct rt_vm {
 
 	/* VM-owned native finalizers. */
 	struct rt_vm_finalizer *vm_finalizer_list;
+
+	/* Optional accelerator HIR optimizer attachment. */
+	bool (*accel_optimize_func)(struct hir_block *func_block,
+				    void *userdata);
+	void *accel_optimize_userdata;
 
 	/* GC. */
 	struct rt_gc_info gc;

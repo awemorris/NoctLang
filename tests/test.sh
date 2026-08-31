@@ -18,12 +18,15 @@ Main suites:
   typedop          Typed LIR operation generation.
   abce             Array-bounds-check elimination.
   packed-loop      Width-1 Packed loop and JIT register-cache tests.
+  hint-accel-cpu   __accel CPU semantics and HIR marker tests.
+  optimizer-callback Nullable accelerator optimizer callback tests.
   cse              Common-subexpression elimination.
   simd             SIMD vectorization, fallback and bytecode tests.
   fast             __fast functions, exact shapes and row-major indexing.
   class            Class freezing and top-level declarations.
   scoping          Block scope, let and TDZ behavior.
   require          CLI source-module resolution.
+  bytecode-require Standalone .nbc require graph and compatibility tests.
   thread           Thread API tests.
   thread-stress    Repeat promotion/expansion races (default: 100 times).
   httpserver       HTTP server API tests.
@@ -31,31 +34,12 @@ Main suites:
   process          Process API tests.
   mmap [build-dir] FileUtil mmap and Packed native-finalizer tests.
   parallel-analysis Target-neutral loop fact/classification tests.
-  accel            Accelerator syntax, contracts and serialization tests.
-  accel-analysis   Target-neutral accelerator loop analysis tests.
-  accel-program    Accelerator program descriptor unit tests.
+  accel-plan [dir] Target-neutral accelerator compiler-plan tests.
+  accel-rewrite [dir] Transactional accelerator HIR rewrite tests.
 
 Accelerator hardware suites:
-  accel-opengl     OpenGL ES execution tests (NOCT selects the binary).
-  accel-vulkan     Vulkan execution tests (NOCT selects the binary).
-  accel-dx12       DirectX 12 execution tests on Windows (NOCT is required).
-  accel-serialization  Relocated OpenGL .nb/.nap hardening tests.
-
-Model and ONNX suites:
-  model-weights    Binary, hash and NWT1 model-weight tests.
-  onnx2noct        ONNX reader, normalization and code-generation tests.
-  onnx-gpu         Generated base GPU model OpenGL tests.
-  onnx-conv        Generated convolution OpenGL tests.
-  onnx-contraction Generated Gemm/MatMul OpenGL tests.
-  onnx-pool        Generated pooling OpenGL tests.
-  onnx-concat      Generated concatenation OpenGL tests.
-  onnx-reduce      Generated reduction OpenGL tests.
-  onnx-batchnorm   Generated BatchNormalization OpenGL tests.
-  onnx-package     Complete generated-package OpenGL tests.
-  onnx-mnist       Locked MNIST model OpenGL tests.
-  onnx-cifar       Project CIFAR model OpenGL tests.
-  onnx-squeezenet  Locked SqueezeNet model OpenGL tests.
-  onnx-tinyyolo    Tiny YOLOv2 static-shape blocker test.
+  accel-vulkan-plan [dir] Vulkan/shaderc backend plan tests.
+  gpu-vulkan [dir] Explicit Vulkan hardware execution tests.
 
 Toolchain/integration suites:
   api [build-dir]  Public Regex/File/Term registration test (default: build-static).
@@ -73,8 +57,8 @@ Cross-architecture suites:
 
 Environment variables such as NOCT, CC, QEMU and QEMU_CPU are passed to
 the concrete scripts in tests/testcases/.  Relative build directories are
-resolved from the repository root.  Hardware/model suites may additionally
-use CONVERTER_NOCT, NOCT_OPENGL_RENDERER_PATTERN and ONNX_ORACLE_PYTHON.
+resolved from the repository root.  The Vulkan hardware suite is explicit
+and is never run by the normal host suite.
 EOF
 }
 
@@ -100,12 +84,15 @@ typing)          run_script run-typing.sh "$@" ;;
 typedop)         run_script run-typedop.sh "$@" ;;
 abce)            run_script run-abce.sh "$@" ;;
 packed-loop)     run_script run-packed-loop.sh "$@" ;;
+hint-accel-cpu)  run_script run-hint-accel-cpu.sh "$@" ;;
+optimizer-callback) run_script run-optimizer-callback.sh "$@" ;;
 cse)             run_script run-cse.sh "$@" ;;
 simd)            run_script run-simd.sh "$@" ;;
 fast)            run_script run-fast.sh "$@" ;;
 class)           run_script run-class.sh "$@" ;;
 scoping)         run_script run-scoping.sh "$@" ;;
 require)         run_script run-require.sh "$@" ;;
+bytecode-require) run_script run-bytecode-require.sh "$@" ;;
 thread)          run_script run-thread.sh "$@" ;;
 thread-stress)   run_script run-thread-stress.sh "$@" ;;
 httpserver)      run_script run-httpserver.sh "$@" ;;
@@ -113,27 +100,10 @@ webapp)          run_script run-webapp.sh "$@" ;;
 process)         run_script run-process.sh "$@" ;;
 mmap)            run_script run-fileutil-mmap.sh "$@" ;;
 parallel-analysis) run_script run-parallel-analysis.sh "$@" ;;
-accel)           run_script run-accel.sh "$@" ;;
-accel-analysis)  run_script run-accel-analysis.sh "$@" ;;
-accel-program)   run_script run-accel-program.sh "$@" ;;
-accel-opengl)    run_script run-accel-opengl.sh "$@" ;;
-accel-vulkan)    run_script run-accel-vulkan.sh "$@" ;;
-accel-dx12)      run_script run-accel-dx12.sh "$@" ;;
-accel-serialization) run_script run-accel-serialization.sh "$@" ;;
-model-weights)   run_script run-model-weights.sh "$@" ;;
-onnx2noct)       run_script run-onnx2noct.sh "$@" ;;
-onnx-gpu)        run_script run-onnx-gpu-opengl.sh "$@" ;;
-onnx-conv)       run_script run-onnx-gpu-conv-opengl.sh "$@" ;;
-onnx-contraction) run_script run-onnx-gpu-contraction-opengl.sh "$@" ;;
-onnx-pool)       run_script run-onnx-gpu-pool-opengl.sh "$@" ;;
-onnx-concat)     run_script run-onnx-gpu-concat-opengl.sh "$@" ;;
-onnx-reduce)     run_script run-onnx-gpu-reduce-opengl.sh "$@" ;;
-onnx-batchnorm)  run_script run-onnx-gpu-batchnorm-opengl.sh "$@" ;;
-onnx-package)    run_script run-onnx-package-opengl.sh "$@" ;;
-onnx-mnist)      run_script run-onnx-mnist-opengl.sh "$@" ;;
-onnx-cifar)      run_script run-onnx-cifar-opengl.sh "$@" ;;
-onnx-squeezenet) run_script run-onnx-squeezenet-opengl.sh "$@" ;;
-onnx-tinyyolo)   run_script run-onnx-tinyyolo-blocker.sh "$@" ;;
+accel-plan)      run_script run-plan-accel.sh "$@" ;;
+accel-rewrite)   run_script run-rewrite-accel.sh "$@" ;;
+accel-vulkan-plan) run_script run-vulkan-accel-plan.sh "$@" ;;
+gpu-vulkan)      run_script run-gpu-vulkan.sh "$@" ;;
 api)             run_script run-api.sh "$@" ;;
 ctrans)          run_script run-ctrans.sh "$@" ;;
 repl)            run_script run-repl.sh "$@" ;;
