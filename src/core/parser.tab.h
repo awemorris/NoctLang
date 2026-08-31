@@ -122,7 +122,7 @@ extern int ast_yydebug;
     TOKEN_LET = 323,               /* TOKEN_LET  */
     TOKEN_EXTEND = 324,            /* TOKEN_EXTEND  */
     TOKEN_STATIC = 325,            /* TOKEN_STATIC  */
-    TOKEN_INLINE = 326,            /* TOKEN_INLINE  */
+    TOKEN_DUNDER_INLINE = 326,     /* TOKEN_DUNDER_INLINE  */
     TOKEN_REQUIRE = 327,           /* TOKEN_REQUIRE  */
     TOKEN_RESERVED_328 = 328,      /* TOKEN_RESERVED_328  */
     TOKEN_RESERVED_329 = 329,      /* TOKEN_RESERVED_329  */

@@ -300,7 +300,7 @@ enum yysymbol_kind_t
   YYSYMBOL_TOKEN_LET = 68,                 /* TOKEN_LET  */
   YYSYMBOL_TOKEN_EXTEND = 69,              /* TOKEN_EXTEND  */
   YYSYMBOL_TOKEN_STATIC = 70,              /* TOKEN_STATIC  */
-  YYSYMBOL_TOKEN_INLINE = 71,              /* TOKEN_INLINE  */
+  YYSYMBOL_TOKEN_DUNDER_INLINE = 71,       /* TOKEN_DUNDER_INLINE  */
   YYSYMBOL_TOKEN_REQUIRE = 72,             /* TOKEN_REQUIRE  */
   YYSYMBOL_TOKEN_RESERVED_328 = 73,        /* TOKEN_RESERVED_328  */
   YYSYMBOL_TOKEN_RESERVED_329 = 74,        /* TOKEN_RESERVED_329  */
@@ -797,20 +797,20 @@ static const char *const yytname[] =
   "TOKEN_GT", "TOKEN_GTE", "TOKEN_LT", "TOKEN_LTE", "TOKEN_EQ",
   "TOKEN_NEQ", "TOKEN_RETURN", "TOKEN_BREAK", "TOKEN_CONTINUE",
   "TOKEN_RPAR_DARROW_LBLK", "TOKEN_AND", "TOKEN_OR", "TOKEN_XOR",
-  "TOKEN_VAR", "TOKEN_LET", "TOKEN_EXTEND", "TOKEN_STATIC", "TOKEN_INLINE",
-  "TOKEN_REQUIRE", "TOKEN_RESERVED_328", "TOKEN_RESERVED_329",
-  "TOKEN_RESERVED_330", "TOKEN_RESERVED_331", "TOKEN_DUNDER_FAST",
-  "TOKEN_RESERVED_333", "TOKEN_RESERVED_334", "TOKEN_RESERVED_335",
-  "TOKEN_NOT", "UNARYMINUS", "CALL", "$accept", "func_list",
-  "toplevel_decl", "func_prefix", "func", "param_list", "type_name",
-  "type_extent", "type_extent_list", "stmt_list", "stmt", "expr_stmt",
-  "assign_stmt", "plusassign_stmt", "minusassign_stmt", "mulassign_stmt",
-  "divassign_stmt", "modassign_stmt", "andassign_stmt", "orassign_stmt",
-  "shlassign_stmt", "shrassign_stmt", "plusplus_stmt", "minusminus_stmt",
-  "if_stmt", "elif_stmt", "else_stmt", "while_stmt", "for_stmt",
-  "return_stmt", "break_stmt", "continue_stmt", "expr", "call_expr",
-  "lambda_expr", "arg_list", "multi_index_list", "kv_list", "kv",
-  "property_name", "term", YY_NULLPTR
+  "TOKEN_VAR", "TOKEN_LET", "TOKEN_EXTEND", "TOKEN_STATIC",
+  "TOKEN_DUNDER_INLINE", "TOKEN_REQUIRE", "TOKEN_RESERVED_328",
+  "TOKEN_RESERVED_329", "TOKEN_RESERVED_330", "TOKEN_RESERVED_331",
+  "TOKEN_DUNDER_FAST", "TOKEN_RESERVED_333", "TOKEN_RESERVED_334",
+  "TOKEN_RESERVED_335", "TOKEN_NOT", "UNARYMINUS", "CALL", "$accept",
+  "func_list", "toplevel_decl", "func_prefix", "func", "param_list",
+  "type_name", "type_extent", "type_extent_list", "stmt_list", "stmt",
+  "expr_stmt", "assign_stmt", "plusassign_stmt", "minusassign_stmt",
+  "mulassign_stmt", "divassign_stmt", "modassign_stmt", "andassign_stmt",
+  "orassign_stmt", "shlassign_stmt", "shrassign_stmt", "plusplus_stmt",
+  "minusminus_stmt", "if_stmt", "elif_stmt", "else_stmt", "while_stmt",
+  "for_stmt", "return_stmt", "break_stmt", "continue_stmt", "expr",
+  "call_expr", "lambda_expr", "arg_list", "multi_index_list", "kv_list",
+  "kv", "property_name", "term", YY_NULLPTR
 };
 
 static const char *
@@ -2350,7 +2350,7 @@ yyreduce:
 #line 2351 "parser.tab.c"
     break;
 
-  case 15: /* func_prefix: TOKEN_STATIC TOKEN_INLINE TOKEN_FUNC  */
+  case 15: /* func_prefix: TOKEN_STATIC TOKEN_DUNDER_INLINE TOKEN_FUNC  */
 #line 318 "parser.y"
                 {
 			(yyval.ival) = 3;
@@ -2366,7 +2366,7 @@ yyreduce:
 #line 2367 "parser.tab.c"
     break;
 
-  case 17: /* func_prefix: TOKEN_STATIC TOKEN_INLINE TOKEN_DUNDER_FAST TOKEN_FUNC  */
+  case 17: /* func_prefix: TOKEN_STATIC TOKEN_DUNDER_INLINE TOKEN_DUNDER_FAST TOKEN_FUNC  */
 #line 326 "parser.y"
                 {
 			(yyval.ival) = 7;
@@ -3495,10 +3495,10 @@ yyreduce:
 #line 3496 "parser.tab.c"
     break;
 
-  case 143: /* property_name: TOKEN_INLINE  */
+  case 143: /* property_name: TOKEN_DUNDER_INLINE  */
 #line 986 "parser.y"
                 {
-			(yyval.sval) = ast_strdup("inline");
+			(yyval.sval) = ast_strdup("__inline");
 		}
 #line 3504 "parser.tab.c"
     break;

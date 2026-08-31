@@ -200,7 +200,7 @@ if(NOCT_ENABLE_OPTIMIZER)
     src/optimizer/hir_opt_analysis.c # Common optimizer analysis
     src/optimizer/hir_fast_func.c    # __fast checked-index optimization
     src/optimizer/hir_opt_abce.c     # ABCE pass
-    src/optimizer/hir_opt_inline.c   # static inline pass
+    src/optimizer/hir_opt_inline.c   # static __inline pass
     src/optimizer/hir_opt_simd.c     # SIMD auto-vectorization
     src/optimizer/hir_opt_unroll.c   # scalar Packed loop unroll
     src/optimizer/hir_opt_loop.c     # loop analysis

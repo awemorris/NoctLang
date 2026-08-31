@@ -754,7 +754,7 @@ ast_accept_func(
 		return NULL;
 
 	if ((flags & AST_FUNC_INLINE) != 0 && (flags & AST_FUNC_STATIC) == 0) {
-		ast_printf(N_TR("inline functions must also be static."));
+		ast_printf(N_TR("__inline functions must also be static."));
 		return NULL;
 	}
 	if ((flags & AST_FUNC_STATIC) != 0) {

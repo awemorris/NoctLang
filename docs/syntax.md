@@ -891,7 +891,7 @@ not available.  Direct calls to other fast functions and the compiler-owned
 `atan2`, `exp`, `ln`, `log2`, `log10`, and numeric conversion intrinsics are
 allowed.  Direct or mutual recursion between fast functions is rejected.
 
-`static inline __fast func` is accepted and remains file-local.  At this stage
+`static __inline __fast func` is accepted and remains file-local.  At this stage
 it is deliberately not inlined: its calls use the same checked fast-function
 path as other fast calls.
 

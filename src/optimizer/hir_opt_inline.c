@@ -6,7 +6,7 @@
  */
 
 /*
- * Conservative HIR inlining for file-local `static inline` functions.
+ * Conservative HIR inlining for file-local `static __inline` functions.
  */
 
 #include <noct/noct.h>

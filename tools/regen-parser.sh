@@ -13,8 +13,10 @@ flex --prefix=ast_yy -o lexer.yy.c lexer.l
 sed -i '1i #include <inttypes.h>\n' lexer.yy.c
 # Flex's C99 branch conflicts with OpenWatcom's compatibility macros.
 sed -i '/^#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L$/c\
-#if defined (__STDC_VERSION__) \&\& __STDC_VERSION__ >= 199901L \&\& \\
+#if defined (__STDC_VERSION__) \&\& __STDC_VERSION__ >= 199901L \&\& \\\
     !defined(__WATCOMC__)' lexer.yy.c
+# Keep the generated file at one terminating newline across Flex versions.
+sed -i '${/^$/d;}' lexer.yy.c
 
 bison -p ast_yy -d -o parser.tab.c parser.y
 

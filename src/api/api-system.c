@@ -36,8 +36,7 @@ static bool cfunc_System_getOSName(NoctEnv *env);
 static bool cfunc_System_checkFileExists(NoctEnv *env);
 static bool cfunc_System_pcall(NoctEnv *env);
 static bool cfunc_System_error(NoctEnv *env);
-static bool system_load_file(NoctEnv *env, const char *fname, char **data,
-			     size_t *size);
+static bool system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size);
 
 /* FFI table. */
 struct ffi_item {

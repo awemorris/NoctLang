@@ -15,7 +15,7 @@ __fast func add_one(x: int): int {
     return x + 1;
 }
 
-static inline __fast func convert_twice(x: int): float {
+static __inline __fast func convert_twice(x: int): float {
     return float(x) * 2.0f;
 }
 

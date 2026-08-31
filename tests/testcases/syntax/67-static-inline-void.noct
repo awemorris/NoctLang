@@ -1,6 +1,6 @@
 static let bias = 1;
 
-static inline func make_pixel(r: int, g: int, b: int): int {
+static __inline func make_pixel(r: int, g: int, b: int): int {
     return (r << 16) | (g << 8) | b;
 }
 

@@ -2,7 +2,7 @@ __fast func add_fast(a: int, b: int): int {
     return a + b;
 }
 
-static inline __fast func twice_fast(value: int): int {
+static __inline __fast func twice_fast(value: int): int {
     return value * 2;
 }
 

@@ -63,7 +63,7 @@ The current source spellings are:
 __gpu func kernel(...): void { ... }
 __accel func pipeline(...): void { ... }
 __fast func calculate(...): int { ... }
-static inline __fast func helper(...): float { ... }
+static __inline __fast func helper(...): float { ... }
 ```
 
 Legacy `gpu func` and `accel func` are no longer aliases.  They produce a
@@ -226,7 +226,7 @@ SIMD, and future multicore parallelization reliable.
 - Globals, closures, dynamic function values, object/method calls, normal
   functions, GPU functions, and accel functions are unavailable in a FAST
   body.
-- Direct same-unit, preloaded, required-module, and `static inline` FAST calls
+- Direct same-unit, preloaded, required-module, and `static __inline` FAST calls
   are supported.  Direct and mutual recursion are rejected.
 
 Caller-side preflight checks exact primitive tags, Packed element kinds,
@@ -285,7 +285,7 @@ Changing to dedicated opcodes would be a new ABI project, not a cleanup.
 Required-module prototype scanning parses only exported names and contracts.
 It does not register functions, assign globals, or run initializers.  The
 Noct App compiler scans all explicit inputs before compiling bodies, making
-FAST resolution independent of input order.  `static inline __fast func`
+FAST resolution independent of input order.  `static __inline __fast func`
 remains file-local.
 
 Multicore automatic parallelization, FAST DOALL/DOSUM lowering, software
