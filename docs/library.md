@@ -11,6 +11,32 @@ The `noct` CLI command includes the standard APIs.
 
 ---
 
+## Regex
+
+`Regex.*` is a standard API provided by `libnoctapi`; it is not a core
+intrinsic. An embedding host installs it explicitly with
+`noct_register_api_regex()`.
+
+All positions are zero-based Unicode codepoint indices. Match end positions
+are exclusive.
+
+### Regex.search(pat, s, from)
+
+Searches `s` at or after `from`. It returns zero when no match exists, or a
+dictionary containing `start`, `end`, and a `groups` array. Each capture group
+has `start` and `end` fields; an unmatched group uses `-1` for both.
+
+### Regex.matches(pat, s)
+
+Returns one when the entire string matches `pat`, otherwise zero.
+
+### Regex.replaceAll(pat, s, repl)
+
+Replaces every non-overlapping match. `$0` through `$9` insert capture groups,
+and `$$` inserts a literal dollar sign.
+
+---
+
 ## File
 
 `File.*` is a standard API and not included in the intrinsics.
@@ -167,27 +193,6 @@ System.shell("ls -lha");
 Raises a hard runtime error with the supplied string.  Execution does not
 continue after this call.  It is intended for command-line tools that must
 reject invalid input with a precise diagnostic.
-
-### System.loadDLL(name)
-
-Loads a trusted native library by logical name and invokes its exported
-`noct_library_init()` once for the current VM.  Paths, suffixes, and traversal
-components are rejected.  The library registers native functions through the
-versioned, append-only `NoctAPI` table declared in `<noct/noct.h>`.
-
-The operating-system library handle remains loaded until process exit.  VM
-state should be attached to a userdata-aware native function and released with
-a VM finalizer; no separate unload or shutdown callback exists.  Registration
-is transactional, so a failed initializer does not publish only part of its
-function set.  See [Packages and native libraries](packages.md) for the ABI,
-search order, and lifetime contract.
-
-### System.tryLoadDLL(name)
-
-Behaves like `System.loadDLL(name)`, except that a library which is simply not
-present returns zero instead of raising an error.  A malformed library, a
-missing entry point, or a failed initializer remains an error.  A successful
-load, including an already initialized library, returns one.
 
 ---
 

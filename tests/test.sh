@@ -23,13 +23,12 @@ Main suites:
   fast             __fast functions, exact shapes and row-major indexing.
   class            Class freezing and top-level declarations.
   scoping          Block scope, let and TDZ behavior.
-  app              .nap packaging and require resolution.
+  require          CLI source-module resolution.
   thread           Thread API tests.
   thread-stress    Repeat promotion/expansion races (default: 100 times).
   httpserver       HTTP server API tests.
   webapp           Web application framework tests.
   process          Process API tests.
-  dynlib [build-dir] Dynamic-library ABI, loading and rollback tests.
   mmap [build-dir] FileUtil mmap and Packed native-finalizer tests.
   parallel-analysis Target-neutral loop fact/classification tests.
   accel            Accelerator syntax, contracts and serialization tests.
@@ -59,7 +58,7 @@ Model and ONNX suites:
   onnx-tinyyolo    Tiny YOLOv2 static-shape blocker test.
 
 Toolchain/integration suites:
-  api [build-dir]  Public File/Term registration test (default: build-static).
+  api [build-dir]  Public Regex/File/Term registration test (default: build-static).
   ctrans [dir]     ANSI C translation tests (default: build-static).
   repl [dir]       REPL session tests (default: build-static).
   fma [dir]        FMA helper C test (default: build-debug).
@@ -106,13 +105,12 @@ simd)            run_script run-simd.sh "$@" ;;
 fast)            run_script run-fast.sh "$@" ;;
 class)           run_script run-class.sh "$@" ;;
 scoping)         run_script run-scoping.sh "$@" ;;
-app)             run_script run-app.sh "$@" ;;
+require)         run_script run-require.sh "$@" ;;
 thread)          run_script run-thread.sh "$@" ;;
 thread-stress)   run_script run-thread-stress.sh "$@" ;;
 httpserver)      run_script run-httpserver.sh "$@" ;;
 webapp)          run_script run-webapp.sh "$@" ;;
 process)         run_script run-process.sh "$@" ;;
-dynlib)          run_script run-dynlib.sh "$@" ;;
 mmap)            run_script run-fileutil-mmap.sh "$@" ;;
 parallel-analysis) run_script run-parallel-analysis.sh "$@" ;;
 accel)           run_script run-accel.sh "$@" ;;

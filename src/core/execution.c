@@ -11,7 +11,6 @@
 
 #include <noct/noct.h>
 #include "runtime.h"
-#include "intrinsics.h"
 #include "bytecode.h"
 
 #include <stdio.h>

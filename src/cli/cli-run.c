@@ -43,6 +43,8 @@ command_run(int argc, char *argv[])
 	NoctValue ret;
 
 	noct_set_default_config(&config);
+	cli_module_reset();
+	config.require_resolver = cli_module_resolve;
 
 	/* Parse options. */
 	if (!parse_options(argc, argv))
@@ -76,6 +78,10 @@ command_run(int argc, char *argv[])
 		return 1;
 	}
 	if (!noct_register_api_file(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		return 1;
+	}
+	if (!noct_register_api_regex(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		return 1;
 	}
@@ -191,6 +197,14 @@ parse_options(int argc, char *argv[])
 		}
 		if (strcmp(argv[i], "--simd-info") == 0) {
 			config.simd_info = true;
+			file_arg++;
+			continue;
+		}
+		if (strncmp(argv[i], "--path=", 7) == 0) {
+			if (!cli_module_add_path(argv[i] + 7)) {
+				wide_printf(N_TR("Invalid --path option.\n"));
+				return false;
+			}
 			file_arg++;
 			continue;
 		}

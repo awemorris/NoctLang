@@ -1,7 +1,0 @@
-build-debug/
-build/
-build-nb/
-generated/
-tests/**/build/
-tests/**/out
-__pycache__/

@@ -5,6 +5,16 @@ set -eu
 NOCT=${NOCT:-../../build-static/noct}
 NOCT_NOOPT=${NOCT_NOOPT:-}
 FAST_EXPECT_OPTIMIZER=${FAST_EXPECT_OPTIMIZER:-1}
+case "$NOCT" in
+/*) ;;
+*) NOCT=$(CDPATH= cd -- "$(dirname -- "$NOCT")" && pwd)/$(basename -- "$NOCT") ;;
+esac
+if [ -n "$NOCT_NOOPT" ]; then
+    case "$NOCT_NOOPT" in
+    /*) ;;
+    *) NOCT_NOOPT=$(CDPATH= cd -- "$(dirname -- "$NOCT_NOOPT")" && pwd)/$(basename -- "$NOCT_NOOPT") ;;
+    esac
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
@@ -147,6 +157,28 @@ run_functional_suite()
     echo "PASS __fast execution ($suite_name)"
 }
 
+run_require_suite()
+{
+    test_noct=$1
+    suite_name=$2
+
+    for options in '-j0 -O0' '-j -O0' '-j0 -O2' '-j -O2'; do
+        # Prototype scanning must not execute the dependency initializer.
+        # shellcheck disable=SC2086
+        "$test_noct" $options --path=fast/modules \
+            fast/required-call.noct > "$TMP/required.out"
+        diff -u fast/required-call.noct.out "$TMP/required.out"
+    done
+
+    check_message \
+        "$test_noct" \
+        fast/required-cycle.noct \
+        'Direct or mutually recursive __fast calls are not supported.' \
+        -j0 -O0 --path=fast/modules
+
+    echo "PASS __fast require prototypes ($suite_name)"
+}
+
 run_checked_suite()
 {
     test_noct=$1
@@ -268,6 +300,7 @@ run_bytecode_suite()
 }
 
 run_functional_suite "$NOCT" "$primary_suite"
+run_require_suite "$NOCT" "$primary_suite"
 run_checked_suite "$NOCT" "$primary_suite"
 run_validation_suite "$NOCT" "$primary_suite"
 run_bytecode_suite "$NOCT" "$primary_suite"
@@ -297,6 +330,7 @@ fi
 
 if [ -n "$NOCT_NOOPT" ]; then
     run_functional_suite "$NOCT_NOOPT" secondary-no-optimizer-build
+    run_require_suite "$NOCT_NOOPT" secondary-no-optimizer-build
     run_checked_suite "$NOCT_NOOPT" secondary-no-optimizer-build
     run_validation_suite "$NOCT_NOOPT" secondary-no-optimizer-build
     run_bytecode_suite "$NOCT_NOOPT" secondary-no-optimizer-build

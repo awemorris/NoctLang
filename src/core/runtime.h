@@ -47,6 +47,7 @@ struct rt_packed;
 struct rt_func;
 struct rt_bindglobal;
 struct rt_vm_finalizer;
+struct rt_required_source;
 struct jit_slab;
 
 /*
@@ -413,6 +414,9 @@ struct rt_vm {
 	/* Function list. */
 	struct rt_func *func_list;
 
+	/* Required source load state. */
+	struct rt_required_source *required_source_list;
+
 	/* VM-owned native finalizers. */
 	struct rt_vm_finalizer *vm_finalizer_list;
 
@@ -530,7 +534,7 @@ rt_detach_thread_env(
  * Compilation
  */
 
-/* Register functions from a souce text. */
+/* Register functions from a source text. */
 bool
 rt_register_source(
 	struct rt_env *env,

@@ -21,12 +21,19 @@
 
 #define FAST_CHECKED_EDGE_INITIAL	16
 #define FAST_CHECKED_EXPR_DEPTH_MAX	64
+#define FAST_CHECKED_PROTOTYPE_INITIAL	16
 #define FAST_CHECKED_TYPE_ERROR		(-3)
 
 struct fast_checked_edge {
 	uint32_t caller;
 	uint32_t callee;
 	int line;
+};
+
+struct fast_checked_prototype {
+	char *name;
+	bool is_fast;
+	struct fast_signature signature;
 };
 
 struct fast_checked_module {
@@ -47,7 +54,18 @@ static const char *const fast_checked_intrinsic_names[] = {
 	"asin", "acos", "atan", "atan2", "exp", "ln", "log2",
 	"log10", "int", "long", "float", "double"
 };
+static struct fast_checked_prototype *fast_checked_prototype_table;
+static uint32_t fast_checked_prototype_count;
+static uint32_t fast_checked_prototype_capacity;
+static struct fast_checked_edge *fast_checked_prototype_edge_table;
+static uint32_t fast_checked_prototype_edge_count;
+static uint32_t fast_checked_prototype_edge_capacity;
 
+static struct fast_checked_prototype *fast_checked_find_prototype(const char *name);
+static bool fast_checked_signature_equal(const struct fast_signature *first, const struct fast_signature *second);
+static bool fast_checked_add_prototype_edge(const char *caller_name, const char *callee_name, int line);
+static bool fast_checked_validate_prototype_cycles(void);
+static bool fast_checked_visit_prototype_cycle(uint32_t prototype, unsigned char *state);
 static bool fast_checked_validate_function(struct fast_checked_module *module, struct hir_block *func);
 static bool fast_checked_validate_locals(struct fast_checked_context *context);
 static bool fast_checked_chain(struct fast_checked_context *context, struct hir_block *head);
@@ -79,6 +97,143 @@ static bool fast_checked_visit_cycle(struct fast_checked_module *module, uint32_
 static bool fast_checked_reject_nonfast_multi(struct hir_block *func);
 static bool fast_checked_find_multi_chain(struct hir_block *head, int *line);
 static bool fast_checked_find_multi_expr(const struct hir_expr *expr);
+
+/*
+ * Clears every externally collected function prototype.
+ */
+void
+hir_fast_checked_reset_prototypes(
+	void)
+{
+	struct fast_checked_prototype *prototype;
+	uint32_t i;
+
+	/* Release every prototype and its owned fast signature. */
+	for (i = 0; i < fast_checked_prototype_count; i++) {
+		prototype = &fast_checked_prototype_table[i];
+		noct_free(prototype->name);
+		prototype->name = NULL;
+		fast_signature_free(&prototype->signature);
+	}
+
+	noct_free(fast_checked_prototype_table);
+	fast_checked_prototype_table = NULL;
+	fast_checked_prototype_count = 0;
+	fast_checked_prototype_capacity = 0;
+
+	noct_free(fast_checked_prototype_edge_table);
+	fast_checked_prototype_edge_table = NULL;
+	fast_checked_prototype_edge_count = 0;
+	fast_checked_prototype_edge_capacity = 0;
+}
+
+/*
+ * Adds an externally collected function prototype.
+ */
+bool
+hir_fast_checked_add_prototype(
+	const char *name,
+	bool is_fast,
+	const struct fast_signature *signature)
+{
+	struct fast_checked_prototype *prototype;
+	struct fast_checked_prototype *table;
+	char message[256];
+	uint32_t capacity;
+	bool compatible;
+
+	if (name == NULL || name[0] == '\0') {
+		hir_error(0, N_TR("Invalid function prototype."));
+		return false;
+	}
+	if (is_fast) {
+		if (signature == NULL) {
+			hir_error(0, N_TR("Invalid __fast function prototype."));
+			return false;
+		}
+		if (!signature->valid) {
+			hir_error(0, N_TR("Invalid __fast function prototype."));
+			return false;
+		}
+		if (!fast_signature_valid(signature)) {
+			hir_error(0, N_TR("Invalid __fast function prototype."));
+			return false;
+		}
+	}
+
+	prototype = fast_checked_find_prototype(name);
+	if (prototype != NULL) {
+		compatible = prototype->is_fast == is_fast;
+		if (compatible && is_fast) {
+			compatible = fast_checked_signature_equal(
+				&prototype->signature,
+				signature);
+		}
+
+		if (!compatible) {
+			snprintf(
+				message,
+				sizeof(message),
+				N_TR("Incompatible duplicate __fast prototype '%s'."),
+				name);
+			hir_error(0, message);
+			return false;
+		}
+
+		return true;
+	}
+
+	if (fast_checked_prototype_count ==
+	    fast_checked_prototype_capacity) {
+		capacity = fast_checked_prototype_capacity == 0 ?
+			FAST_CHECKED_PROTOTYPE_INITIAL :
+			fast_checked_prototype_capacity * 2;
+		if (capacity < fast_checked_prototype_capacity ||
+		    capacity > UINT32_MAX / sizeof(*table)) {
+			hir_error(
+				0,
+				N_TR("Too many function prototypes in the require graph."));
+			return false;
+		}
+
+		table = noct_realloc(
+			fast_checked_prototype_table,
+			(size_t)capacity * sizeof(*table));
+		if (table == NULL) {
+			hir_out_of_memory();
+			return false;
+		}
+
+		fast_checked_prototype_table = table;
+		fast_checked_prototype_capacity = capacity;
+	}
+
+	prototype = &fast_checked_prototype_table[
+		fast_checked_prototype_count];
+	memset(prototype, 0, sizeof(*prototype));
+	fast_signature_init(&prototype->signature);
+
+	prototype->name = noct_strdup(name);
+	if (prototype->name == NULL) {
+		hir_out_of_memory();
+		return false;
+	}
+
+	prototype->is_fast = is_fast;
+	if (is_fast) {
+		if (!fast_signature_clone(&prototype->signature, signature)) {
+			noct_free(prototype->name);
+			prototype->name = NULL;
+			fast_signature_free(&prototype->signature);
+			hir_out_of_memory();
+			return false;
+		}
+	}
+
+	fast_checked_prototype_count++;
+
+	return true;
+}
 
 /*
  * Validates every fast function and installs its checked index lowering.
@@ -124,10 +279,226 @@ hir_fast_checked_module(
 
 	if (result)
 		result = fast_checked_validate_cycles(&module);
+	if (result)
+		result = fast_checked_validate_prototype_cycles();
 
 	noct_free(module.edge);
 
 	return result;
+}
+
+/* Find one externally collected function prototype. */
+static struct fast_checked_prototype *
+fast_checked_find_prototype(
+	const char *name)
+{
+	uint32_t i;
+
+	/* Search every collected prototype by its complete link name. */
+	for (i = 0; i < fast_checked_prototype_count; i++) {
+		if (strcmp(fast_checked_prototype_table[i].name, name) == 0)
+			return &fast_checked_prototype_table[i];
+	}
+
+	return NULL;
+}
+
+/* Compare every owned field of two fast signatures. */
+static bool
+fast_checked_signature_equal(
+	const struct fast_signature *first,
+	const struct fast_signature *second)
+{
+	const struct fast_param_contract *first_param;
+	const struct fast_param_contract *second_param;
+	const struct fast_extent *first_extent;
+	const struct fast_extent *second_extent;
+	uint32_t i;
+	uint32_t axis;
+
+	if (first == second)
+		return true;
+	if (first == NULL || second == NULL)
+		return false;
+	if (first->version != second->version)
+		return false;
+	if (first->valid != second->valid)
+		return false;
+	if (first->param_count != second->param_count)
+		return false;
+	if (first->return_type != second->return_type)
+		return false;
+
+	/* Compare every parameter contract and exact shape. */
+	for (i = 0; i < first->param_count; i++) {
+		first_param = &first->param[i];
+		second_param = &second->param[i];
+
+		if (first_param->value_type != second_param->value_type)
+			return false;
+		if (first_param->packed_type != second_param->packed_type)
+			return false;
+		if (first_param->restricted != second_param->restricted)
+			return false;
+		if (first_param->rank != second_param->rank)
+			return false;
+
+		/* Compare every constant or parameter-dependent extent. */
+		for (axis = 0; axis < first_param->rank; axis++) {
+			first_extent = &first_param->extent[axis];
+			second_extent = &second_param->extent[axis];
+
+			if (first_extent->kind != second_extent->kind)
+				return false;
+			if (first_extent->kind == FAST_EXTENT_CONST &&
+			    first_extent->value.constant !=
+				second_extent->value.constant) {
+				return false;
+			}
+			if (first_extent->kind == FAST_EXTENT_PARAM &&
+			    first_extent->value.param_index !=
+				second_extent->value.param_index) {
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+/* Append one non-static fast call edge to the prototype graph. */
+static bool
+fast_checked_add_prototype_edge(
+	const char *caller_name,
+	const char *callee_name,
+	int line)
+{
+	struct fast_checked_prototype *caller;
+	struct fast_checked_prototype *callee;
+	struct fast_checked_edge *edge;
+	uint32_t caller_index;
+	uint32_t callee_index;
+	uint32_t capacity;
+	uint32_t i;
+
+	caller = fast_checked_find_prototype(caller_name);
+	callee = fast_checked_find_prototype(callee_name);
+	if (caller == NULL || callee == NULL)
+		return true;
+	if (!caller->is_fast || !callee->is_fast)
+		return true;
+
+	caller_index = (uint32_t)(caller - fast_checked_prototype_table);
+	callee_index = (uint32_t)(callee - fast_checked_prototype_table);
+
+	/* Ignore an edge already recorded while validating this graph. */
+	for (i = 0; i < fast_checked_prototype_edge_count; i++) {
+		edge = &fast_checked_prototype_edge_table[i];
+		if (edge->caller == caller_index &&
+		    edge->callee == callee_index) {
+			return true;
+		}
+	}
+
+	if (fast_checked_prototype_edge_count ==
+	    fast_checked_prototype_edge_capacity) {
+		capacity = fast_checked_prototype_edge_capacity == 0 ?
+			FAST_CHECKED_EDGE_INITIAL :
+			fast_checked_prototype_edge_capacity * 2;
+		if (capacity < fast_checked_prototype_edge_capacity ||
+		    capacity > UINT32_MAX / sizeof(*edge)) {
+			hir_error(line, N_TR("Too many direct __fast call edges."));
+			return false;
+		}
+
+		edge = noct_realloc(
+			fast_checked_prototype_edge_table,
+			(size_t)capacity * sizeof(*edge));
+		if (edge == NULL) {
+			hir_out_of_memory();
+			return false;
+		}
+
+		fast_checked_prototype_edge_table = edge;
+		fast_checked_prototype_edge_capacity = capacity;
+	}
+
+	edge = &fast_checked_prototype_edge_table[
+		fast_checked_prototype_edge_count];
+	edge->caller = caller_index;
+	edge->callee = callee_index;
+	edge->line = line;
+	fast_checked_prototype_edge_count++;
+
+	return true;
+}
+
+/* Reject recursion spanning non-static prototypes in the require graph. */
+static bool
+fast_checked_validate_prototype_cycles(
+	void)
+{
+	unsigned char *state;
+	uint32_t i;
+	bool result;
+
+	state = noct_calloc(fast_checked_prototype_count, sizeof(*state));
+	if (state == NULL && fast_checked_prototype_count > 0) {
+		hir_out_of_memory();
+		return false;
+	}
+
+	result = true;
+
+	/* Start a depth-first search at every unvisited fast prototype. */
+	for (i = 0; i < fast_checked_prototype_count; i++) {
+		if (!fast_checked_prototype_table[i].is_fast || state[i] != 0)
+			continue;
+		if (!fast_checked_visit_prototype_cycle(i, state)) {
+			result = false;
+			break;
+		}
+	}
+
+	noct_free(state);
+
+	return result;
+}
+
+/* Visit one node in the require graph's fast prototype call graph. */
+static bool
+fast_checked_visit_prototype_cycle(
+	uint32_t prototype,
+	unsigned char *state)
+{
+	const struct fast_checked_edge *edge;
+	uint32_t i;
+
+	state[prototype] = 1;
+
+	/* Follow every outgoing call to a non-static fast prototype. */
+	for (i = 0; i < fast_checked_prototype_edge_count; i++) {
+		edge = &fast_checked_prototype_edge_table[i];
+		if (edge->caller != prototype)
+			continue;
+		if (state[edge->callee] == 1) {
+			hir_error(
+				edge->line,
+				N_TR("Direct or mutually recursive __fast calls are not supported."));
+			return false;
+		}
+		if (state[edge->callee] == 0) {
+			if (!fast_checked_visit_prototype_cycle(
+				edge->callee,
+				state)) {
+				return false;
+			}
+		}
+	}
+
+	state[prototype] = 2;
+
+	return true;
 }
 
 /* Validate one complete fast function. */
@@ -791,6 +1162,7 @@ fast_checked_call(
 {
 	struct hir_expr *function;
 	struct hir_block *callee;
+	struct fast_checked_prototype *prototype;
 	const struct fast_signature *signature;
 	const char *name;
 	int callee_index;
@@ -810,18 +1182,33 @@ fast_checked_call(
 
 	name = function->val.term.term->val.symbol;
 	callee_index = fast_checked_find_function(context->module, name);
-	if (callee_index < 0 && fast_checked_intrinsic_name(name)) {
-		return fast_checked_intrinsic(
-			context,
-			expr,
-			name,
-			line,
-			depth,
-			type);
+	prototype = NULL;
+	if (callee_index < 0)
+		prototype = fast_checked_find_prototype(name);
+
+	if (callee_index < 0 && prototype == NULL) {
+		if (fast_checked_intrinsic_name(name)) {
+			return fast_checked_intrinsic(
+				context,
+				expr,
+				name,
+				line,
+				depth,
+				type);
+		}
 	}
 
-	if (callee_index < 0 ||
-	    !context->module->func_table[callee_index]->val.func.is_fast) {
+	callee = NULL;
+	signature = NULL;
+	if (callee_index >= 0) {
+		callee = context->module->func_table[callee_index];
+		if (callee->val.func.is_fast)
+			signature = callee->val.func.fast_signature;
+	} else if (prototype != NULL && prototype->is_fast) {
+		signature = &prototype->signature;
+	}
+
+	if (signature == NULL) {
 		char message[256];
 
 		snprintf(
@@ -833,10 +1220,7 @@ fast_checked_call(
 		return false;
 	}
 
-	callee = context->module->func_table[callee_index];
-	signature = callee->val.func.fast_signature;
-	if (signature == NULL ||
-	    !signature->valid ||
+	if (!signature->valid ||
 	    signature->param_count != expr->val.call.arg_count) {
 		hir_error(line, N_TR("A direct __fast call has the wrong argument count."));
 		return false;
@@ -869,15 +1253,25 @@ fast_checked_call(
 		}
 	}
 
-	caller_index = (uint32_t)fast_checked_find_function(
-		context->module,
-		context->func->val.func.name);
-	if (!fast_checked_add_edge(
-		context->module,
-		caller_index,
-		(uint32_t)callee_index,
-		line))
+	if (callee_index >= 0) {
+		caller_index = (uint32_t)fast_checked_find_function(
+			context->module,
+			context->func->val.func.name);
+		if (!fast_checked_add_edge(
+			context->module,
+			caller_index,
+			(uint32_t)callee_index,
+			line)) {
+			return false;
+		}
+	}
+
+	if (!fast_checked_add_prototype_edge(
+		context->func->val.func.name,
+		name,
+		line)) {
 		return false;
+	}
 
 	*type = signature->return_type;
 

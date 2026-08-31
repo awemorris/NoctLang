@@ -117,6 +117,7 @@ static bool hir_visit_dict_expr(struct hir_expr **hexpr, struct ast_expr *aexpr)
 static bool hir_visit_func_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_new_expr(struct hir_expr **hexpr, struct ast_expr *aexpr);
 static bool hir_visit_term(struct hir_term **hterm, struct ast_term *aterm);
+static bool hir_build_ast_fast_signature(const struct ast_func *afunc, struct fast_signature *signature);
 static bool hir_build_fast_signature(struct hir_block *hfunc, const struct ast_func *afunc);
 static bool hir_check_type_annotation(int line, const char *type_name, bool allow_shape, int *tag, int *packed_type, bool *restricted);
 static bool hir_visit_param_list(struct hir_block *hfunc, struct ast_func *afunc);
@@ -167,6 +168,55 @@ hir_get_intrinsic_call(
 		return HIR_INTRINSIC_FLOAT_FROM;
 
 	return HIR_INTRINSIC_NONE;
+}
+
+/*
+ * Collects externally visible function prototypes from the current AST.
+ */
+bool
+hir_collect_fast_prototypes(
+	void)
+{
+	struct ast_func_list *func_list;
+	struct ast_func *func;
+	struct fast_signature signature;
+	const struct fast_signature *signature_ptr;
+
+	func_list = ast_get_func_list();
+	func = func_list != NULL ? func_list->list : NULL;
+
+	/* Collect every function that is visible outside this source file. */
+	while (func != NULL) {
+		if (func->is_static) {
+			func = func->next;
+			continue;
+		}
+
+		fast_signature_init(&signature);
+		signature_ptr = NULL;
+
+		if (func->is_fast) {
+			if (!hir_build_ast_fast_signature(func, &signature)) {
+				fast_signature_free(&signature);
+				return false;
+			}
+
+			signature_ptr = &signature;
+		}
+
+		if (!hir_fast_checked_add_prototype(
+			func->name,
+			func->is_fast,
+			signature_ptr)) {
+			fast_signature_free(&signature);
+			return false;
+		}
+
+		fast_signature_free(&signature);
+		func = func->next;
+	}
+
+	return true;
 }
 
 /*
@@ -2904,6 +2954,84 @@ hir_resolve_type_name(
 	}
 
 	return false;
+}
+
+/* Build a complete fast signature without constructing its function body. */
+static bool
+hir_build_ast_fast_signature(
+	const struct ast_func *afunc,
+	struct fast_signature *signature)
+{
+	struct ast_param *param;
+	const char *param_name[HIR_PARAM_SIZE];
+	const char *param_annotation[HIR_PARAM_SIZE];
+	int param_type[HIR_PARAM_SIZE];
+	int param_packed_type[HIR_PARAM_SIZE];
+	bool param_restricted[HIR_PARAM_SIZE];
+	char message[256];
+	uint32_t param_count;
+	int return_type;
+	int return_packed_type;
+	bool return_restricted;
+
+	assert(afunc != NULL);
+	assert(afunc->is_fast);
+	assert(signature != NULL);
+
+	param = afunc->param_list != NULL ? afunc->param_list->list : NULL;
+	param_count = 0;
+
+	/* Resolve every annotated parameter without visiting the function body. */
+	while (param != NULL) {
+		if (param_count == HIR_PARAM_SIZE) {
+			hir_fatal(0, N_TR("Exceeded the maximum parameter count."));
+			return false;
+		}
+
+		param_name[param_count] = param->name;
+		param_annotation[param_count] = param->type_name;
+		if (!hir_check_type_annotation(
+			0,
+			param->type_name,
+			true,
+			&param_type[param_count],
+			&param_packed_type[param_count],
+			&param_restricted[param_count])) {
+			return false;
+		}
+
+		param_count++;
+		param = param->next;
+	}
+
+	if (!hir_check_type_annotation(
+		0,
+		afunc->return_type_name,
+		false,
+		&return_type,
+		&return_packed_type,
+		&return_restricted)) {
+		return false;
+	}
+
+	if (!fast_signature_build(
+		signature,
+		true,
+		param_count,
+		param_name,
+		param_annotation,
+		param_type,
+		param_packed_type,
+		param_restricted,
+		afunc->return_type_name,
+		return_type,
+		message,
+		sizeof(message))) {
+		hir_fatal(0, message);
+		return false;
+	}
+
+	return true;
 }
 
 /* Build the exact source-level contract for one fast function. */

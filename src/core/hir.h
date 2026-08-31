@@ -548,6 +548,12 @@ struct hir_local {
 };
 
 /*
+ * Collects externally visible function prototypes from the current AST.
+ */
+bool
+hir_collect_fast_prototypes(void);
+
+/*
  * Build HIR functions from an AST.
  */
 bool

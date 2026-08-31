@@ -15,6 +15,23 @@
 #include <noct/noct.h>
 
 struct hir_block;
+struct fast_signature;
+
+/*
+ * Clears every externally collected function prototype.
+ */
+void
+hir_fast_checked_reset_prototypes(
+	void);
+
+/*
+ * Adds an externally collected function prototype.
+ */
+bool
+hir_fast_checked_add_prototype(
+	const char *name,
+	bool is_fast,
+	const struct fast_signature *signature);
 
 bool
 hir_fast_checked_module(

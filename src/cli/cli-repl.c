@@ -171,6 +171,8 @@ register_repl_libraries(NoctEnv *env)
 		return false;
 	if (!noct_register_api_file(env))
 		return false;
+	if (!noct_register_api_regex(env))
+		return false;
 #if defined(NOCT_USE_MULTITHREAD)
 	if (!noct_register_api_thread(env))
 		return false;

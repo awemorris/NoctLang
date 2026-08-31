@@ -175,8 +175,7 @@ set(
   src/core/gc.c                 # Runtime GC part
   src/core/runtime.c            # Runtime main part
   src/core/noct.c               # Public functions
-  src/intrin/intrinsics.c       # Intrinsics
-  src/common/regex.c            # Regex engine (used by the Regex.* intrinsics)
+  src/core/intrinsics.c         # Intrinsics
 )
 
 # Determine the object-model sources
@@ -300,7 +299,10 @@ endif()
 # Determine the optional API files.
 #
 
-set(NOCT_API_SOURCE)
+set(
+  NOCT_API_SOURCE
+  src/api/api-regex.c           # Regex.*
+)
 
 # System.*
 if(NOCT_ENABLE_API_SYSTEM)
@@ -397,9 +399,6 @@ target_include_directories(noct PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
   ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/api
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/common
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/intrin
 )
 if(NOCT_ENABLE_OPTIMIZER)
   target_include_directories(noct PRIVATE
@@ -656,6 +655,7 @@ if(NOCT_ENABLE_CLI)
     src/cli/cli-main.c
     src/cli/cli-run.c
     src/cli/cli-cfunc.c
+    src/cli/module.c
     ${CLI_BCBACK_SOURCES}
     ${CLI_CBACK_SOURCES}
     ${CLI_ELBACK_SOURCES}

@@ -12,6 +12,7 @@
 #include <noct/noct.h>
 #include "ast.h"
 #include "hir.h"
+#include "hir_fast_checked.h"
 #include "lir.h"
 #include "runtime.h"
 #include "intrinsics.h"
@@ -32,6 +33,14 @@
 #define NOT_IMPLEMENTED		0
 #define NEVER_COME_HERE		0
 #define PINNED_VAR_NOT_FOUND	0
+#define RT_FAST_SCAN_INITIAL	16
+
+/* Required source state. */
+enum rt_required_source_state {
+	RT_REQUIRED_SOURCE_LOADING,
+	RT_REQUIRED_SOURCE_LOADED,
+	RT_REQUIRED_SOURCE_FAILED
+};
 
 /* Finalizer. */
 struct rt_vm_finalizer {
@@ -40,8 +49,34 @@ struct rt_vm_finalizer {
 	struct rt_vm_finalizer *next;
 };
 
+/* A source returned by the host's require resolver. */
+struct rt_required_source {
+	char *path;
+	enum rt_required_source_state state;
+	struct rt_required_source *next;
+};
+
+/* Require-graph paths visited by the side-effect-free fast prototype scan. */
+struct rt_fast_scan_context {
+	char **path;
+	uint32_t count;
+	uint32_t capacity;
+};
+
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
+static bool rt_register_source_internal(struct rt_env *env, const char *file_name, const char *source_text);
+static bool rt_prepare_fast_prototypes(struct rt_env *env, const char *file_name, const char *source_text);
+static bool rt_scan_fast_prototypes(struct rt_env *env, const char *file_name, const char *source_text, struct rt_fast_scan_context *context);
+static bool rt_fast_scan_seen(const struct rt_fast_scan_context *context, const char *path);
+static bool rt_fast_scan_remember(struct rt_env *env, struct rt_fast_scan_context *context, char *path);
+static bool rt_load_required_source(struct rt_env *env, const char *file_name, const char *module_name);
+static struct rt_required_source *rt_find_required_source(struct rt_vm *vm, const char *path);
+static struct rt_required_source *rt_add_required_source(struct rt_env *env, char *path);
+static void rt_cleanup_required_sources(struct rt_vm *vm);
+static bool rt_read_required_source(struct rt_env *env, const char *file_name, const char *path, char **source_text);
+static char *rt_make_required_source_name(struct rt_env *env, const char *module_name, const char *path);
+static void rt_set_error_file(struct rt_env *env, const char *file_name);
 static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
 static bool rt_register_bytecode_func(struct rt_env *rt, uint8_t *data, size_t size, uint32_t *pos, char *file_name, char *init_name_out, size_t init_name_size);
 static const char *rt_read_bytecode_line(uint8_t *data, size_t size, uint32_t *pos);
@@ -220,6 +255,9 @@ rt_destroy_vm(
 		func = next_func;
 	}
 
+	/* Free required source load state. */
+	rt_cleanup_required_sources(vm);
+
 	/* Free thread environments. */
 	env = vm->env_list;
 	while (env != NULL) {
@@ -378,7 +416,7 @@ rt_detach_thread_env(
  */
 
 /*
- * Register functions from a souce text.
+ * Register functions from a source text.
  */
 bool
 rt_register_source(
@@ -386,93 +424,722 @@ rt_register_source(
 	const char *file_name,
 	const char *source_text)
 {
-	char init_func_name[256];
-	struct hir_block *hfunc;
-	struct lir_func *lfunc;
-	uint32_t i, func_count;
 	bool is_succeeded;
 
-	is_succeeded = false;
-	init_func_name[0] = '\0';
+	if (!rt_prepare_fast_prototypes(env, file_name, source_text)) {
+		hir_fast_checked_reset_prototypes();
+		return false;
+	}
 
-	do {
-		/* Do parse and build AST. */
-		if (!ast_build(file_name, source_text)) {
-			strncpy(env->file_name, ast_get_file_name(), sizeof(env->file_name) - 1);
-			env->line = ast_get_error_line();
-			rt_error(env, "%s", ast_get_error_message());
-			break;
-		}
-
-		/* Transform AST to HIR. */
-		if (!hir_build()) {
-			strncpy(env->file_name, hir_get_file_name(), sizeof(env->file_name) - 1);
-			env->line = hir_get_error_line();
-			rt_error(env, "%s", hir_get_error_message());
-			break;
-		}
-
-		/* Free intermediates. */
-		ast_cleanup();
-
-		/* Configure LIR construction for this VM. */
-		lir_set_optimize_level(env->vm->config.optimize_level);
-		lir_set_lineinfo(env->vm->config.line_info);
-
-		/* For each function. */
-		func_count = hir_get_function_count();
-		for (i = 0; i < func_count; i++) {
-			/* Run the HIR optimizer. */
-			hfunc = hir_get_function(i);
-			if (!hir_optimize_func(hfunc,
-					       env->vm->config.optimize_level,
-					       env->vm->config.simd_info)) {
-				rt_error(env, "%s", hir_get_error_message());
-				break;
-			}
-
-			/* Transform HIR to LIR (bytecode). */
-			if (!lir_build(hfunc, &lfunc)) {
-				strncpy(env->file_name, lir_get_file_name(), sizeof(env->file_name) - 1);
-				env->line = lir_get_error_line();
-				rt_error(env, "%s", lir_get_error_message());
-				break;
-			}
-
-			/* Make a function object. */
-			if (!rt_register_lir(env, lfunc))
-				break;
-
-			/* Remember a load-time init function. */
-			if (strncmp(lfunc->func_name, "$init.", 6) == 0) {
-				strncpy(init_func_name, lfunc->func_name,
-					sizeof(init_func_name) - 1);
-			}
-
-			/* Free a LIR. */
-			lir_cleanup(lfunc);
-		}
-		if (i != func_count)
-			break;
-
-		/* Free intermediates. */
-		hir_cleanup();
-
-		/* JIT-commit. */
-		if (!rt_commit_jit(env))
-			break;
-
-		/* Auto-execute the load-time init function ($init section). */
-		if (init_func_name[0] != '\0') {
-			struct rt_value init_ret;
-			if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
-				break;
-		}
-
-		is_succeeded = true;
-	} while (0);
+	is_succeeded = rt_register_source_internal(
+		env,
+		file_name,
+		source_text);
+	hir_fast_checked_reset_prototypes();
 
 	return is_succeeded;
+}
+
+/* Collect callable prototypes without registering or executing source. */
+static bool
+rt_prepare_fast_prototypes(
+	struct rt_env *env,
+	const char *file_name,
+	const char *source_text)
+{
+	struct rt_fast_scan_context context;
+	struct rt_func *func;
+	const struct fast_signature *signature;
+	uint32_t i;
+	bool is_succeeded;
+
+	memset(&context, 0, sizeof(context));
+	hir_fast_checked_reset_prototypes();
+
+	func = env->vm->func_list;
+
+	/* Seed the registry with functions already installed in this VM. */
+	while (func != NULL) {
+		struct rt_value global;
+
+		if (!rt_check_global(env, func->name)) {
+			func = func->next;
+			continue;
+		}
+		if (!rt_get_global(env, func->name, &global))
+			return false;
+		if (global.type != NOCT_VALUE_FUNC ||
+		    global.val.func != func) {
+			func = func->next;
+			continue;
+		}
+
+		signature = func->is_fast ? &func->fast_signature : NULL;
+		if (!hir_fast_checked_add_prototype(
+			func->name,
+			func->is_fast,
+			signature)) {
+			rt_set_error_file(env, file_name);
+			env->line = hir_get_error_line();
+			rt_error(env, "%s", hir_get_error_message());
+			return false;
+		}
+
+		func = func->next;
+	}
+
+	is_succeeded = rt_scan_fast_prototypes(
+		env,
+		file_name,
+		source_text,
+		&context);
+
+	/* Release every resolver-owned path retained by the scan. */
+	for (i = 0; i < context.count; i++)
+		free(context.path[i]);
+	noct_free(context.path);
+
+	return is_succeeded;
+}
+
+/* Scan one source and each unresolved dependency for function prototypes. */
+static bool
+rt_scan_fast_prototypes(
+	struct rt_env *env,
+	const char *file_name,
+	const char *source_text,
+	struct rt_fast_scan_context *context)
+{
+	struct rt_required_source *required_source;
+	char **require_name;
+	char *path;
+	char *required_file_name;
+	char *required_source_text;
+	uint32_t require_count;
+	uint32_t i;
+	bool ast_started;
+	bool is_succeeded;
+
+	require_name = NULL;
+	path = NULL;
+	required_file_name = NULL;
+	required_source_text = NULL;
+	require_count = 0;
+	ast_started = false;
+	is_succeeded = false;
+
+	ast_started = true;
+	if (!ast_build(file_name, source_text)) {
+		rt_set_error_file(env, file_name);
+		env->line = ast_get_error_line();
+		rt_error(env, "%s", ast_get_error_message());
+		goto cleanup;
+	}
+
+	if (!hir_collect_fast_prototypes()) {
+		rt_set_error_file(env, file_name);
+		env->line = hir_get_error_line();
+		rt_error(env, "%s", hir_get_error_message());
+		goto cleanup;
+	}
+
+	require_count = ast_get_require_count();
+	if (require_count != 0) {
+		require_name = noct_calloc(
+			require_count,
+			sizeof(*require_name));
+		if (require_name == NULL) {
+			rt_out_of_memory(env);
+			goto cleanup;
+		}
+
+		/* Preserve every dependency name beyond the AST lifetime. */
+		for (i = 0; i < require_count; i++) {
+			require_name[i] = noct_strdup(ast_get_require_name(i));
+			if (require_name[i] == NULL) {
+				rt_out_of_memory(env);
+				goto cleanup;
+			}
+		}
+
+		if (env->vm->config.require_resolver == NULL) {
+			rt_set_error_file(env, file_name);
+			env->line = 0;
+			rt_error(
+				env,
+				N_TR("require is not available in this environment."));
+			goto cleanup;
+		}
+	}
+
+	ast_cleanup();
+	ast_started = false;
+
+	/* Recursively scan every dependency without loading its initializer. */
+	for (i = 0; i < require_count; i++) {
+		path = env->vm->config.require_resolver(require_name[i]);
+		if (path == NULL || path[0] == '\0') {
+			free(path);
+			path = NULL;
+			rt_set_error_file(env, file_name);
+			env->line = 0;
+			rt_error(
+				env,
+				N_TR("Cannot resolve required module '%s'."),
+				require_name[i]);
+			goto cleanup;
+		}
+
+		required_source = rt_find_required_source(env->vm, path);
+		if (required_source != NULL &&
+		    required_source->state == RT_REQUIRED_SOURCE_LOADED) {
+			free(path);
+			path = NULL;
+			continue;
+		}
+
+		if (rt_fast_scan_seen(context, path)) {
+			free(path);
+			path = NULL;
+			continue;
+		}
+
+		if (!rt_fast_scan_remember(env, context, path)) {
+			free(path);
+			path = NULL;
+			goto cleanup;
+		}
+
+		required_file_name = rt_make_required_source_name(
+			env,
+			require_name[i],
+			path);
+		if (required_file_name == NULL)
+			goto cleanup;
+
+		if (!rt_read_required_source(
+			env,
+			file_name,
+			path,
+			&required_source_text)) {
+			goto cleanup;
+		}
+
+		if (!rt_scan_fast_prototypes(
+			env,
+			required_file_name,
+			required_source_text,
+			context)) {
+			goto cleanup;
+		}
+
+		noct_free(required_source_text);
+		noct_free(required_file_name);
+		required_source_text = NULL;
+		required_file_name = NULL;
+		path = NULL;
+	}
+
+	is_succeeded = true;
+
+cleanup:
+	if (ast_started)
+		ast_cleanup();
+
+	/* Free every dependency name copied from this AST. */
+	for (i = 0; i < require_count; i++)
+		noct_free(require_name != NULL ? require_name[i] : NULL);
+	noct_free(require_name);
+	noct_free(required_source_text);
+	noct_free(required_file_name);
+
+	return is_succeeded;
+}
+
+/* Check whether the prototype scan has already visited one resolved path. */
+static bool
+rt_fast_scan_seen(
+	const struct rt_fast_scan_context *context,
+	const char *path)
+{
+	uint32_t i;
+
+	/* Compare the path with every retained resolver result. */
+	for (i = 0; i < context->count; i++) {
+		if (strcmp(context->path[i], path) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+/* Retain one resolver-owned path in the prototype scan context. */
+static bool
+rt_fast_scan_remember(
+	struct rt_env *env,
+	struct rt_fast_scan_context *context,
+	char *path)
+{
+	char **new_path;
+	uint32_t new_capacity;
+
+	if (context->count == context->capacity) {
+		if (context->capacity == 0) {
+			new_capacity = RT_FAST_SCAN_INITIAL;
+		} else {
+			if (context->capacity > UINT32_MAX / 2) {
+				rt_out_of_memory(env);
+				return false;
+			}
+			new_capacity = context->capacity * 2;
+		}
+
+		if ((size_t)new_capacity > (size_t)-1 / sizeof(*new_path)) {
+			rt_out_of_memory(env);
+			return false;
+		}
+
+		new_path = noct_realloc(
+			context->path,
+			(size_t)new_capacity * sizeof(*new_path));
+		if (new_path == NULL) {
+			rt_out_of_memory(env);
+			return false;
+		}
+
+		context->path = new_path;
+		context->capacity = new_capacity;
+	}
+
+	context->path[context->count] = path;
+	context->count++;
+
+	return true;
+}
+
+/* Register one source and its required sources. */
+static bool
+rt_register_source_internal(
+	struct rt_env *env,
+	const char *file_name,
+	const char *source_text)
+{
+	struct hir_block *hfunc;
+	struct lir_func *lfunc;
+	char *init_func_name;
+	char **require_name;
+	uint32_t require_count;
+	uint32_t func_count;
+	uint32_t i;
+	bool ast_started;
+	bool hir_started;
+	bool is_succeeded;
+
+	require_name = NULL;
+	require_count = 0;
+	init_func_name = NULL;
+	ast_started = false;
+	hir_started = false;
+	is_succeeded = false;
+
+	/* Parse and build the AST. */
+	ast_started = true;
+	if (!ast_build(file_name, source_text)) {
+		rt_set_error_file(env, file_name);
+		env->line = ast_get_error_line();
+		rt_error(env, "%s", ast_get_error_message());
+		goto cleanup;
+	}
+
+	/* Preserve require names beyond the AST arena lifetime. */
+	require_count = ast_get_require_count();
+	if (require_count != 0) {
+		require_name = noct_calloc(require_count, sizeof(*require_name));
+		if (require_name == NULL) {
+			rt_out_of_memory(env);
+			goto cleanup;
+		}
+
+		/* Copy every required module name. */
+		for (i = 0; i < require_count; i++) {
+			require_name[i] = noct_strdup(ast_get_require_name(i));
+			if (require_name[i] == NULL) {
+				rt_out_of_memory(env);
+				goto cleanup;
+			}
+		}
+
+		if (env->vm->config.require_resolver == NULL) {
+			rt_set_error_file(env, file_name);
+			env->line = 0;
+			rt_error(env, N_TR("require is not available in this environment."));
+			goto cleanup;
+		}
+	}
+
+	/* Transform the AST to HIR. */
+	hir_started = true;
+	if (!hir_build()) {
+		rt_set_error_file(env, file_name);
+		env->line = hir_get_error_line();
+		rt_error(env, "%s", hir_get_error_message());
+		goto cleanup;
+	}
+
+	ast_cleanup();
+	ast_started = false;
+
+	/* Configure LIR construction for this VM. */
+	lir_set_optimize_level(env->vm->config.optimize_level);
+	lir_set_lineinfo(env->vm->config.line_info);
+
+	func_count = hir_get_function_count();
+
+	/* Register every function before loading the dependencies. */
+	for (i = 0; i < func_count; i++) {
+		hfunc = hir_get_function(i);
+		if (!hir_optimize_func(
+			hfunc,
+			env->vm->config.optimize_level,
+			env->vm->config.simd_info)) {
+			rt_error(env, "%s", hir_get_error_message());
+			goto cleanup;
+		}
+
+		if (!lir_build(hfunc, &lfunc)) {
+			rt_set_error_file(env, lir_get_file_name());
+			env->line = lir_get_error_line();
+			rt_error(env, "%s", lir_get_error_message());
+			goto cleanup;
+		}
+
+		if (!rt_register_lir(env, lfunc)) {
+			lir_cleanup(lfunc);
+			goto cleanup;
+		}
+
+		if (strncmp(lfunc->func_name, "$init.", 6) == 0) {
+			init_func_name = noct_strdup(lfunc->func_name);
+			if (init_func_name == NULL) {
+				lir_cleanup(lfunc);
+				rt_out_of_memory(env);
+				goto cleanup;
+			}
+		}
+
+		lir_cleanup(lfunc);
+	}
+
+	hir_cleanup();
+	hir_started = false;
+
+	/* Publish this source's JIT code before a dependency can call it. */
+	if (!rt_commit_jit(env))
+		goto cleanup;
+
+	/* Load dependencies after releasing the process-global compiler state. */
+	for (i = 0; i < require_count; i++) {
+		if (!rt_load_required_source(env, file_name, require_name[i]))
+			goto cleanup;
+	}
+
+	/* Execute this source's initializer after its dependencies. */
+	if (init_func_name != NULL) {
+		struct rt_value init_ret;
+
+		if (!rt_call_with_name(env, init_func_name, 0, NULL, &init_ret))
+			goto cleanup;
+	}
+
+	is_succeeded = true;
+
+cleanup:
+	if (hir_started)
+		hir_cleanup();
+	if (ast_started)
+		ast_cleanup();
+
+	/* Free every copied require name. */
+	for (i = 0; i < require_count; i++)
+		noct_free(require_name != NULL ? require_name[i] : NULL);
+	noct_free(require_name);
+	noct_free(init_func_name);
+
+	return is_succeeded;
+}
+
+/* Load one required source through the host resolver. */
+static bool
+rt_load_required_source(
+	struct rt_env *env,
+	const char *file_name,
+	const char *module_name)
+{
+	struct rt_required_source *required_source;
+	char *path;
+	char *required_file_name;
+	char *source_text;
+	bool is_succeeded;
+
+	path = env->vm->config.require_resolver(module_name);
+	if (path == NULL || path[0] == '\0') {
+		free(path);
+		rt_set_error_file(env, file_name);
+		env->line = 0;
+		rt_error(
+			env,
+			N_TR("Cannot resolve required module '%s'."),
+			module_name);
+		return false;
+	}
+
+	required_source = rt_find_required_source(env->vm, path);
+	if (required_source != NULL) {
+		free(path);
+
+		if (required_source->state == RT_REQUIRED_SOURCE_LOADED)
+			return true;
+
+		rt_set_error_file(env, file_name);
+		env->line = 0;
+		if (required_source->state == RT_REQUIRED_SOURCE_LOADING) {
+			rt_error(
+				env,
+				N_TR("Circular require involving '%s'."),
+				module_name);
+		} else {
+			rt_error(
+				env,
+				N_TR("Required module '%s' previously failed to load."),
+				module_name);
+		}
+		return false;
+	}
+
+	required_file_name = rt_make_required_source_name(
+		env,
+		module_name,
+		path);
+	if (required_file_name == NULL) {
+		free(path);
+		return false;
+	}
+
+	if (!rt_read_required_source(
+		env,
+		file_name,
+		path,
+		&source_text)) {
+		noct_free(required_file_name);
+		free(path);
+		return false;
+	}
+
+	required_source = rt_add_required_source(env, path);
+	if (required_source == NULL) {
+		noct_free(source_text);
+		noct_free(required_file_name);
+		free(path);
+		return false;
+	}
+
+	is_succeeded = rt_register_source_internal(
+		env,
+		required_file_name,
+		source_text);
+	if (is_succeeded)
+		required_source->state = RT_REQUIRED_SOURCE_LOADED;
+	else
+		required_source->state = RT_REQUIRED_SOURCE_FAILED;
+
+	noct_free(source_text);
+	noct_free(required_file_name);
+
+	return is_succeeded;
+}
+
+/* Find required source state by resolved path. */
+static struct rt_required_source *
+rt_find_required_source(
+	struct rt_vm *vm,
+	const char *path)
+{
+	struct rt_required_source *required_source;
+
+	/* Search every required source already seen by this VM. */
+	for (required_source = vm->required_source_list;
+	     required_source != NULL;
+	     required_source = required_source->next) {
+		if (strcmp(required_source->path, path) == 0)
+			return required_source;
+	}
+
+	return NULL;
+}
+
+/* Add required source state to a VM. */
+static struct rt_required_source *
+rt_add_required_source(
+	struct rt_env *env,
+	char *path)
+{
+	struct rt_required_source *required_source;
+
+	required_source = noct_calloc(1, sizeof(*required_source));
+	if (required_source == NULL) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
+	required_source->path = path;
+	required_source->state = RT_REQUIRED_SOURCE_LOADING;
+	required_source->next = env->vm->required_source_list;
+	env->vm->required_source_list = required_source;
+
+	return required_source;
+}
+
+/* Free every required source state in a VM. */
+static void
+rt_cleanup_required_sources(
+	struct rt_vm *vm)
+{
+	struct rt_required_source *required_source;
+	struct rt_required_source *next;
+
+	required_source = vm->required_source_list;
+
+	/* Free every required source entry. */
+	while (required_source != NULL) {
+		next = required_source->next;
+		free(required_source->path);
+		noct_free(required_source);
+		required_source = next;
+	}
+
+	vm->required_source_list = NULL;
+}
+
+/* Read one source file selected by the host resolver. */
+static bool
+rt_read_required_source(
+	struct rt_env *env,
+	const char *file_name,
+	const char *path,
+	char **source_text)
+{
+	FILE *fp;
+	long file_size;
+	size_t read_size;
+
+	*source_text = NULL;
+
+	fp = fopen(path, "rb");
+	if (fp == NULL) {
+		rt_set_error_file(env, file_name);
+		env->line = 0;
+		rt_error(env, N_TR("Cannot open required module '%s'."), path);
+		return false;
+	}
+
+	if (fseek(fp, 0, SEEK_END) != 0) {
+		fclose(fp);
+		rt_set_error_file(env, file_name);
+		env->line = 0;
+		rt_error(env, N_TR("Cannot read required module '%s'."), path);
+		return false;
+	}
+
+	file_size = ftell(fp);
+	if (file_size < 0) {
+		fclose(fp);
+		rt_set_error_file(env, file_name);
+		env->line = 0;
+		rt_error(env, N_TR("Cannot read required module '%s'."), path);
+		return false;
+	}
+
+	if (fseek(fp, 0, SEEK_SET) != 0) {
+		fclose(fp);
+		rt_set_error_file(env, file_name);
+		env->line = 0;
+		rt_error(env, N_TR("Cannot read required module '%s'."), path);
+		return false;
+	}
+
+	read_size = (size_t)file_size;
+	if (read_size == (size_t)-1) {
+		fclose(fp);
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	*source_text = noct_malloc(read_size + 1);
+	if (*source_text == NULL) {
+		fclose(fp);
+		rt_out_of_memory(env);
+		return false;
+	}
+
+	if (fread(*source_text, 1, read_size, fp) != read_size) {
+		noct_free(*source_text);
+		*source_text = NULL;
+		fclose(fp);
+		rt_set_error_file(env, file_name);
+		env->line = 0;
+		rt_error(env, N_TR("Cannot read required module '%s'."), path);
+		return false;
+	}
+
+	(*source_text)[read_size] = '\0';
+	fclose(fp);
+
+	return true;
+}
+
+/* Make a stable logical name for one required source. */
+static char *
+rt_make_required_source_name(
+	struct rt_env *env,
+	const char *module_name,
+	const char *path)
+{
+	const char *suffix;
+	char *file_name;
+	size_t path_length;
+	size_t file_name_size;
+
+	suffix = ".noct";
+	path_length = strlen(path);
+	if (path_length >= 4 && strcmp(path + path_length - 4, ".nct") == 0)
+		suffix = ".nct";
+
+	file_name_size = strlen("@require/") + strlen(module_name) +
+		strlen(suffix) + 1;
+	file_name = noct_malloc(file_name_size);
+	if (file_name == NULL) {
+		rt_out_of_memory(env);
+		return NULL;
+	}
+
+	snprintf(
+		file_name,
+		file_name_size,
+		"@require/%s%s",
+		module_name,
+		suffix);
+
+	return file_name;
+}
+
+/* Set the current error file without truncation ambiguity. */
+static void
+rt_set_error_file(
+	struct rt_env *env,
+	const char *file_name)
+{
+	strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
+	env->file_name[sizeof(env->file_name) - 1] = '\0';
 }
 
 /* Register a function from LIR. */

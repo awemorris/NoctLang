@@ -9,8 +9,8 @@ echo 'NoctLang Test Suites'
 echo
 
 for suite in \
-    syntax cli-options typing typedop abce packed-loop cse parallel-analysis accel-analysis \
-    accel accel-program simd class scoping app \
+    syntax cli-options typing typedop abce packed-loop cse parallel-analysis \
+    simd fast class scoping require \
     thread httpserver webapp process fileutil-mmap
 do
     sh "run-$suite.sh"
