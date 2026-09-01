@@ -790,24 +790,52 @@ buffer parameters are exact `rpackedint32`, `rpackeduint32`, and
 `rpackedfloat` annotations.  It accepts typed `int` and `float` scalar
 parameters and suitable top-level one-dimensional ranged loops whose
 iterations are independent.  Straight-line arithmetic, comparisons, and
-Packed loads and stores within such loops may be moved to Vulkan.  Multiple
-eligible loops in one region may share one synchronous GPU session.
+Packed loads and stores within such loops may be moved to the selected GPU
+backend.  Multiple adjacent eligible loops may share one synchronous GPU
+session.  CPU statements divide eligible loops into separate regions: the
+first session finishes before the CPU statements execute, and a later session
+begins for the next eligible region.  “Multiple GPU regions” therefore means
+multiple disjoint synchronous offload regions in one function; it does not
+mean that the function uses multiple physical GPUs.
 
 Code outside that subset remains valid CPU code; unsupported control flow,
-calls, types, or dependence patterns do not make the source invalid.  Local
-buffers use ordinary declarations and constructors such as
-`let temporary: packedfloat = Packed.float32(count)`.  For an eligible
-synchronous region, a typed local remains an ordinary CPU-owned Packed object;
-the optimizer adds whole-buffer transfers around the GPU session.  It does not
-turn the local into an opaque GPU object.  Device-only local storage,
-reductions, and device persistence require additional proof and are not part
-of the initial contract.
+calls, types, or dependence patterns do not make the source invalid.  A loop
+classified as a DOSUM reduction may be optimized when its accumulator is an
+`int` (signed 32-bit) or `u32` (unsigned 32-bit), starts at additive zero, and
+is updated by addition.  Floating point reductions and minimum, maximum, and
+product reductions are currently declined and continue through the CPU body.
+
+Local buffers use ordinary declarations and constructors such as
+`let temporary: packedfloat = Packed.float32(count)`.  Ordinarily, a typed
+local remains a CPU-owned Packed object and the optimizer adds whole-buffer
+transfers around the GPU session.  It may omit that host Packed object only
+for a conservative device-only local optimization.  A declaration using the
+matching exact `Packed.*` constructor must immediately precede a single GPU
+region; the local must not be used by CPU code, returned, escaped, reassigned,
+or retained; and the first kernel must completely define every element before
+any read.  Its exact positive extent must be a literal or an immutable `int`
+parameter.  If any proof is missing, the optimizer keeps the CPU-backed
+representation or declines the region.  Direct device-only return,
+dirty subrange transfer, asynchronous execution, and persistence across GPU
+regions or function calls are not supported.
 
 GPU optimization is available only while compiling source for an explicit
 `--gpu` run.  `.nbc` and `.nap` preserve the ordinary CPU body and contain no
 GPU program.  Once an eligible loop has been replaced and GPU execution has
 started, a GPU error terminates that invocation; the removed CPU loop is not
-replayed.
+replayed.  Successful GPU execution preserves the ordinary value semantics,
+but explicit GPU execution can fail from device-resource exhaustion at a
+different point than the CPU implementation would report host-memory
+exhaustion.
+
+The accelerator-enabled CLI chooses from the devices reported by
+`--gpu-list`.  Canonical selectors have the forms `vulkan:NAME`,
+`opengles:NAME`, `d3d12:NAME`, and `metal:NAME`; an unqualified exact name is
+accepted only when it is unique.  `--gpu` without a selector chooses a default
+suitable device.  Accelerator builds select platform backends automatically:
+Direct3D 12 on Windows, Vulkan and OpenGL ES on Linux and FreeBSD, and Metal on
+macOS.  These facilities are not used by `.nbc`, `.nap`, `--compile`, or
+`--app`.
 
 # `__fast func`
 

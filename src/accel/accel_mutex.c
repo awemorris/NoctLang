@@ -129,3 +129,116 @@ accel_mutex_destroy(
 
 	mutex->initialized = false;
 }
+
+/*
+ * Initializes one accelerator condition variable.
+ */
+bool
+accel_condition_init(
+	struct accel_condition *condition)
+{
+#if !defined(NOCT_TARGET_WINDOWS)
+	int result;
+
+#endif
+	assert(condition != NULL);
+	assert(!condition->initialized);
+
+#if defined(NOCT_TARGET_WINDOWS)
+	InitializeConditionVariable(&condition->native);
+	condition->initialized = true;
+#else
+	/* Initializes the native condition variable without transferred ownership. */
+	result = pthread_cond_init(&condition->native, NULL);
+	if (result != 0)
+		return false;
+
+	condition->initialized = true;
+#endif
+
+	return true;
+}
+
+/*
+ * Waits atomically after releasing and before reacquiring one mutex.
+ */
+void
+accel_condition_wait(
+	struct accel_condition *condition,
+	struct accel_mutex *mutex)
+{
+#if !defined(NOCT_TARGET_WINDOWS)
+	int result;
+
+#endif
+	assert(condition != NULL);
+	assert(condition->initialized);
+	assert(mutex != NULL);
+	assert(mutex->initialized);
+
+#if defined(NOCT_TARGET_WINDOWS)
+	/* Waits indefinitely while atomically releasing the exclusive SRW lock. */
+	if (!SleepConditionVariableSRW(
+		&condition->native,
+		&mutex->native,
+		INFINITE,
+		0)) {
+		abort();
+	}
+#else
+	/* Waits indefinitely while atomically releasing the POSIX mutex. */
+	result = pthread_cond_wait(&condition->native, &mutex->native);
+	if (result != 0)
+		abort();
+#endif
+}
+
+/*
+ * Wakes every waiter blocked on one accelerator condition.
+ */
+void
+accel_condition_wake_all(
+	struct accel_condition *condition)
+{
+#if !defined(NOCT_TARGET_WINDOWS)
+	int result;
+
+#endif
+	assert(condition != NULL);
+	assert(condition->initialized);
+
+#if defined(NOCT_TARGET_WINDOWS)
+	WakeAllConditionVariable(&condition->native);
+#else
+	/* Wakes every POSIX waiter and treats synchronization failure as fatal. */
+	result = pthread_cond_broadcast(&condition->native);
+	if (result != 0)
+		abort();
+#endif
+}
+
+/*
+ * Destroys one initialized accelerator condition variable.
+ */
+void
+accel_condition_destroy(
+	struct accel_condition *condition)
+{
+#if !defined(NOCT_TARGET_WINDOWS)
+	int result;
+
+#endif
+	/* Accepts cleanup of an optional or uninitialized condition variable. */
+	if (condition == NULL)
+		return;
+	if (!condition->initialized)
+		return;
+
+#if !defined(NOCT_TARGET_WINDOWS)
+	result = pthread_cond_destroy(&condition->native);
+	if (result != 0)
+		abort();
+#endif
+
+	condition->initialized = false;
+}

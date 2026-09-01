@@ -14,11 +14,7 @@ option(NOCT_ENABLE_OBJECT         "Build objects only"                    OFF)
 option(NOCT_ENABLE_JIT            "Enable JIT compilation"                OFF)
 option(NOCT_ENABLE_OPTIMIZER      "Enable optimizer"                      OFF)
 option(NOCT_ENABLE_MULTITHREAD    "Enable multithread support"            OFF)
-option(NOCT_ENABLE_ACCEL          "Enable the Vulkan accelerator"          OFF)
-
-# Focused host tests for target-neutral accelerator components.
-option(NOCT_ENABLE_ACCEL_COMMON_TESTS
-       "Enable accelerator common-component tests"                       OFF)
+option(NOCT_ENABLE_ACCEL          "Enable accelerator support"           OFF)
 
 # Program config options.
 option(NOCT_ENABLE_CLI            "Enable CLI"                            OFF)
@@ -58,6 +54,10 @@ option(NOCT_TARGET_ZEDBSD         "Build for zedBSD"                      OFF)
 # Installation options.
 option(NOCT_ENABLE_INSTALL        "Enable installation"                   OFF)
 option(NOCT_ENABLE_MDOC           "Install mdoc(7) man page"              OFF)
+
+if(NOCT_ENABLE_INSTALL)
+  include(GNUInstallDirs)
+endif()
 
 # ---
 
@@ -185,25 +185,7 @@ if(NOCT_ENABLE_CLI)
   endif()
 endif()
 
-if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
-  if(NOT NOCT_LIB_TYPE STREQUAL "STATIC")
-    message(FATAL_ERROR
-      "NOCT_ENABLE_ACCEL_COMMON_TESTS requires a static Noct library")
-  endif()
-  if(NOT NOCT_ENABLE_OPTIMIZER)
-    message(FATAL_ERROR
-      "NOCT_ENABLE_ACCEL_COMMON_TESTS requires NOCT_ENABLE_OPTIMIZER")
-  endif()
-  if(CMAKE_CROSSCOMPILING)
-    message(FATAL_ERROR
-      "NOCT_ENABLE_ACCEL_COMMON_TESTS requires a host-native build")
-  endif()
-endif()
-
 if(NOCT_ENABLE_ACCEL)
-  if(NOT NOCT_LIB_TYPE STREQUAL "STATIC")
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires a static Noct library")
-  endif()
   if(NOT NOCT_ENABLE_CLI)
     message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_CLI")
   endif()
@@ -213,6 +195,15 @@ if(NOCT_ENABLE_ACCEL)
   if(NOT NOCT_ENABLE_OPTIMIZER)
     message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_OPTIMIZER")
   endif()
+endif()
+
+# Keep focused accelerator tests available without adding another public
+# accelerator build option.  These targets remain EXCLUDE_FROM_ALL.
+set(NOCT_BUILD_ACCEL_COMMON_TESTS OFF)
+if(    NOCT_LIB_TYPE STREQUAL "STATIC"
+   AND NOCT_ENABLE_OPTIMIZER
+   AND NOT CMAKE_CROSSCOMPILING)
+  set(NOCT_BUILD_ACCEL_COMMON_TESTS ON)
 endif()
 
 # Determine the base files.
@@ -489,7 +480,7 @@ endif()
 # Keep accelerator attachment fields private to accelerator-aware targets.
 if(NOCT_ENABLE_ACCEL)
   list(APPEND NOCT_PRIVATE_CPPFLAGS NOCT_USE_ACCEL)
-elseif(NOCT_ENABLE_ACCEL_COMMON_TESTS)
+elseif(NOCT_BUILD_ACCEL_COMMON_TESTS)
   target_compile_definitions(noct PRIVATE NOCT_USE_ACCEL)
   if(NOCT_ENABLE_API)
     target_compile_definitions(noctapi PRIVATE NOCT_USE_ACCEL)
@@ -644,10 +635,10 @@ endif()
 
 if(    NOT WIN32
    AND ((NOCT_ENABLE_API
-         AND NOCT_ENABLE_API_THREAD
-         AND NOCT_ENABLE_MULTITHREAD)
+        AND NOCT_ENABLE_API_THREAD
+        AND NOCT_ENABLE_MULTITHREAD)
         OR NOCT_ENABLE_ACCEL
-        OR NOCT_ENABLE_ACCEL_COMMON_TESTS))
+        OR NOCT_BUILD_ACCEL_COMMON_TESTS))
   set(THREADS_PREFER_PTHREAD_FLAG TRUE)
   find_package(Threads REQUIRED)
 endif()
@@ -732,29 +723,12 @@ endif()
 # ---
 
 #
-# Optional Vulkan accelerator
+# Optional accelerator
 #
 
 if(NOCT_ENABLE_ACCEL)
-  enable_language(CXX)
-  find_package(Vulkan REQUIRED)
-  find_package(shaderc CONFIG QUIET)
-
-  if(TARGET shaderc::shaderc)
-    set(NOCT_SHADERC_TARGET shaderc::shaderc)
-  elseif(TARGET shaderc::shaderc_combined)
-    set(NOCT_SHADERC_TARGET shaderc::shaderc_combined)
-  elseif(TARGET shaderc_combined)
-    set(NOCT_SHADERC_TARGET shaderc_combined)
-  else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
-    set(NOCT_SHADERC_TARGET PkgConfig::SHADERC)
-  endif()
-
-  add_library(
-    noctaccel
-    STATIC
+  set(
+    NOCT_ACCEL_COMMON_SOURCE
     src/accel/accel_ir.c
     src/accel/accel_program.c
     src/accel/accel_residency.c
@@ -764,15 +738,132 @@ if(NOCT_ENABLE_ACCEL)
     src/accel/accel_rewrite.c
     src/accel/accel_lir_budget.c
     src/accel/accel_callback.c
+    src/accel/accel_device.c
+    src/accel/accel_runtime.c
+    src/accel/accel_shader_source.c
     src/accel/accel.c
-    src/accel/accel_vulkan.c
-    src/accel/accel_vulkan_shader.c
   )
+  set(NOCT_ACCEL_BACKEND_SOURCE)
+  set(NOCT_ACCEL_BACKEND_DEFINITIONS)
+  set(NOCT_ACCEL_BACKEND_LIBRARIES)
+  set(NOCT_ACCEL_HAS_VULKAN OFF)
+  set(NOCT_ACCEL_LIBRARY_TYPE STATIC)
+
+  if(WIN32)
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_SOURCE
+      src/accel/accel_dx12.c
+    )
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_DEFINITIONS
+      NOCT_ACCEL_BACKEND_DX12
+    )
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_LIBRARIES
+      d3d12
+      dxgi
+      dxguid
+      d3dcompiler
+      ole32
+    )
+  elseif(APPLE)
+    enable_language(OBJC)
+    find_library(NOCT_FOUNDATION_FRAMEWORK Foundation)
+    find_library(NOCT_METAL_FRAMEWORK Metal)
+    if(NOT NOCT_FOUNDATION_FRAMEWORK OR NOT NOCT_METAL_FRAMEWORK)
+      message(FATAL_ERROR
+        "NOCT_ENABLE_ACCEL requires the Foundation and Metal frameworks")
+    endif()
+
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_SOURCE
+      src/accel/accel_metal.m
+    )
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_DEFINITIONS
+      NOCT_ACCEL_BACKEND_METAL
+    )
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_LIBRARIES
+      ${NOCT_FOUNDATION_FRAMEWORK}
+      ${NOCT_METAL_FRAMEWORK}
+    )
+  elseif(   CMAKE_SYSTEM_NAME STREQUAL "Linux"
+         OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+    set(NOCT_ACCEL_LIBRARY_TYPE SHARED)
+    enable_language(CXX)
+    find_package(Vulkan REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    find_package(shaderc CONFIG QUIET)
+
+    if(TARGET shaderc::shaderc)
+      set(NOCT_SHADERC_TARGET shaderc::shaderc)
+    elseif(TARGET shaderc::shaderc_combined)
+      set(NOCT_SHADERC_TARGET shaderc::shaderc_combined)
+    elseif(TARGET shaderc_combined)
+      set(NOCT_SHADERC_TARGET shaderc_combined)
+    else()
+      pkg_check_modules(SHADERC REQUIRED IMPORTED_TARGET shaderc)
+      set(NOCT_SHADERC_TARGET PkgConfig::SHADERC)
+    endif()
+
+    pkg_check_modules(NOCT_EGL REQUIRED IMPORTED_TARGET egl)
+    pkg_check_modules(NOCT_GLESV2 REQUIRED IMPORTED_TARGET glesv2)
+
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_SOURCE
+      src/accel/accel_vulkan.c
+      src/accel/accel_vulkan_shader.c
+      src/accel/accel_opengles.c
+    )
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_DEFINITIONS
+      NOCT_ACCEL_BACKEND_VULKAN
+      NOCT_ACCEL_BACKEND_OPENGLES
+    )
+    list(
+      APPEND
+      NOCT_ACCEL_BACKEND_LIBRARIES
+      Vulkan::Vulkan
+      ${NOCT_SHADERC_TARGET}
+      PkgConfig::NOCT_EGL
+      PkgConfig::NOCT_GLESV2
+    )
+    set(NOCT_ACCEL_HAS_VULKAN ON)
+  else()
+    message(FATAL_ERROR
+      "NOCT_ENABLE_ACCEL is not supported on ${CMAKE_SYSTEM_NAME}")
+  endif()
+
+  add_library(
+    noctaccel
+    ${NOCT_ACCEL_LIBRARY_TYPE}
+    ${NOCT_ACCEL_COMMON_SOURCE}
+    ${NOCT_ACCEL_BACKEND_SOURCE}
+  )
+  if(NOCT_ACCEL_LIBRARY_TYPE STREQUAL "SHARED")
+    set_target_properties(
+      noctaccel
+      PROPERTIES
+      VERSION 1.0.0
+      SOVERSION 1
+      LINKER_LANGUAGE CXX
+    )
+  endif()
   target_compile_definitions(
     noctaccel
     PRIVATE
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
+    ${NOCT_ACCEL_BACKEND_DEFINITIONS}
   )
   target_include_directories(
     noctaccel
@@ -783,57 +874,50 @@ if(NOCT_ENABLE_ACCEL)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
     ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
   )
-  target_link_libraries(
-    noctaccel
-    PRIVATE
-    noct
-    Vulkan::Vulkan
-    ${NOCT_SHADERC_TARGET}
-  )
+  target_link_libraries(noctaccel PRIVATE ${NOCT_ACCEL_BACKEND_LIBRARIES})
+  if(NOCT_ACCEL_LIBRARY_TYPE STREQUAL "STATIC")
+    target_link_libraries(noctaccel PRIVATE noct)
+  endif()
   if(NOT WIN32)
     target_link_libraries(noctaccel PRIVATE Threads::Threads)
   endif()
 
-  add_executable(
-    noct-test-accel-vulkan-plan
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel-vulkan-test.c
-  )
-  target_compile_definitions(
-    noct-test-accel-vulkan-plan
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-  )
-  target_include_directories(
-    noct-test-accel-vulkan-plan
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-  )
-  target_link_libraries(
-    noct-test-accel-vulkan-plan
-    PRIVATE
-    noctaccel
-    noct
-    Vulkan::Vulkan
-    ${NOCT_SHADERC_TARGET}
-  )
-  if(NOT WIN32)
+  if(NOCT_ACCEL_HAS_VULKAN)
+    add_executable(
+      noct-test-accel-vulkan-plan
+      EXCLUDE_FROM_ALL
+      tests/testcases/accel-vulkan-test.c
+    )
+    target_compile_definitions(
+      noct-test-accel-vulkan-plan
+      PRIVATE
+      ${NOCT_PUBLIC_CPPFLAGS}
+      ${NOCT_PRIVATE_CPPFLAGS}
+      ${NOCT_ACCEL_BACKEND_DEFINITIONS}
+    )
+    target_include_directories(
+      noct-test-accel-vulkan-plan
+      PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+    )
     target_link_libraries(
       noct-test-accel-vulkan-plan
       PRIVATE
+      noctaccel
+      noct
+      ${NOCT_ACCEL_BACKEND_LIBRARIES}
       Threads::Threads
     )
+    set_target_properties(
+      noct-test-accel-vulkan-plan
+      PROPERTIES
+      LINKER_LANGUAGE CXX
+    )
   endif()
-  set_target_properties(
-    noct-test-accel-vulkan-plan
-    PROPERTIES
-    LINKER_LANGUAGE CXX
-  )
 endif()
 
 # ---
@@ -842,7 +926,7 @@ endif()
 # Target-neutral accelerator tests
 #
 
-if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
+if(NOCT_BUILD_ACCEL_COMMON_TESTS)
   add_library(
     noct-accel-test-common
     STATIC
@@ -856,6 +940,9 @@ if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
     src/accel/accel_rewrite.c
     src/accel/accel_lir_budget.c
     src/accel/accel_callback.c
+    src/accel/accel_device.c
+    src/accel/accel_runtime.c
+    src/accel/accel_shader_source.c
   )
   target_compile_definitions(
     noct-accel-test-common
@@ -876,6 +963,93 @@ if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
   target_link_libraries(noct-accel-test-common PRIVATE noct)
   if(NOT WIN32)
     target_link_libraries(noct-accel-test-common PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(
+    noct-test-accel-device
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel-device-test.c
+  )
+  target_compile_definitions(
+    noct-test-accel-device
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+    NOCT_USE_ACCEL
+  )
+  target_include_directories(
+    noct-test-accel-device
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+  )
+  target_link_libraries(
+    noct-test-accel-device
+    PRIVATE
+    noct-accel-test-common
+    noct
+  )
+
+  add_executable(
+    noct-test-accel-shader-source
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel-shader-source-test.c
+  )
+  target_compile_definitions(
+    noct-test-accel-shader-source
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+    NOCT_USE_ACCEL
+  )
+  target_include_directories(
+    noct-test-accel-shader-source
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+  )
+  target_link_libraries(
+    noct-test-accel-shader-source
+    PRIVATE
+    noct-accel-test-common
+    noct
+  )
+
+  add_executable(
+    noct-test-accel-runtime
+    EXCLUDE_FROM_ALL
+    tests/testcases/accel-runtime-test.c
+  )
+  target_compile_definitions(
+    noct-test-accel-runtime
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+    NOCT_USE_ACCEL
+  )
+  target_include_directories(
+    noct-test-accel-runtime
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
+  )
+  target_link_libraries(
+    noct-test-accel-runtime
+    PRIVATE
+    noct-accel-test-common
+    noct
+  )
+  if(NOT WIN32)
+    target_link_libraries(noct-test-accel-runtime PRIVATE Threads::Threads)
   endif()
 
   add_executable(
@@ -1088,7 +1262,25 @@ if(NOCT_ENABLE_CLI)
       ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
     )
     target_link_libraries(noctcli PRIVATE noctaccel)
-    set_target_properties(noctcli PROPERTIES LINKER_LANGUAGE CXX)
+    if(NOCT_ACCEL_LIBRARY_TYPE STREQUAL "SHARED")
+      # Resolve the accelerator's private host references from the one core
+      # archive owned by the executable.  Because noctaccel is a direct ELF
+      # dependency, the linker exports only the core definitions it needs.
+      target_link_libraries(noctcli PRIVATE noct)
+    endif()
+    if(APPLE)
+      set_target_properties(noctcli PROPERTIES LINKER_LANGUAGE OBJC)
+    elseif(   CMAKE_SYSTEM_NAME STREQUAL "Linux"
+           OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+      set_target_properties(noctcli PROPERTIES LINKER_LANGUAGE CXX)
+    endif()
+    if(NOCT_ACCEL_LIBRARY_TYPE STREQUAL "SHARED")
+      set_target_properties(
+        noctcli
+        PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+      )
+    endif()
   endif()
   if(WIN32)
     target_link_libraries(noctcli PRIVATE shell32)
@@ -1183,7 +1375,7 @@ if(NOCT_LIB_TYPE STREQUAL "STATIC" AND NOT CMAKE_CROSSCOMPILING)
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
   )
-  if(NOCT_ENABLE_ACCEL OR NOCT_ENABLE_ACCEL_COMMON_TESTS)
+  if(NOCT_ENABLE_ACCEL OR NOCT_BUILD_ACCEL_COMMON_TESTS)
     target_compile_definitions(
       noct-test-optimizer-callback
       PRIVATE
@@ -1208,8 +1400,6 @@ endif()
 #
 
 if(NOCT_ENABLE_INSTALL)
-  include(GNUInstallDirs)
-
   # Check for BSD.
   if(   CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
      OR CMAKE_SYSTEM_NAME STREQUAL "NetBSD"
@@ -1248,6 +1438,15 @@ if(NOCT_ENABLE_INSTALL)
       TARGETS noctcli RUNTIME
       DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
+
+    if(NOCT_ENABLE_ACCEL)
+      install(
+        TARGETS noctaccel
+        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+      )
+    endif()
 
     # man noct.1
     if(NOT NOCT_ENABLE_MDOC)

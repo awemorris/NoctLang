@@ -30,8 +30,11 @@ struct accel_compile_scalar {
 
 struct accel_compile_buffer {
 	const struct hir_memory_object *object;
+	const struct hir_expr *device_extent;
+	struct hir_block *device_declaration;
 	int args_slot;
 	int program_binding;
+	int residency;
 	bool gpu_read;
 	bool gpu_write;
 	bool cpu_read;
@@ -42,6 +45,11 @@ struct accel_compile_buffer {
 	bool reassigned;
 };
 
+struct accel_compile_region {
+	uint32_t first_loop;
+	uint32_t loop_count;
+};
+
 struct accel_compile_state {
 	struct accel_compile_context base;
 	struct hir_memory_catalog catalog;
@@ -49,8 +57,19 @@ struct accel_compile_state {
 	uint32_t scalar_count;
 	struct accel_compile_buffer buffer[ACCEL_MAX_BUFFER_BINDINGS];
 	uint32_t buffer_count;
+	struct hir_block *candidate_loop[ACCEL_MAX_KERNELS];
+	struct hir_loop_summary *candidate_summary[ACCEL_MAX_KERNELS];
+	int candidate_classification[ACCEL_MAX_KERNELS];
+	struct hir_dosum_result candidate_dosum[ACCEL_MAX_KERNELS];
+	struct hir_block *candidate_initializer[ACCEL_MAX_KERNELS];
+	uint32_t candidate_loop_count;
+	struct accel_compile_region region[ACCEL_MAX_KERNELS];
+	uint32_t region_count;
 	struct hir_block *loop[ACCEL_MAX_KERNELS];
 	struct hir_loop_summary *summary[ACCEL_MAX_KERNELS];
+	int classification[ACCEL_MAX_KERNELS];
+	struct hir_dosum_result dosum[ACCEL_MAX_KERNELS];
+	uint32_t scalar_result_entry[ACCEL_MAX_KERNELS];
 	uint32_t loop_count;
 	struct accel_program *program;
 	enum accel_compile_status status;
@@ -73,6 +92,7 @@ struct accel_kernel_lower {
 	struct hir_loop_summary *summary;
 	struct accel_ir_kernel *kernel;
 	struct accel_ir_builder builder;
+	uint32_t kernel_index;
 	uint32_t global_index;
 	bool has_global_index;
 	uint32_t uniform_value[ACCEL_MAX_SCALAR_BINDINGS];
@@ -90,8 +110,14 @@ static bool accel_compile_parameters(struct accel_compile_state *state);
 static bool accel_compile_catalog(struct accel_compile_state *state);
 static bool accel_compile_find_loops(struct accel_compile_state *state);
 static bool accel_compile_analyze_loops(struct accel_compile_state *state);
+static bool accel_compile_validate_dosum_initializer(struct accel_compile_state *state, uint32_t candidate_index);
+static bool accel_compile_rebuild_regions(struct accel_compile_state *state);
+static bool accel_compile_is_transparent_initializer(const struct accel_compile_state *state, const struct hir_block *block, uint32_t candidate_index);
 static bool accel_compile_scan_function(struct accel_compile_state *state);
 static bool accel_compile_build_plan(struct accel_compile_state *state);
+static void accel_compile_activate_region(struct accel_compile_state *state, uint32_t region_index);
+static void accel_compile_reset_region_state(struct accel_compile_state *state);
+static bool accel_compile_build_region(struct accel_compile_state *state, uint32_t function_index, uint32_t region_index);
 static bool accel_compile_source_function_index(struct hir_block *func_block, uint32_t *index);
 static struct hir_local *accel_compile_find_local(struct hir_block *func_block, const char *symbol);
 static int accel_compile_param_slot(struct hir_block *func_block, const char *symbol);
@@ -99,6 +125,12 @@ static int accel_compile_scalar_index(const struct accel_compile_state *state, c
 static int accel_compile_buffer_catalog_index(const struct accel_compile_state *state, const char *symbol);
 static int accel_compile_buffer_program_index(const struct accel_compile_state *state, int object_id);
 static bool accel_compile_local_constructor_valid(struct accel_compile_state *state, const struct hir_memory_object *object);
+static void accel_compile_device_local_facts(struct accel_compile_state *state, uint32_t buffer_index, struct accel_device_local_facts *facts);
+static bool accel_compile_device_declaration(struct accel_compile_state *state, uint32_t buffer_index, struct hir_block **declaration, const struct hir_expr **extent);
+static bool accel_compile_device_extent_supported(struct accel_compile_state *state, const struct hir_expr *extent);
+static bool accel_compile_device_first_kernel(struct accel_compile_state *state, uint32_t buffer_index, const struct hir_expr *extent, struct accel_device_local_facts *facts);
+static bool accel_compile_extent_equal(const struct hir_expr *first, const struct hir_expr *second);
+static bool accel_compile_integer_literal(const struct hir_expr *expression, int64_t *value);
 static bool accel_compile_block_seen(struct accel_scan_context *scan, struct hir_block *block);
 static bool accel_compile_scan_block(struct accel_scan_context *scan, struct hir_block *block, bool in_gpu_loop);
 static bool accel_compile_scan_statement(struct accel_scan_context *scan, const struct hir_stmt *statement, bool in_gpu_loop);
@@ -108,6 +140,7 @@ static bool accel_compile_is_selected_loop(const struct accel_compile_state *sta
 static bool accel_compile_add_scalar_bindings(struct accel_compile_state *state);
 static bool accel_compile_mark_gpu_buffers(struct accel_compile_state *state);
 static bool accel_compile_add_buffer_bindings(struct accel_compile_state *state);
+static bool accel_compile_add_scalar_results(struct accel_compile_state *state);
 static bool accel_compile_add_kernels(struct accel_compile_state *state);
 static bool accel_compile_finalize_buffers(struct accel_compile_state *state);
 static bool accel_compile_add_size_expression(struct accel_compile_state *state, const struct accel_size_expression *expression, uint32_t *index);
@@ -126,7 +159,9 @@ static bool accel_lower_comparison(struct accel_kernel_lower *lower, const struc
 static bool accel_lower_subscript(struct accel_kernel_lower *lower, const struct hir_expr *expression, struct accel_lower_value *result);
 static bool accel_lower_index(struct accel_kernel_lower *lower, const struct hir_expr *expression, struct accel_lower_value *result);
 static bool accel_lower_symbol(struct accel_kernel_lower *lower, const char *symbol, struct accel_lower_value *result);
+static int accel_lower_scalar_result_index(const struct accel_kernel_lower *lower, const char *symbol);
 static bool accel_lower_uniform(struct accel_kernel_lower *lower, uint32_t scalar_index, struct accel_lower_value *result);
+static bool accel_lower_scalar_result(struct accel_kernel_lower *lower, uint32_t result_entry_id, struct accel_lower_value *result);
 static bool accel_lower_global_index(struct accel_kernel_lower *lower, struct accel_lower_value *result);
 static bool accel_lower_index_adjust(struct accel_kernel_lower *lower, struct accel_lower_value base, struct accel_lower_value adjustment, bool subtract, struct accel_lower_value *result);
 static bool accel_lower_constant_i32(struct accel_kernel_lower *lower, int32_t value, struct accel_lower_value *result);
@@ -134,6 +169,7 @@ static bool accel_lower_constant_f32(struct accel_kernel_lower *lower, float val
 static bool accel_lower_emit_binary(struct accel_kernel_lower *lower, int opcode, int result_type, struct accel_lower_value left, struct accel_lower_value right, struct accel_lower_value *result);
 static bool accel_lower_emit_load(struct accel_kernel_lower *lower, uint32_t buffer_index, int result_type, struct accel_lower_value index, struct accel_lower_value *result);
 static bool accel_lower_emit_store(struct accel_kernel_lower *lower, uint32_t buffer_index, struct accel_lower_value index, struct accel_lower_value value);
+static bool accel_lower_emit_atomic_add(struct accel_kernel_lower *lower, uint32_t result_entry_id, struct accel_lower_value value);
 static bool accel_lower_coerce(struct accel_kernel_lower *lower, struct accel_lower_value value, int expected_type, struct accel_lower_value *result);
 static bool accel_lower_append(struct accel_kernel_lower *lower, struct accel_ir_instruction *instruction, struct accel_lower_value *result);
 static void accel_lower_instruction_init(struct accel_ir_instruction *instruction, int opcode, int result_type);
@@ -198,7 +234,7 @@ accel_compile_func(
 		accel_compile_cleanup(&state);
 		return status;
 	}
-	if (!accel_compile_scan_function(&state)) {
+	if (!accel_compile_rebuild_regions(&state)) {
 		status = state.status;
 		accel_compile_cleanup(&state);
 		return status;
@@ -304,9 +340,9 @@ accel_compile_cleanup(
 	uint32_t i;
 
 	/* Release every optimizer summary retained during construction. */
-	for (i = 0; i < state->loop_count; i++) {
-		hir_loop_summary_free(state->summary[i]);
-		state->summary[i] = NULL;
+	for (i = 0; i < state->candidate_loop_count; i++) {
+		hir_loop_summary_free(state->candidate_summary[i]);
+		state->candidate_summary[i] = NULL;
 	}
 
 	accel_program_destroy(state->program);
@@ -437,7 +473,7 @@ accel_compile_catalog(
 	return true;
 }
 
-/* Find one consecutive top-level region containing only ranged loops. */
+/* Find every top-level ranged-loop region separated by CPU statements. */
 static bool
 accel_compile_find_loops(
 	struct accel_compile_state *state)
@@ -446,12 +482,11 @@ accel_compile_find_loops(
 	struct hir_block *visited[ACCEL_COMPILE_MAX_VISITED];
 	uint32_t visited_count;
 	uint32_t i;
+	struct accel_compile_region *region;
 	bool region_started;
-	bool region_ended;
 
 	visited_count = 0;
 	region_started = false;
-	region_ended = false;
 	block = state->base.func_block->val.func.inner;
 
 	/* Walk only the function's top-level successor chain. */
@@ -472,6 +507,8 @@ accel_compile_find_loops(
 		}
 
 		visited[visited_count++] = block;
+
+		/* Require every traversed block to belong to this function. */
 		if (block->parent != state->base.func_block) {
 			accel_compile_error(
 				state,
@@ -481,28 +518,41 @@ accel_compile_find_loops(
 		}
 
 		if (block->type == HIR_BLOCK_BASIC) {
-			if (region_started && block->val.basic.stmt_list != NULL)
-				region_ended = true;
-		} else if (block->type == HIR_BLOCK_FOR) {
-			if (region_ended) {
-				accel_compile_decline(
-					state,
-					ACCEL_DECLINE_CONTROL_FLOW);
-				return false;
+			/* Finish the current maximal group at real CPU code. */
+			if (region_started && block->val.basic.stmt_list != NULL) {
+				region = &state->region[state->region_count];
+				region->loop_count =
+					state->candidate_loop_count -
+					region->first_loop;
+				state->region_count++;
+				region_started = false;
 			}
+		} else if (block->type == HIR_BLOCK_FOR) {
 			if (!block->val.for_.is_ranged) {
 				accel_compile_decline(
 					state,
 					ACCEL_DECLINE_CONTROL_FLOW);
 				return false;
 			}
-			if (state->loop_count >= ACCEL_MAX_KERNELS) {
+			if (state->candidate_loop_count >= ACCEL_MAX_KERNELS) {
 				accel_compile_decline(state, ACCEL_DECLINE_LIMIT);
 				return false;
 			}
 
-			region_started = true;
-			state->loop[state->loop_count++] = block;
+			/* Start a new source-ordered region after a CPU boundary. */
+			if (!region_started) {
+				if (state->region_count >= ACCEL_MAX_KERNELS) {
+					accel_compile_decline(
+						state,
+						ACCEL_DECLINE_LIMIT);
+					return false;
+				}
+				region = &state->region[state->region_count];
+				region->first_loop = state->candidate_loop_count;
+				region_started = true;
+			}
+
+			state->candidate_loop[state->candidate_loop_count++] = block;
 		} else {
 			accel_compile_decline(
 				state,
@@ -513,7 +563,15 @@ accel_compile_find_loops(
 		block = block->succ;
 	}
 
-	if (state->loop_count == 0) {
+	/* Finish a final region that reaches the function suffix. */
+	if (region_started) {
+		region = &state->region[state->region_count];
+		region->loop_count =
+			state->candidate_loop_count - region->first_loop;
+		state->region_count++;
+	}
+
+	if (state->candidate_loop_count == 0) {
 		accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
 		return false;
 	}
@@ -527,25 +585,26 @@ accel_compile_analyze_loops(
 	struct accel_compile_state *state)
 {
 	struct hir_doall_result doall;
+	struct hir_dosum_result dosum;
 	struct hir_loop_summary *summary;
 	uint32_t i;
 
 	/* Analyze and classify selected loops in source order. */
-	for (i = 0; i < state->loop_count; i++) {
+	for (i = 0; i < state->candidate_loop_count; i++) {
 		summary = NULL;
 		if (!hir_loop_analyze(
 			state->base.func_block,
-			state->loop[i],
+			state->candidate_loop[i],
 			&state->catalog,
 			&summary)) {
 			accel_compile_error(
 				state,
-				state->loop[i]->line,
+				state->candidate_loop[i]->line,
 				N_TR("Failed to analyze accelerator loop."));
 			return false;
 		}
 
-		state->summary[i] = summary;
+		state->candidate_summary[i] = summary;
 		if (summary->analysis_status != HIR_ANALYSIS_COMPLETE) {
 			accel_compile_decline(
 				state,
@@ -561,21 +620,270 @@ accel_compile_analyze_loops(
 		if (!hir_doall_classify(summary, &doall)) {
 			accel_compile_error(
 				state,
-				state->loop[i]->line,
+				state->candidate_loop[i]->line,
 				N_TR("Failed to classify accelerator loop."));
 			return false;
 		}
-		if (doall.classification != HIR_PAR_CLASS_DOALL) {
+
+		/* Accept an independent loop before considering a reduction. */
+		if (doall.classification == HIR_PAR_CLASS_DOALL) {
+			if (doall.alias_requirement_count != 0) {
+				accel_compile_decline(
+					state,
+					ACCEL_DECLINE_PARAMETER_ALIAS);
+				return false;
+			}
+
+			state->candidate_classification[i] =
+				HIR_PAR_CLASS_DOALL;
+			continue;
+		}
+
+		/* Reuse the canonical optimizer reduction classifier. */
+		memset(&dosum, 0, sizeof(dosum));
+		if (!hir_dosum_classify(summary, &dosum)) {
+			accel_compile_error(
+				state,
+				state->candidate_loop[i]->line,
+				N_TR("Failed to classify accelerator reduction."));
+			return false;
+		}
+		if (dosum.classification != HIR_PAR_CLASS_DOSUM ||
+		    dosum.operator_ != HIR_REDUCTION_ADD) {
 			accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
 			return false;
 		}
-		if (doall.alias_requirement_count != 0) {
-			accel_compile_decline(
-				state,
-				ACCEL_DECLINE_PARAMETER_ALIAS);
+		if (dosum.value_type != HIR_DECL_SCALAR_INT32 &&
+		    dosum.value_type != HIR_DECL_SCALAR_UINT32) {
+			accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
 			return false;
 		}
+		if (dosum.accumulator_symbol == NULL ||
+		    dosum.mapped_expr == NULL) {
+			accel_compile_error(
+				state,
+				state->candidate_loop[i]->line,
+				N_TR("Invalid accelerator reduction metadata."));
+			return false;
+		}
+
+		state->candidate_classification[i] = HIR_PAR_CLASS_DOSUM;
+		state->candidate_dosum[i] = dosum;
+		if (!accel_compile_validate_dosum_initializer(state, i))
+			return false;
 	}
+
+	return true;
+}
+
+/* Revalidate one reduction declaration against the top-level loop edge. */
+static bool
+accel_compile_validate_dosum_initializer(
+	struct accel_compile_state *state,
+	uint32_t candidate_index)
+{
+	const struct hir_dosum_result *dosum;
+	struct hir_block *block;
+	struct hir_block *loop;
+	struct hir_local *local;
+	struct hir_stmt *statement;
+
+	if (candidate_index >= state->candidate_loop_count) {
+		accel_compile_error(
+			state,
+			state->base.func_block->line,
+			N_TR("Invalid accelerator reduction metadata."));
+		return false;
+	}
+
+	dosum = &state->candidate_dosum[candidate_index];
+	loop = state->candidate_loop[candidate_index];
+
+	/* Revalidate the classifier's function and loop ownership. */
+	if (loop == NULL ||
+	    loop->parent != state->base.func_block ||
+	    state->candidate_summary[candidate_index] == NULL ||
+	    state->candidate_summary[candidate_index]->func !=
+		state->base.func_block ||
+	    state->candidate_summary[candidate_index]->loop != loop) {
+		accel_compile_error(
+			state,
+			state->base.func_block->line,
+			N_TR("Invalid accelerator reduction metadata."));
+		return false;
+	}
+
+	local = accel_compile_find_local(
+		state->base.func_block,
+		dosum->accumulator_symbol);
+
+	/* Require the classifier result to name one mutable function local. */
+	if (local == NULL ||
+	    local->declaration_kind != HIR_LOCAL_DECL_VAR ||
+	    local->declaration_stmt == NULL ||
+	    local->initializer == NULL ||
+	    local->initializer != dosum->identity) {
+		accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
+		return false;
+	}
+
+	block = state->base.func_block->val.func.inner;
+
+	/* Locate the exact top-level predecessor of the reduction loop. */
+	while (block != NULL && block != state->base.func_block->succ) {
+		if (block->succ == loop)
+			break;
+		block = block->succ;
+	}
+
+	if (block == NULL || block == state->base.func_block->succ) {
+		accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
+		return false;
+	}
+	if (block->parent != state->base.func_block ||
+	    block->type != HIR_BLOCK_BASIC) {
+		accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
+		return false;
+	}
+
+	statement = block->val.basic.stmt_list;
+	if (statement == NULL) {
+		accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
+		return false;
+	}
+
+	/* Require the declaration to be the final CPU statement before DOSUM. */
+	while (statement->next != NULL)
+		statement = statement->next;
+
+	if (statement != local->declaration_stmt ||
+	    statement->rhs != local->initializer) {
+		accel_compile_decline(state, ACCEL_DECLINE_NOT_DOALL);
+		return false;
+	}
+
+	state->candidate_initializer[candidate_index] = block;
+
+	return true;
+}
+
+/* Rebuild source regions after recognizing transparent zero initializers. */
+static bool
+accel_compile_rebuild_regions(
+	struct accel_compile_state *state)
+{
+	struct accel_compile_region *region;
+	struct hir_block *block;
+	uint32_t candidate_index;
+	bool region_started;
+	bool transparent;
+
+	memset(state->region, 0, sizeof(state->region));
+	state->region_count = 0;
+	candidate_index = 0;
+	region_started = false;
+	block = state->base.func_block->val.func.inner;
+
+	/* Repartition the already validated top-level source chain. */
+	while (block != NULL && block != state->base.func_block->succ) {
+		if (block->type == HIR_BLOCK_BASIC) {
+			transparent = false;
+			if (region_started &&
+			    candidate_index < state->candidate_loop_count) {
+				transparent = accel_compile_is_transparent_initializer(
+					state,
+					block,
+					candidate_index);
+			}
+
+			/* Close the region at every nontransparent CPU statement. */
+			if (region_started &&
+			    block->val.basic.stmt_list != NULL &&
+			    !transparent) {
+				region = &state->region[state->region_count];
+				region->loop_count =
+					candidate_index - region->first_loop;
+				state->region_count++;
+				region_started = false;
+			}
+		} else if (block->type == HIR_BLOCK_FOR) {
+			if (candidate_index >= state->candidate_loop_count ||
+			    state->candidate_loop[candidate_index] != block) {
+				accel_compile_error(
+					state,
+					block->line,
+					N_TR("Malformed accelerator function control flow."));
+				return false;
+			}
+
+			/* Start a new region after a retained CPU boundary. */
+			if (!region_started) {
+				if (state->region_count >= ACCEL_MAX_KERNELS) {
+					accel_compile_decline(
+						state,
+						ACCEL_DECLINE_LIMIT);
+					return false;
+				}
+
+				region = &state->region[state->region_count];
+				region->first_loop = candidate_index;
+				region_started = true;
+			}
+
+			candidate_index++;
+		} else {
+			accel_compile_error(
+				state,
+				block->line,
+				N_TR("Malformed accelerator function control flow."));
+			return false;
+		}
+
+		block = block->succ;
+	}
+
+	/* Close a final region reaching the function suffix. */
+	if (region_started) {
+		region = &state->region[state->region_count];
+		region->loop_count = candidate_index - region->first_loop;
+		state->region_count++;
+	}
+
+	if (candidate_index != state->candidate_loop_count ||
+	    state->region_count == 0) {
+		accel_compile_error(
+			state,
+			state->base.func_block->line,
+			N_TR("Malformed accelerator function control flow."));
+		return false;
+	}
+
+	return true;
+}
+
+/* Check whether one sole zero declaration may remain inside a GPU region. */
+static bool
+accel_compile_is_transparent_initializer(
+	const struct accel_compile_state *state,
+	const struct hir_block *block,
+	uint32_t candidate_index)
+{
+	const struct hir_stmt *declaration;
+
+	if (candidate_index >= state->candidate_loop_count)
+		return false;
+	if (state->candidate_classification[candidate_index] !=
+	    HIR_PAR_CLASS_DOSUM) {
+		return false;
+	}
+	if (state->candidate_initializer[candidate_index] != block)
+		return false;
+
+	declaration = block->val.basic.stmt_list;
+	if (declaration == NULL)
+		return false;
+	if (declaration->next != NULL)
+		return false;
 
 	return true;
 }
@@ -586,6 +894,7 @@ accel_compile_scan_function(
 	struct accel_compile_state *state)
 {
 	struct accel_scan_context scan;
+	struct accel_device_local_facts facts;
 	uint32_t i;
 	int residency;
 
@@ -606,13 +915,21 @@ accel_compile_scan_function(
 		residency = accel_residency_classify_buffer(
 			state->buffer[i].object,
 			state->buffer[i].reassigned);
+		if (residency == ACCEL_RESIDENCY_LOCAL_HOST) {
+			accel_compile_device_local_facts(state, i, &facts);
+			residency = accel_residency_classify_device_local(
+				state->buffer[i].object,
+				&facts);
+		}
+		state->buffer[i].residency = residency;
 		if (residency == ACCEL_RESIDENCY_UNSUPPORTED) {
 			accel_compile_decline(
 				state,
 				ACCEL_DECLINE_BUFFER_ESCAPE);
 			return false;
 		}
-		if (residency == ACCEL_RESIDENCY_LOCAL_HOST &&
+		if ((residency == ACCEL_RESIDENCY_LOCAL_HOST ||
+		     residency == ACCEL_RESIDENCY_LOCAL_DEVICE) &&
 		    !accel_compile_local_constructor_valid(
 			state,
 			state->buffer[i].object)) {
@@ -752,7 +1069,6 @@ accel_compile_buffer_program_index(
 
 	return -1;
 }
-
 /* Accept only exact constructors that create a fresh CPU Packed object. */
 static bool
 accel_compile_local_constructor_valid(
@@ -793,6 +1109,291 @@ accel_compile_local_constructor_valid(
 		return false;
 
 	return strcmp(initializer->val.thiscall.func, function_name) == 0;
+}
+
+/* Collect the exact proof needed to remove one local Packed constructor. */
+static void
+accel_compile_device_local_facts(
+	struct accel_compile_state *state,
+	uint32_t buffer_index,
+	struct accel_device_local_facts *facts)
+{
+	struct accel_compile_buffer *buffer;
+	struct hir_block *declaration;
+	const struct hir_expr *extent;
+
+	memset(facts, 0, sizeof(*facts));
+	buffer = &state->buffer[buffer_index];
+	facts->exact_constructor = accel_compile_local_constructor_valid(
+		state,
+		buffer->object);
+	facts->unique_region = true;
+	facts->cpu_read = buffer->cpu_read;
+	facts->cpu_write = buffer->cpu_write;
+	facts->returned = buffer->returned;
+	facts->escaped = buffer->escaped;
+	facts->unknown_call = buffer->unknown_call;
+	facts->reassigned = buffer->reassigned;
+
+	/* Locate the removable declaration and its original size expression. */
+	declaration = NULL;
+	extent = NULL;
+	facts->declaration_adjacent = accel_compile_device_declaration(
+		state,
+		buffer_index,
+		&declaration,
+		&extent);
+	if (!facts->declaration_adjacent)
+		return;
+
+	/* Restrict allocation size to one positive literal or immutable I32 input. */
+	facts->immutable_extent = accel_compile_device_extent_supported(
+		state,
+		extent);
+	if (!facts->immutable_extent)
+		return;
+
+	/* Prove a complete first-kernel definition followed by a GPU consumer. */
+	if (!accel_compile_device_first_kernel(
+		state,
+		buffer_index,
+		extent,
+		facts)) {
+		return;
+	}
+
+	/* Retain source pointers only until the deep-owned program is built. */
+	buffer->device_declaration = declaration;
+	buffer->device_extent = extent;
+}
+
+/* Locate one sole local constructor immediately before the selected region. */
+static bool
+accel_compile_device_declaration(
+	struct accel_compile_state *state,
+	uint32_t buffer_index,
+	struct hir_block **declaration,
+	const struct hir_expr **extent)
+{
+	const struct accel_compile_buffer *buffer;
+	struct hir_local *local;
+	struct hir_block *block;
+	const struct hir_expr *initializer;
+
+	*declaration = NULL;
+	*extent = NULL;
+	buffer = &state->buffer[buffer_index];
+	local = accel_compile_find_local(
+		state->base.func_block,
+		buffer->object->symbol);
+
+	/* Require the exact direct one-argument constructor already recognized. */
+	if (local == NULL || local->declaration_stmt == NULL)
+		return false;
+	initializer = local->initializer;
+	if (initializer == NULL || initializer->type != HIR_EXPR_THISCALL)
+		return false;
+	if (initializer->val.thiscall.arg_count != 1)
+		return false;
+
+	/* Find the declaration on the function's top-level successor chain. */
+	block = state->base.func_block->val.func.inner;
+	while (block != NULL && block != state->base.func_block->succ) {
+		if (block->type == HIR_BLOCK_BASIC &&
+		    block->val.basic.stmt_list == local->declaration_stmt) {
+			break;
+		}
+		block = block->succ;
+	}
+
+	/* Require a sole statement immediately before this region's first loop. */
+	if (block == NULL || block == state->base.func_block->succ)
+		return false;
+	if (block->parent != state->base.func_block)
+		return false;
+	if (local->declaration_stmt->next != NULL)
+		return false;
+	if (state->loop_count == 0 || block->succ != state->loop[0])
+		return false;
+
+	*declaration = block;
+	*extent = initializer->val.thiscall.arg[0];
+
+	/* Reports the exact constructor position and borrowed extent expression. */
+	return true;
+}
+
+/* Recognize one constructor size whose value cannot change in the function. */
+static bool
+accel_compile_device_extent_supported(
+	struct accel_compile_state *state,
+	const struct hir_expr *extent)
+{
+	const char *symbol;
+	int64_t constant;
+	int scalar_index;
+
+	/* Accept a source literal only when the constructor extent is positive. */
+	if (accel_compile_integer_literal(extent, &constant)) {
+		if (constant <= 0 || constant > INT_MAX)
+			return false;
+
+		return true;
+	}
+
+	/* Ignore redundant parentheses around one immutable I32 parameter. */
+	while (extent != NULL && extent->type == HIR_EXPR_PAR)
+		extent = extent->val.unary.expr;
+	symbol = accel_compile_term_symbol(extent);
+	if (symbol == NULL)
+		return false;
+
+	scalar_index = accel_compile_scalar_index(state, symbol);
+	if (scalar_index < 0)
+		return false;
+	if (state->scalar[scalar_index].value_type != ACCEL_IR_I32)
+		return false;
+	if (state->scalar[scalar_index].reassigned)
+		return false;
+
+	/* Accepts runtime positivity validation for one immutable I32 input. */
+	return true;
+}
+
+/* Prove one exact first-kernel definition and a later same-session read. */
+static bool
+accel_compile_device_first_kernel(
+	struct accel_compile_state *state,
+	uint32_t buffer_index,
+	const struct hir_expr *extent,
+	struct accel_device_local_facts *facts)
+{
+	const struct hir_loop_summary *summary;
+	const struct hir_memory_access *access;
+	int64_t start;
+	uint32_t write_count;
+	uint32_t i;
+	uint32_t j;
+	bool exact_write;
+	bool later_read;
+
+	/* Require at least one consumer after the producer kernel. */
+	if (state->loop_count < 2)
+		return false;
+
+	summary = state->summary[0];
+	write_count = 0;
+	exact_write = false;
+	later_read = false;
+
+	/* Collect accesses to this local in the first selected kernel. */
+	for (i = 0; i < summary->access_count; i++) {
+		access = &summary->access[i];
+		if (access->object_id != state->buffer[buffer_index].object->id)
+			continue;
+		if (access->kind == HIR_MEMORY_READ) {
+			facts->first_kernel_reads = true;
+			continue;
+		}
+		if (access->kind != HIR_MEMORY_WRITE)
+			return false;
+
+		facts->first_kernel_writes = true;
+		write_count++;
+		if (access->index.kind == HIR_AFFINE_COUNTER_OFFSET &&
+		    access->index.offset == 0 &&
+		    access->index.invariant_symbol == NULL) {
+			exact_write = true;
+		}
+	}
+
+	/* Require a subsequent kernel to consume the defined local. */
+	for (i = 1; i < state->loop_count; i++) {
+		summary = state->summary[i];
+		for (j = 0; j < summary->access_count; j++) {
+			access = &summary->access[j];
+			if (access->object_id ==
+			    state->buffer[buffer_index].object->id &&
+			    access->kind == HIR_MEMORY_READ) {
+				later_read = true;
+			}
+		}
+	}
+
+	/* Match the producer loop domain to the constructor extent exactly. */
+	if (!accel_compile_integer_literal(state->loop[0]->val.for_.start, &start))
+		return false;
+	if (start != 0)
+		return false;
+	if (!accel_compile_extent_equal(
+		state->loop[0]->val.for_.stop,
+		extent)) {
+		return false;
+	}
+
+	facts->first_kernel_full_overwrite =
+		write_count == 1 && exact_write && later_read;
+	facts->first_kernel_exact_extent = true;
+
+	/* Reports a conservative static producer proof. */
+	return true;
+}
+
+/* Compare two supported extent leaves without general expression folding. */
+static bool
+accel_compile_extent_equal(
+	const struct hir_expr *first,
+	const struct hir_expr *second)
+{
+	const char *first_symbol;
+	const char *second_symbol;
+	int64_t first_constant;
+	int64_t second_constant;
+
+	/* Compare exact integer constants after the shared constant recognizer. */
+	if (accel_compile_integer_literal(first, &first_constant)) {
+		if (!accel_compile_integer_literal(second, &second_constant))
+			return false;
+
+		return first_constant == second_constant;
+	}
+
+	/* Ignore redundant parentheses around exact parameter symbols. */
+	while (first != NULL && first->type == HIR_EXPR_PAR)
+		first = first->val.unary.expr;
+	while (second != NULL && second->type == HIR_EXPR_PAR)
+		second = second->val.unary.expr;
+	first_symbol = accel_compile_term_symbol(first);
+	second_symbol = accel_compile_term_symbol(second);
+	if (first_symbol == NULL || second_symbol == NULL)
+		return false;
+
+	/* Reports exact scope-resolved symbol identity. */
+	return strcmp(first_symbol, second_symbol) == 0;
+}
+
+/* Read one optionally parenthesized exact I32 integer literal. */
+static bool
+accel_compile_integer_literal(
+	const struct hir_expr *expression,
+	int64_t *value)
+{
+	/* Ignore only source parentheses around the literal itself. */
+	while (expression != NULL && expression->type == HIR_EXPR_PAR)
+		expression = expression->val.unary.expr;
+
+	/* Reject folded expressions and non-I32 literal term kinds. */
+	if (expression == NULL || expression->type != HIR_EXPR_TERM)
+		return false;
+	if (expression->val.term.term == NULL ||
+	    expression->val.term.term->type != HIR_TERM_INT) {
+		return false;
+	}
+
+	*value = expression->val.term.term->val.i;
+
+	/* Reports one exact source integer term. */
+	return true;
 }
 
 /* Record a visited block and detect graph cycles or excessive input. */
@@ -1393,8 +1994,8 @@ accel_compile_build_plan(
 	struct accel_compile_state *state)
 {
 	struct hir_block *func_block;
-	char error[160];
 	uint32_t function_index;
+	uint32_t i;
 
 	func_block = state->base.func_block;
 	if (func_block->val.func.file_name == NULL ||
@@ -1422,13 +2023,112 @@ accel_compile_build_plan(
 		return false;
 	}
 
+	/* Build every region before exposing the all-or-nothing plan. */
+	for (i = 0; i < state->region_count; i++) {
+		accel_compile_activate_region(state, i);
+		accel_compile_reset_region_state(state);
+		if (!accel_compile_scan_function(state))
+			return false;
+		if (!accel_compile_build_region(state, function_index, i))
+			return false;
+	}
+
+	return true;
+}
+
+/* Select one region's loops and summaries for the existing lowerer. */
+static void
+accel_compile_activate_region(
+	struct accel_compile_state *state,
+	uint32_t region_index)
+{
+	const struct accel_compile_region *region;
+	uint32_t candidate_index;
+	uint32_t i;
+
+	region = &state->region[region_index];
+	state->loop_count = region->loop_count;
+
+	/* Borrow the selected region through the region-local zero-based view. */
+	for (i = 0; i < region->loop_count; i++) {
+		candidate_index = region->first_loop + i;
+		state->loop[i] = state->candidate_loop[candidate_index];
+		state->summary[i] = state->candidate_summary[candidate_index];
+		state->classification[i] =
+			state->candidate_classification[candidate_index];
+		state->dosum[i] = state->candidate_dosum[candidate_index];
+		state->scalar_result_entry[i] = ACCEL_PROGRAM_INDEX_NONE;
+	}
+}
+
+/* Clear region-relative use facts before scanning the whole function. */
+static void
+accel_compile_reset_region_state(
+	struct accel_compile_state *state)
+{
+	uint32_t i;
+
+	/* Recompute scalar reassignment facts for the selected region scan. */
+	for (i = 0; i < state->scalar_count; i++)
+		state->scalar[i].reassigned = false;
+
+	/* Restore catalog records to their deterministic pre-region state. */
+	for (i = 0; i < state->buffer_count; i++) {
+		state->buffer[i].device_extent = NULL;
+		state->buffer[i].device_declaration = NULL;
+		state->buffer[i].args_slot = accel_compile_param_slot(
+			state->base.func_block,
+			state->buffer[i].object->symbol);
+		state->buffer[i].program_binding = -1;
+		state->buffer[i].residency = ACCEL_RESIDENCY_UNSUPPORTED;
+		state->buffer[i].gpu_read = false;
+		state->buffer[i].gpu_write = false;
+		state->buffer[i].cpu_read = false;
+		state->buffer[i].cpu_write = false;
+		state->buffer[i].returned = false;
+		state->buffer[i].escaped = false;
+		state->buffer[i].unknown_call = false;
+		state->buffer[i].reassigned = false;
+	}
+}
+
+/* Build and append one deep-owned region program. */
+static bool
+accel_compile_build_region(
+	struct accel_compile_state *state,
+	uint32_t function_index,
+	uint32_t region_index)
+{
+	struct hir_block *func_block;
+	char error[160];
+	uint32_t i;
+	int first_block_id;
+
+	func_block = state->base.func_block;
+	first_block_id = state->loop[0]->id;
+
+	/* Include one removable constructor at the region's source-order start. */
+	for (i = 0; i < state->buffer_count; i++) {
+		if (state->buffer[i].residency != ACCEL_RESIDENCY_LOCAL_DEVICE)
+			continue;
+		if (state->buffer[i].device_declaration == NULL) {
+			accel_compile_error(
+				state,
+				state->buffer[i].object->source_line,
+				N_TR("Invalid accelerator device-local declaration."));
+			return false;
+		}
+		first_block_id = state->buffer[i].device_declaration->id;
+	}
+
 	state->program = accel_program_create(
 		func_block->val.func.file_name,
 		func_block->val.func.name,
 		func_block->line,
 		function_index,
-		0,
-		state->loop[0]->id,
+		func_block->val.func.param_count,
+		region_index,
+		first_block_id,
 		state->loop[state->loop_count - 1]->id);
 	if (state->program == NULL) {
 		accel_compile_error(
@@ -1443,6 +2143,8 @@ accel_compile_build_plan(
 	if (!accel_compile_mark_gpu_buffers(state))
 		return false;
 	if (!accel_compile_add_buffer_bindings(state))
+		return false;
+	if (!accel_compile_add_scalar_results(state))
 		return false;
 	if (!accel_compile_add_kernels(state))
 		return false;
@@ -1515,6 +2217,7 @@ accel_compile_mark_gpu_buffers(
 	const struct hir_memory_access *access;
 	uint32_t i;
 	uint32_t j;
+	uint32_t k;
 	int buffer_index;
 
 	/* Mark every analyzed memory access in every selected kernel. */
@@ -1524,17 +2227,12 @@ accel_compile_mark_gpu_buffers(
 			access = &state->summary[i]->access[j];
 			buffer_index = -1;
 
-			/* Resolve the catalog object id to compiler metadata. */
-			{
-				uint32_t k;
-
-				/* Find the buffer carrying this catalog object id. */
-				for (k = 0; k < state->buffer_count; k++) {
-					if (state->buffer[k].object->id ==
-					    access->object_id) {
-						buffer_index = (int)k;
-						break;
-					}
+			/* Find the buffer carrying this catalog object id. */
+			for (k = 0; k < state->buffer_count; k++) {
+				if (state->buffer[k].object->id ==
+				    access->object_id) {
+					buffer_index = (int)k;
+					break;
 				}
 			}
 
@@ -1582,9 +2280,7 @@ accel_compile_add_buffer_bindings(
 		if (!state->buffer[i].gpu_read && !state->buffer[i].gpu_write)
 			continue;
 
-		residency = accel_residency_classify_buffer(
-			state->buffer[i].object,
-			state->buffer[i].reassigned);
+		residency = state->buffer[i].residency;
 		if (residency == ACCEL_RESIDENCY_UNSUPPORTED) {
 			accel_compile_decline(state, ACCEL_DECLINE_BUFFER_ESCAPE);
 			return false;
@@ -1612,13 +2308,21 @@ accel_compile_add_buffer_bindings(
 		binding.element_kind = state->buffer[i].object->element_kind;
 		binding.element_width =
 			(uint32_t)state->buffer[i].object->element_width;
-		binding.origin = residency == ACCEL_RESIDENCY_PARAMETER_HOST ?
-			ACCEL_BUFFER_PARAMETER : ACCEL_BUFFER_LOCAL_HOST;
-		binding.args_slot = (uint32_t)state->buffer[i].args_slot;
+		if (residency == ACCEL_RESIDENCY_PARAMETER_HOST)
+			binding.origin = ACCEL_BUFFER_PARAMETER;
+		else if (residency == ACCEL_RESIDENCY_LOCAL_HOST)
+			binding.origin = ACCEL_BUFFER_LOCAL_HOST;
+		else
+			binding.origin = ACCEL_BUFFER_LOCAL_DEVICE;
+		if (residency == ACCEL_RESIDENCY_LOCAL_DEVICE)
+			binding.args_slot = ACCEL_ARGS_SLOT_NONE;
+		else
+			binding.args_slot = (uint32_t)state->buffer[i].args_slot;
 		binding.device_binding = state->program->buffer_count;
 		binding.required_first_expression = ACCEL_PROGRAM_INDEX_NONE;
 		binding.required_end_expression = ACCEL_PROGRAM_INDEX_NONE;
 		binding.required_byte_end_expression = ACCEL_PROGRAM_INDEX_NONE;
+		binding.extent_expression = ACCEL_PROGRAM_INDEX_NONE;
 
 		/* Mark every per-kernel range as absent until an access is recorded. */
 		for (j = 0; j < ACCEL_MAX_KERNELS; j++) {
@@ -1627,7 +2331,8 @@ accel_compile_add_buffer_bindings(
 			binding.kernel_required_end_expression[j] =
 				ACCEL_PROGRAM_INDEX_NONE;
 		}
-		binding.host_visible = true;
+		binding.host_visible =
+			residency != ACCEL_RESIDENCY_LOCAL_DEVICE;
 		binding.cpu_read = state->buffer[i].cpu_read;
 		binding.cpu_write = state->buffer[i].cpu_write;
 		binding.returned = state->buffer[i].returned;
@@ -1647,8 +2352,76 @@ accel_compile_add_buffer_bindings(
 	}
 
 	if (state->program->buffer_count == 0) {
+		/* A scalar reduction remains observable without a Packed binding. */
+		for (i = 0; i < state->loop_count; i++) {
+			if (state->classification[i] == HIR_PAR_CLASS_DOSUM)
+				return true;
+		}
+
 		accel_compile_decline(state, ACCEL_DECLINE_EXPRESSION);
 		return false;
+	}
+
+	return true;
+}
+
+/* Allocate dense runtime output slots for supported scalar reductions. */
+static bool
+accel_compile_add_scalar_results(
+	struct accel_compile_state *state)
+{
+	struct accel_scalar_result result;
+	uint32_t result_entry_id;
+	uint32_t next_args_slot;
+	uint32_t i;
+
+	next_args_slot = state->base.func_block->val.func.param_count;
+
+	/* Continue after every CPU-backed buffer slot already in this region. */
+	for (i = 0; i < state->program->buffer_count; i++) {
+		if (state->program->buffer[i].args_slot == ACCEL_ARGS_SLOT_NONE)
+			continue;
+		if (state->program->buffer[i].args_slot >= next_args_slot)
+			next_args_slot = state->program->buffer[i].args_slot + 1;
+	}
+
+	/* Record reductions in source kernel order for deterministic entry IDs. */
+	for (i = 0; i < state->loop_count; i++) {
+		if (state->classification[i] != HIR_PAR_CLASS_DOSUM)
+			continue;
+		if (next_args_slot >= HIR_PARAM_SIZE) {
+			accel_compile_decline(state, ACCEL_DECLINE_LIMIT);
+			return false;
+		}
+
+		memset(&result, 0, sizeof(result));
+		result.name = (char *)state->dosum[i].accumulator_symbol;
+		result.args_slot = next_args_slot;
+		result.value_type = ACCEL_IR_I32;
+		result.identity_bits = 0;
+		result.producer_kernel = i;
+		result.gpu_consumer_mask = 0;
+		result.cpu_publication = state->dosum[i].post_loop_use;
+		if (!accel_program_add_scalar_result(
+			state->program,
+			&result,
+			&result_entry_id)) {
+			accel_compile_error(
+				state,
+				state->dosum[i].line,
+				N_TR("Out of memory while recording accelerator scalar result."));
+			return false;
+		}
+		if (result_entry_id != state->program->scalar_result_count - 1) {
+			accel_compile_error(
+				state,
+				state->dosum[i].line,
+				N_TR("Nondeterministic accelerator scalar result."));
+			return false;
+		}
+
+		state->scalar_result_entry[i] = result_entry_id;
+		next_args_slot++;
 	}
 
 	return true;
@@ -1668,6 +2441,7 @@ accel_compile_add_kernels(
 	uint32_t trip;
 	uint32_t kernel_index;
 	uint32_t i;
+	uint32_t j;
 
 	/* Lower every selected loop into one deterministic kernel entry. */
 	for (i = 0; i < state->loop_count; i++) {
@@ -1682,6 +2456,17 @@ accel_compile_add_kernels(
 			state->loop[i]->val.for_.stop,
 			&stop)) {
 			return false;
+		}
+
+		/* Bind each device-local allocation to the first producer's extent. */
+		if (i == 0) {
+			for (j = 0; j < state->program->buffer_count; j++) {
+				if (state->program->buffer[j].origin !=
+				    ACCEL_BUFFER_LOCAL_DEVICE) {
+					continue;
+				}
+				state->program->buffer[j].extent_expression = stop;
+			}
 		}
 
 		memset(&expression, 0, sizeof(expression));
@@ -1773,7 +2558,10 @@ accel_compile_finalize_buffers(
 
 		memset(&expression, 0, sizeof(expression));
 		expression.opcode = ACCEL_SIZE_MUL_CONSTANT;
-		expression.left = buffer->required_end_expression;
+		if (buffer->origin == ACCEL_BUFFER_LOCAL_DEVICE)
+			expression.left = buffer->extent_expression;
+		else
+			expression.left = buffer->required_end_expression;
 		expression.right = ACCEL_PROGRAM_INDEX_NONE;
 		expression.reference = ACCEL_PROGRAM_INDEX_NONE;
 		expression.value = buffer->element_width;
@@ -1784,6 +2572,14 @@ accel_compile_finalize_buffers(
 			return false;
 		}
 		buffer->required_byte_end_expression = byte_end;
+
+		/* Keep a device-only allocation outside every host transfer path. */
+		if (buffer->origin == ACCEL_BUFFER_LOCAL_DEVICE) {
+			buffer->upload_required = false;
+			buffer->download_required = false;
+			buffer->materialization_required = false;
+			continue;
+		}
 
 		any_write = false;
 
@@ -2292,6 +3088,7 @@ accel_compile_build_kernel(
 	lower.loop = state->loop[kernel_index];
 	lower.summary = state->summary[kernel_index];
 	lower.kernel = kernel;
+	lower.kernel_index = kernel_index;
 	accel_ir_builder_init(&lower.builder, kernel);
 
 	if (!accel_lower_block(&lower, lower.loop->val.for_.inner)) {
@@ -2397,10 +3194,12 @@ accel_lower_statement(
 	struct accel_kernel_lower *lower,
 	const struct hir_stmt *statement)
 {
+	const struct hir_dosum_result *dosum;
 	struct accel_lower_value index;
 	struct accel_lower_value value;
 	struct hir_local *local;
 	const char *symbol;
+	uint32_t result_entry_id;
 	int buffer_catalog_index;
 	int buffer_program_index;
 	int expected_type;
@@ -2410,6 +3209,38 @@ accel_lower_statement(
 			lower->state,
 			ACCEL_DECLINE_EXPRESSION);
 		return false;
+	}
+
+	/* Replace the canonical accumulator update with one atomic result add. */
+	dosum = NULL;
+	if (lower->state->classification[lower->kernel_index] ==
+	    HIR_PAR_CLASS_DOSUM) {
+		dosum = &lower->state->dosum[lower->kernel_index];
+		symbol = accel_compile_term_symbol(statement->lhs);
+		if (symbol != NULL &&
+		    strcmp(symbol, dosum->accumulator_symbol) == 0) {
+			result_entry_id = lower->state->scalar_result_entry[
+				lower->kernel_index];
+			if (result_entry_id == ACCEL_PROGRAM_INDEX_NONE) {
+				accel_compile_error(
+					lower->state,
+					statement->line,
+					N_TR("Accelerator reduction has no result entry."));
+				return false;
+			}
+			if (!accel_lower_expression(
+				lower,
+				dosum->mapped_expr,
+				ACCEL_IR_I32,
+				&value)) {
+				return false;
+			}
+
+			return accel_lower_emit_atomic_add(
+				lower,
+				result_entry_id,
+				value);
+		}
 	}
 
 	if (statement->lhs->type == HIR_EXPR_SUBSCR) {
@@ -3083,6 +3914,7 @@ accel_lower_symbol(
 	struct accel_lower_value *result)
 {
 	struct hir_local *local;
+	int result_entry_id;
 	int scalar_index;
 
 	if (symbol == NULL) {
@@ -3114,8 +3946,19 @@ accel_lower_symbol(
 			result);
 	}
 
+	/* Resolve scalar reductions produced by an earlier kernel in this region. */
+	result_entry_id = accel_lower_scalar_result_index(lower, symbol);
+	if (result_entry_id >= 0) {
+		return accel_lower_scalar_result(
+			lower,
+			(uint32_t)result_entry_id,
+			result);
+	}
+
 	local = accel_compile_find_local(lower->state->base.func_block, symbol);
-	if (local == NULL || local->index < 0 || local->index >= ACCEL_MAX_LOCALS) {
+	if (local == NULL ||
+	    local->index < 0 ||
+	    local->index >= ACCEL_MAX_LOCALS) {
 		accel_compile_decline(
 			lower->state,
 			ACCEL_DECLINE_EXPRESSION);
@@ -3132,6 +3975,30 @@ accel_lower_symbol(
 	result->type = lower->local_type[local->index];
 
 	return true;
+}
+
+/* Return one earlier region result entry matching a source scalar symbol. */
+static int
+accel_lower_scalar_result_index(
+	const struct accel_kernel_lower *lower,
+	const char *symbol)
+{
+	const struct accel_scalar_result *result;
+	uint32_t i;
+
+	if (symbol == NULL)
+		return -1;
+
+	/* Search dense result entries in producer order. */
+	for (i = 0; i < lower->state->program->scalar_result_count; i++) {
+		result = &lower->state->program->scalar_result[i];
+		if (result->producer_kernel >= lower->kernel_index)
+			continue;
+		if (strcmp(result->name, symbol) == 0)
+			return (int)i;
+	}
+
+	return -1;
 }
 
 /* Emit or reuse the uniform value for one scalar program binding. */
@@ -3169,6 +4036,47 @@ accel_lower_uniform(
 
 	lower->uniform_value[binding_index] = result->value;
 	lower->has_uniform[binding_index] = true;
+
+	return true;
+}
+
+/* Emit one load from a scalar result produced by an earlier kernel. */
+static bool
+accel_lower_scalar_result(
+	struct accel_kernel_lower *lower,
+	uint32_t result_entry_id,
+	struct accel_lower_value *result)
+{
+	struct accel_ir_instruction instruction;
+	struct accel_scalar_result *scalar_result;
+
+	if (result_entry_id >= lower->state->program->scalar_result_count) {
+		accel_compile_error(
+			lower->state,
+			lower->loop->line,
+			N_TR("Invalid accelerator scalar result binding."));
+		return false;
+	}
+
+	scalar_result = &lower->state->program->scalar_result[result_entry_id];
+	if (scalar_result->producer_kernel >= lower->kernel_index) {
+		accel_compile_error(
+			lower->state,
+			lower->loop->line,
+			N_TR("Accelerator scalar result is not available."));
+		return false;
+	}
+
+	accel_lower_instruction_init(
+		&instruction,
+		ACCEL_IR_LOAD_RESULT_I32,
+		ACCEL_IR_I32);
+	instruction.reference = result_entry_id;
+	if (!accel_lower_append(lower, &instruction, result))
+		return false;
+
+	scalar_result->gpu_consumer_mask |=
+		(uint32_t)1U << lower->kernel_index;
 
 	return true;
 }
@@ -3346,6 +4254,41 @@ accel_lower_emit_store(
 	instruction.operand[0] = index.value;
 	instruction.operand[1] = value.value;
 	instruction.reference = buffer_index;
+
+	return accel_lower_append(lower, &instruction, &unused);
+}
+
+/* Emit one low-32-bit wrapping additive reduction contribution. */
+static bool
+accel_lower_emit_atomic_add(
+	struct accel_kernel_lower *lower,
+	uint32_t result_entry_id,
+	struct accel_lower_value value)
+{
+	struct accel_ir_instruction instruction;
+	struct accel_lower_value unused;
+
+	if (value.type != ACCEL_IR_I32) {
+		accel_compile_error(
+			lower->state,
+			lower->loop->line,
+			N_TR("Invalid accelerator reduction value type."));
+		return false;
+	}
+	if (result_entry_id >= lower->state->program->scalar_result_count) {
+		accel_compile_error(
+			lower->state,
+			lower->loop->line,
+			N_TR("Invalid accelerator reduction result entry."));
+		return false;
+	}
+
+	accel_lower_instruction_init(
+		&instruction,
+		ACCEL_IR_ATOMIC_ADD_I32,
+		ACCEL_IR_VOID);
+	instruction.operand[0] = value.value;
+	instruction.reference = result_entry_id;
 
 	return accel_lower_append(lower, &instruction, &unused);
 }

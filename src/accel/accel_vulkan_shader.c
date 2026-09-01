@@ -1,8 +1,10 @@
 /* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
 
 /*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
+ * zedBSD
+ * Copyright (C) 2026 Awe Morris
+ *
+ * SPDX-License-Identifier: Zlib
  */
 
 /*
@@ -42,6 +44,12 @@
 #define ACCEL_SPIRV_DEC_RELAXED_PRECISION 0U
 #define ACCEL_SPIRV_DEC_NO_CONTRACTION	42U
 
+enum accel_shader_build_status {
+	ACCEL_SHADER_BUILD_SUCCESS,
+	ACCEL_SHADER_BUILD_OUT_OF_MEMORY,
+	ACCEL_SHADER_BUILD_INVALID_IR
+};
+
 struct accel_text {
 	char *data;
 	size_t length;
@@ -62,6 +70,8 @@ struct accel_shader_builder {
 static bool accel_text_reserve(struct accel_text *text, size_t additional);
 static bool accel_text_append(struct accel_text *text, const char *format, ...);
 static void accel_text_cleanup(struct accel_text *text);
+static enum accel_shader_build_status accel_shader_build_assembly(struct accel_shader_builder *builder, struct accel_text *assembly);
+static void accel_shader_work_cleanup(struct accel_shader_builder *builder, struct accel_text *assembly);
 static bool accel_shader_uses_f32(const struct accel_ir_kernel *kernel);
 static bool accel_shader_build_entry(struct accel_shader_builder *builder);
 static bool accel_shader_build_annotations(struct accel_shader_builder *builder);
@@ -73,6 +83,8 @@ static bool accel_shader_build_constant(struct accel_shader_builder *builder, co
 static bool accel_shader_build_uniform(struct accel_shader_builder *builder, const struct accel_ir_instruction *instruction);
 static bool accel_shader_build_load(struct accel_shader_builder *builder, const struct accel_ir_instruction *instruction);
 static bool accel_shader_build_store(struct accel_shader_builder *builder, const struct accel_ir_instruction *instruction, uint32_t instruction_index);
+static bool accel_shader_build_atomic_add(struct accel_shader_builder *builder, const struct accel_ir_instruction *instruction, uint32_t instruction_index);
+static bool accel_shader_build_result_load(struct accel_shader_builder *builder, const struct accel_ir_instruction *instruction);
 static bool accel_shader_build_arithmetic(struct accel_shader_builder *builder, const struct accel_ir_instruction *instruction);
 static bool accel_shader_build_comparison(struct accel_shader_builder *builder, const struct accel_ir_instruction *instruction);
 static const char *accel_shader_type_name(int type);
@@ -105,66 +117,98 @@ accel_vulkan_shader_compile(
 	const char *message;
 	size_t byte_count;
 	char validation_error[128];
+	enum accel_shader_build_status build_status;
+	bool valid;
 
+	/* Reject a missing result destination. */
 	if (result == NULL)
 		return ACCEL_COMPILE_ERROR;
 
+	/* Clear the caller's result before starting compilation. */
 	result->word = NULL;
 	result->word_count = 0;
 
-	if (compiler == NULL || options == NULL || program == NULL) {
+	/* Reject an incomplete compiler request. */
+	if (compiler == NULL ||
+	    options == NULL ||
+	    program == NULL) {
 		hir_error(0, N_TR("Invalid Vulkan shader compiler input."));
 		return ACCEL_COMPILE_ERROR;
 	}
+
+	/* Reject a kernel index outside the immutable program. */
 	if (kernel_index >= program->kernel_count) {
 		hir_error(0, N_TR("Invalid Vulkan kernel index."));
 		return ACCEL_COMPILE_ERROR;
 	}
 
+	/* Initialize the temporary assembly builder. */
 	memset(&builder, 0, sizeof(builder));
 	memset(&assembly, 0, sizeof(assembly));
 	builder.program = program;
 	builder.kernel = &program->kernel[kernel_index];
 	builder.uses_f32 = accel_shader_uses_f32(builder.kernel->ir);
 
-	if (!accel_shader_build_entry(&builder))
-		goto out_of_memory;
-	if (!accel_shader_build_annotations(&builder))
-		goto out_of_memory;
-	if (!accel_shader_build_declarations(&builder))
-		goto out_of_memory;
-	if (!accel_shader_build_body(&builder))
-		goto invalid_ir;
-	if (!accel_shader_join(&builder, &assembly))
-		goto out_of_memory;
+	/* Build the deterministic SPIR-V assembly text. */
+	build_status = accel_shader_build_assembly(&builder, &assembly);
 
+	/* Report an exhausted text allocation. */
+	if (build_status == ACCEL_SHADER_BUILD_OUT_OF_MEMORY) {
+		hir_out_of_memory();
+		accel_shader_work_cleanup(&builder, &assembly);
+		return ACCEL_COMPILE_ERROR;
+	}
+
+	/* Report an instruction outside the validated Vulkan subset. */
+	if (build_status == ACCEL_SHADER_BUILD_INVALID_IR) {
+		hir_error(
+			builder.kernel->source_line,
+			N_TR("Unsupported instruction reached the Vulkan shader generator."));
+		accel_shader_work_cleanup(&builder, &assembly);
+		return ACCEL_COMPILE_ERROR;
+	}
+
+	/* Assemble the completed text with shaderc. */
 	compiled = shaderc_assemble_into_spv(
 		compiler,
 		assembly.data,
 		assembly.length,
 		options);
+
+	/* Reject a missing shaderc result. */
 	if (compiled == NULL) {
 		hir_error(
 			builder.kernel->source_line,
 			N_TR("Vulkan shader assembler returned no result."));
-		goto error;
+		accel_shader_work_cleanup(&builder, &assembly);
+		return ACCEL_COMPILE_ERROR;
 	}
 
+	/* Inspect the shaderc compilation status. */
 	status = shaderc_result_get_compilation_status(compiled);
+
+	/* Report a shaderc assembly failure. */
 	if (status != shaderc_compilation_status_success) {
 		message = shaderc_result_get_error_message(compiled);
+
+		/* Supply a stable message when shaderc provides none. */
 		if (message == NULL)
 			message = N_TR("unknown assembler failure");
+
 		accel_shader_hir_error(
 			builder.kernel->source_line,
 			N_TR("Vulkan shader assembly failed: "),
 			message);
 		shaderc_result_release(compiled);
-		goto error;
+		accel_shader_work_cleanup(&builder, &assembly);
+		return ACCEL_COMPILE_ERROR;
 	}
 
+	/* Read the assembled SPIR-V byte range. */
 	byte_count = shaderc_result_get_length(compiled);
 	byte = shaderc_result_get_bytes(compiled);
+
+	/* Reject a missing, short, or misaligned binary module. */
 	if (byte == NULL ||
 	    byte_count < 5 * sizeof(uint32_t) ||
 	    byte_count % sizeof(uint32_t) != 0) {
@@ -172,55 +216,52 @@ accel_vulkan_shader_compile(
 			builder.kernel->source_line,
 			N_TR("Vulkan shader assembler returned malformed SPIR-V."));
 		shaderc_result_release(compiled);
-		goto error;
+		accel_shader_work_cleanup(&builder, &assembly);
+		return ACCEL_COMPILE_ERROR;
 	}
 
+	/* Allocate the owned result module. */
 	result->word = noct_malloc(byte_count);
 	if (result->word == NULL) {
 		shaderc_result_release(compiled);
-		goto out_of_memory;
+		hir_out_of_memory();
+		accel_shader_work_cleanup(&builder, &assembly);
+		return ACCEL_COMPILE_ERROR;
 	}
 
+	/*
+	 * Copy and normalize the assembled module header.  Shaderc emits a
+	 * SPIR-V 1.0 header even when its target option requests SPIR-V 1.5.
+	 */
 	memcpy(result->word, byte, byte_count);
 	result->word_count = byte_count / sizeof(uint32_t);
 	shaderc_result_release(compiled);
-
-	/* shaderc's assembler emits a 1.0 header even with a 1.5 target option. */
 	result->word[1] = ACCEL_SPIRV_VERSION_1_5;
 
-	if (!accel_spirv_validate(
+	/* Validate the generated module before publishing it. */
+	valid = accel_spirv_validate(
 		result->word,
 		result->word_count,
 		builder.uses_f32,
 		validation_error,
-		sizeof(validation_error))) {
+		sizeof(validation_error));
+
+	/* Reject a generated module outside the backend contract. */
+	if (!valid) {
 		accel_shader_hir_error(
 			builder.kernel->source_line,
 			N_TR("Generated Vulkan SPIR-V is invalid: "),
 			validation_error);
 		accel_vulkan_shader_cleanup(result);
-		goto error;
+		accel_shader_work_cleanup(&builder, &assembly);
+		return ACCEL_COMPILE_ERROR;
 	}
 
-	accel_text_cleanup(&assembly);
-	accel_shader_builder_cleanup(&builder);
+	/* Release temporary text after publishing the owned module. */
+	accel_shader_work_cleanup(&builder, &assembly);
 
+	/* Report successful shader compilation. */
 	return ACCEL_COMPILE_APPLIED;
-
-invalid_ir:
-	hir_error(
-		builder.kernel->source_line,
-		N_TR("Unsupported instruction reached the Vulkan shader generator."));
-	goto error;
-
-out_of_memory:
-	hir_out_of_memory();
-
-error:
-	accel_text_cleanup(&assembly);
-	accel_shader_builder_cleanup(&builder);
-
-	return ACCEL_COMPILE_ERROR;
 }
 
 /*
@@ -230,12 +271,62 @@ void
 accel_vulkan_shader_cleanup(
 	struct accel_vulkan_spirv *spirv)
 {
+	/* Ignore an absent result container. */
 	if (spirv == NULL)
 		return;
 
+	/* Release the module and clear the public result. */
 	noct_free(spirv->word);
 	spirv->word = NULL;
 	spirv->word_count = 0;
+}
+
+/* Build every ordered assembly section and classify one failure. */
+static enum accel_shader_build_status
+accel_shader_build_assembly(
+	struct accel_shader_builder *builder,
+	struct accel_text *assembly)
+{
+	bool built;
+
+	/* Build the module entry and execution modes. */
+	built = accel_shader_build_entry(builder);
+	if (!built)
+		return ACCEL_SHADER_BUILD_OUT_OF_MEMORY;
+
+	/* Build the module annotations. */
+	built = accel_shader_build_annotations(builder);
+	if (!built)
+		return ACCEL_SHADER_BUILD_OUT_OF_MEMORY;
+
+	/* Build the module declarations. */
+	built = accel_shader_build_declarations(builder);
+	if (!built)
+		return ACCEL_SHADER_BUILD_OUT_OF_MEMORY;
+
+	/* Build the validated instruction body. */
+	built = accel_shader_build_body(builder);
+	if (!built)
+		return ACCEL_SHADER_BUILD_INVALID_IR;
+
+	/* Join the sections into one shaderc input. */
+	built = accel_shader_join(builder, assembly);
+	if (!built)
+		return ACCEL_SHADER_BUILD_OUT_OF_MEMORY;
+
+	/* Report a complete assembly string. */
+	return ACCEL_SHADER_BUILD_SUCCESS;
+}
+
+/* Release all temporary shader-generation text. */
+static void
+accel_shader_work_cleanup(
+	struct accel_shader_builder *builder,
+	struct accel_text *assembly)
+{
+	/* Release joined text before its source sections. */
+	accel_text_cleanup(assembly);
+	accel_shader_builder_cleanup(builder);
 }
 
 /* Grow one assembly section without losing its current allocation. */
@@ -385,7 +476,20 @@ accel_shader_build_entry(
 		if (!accel_text_append(&builder->entry, " %%buffer_%u", i))
 			return false;
 	}
-	if (!accel_text_append(&builder->entry, " %%scalar\n"))
+
+	/* Append the required scalar-block interface variable. */
+	if (!accel_text_append(&builder->entry, " %%scalar"))
+		return false;
+
+	/* Append the optional scalar-result interface variable. */
+	if (builder->program->scalar_result_count != 0) {
+		/* Append the result only when the program publishes one. */
+		if (!accel_text_append(&builder->entry, " %%result"))
+			return false;
+	}
+
+	/* Complete the entry-point declaration. */
+	if (!accel_text_append(&builder->entry, "\n"))
 		return false;
 	if (!accel_text_append(&builder->entry, "OpExecutionMode %%main LocalSize 64 1 1\n"))
 		return false;
@@ -431,6 +535,17 @@ accel_shader_build_annotations(
 	if (!accel_text_append(&builder->annotation, "OpDecorate %%scalar Binding %u\n", builder->program->buffer_count))
 		return false;
 
+	/* Decorate the optional scalar-result storage buffer. */
+	if (builder->program->scalar_result_count != 0) {
+		/* Assign the scalar-result descriptor set. */
+		if (!accel_text_append(&builder->annotation, "OpDecorate %%result DescriptorSet 0\n"))
+			return false;
+
+		/* Assign the scalar-result binding after the scalar block. */
+		if (!accel_text_append(&builder->annotation, "OpDecorate %%result Binding %u\n", builder->program->buffer_count + 1))
+			return false;
+	}
+
 	/* Prohibit contraction for every generated floating arithmetic result. */
 	for (i = 0; i < builder->kernel->ir->instruction_count; i++) {
 		instruction = &builder->kernel->ir->instruction[i];
@@ -455,6 +570,7 @@ accel_shader_build_declarations(
 {
 	const struct accel_ir_instruction *instruction;
 	uint32_t scalar_word_count;
+	uint32_t constant_word_count;
 	uint32_t i;
 
 	if (!accel_text_append(&builder->declaration, "%%void = OpTypeVoid\n"))
@@ -492,16 +608,43 @@ accel_shader_build_declarations(
 	if (!accel_text_append(&builder->declaration, "%%scalar = OpVariable %%ptr_storage_block StorageBuffer\n"))
 		return false;
 
+	/* Declare the optional scalar-result storage buffer. */
+	if (builder->program->scalar_result_count != 0) {
+		/* Emit the interface variable only when it is referenced. */
+		if (!accel_text_append(&builder->declaration, "%%result = OpVariable %%ptr_storage_block StorageBuffer\n"))
+			return false;
+	}
+
+	/* Compute the complete range of reusable unsigned constants. */
 	scalar_word_count = builder->program->scalar_count +
 		builder->program->kernel_count * 2;
+	constant_word_count = scalar_word_count;
 
-	/* Declare the structure index and every scalar-block word index. */
-	for (i = 0; i < scalar_word_count; i++) {
+	/* Include every scalar-result index in the constant range. */
+	if (constant_word_count < builder->program->scalar_result_count)
+		constant_word_count = builder->program->scalar_result_count;
+
+	/* Declare the structure index and every referenced word index. */
+	for (i = 0; i < constant_word_count; i++) {
 		if (!accel_text_append(&builder->declaration, "%%u32_%u = OpConstant %%u32 %u\n", i, i))
 			return false;
 	}
-	if (scalar_word_count == 0) {
+
+	/* Guarantee the structure-member index for an otherwise empty range. */
+	if (constant_word_count == 0) {
+		/* Declare the mandatory zero index. */
 		if (!accel_text_append(&builder->declaration, "%%u32_0 = OpConstant %%u32 0\n"))
+			return false;
+	}
+
+	/* Declare constants required by scalar-result atomics. */
+	if (builder->program->scalar_result_count != 0) {
+		/* Declare the device scope used by every reduction. */
+		if (!accel_text_append(&builder->declaration, "%%scope_device = OpConstant %%u32 1\n"))
+			return false;
+
+		/* Declare the unordered atomic-memory semantics. */
+		if (!accel_text_append(&builder->declaration, "%%semantics_none = OpConstant %%u32 0\n"))
 			return false;
 	}
 
@@ -640,27 +783,43 @@ accel_shader_build_instruction(
 	const struct accel_ir_instruction *instruction,
 	uint32_t instruction_index)
 {
+	bool built;
+
 	/* Select the exact lowering for this typed operation. */
 	switch (instruction->opcode) {
 	case ACCEL_IR_PARAMETER:
 	case ACCEL_IR_UNIFORM:
-		return accel_shader_build_uniform(builder, instruction);
+		built = accel_shader_build_uniform(builder, instruction);
+		break;
 	case ACCEL_IR_CONST_BOOL:
 	case ACCEL_IR_CONST_I32:
 	case ACCEL_IR_CONST_F32:
-		return accel_shader_build_constant(builder, instruction);
+		built = accel_shader_build_constant(builder, instruction);
+		break;
 	case ACCEL_IR_GLOBAL_INDEX:
-		return accel_text_append(
+		built = accel_text_append(
 			&builder->body,
 			"%%v%u = OpCopyObject %%u32 %%lane\n",
 			instruction->result);
+		break;
 	case ACCEL_IR_BUFFER_LOAD:
-		return accel_shader_build_load(builder, instruction);
+		built = accel_shader_build_load(builder, instruction);
+		break;
 	case ACCEL_IR_BUFFER_STORE:
-		return accel_shader_build_store(
+		built = accel_shader_build_store(
 			builder,
 			instruction,
 			instruction_index);
+		break;
+	case ACCEL_IR_ATOMIC_ADD_I32:
+		built = accel_shader_build_atomic_add(
+			builder,
+			instruction,
+			instruction_index);
+		break;
+	case ACCEL_IR_LOAD_RESULT_I32:
+		built = accel_shader_build_result_load(builder, instruction);
+		break;
 	case ACCEL_IR_ADD:
 	case ACCEL_IR_SUB:
 	case ACCEL_IR_MUL:
@@ -671,16 +830,18 @@ accel_shader_build_instruction(
 	case ACCEL_IR_BIT_XOR:
 	case ACCEL_IR_SHIFT_LEFT:
 	case ACCEL_IR_SHIFT_RIGHT_LOGICAL:
-		return accel_shader_build_arithmetic(builder, instruction);
+		built = accel_shader_build_arithmetic(builder, instruction);
+		break;
 	case ACCEL_IR_COMPARE_EQ:
 	case ACCEL_IR_COMPARE_NE:
 	case ACCEL_IR_COMPARE_LT:
 	case ACCEL_IR_COMPARE_LTE:
 	case ACCEL_IR_COMPARE_GT:
 	case ACCEL_IR_COMPARE_GTE:
-		return accel_shader_build_comparison(builder, instruction);
+		built = accel_shader_build_comparison(builder, instruction);
+		break;
 	case ACCEL_IR_SELECT:
-		return accel_text_append(
+		built = accel_text_append(
 			&builder->body,
 			"%%v%u = OpSelect %s %%v%u %%v%u %%v%u\n",
 			instruction->result,
@@ -688,9 +849,14 @@ accel_shader_build_instruction(
 			instruction->operand[0],
 			instruction->operand[1],
 			instruction->operand[2]);
+		break;
 	default:
-		return false;
+		built = false;
+		break;
 	}
+
+	/* Report whether the selected instruction was lowered. */
+	return built;
 }
 
 /* Lower one exact scalar constant. */
@@ -798,6 +964,86 @@ accel_shader_build_store(
 		"OpStore %%store_pointer_%u %%store_value_%u\n",
 		instruction_index,
 		instruction_index);
+}
+
+/* Lower one wrapping I32 contribution into a scalar-result word. */
+static bool
+accel_shader_build_atomic_add(
+	struct accel_shader_builder *builder,
+	const struct accel_ir_instruction *instruction,
+	uint32_t instruction_index)
+{
+	bool appended;
+
+	/* Convert the signed contribution to its wrapping word form. */
+	appended = accel_text_append(
+		&builder->body,
+		"%%result_add_value_%u = OpBitcast %%u32 %%v%u\n",
+		instruction_index,
+		instruction->operand[0]);
+	if (!appended)
+		return false;
+
+	/* Address the selected scalar-result word. */
+	appended = accel_text_append(
+		&builder->body,
+		"%%result_add_pointer_%u = OpAccessChain %%ptr_storage_u32 %%result %%u32_0 %%u32_%u\n",
+		instruction_index,
+		instruction->reference);
+	if (!appended)
+		return false;
+
+	/* Add the contribution with device-wide unordered atomicity. */
+	appended = accel_text_append(
+		&builder->body,
+		"%%result_add_old_%u = OpAtomicIAdd %%u32 %%result_add_pointer_%u %%scope_device %%semantics_none %%result_add_value_%u\n",
+		instruction_index,
+		instruction_index,
+		instruction_index);
+	if (!appended)
+		return false;
+
+	/* Report a complete atomic reduction lowering. */
+	return true;
+}
+
+/* Lower one scalar-result load into a signed I32 SSA value. */
+static bool
+accel_shader_build_result_load(
+	struct accel_shader_builder *builder,
+	const struct accel_ir_instruction *instruction)
+{
+	bool appended;
+
+	/* Address the selected scalar-result word. */
+	appended = accel_text_append(
+		&builder->body,
+		"%%result_pointer_%u = OpAccessChain %%ptr_storage_u32 %%result %%u32_0 %%u32_%u\n",
+		instruction->result,
+		instruction->reference);
+	if (!appended)
+		return false;
+
+	/* Load the wrapping result word. */
+	appended = accel_text_append(
+		&builder->body,
+		"%%result_word_%u = OpLoad %%u32 %%result_pointer_%u\n",
+		instruction->result,
+		instruction->result);
+	if (!appended)
+		return false;
+
+	/* Restore the signed I32 SSA representation. */
+	appended = accel_text_append(
+		&builder->body,
+		"%%v%u = OpBitcast %%i32 %%result_word_%u\n",
+		instruction->result,
+		instruction->result);
+	if (!appended)
+		return false;
+
+	/* Report a complete scalar-result load. */
+	return true;
 }
 
 /* Lower one arithmetic, bitwise, shift, or index operation. */

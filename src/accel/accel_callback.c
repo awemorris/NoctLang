@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool accel_callback_optimize_claimed(void *func_data, void *userdata);
 static void accel_callback_destroy_prepared(struct accel_context *context, struct accel_prepared_program prepared[], uint32_t count);
 static bool accel_callback_error(struct hir_block *func_block, const char *message);
 
@@ -25,6 +26,38 @@ static bool accel_callback_error(struct hir_block *func_block, const char *messa
  */
 bool
 accel_optimize_callback(
+	void *func_data,
+	void *userdata)
+{
+	struct accel_context *context;
+	struct hir_block *func_block;
+	bool success;
+
+	context = userdata;
+	func_block = func_data;
+
+	/* Rejects incomplete callback data before claiming shared state. */
+	if (func_block == NULL)
+		return false;
+	if (context == NULL)
+		return accel_callback_error(func_block, N_TR("Missing accelerator context."));
+
+	/* Claims the registry and backend across the complete optimizer callback. */
+	if (!accel_context_begin_operation(context)) {
+		return accel_callback_error(
+			func_block,
+			N_TR("Detached accelerator context."));
+	}
+
+	success = accel_callback_optimize_claimed(func_data, userdata);
+	accel_context_end_operation(context);
+
+	return success;
+}
+
+/* Optimize one function while holding an external context lifetime claim. */
+static bool
+accel_callback_optimize_claimed(
 	void *func_data,
 	void *userdata)
 {
@@ -41,7 +74,6 @@ accel_optimize_callback(
 	uint32_t region_count;
 	uint32_t prepared_count;
 	uint32_t i;
-	bool attached;
 
 	context = userdata;
 	func_block = func_data;
@@ -52,20 +84,6 @@ accel_optimize_callback(
 	serialized_tmpvar_size = 0;
 	prepared_count = 0;
 	memset(&guard, 0, sizeof(guard));
-
-	if (func_block == NULL)
-		return false;
-	if (context == NULL)
-		return accel_callback_error(func_block, N_TR("Missing accelerator context."));
-
-	accel_context_state_lock(context);
-	attached = accel_context_is_attached_locked(context);
-	accel_context_state_unlock(context);
-	if (!attached) {
-		return accel_callback_error(
-			func_block,
-			N_TR("Detached accelerator context."));
-	}
 
 	status = accel_compile_func(func_block, &plan);
 	if (status == ACCEL_COMPILE_DECLINED) {

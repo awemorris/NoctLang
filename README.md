@@ -324,21 +324,49 @@ resolver through `NoctConfig.require_resolver`.
 `__accel func` marks an ordinary CPU-executable function as a candidate for
 accelerator optimization.  Without `--gpu`, at `-O0`, in a build without the
 accelerator, or when a function is not eligible, its checked CPU body runs
-normally.
+normally.  The annotation is an optimization hint, not a distinct function
+kind or a requirement that a backend accept the function.
 
-An accelerator-enabled static build uses Vulkan as its initial GPU backend:
+Build the optional accelerator with `-DNOCT_ENABLE_ACCEL=ON`.  One option
+selects the platform backends automatically: Windows uses Direct3D 12, Linux
+and FreeBSD build Vulkan and OpenGL ES, and macOS uses Metal.  List the
+available devices before selecting one if necessary:
 
 ```
+noct --gpu-list
 noct --gpu program.noct
-noct --gpu=EXACT_DEVICE_NAME program.noct
+noct --gpu=vulkan:EXACT_DEVICE_NAME program.noct
 ```
+
+`--gpu` chooses the default suitable device.  The canonical selectors printed
+by `--gpu-list` begin with `vulkan:`, `opengles:`, `d3d12:`, or `metal:`.  An
+exact plain device name is accepted for compatibility only when it is unique
+across the available backends; use the qualified selector when a name is
+ambiguous.
+
+On Linux and FreeBSD, the accelerator component is the CLI-private shared
+library `libnoctaccel.so`; it is not a public accelerator ABI.
 
 `--gpu` is valid only when running source, including source supplied with
-`-e`.  It cannot be combined with `.nbc`, `.nap`, `--compile`, or
-`--compile --app`.  Source is the GPU distribution format: bytecode and app
-files contain neither GPU code nor backend metadata.  If a committed GPU
-execution fails, that invocation reports an error instead of replaying the
-removed loop on the CPU.
+`-e`.  It cannot be combined with `.nbc`, `.nap`, `--compile`, or `--app`.
+Source is the GPU distribution format: bytecode and app files contain neither
+GPU code nor backend metadata.
+
+After GPU execution has started, a GPU error terminates that invocation.  The
+removed CPU loop is not replayed after a partial or failed GPU execution.
+
+Eligible loop groups are executed synchronously.  CPU statements between two
+eligible groups end the first GPU session before the CPU statements run and
+start a new session for the later group.  Integer additive-zero reductions and
+some provably device-only local Packed buffers can be optimized; unsupported
+forms simply keep their ordinary CPU implementation.  These are multiple GPU
+regions within one function, not execution on multiple physical GPUs.
+Currently, reductions are limited to 32-bit wrapped addition from zero with
+an `int` or `u32` accumulator.  Device-only direct return, dirty subrange
+transfer, cross-region device persistence, and floating-point, minimum,
+maximum, or product reductions are not optimized.  The generated runtime calls
+use a private, backend-specific `__Accel` package.  There is no public
+`Accel.*` accelerator API.
 
 ### Compile into Emacs Lisp
 

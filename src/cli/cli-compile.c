@@ -96,7 +96,8 @@ command_compile(
 			continue;
 		}
 		if (strcmp(argv[first], "--gpu") == 0 ||
-		    strncmp(argv[first], "--gpu=", 6) == 0) {
+		    strncmp(argv[first], "--gpu=", 6) == 0 ||
+		    strcmp(argv[first], "--gpu-list") == 0) {
 			printf(
 				"GPU acceleration is available only when running Noct source.\n");
 			goto cleanup;

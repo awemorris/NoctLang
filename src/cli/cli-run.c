@@ -48,11 +48,16 @@ static int prog_arg;
 static size_t param_count;
 static bool is_oneliner;
 static bool gpu_requested;
+static bool gpu_list_requested;
 static char *gpu_name;
 static struct cli_program_input program_input;
 
 static bool parse_options(int argc, char *argv[]);
 static bool parse_gpu_option(int argc, char *argv[], int index);
+static int list_gpu_devices(void);
+#if defined(NOCT_USE_ACCEL)
+static bool print_gpu_device(const char *selector, void *userdata);
+#endif
 static bool prepare_program_input(int argc, char *argv[]);
 static bool prepare_file_input(const char *path);
 static bool prepare_oneliner_input(const char *command);
@@ -87,6 +92,19 @@ command_run(
 
 	if (!parse_options(argc, argv))
 		goto cleanup;
+
+	/* List devices before creating source, module, or VM state. */
+	if (gpu_list_requested) {
+		if (gpu_requested || argc != 2 || file_arg != argc || is_oneliner) {
+			wide_printf(N_TR("--gpu-list must be used by itself.\n"));
+			cli_module_reset();
+			return 1;
+		}
+
+		result = list_gpu_devices();
+		cli_module_reset();
+		return result;
+	}
 
 	if (file_arg == argc && !is_oneliner) {
 		if (argc == 1) {
@@ -237,6 +255,7 @@ parse_options(int argc, char *argv[])
 	file_arg = 1;
 	is_oneliner = false;
 	gpu_requested = false;
+	gpu_list_requested = false;
 	for (i = 1; i < argc; i++) {
 		if (argv[i][0] != '-')
 			break;
@@ -278,6 +297,15 @@ parse_options(int argc, char *argv[])
 		    strncmp(argv[i], "--gpu=", 6) == 0) {
 			if (!parse_gpu_option(argc, argv, i))
 				return false;
+			file_arg++;
+			continue;
+		}
+		if (strcmp(argv[i], "--gpu-list") == 0) {
+			if (gpu_list_requested) {
+				wide_printf(N_TR("--gpu-list may be specified only once.\n"));
+				return false;
+			}
+			gpu_list_requested = true;
 			file_arg++;
 			continue;
 		}
@@ -334,6 +362,64 @@ parse_options(int argc, char *argv[])
 
 	return true;
 }
+
+/* List every suitable accelerator device in canonical selector form. */
+static int
+list_gpu_devices(
+	void)
+{
+#if defined(NOCT_USE_ACCEL)
+	char error[256];
+	size_t device_count;
+
+	error[0] = '\0';
+	device_count = 0;
+
+	/* Enumerate devices through the private CLI accelerator boundary. */
+	if (!accel_list_devices(
+		print_gpu_device,
+		NULL,
+		error,
+		sizeof(error),
+		&device_count)) {
+		if (error[0] != '\0')
+			wide_printf(N_TR("GPU enumeration failed: %s\n"), error);
+		else
+			wide_printf(N_TR("GPU enumeration failed.\n"));
+		return 1;
+	}
+
+	/* Distinguish an empty suitable-device set from an API failure. */
+	if (device_count == 0) {
+		wide_printf(N_TR("No suitable GPU device is available.\n"));
+		return 1;
+	}
+
+	return 0;
+#else
+	wide_printf(N_TR("GPU acceleration is not available in this build.\n"));
+
+	return 1;
+#endif
+}
+
+#if defined(NOCT_USE_ACCEL)
+/* Print one canonical accelerator selector. */
+static bool
+print_gpu_device(
+	const char *selector,
+	void *userdata)
+{
+	UNUSED_PARAMETER(userdata);
+
+	if (selector == NULL)
+		return false;
+
+	wide_printf("%s\n", selector);
+
+	return true;
+}
+#endif
 
 /* Parse one accelerator selection without making it build-dependent. */
 static bool

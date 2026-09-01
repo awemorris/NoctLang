@@ -25,9 +25,22 @@ struct accel_mutex {
 	bool initialized;
 };
 
+struct accel_condition {
+#if defined(NOCT_TARGET_WINDOWS)
+	CONDITION_VARIABLE native;
+#else
+	pthread_cond_t native;
+#endif
+	bool initialized;
+};
+
 bool accel_mutex_init(struct accel_mutex *mutex);
 void accel_mutex_lock(struct accel_mutex *mutex);
 void accel_mutex_unlock(struct accel_mutex *mutex);
 void accel_mutex_destroy(struct accel_mutex *mutex);
+bool accel_condition_init(struct accel_condition *condition);
+void accel_condition_wait(struct accel_condition *condition, struct accel_mutex *mutex);
+void accel_condition_wake_all(struct accel_condition *condition);
+void accel_condition_destroy(struct accel_condition *condition);
 
 #endif

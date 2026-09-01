@@ -39,7 +39,8 @@ Main suites:
 
 Accelerator hardware suites:
   accel-vulkan-plan [dir] Vulkan/shaderc backend plan tests.
-  gpu-vulkan [dir] Explicit Vulkan hardware execution tests.
+  gpu [dir]         Explicit selected-backend hardware execution tests.
+  gpu-vulkan [dir] Compatibility alias for the accelerator hardware suite.
 
 Toolchain/integration suites:
   api [build-dir]  Public Regex/File/Term registration test (default: build-static).
@@ -103,7 +104,7 @@ parallel-analysis) run_script run-parallel-analysis.sh "$@" ;;
 accel-plan)      run_script run-plan-accel.sh "$@" ;;
 accel-rewrite)   run_script run-rewrite-accel.sh "$@" ;;
 accel-vulkan-plan) run_script run-vulkan-accel-plan.sh "$@" ;;
-gpu-vulkan)      run_script run-gpu-vulkan.sh "$@" ;;
+gpu|gpu-vulkan)  run_script run-gpu-vulkan.sh "$@" ;;
 api)             run_script run-api.sh "$@" ;;
 ctrans)          run_script run-ctrans.sh "$@" ;;
 repl)            run_script run-repl.sh "$@" ;;

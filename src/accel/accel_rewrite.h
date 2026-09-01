@@ -27,7 +27,7 @@ accel_rewrite_stage(
 	struct accel_rewrite **result);
 
 /*
- * Adds all generated locals as the last fallible HIR mutation.
+ * Links all preallocated generated locals into unchanged live HIR.
  */
 bool
 accel_rewrite_add_locals(

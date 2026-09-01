@@ -10,18 +10,22 @@
  */
 
 #include "accel_vulkan.h"
+#include "accel_vulkan_shader.h"
 #include "runtime.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#define ACCEL_TEST_SPIRV_OP_ATOMIC_IADD	234U
+
 enum mock_mode {
 	MOCK_SUCCESS,
 	MOCK_VERSION_MISSING,
 	MOCK_VERSION_FAILURE,
 	MOCK_VERSION_1_1,
-	MOCK_PROPERTIES_MISSING
+	MOCK_PROPERTIES_MISSING,
+	MOCK_IDLE_FAILURE
 };
 
 struct mock_state {
@@ -32,6 +36,7 @@ struct mock_state {
 	uint32_t enumerate_device_count;
 	uint32_t create_device_count;
 	uint32_t destroy_device_count;
+	uint32_t device_wait_idle_count;
 };
 
 static struct mock_state mock;
@@ -53,7 +58,11 @@ static void mock_make_api(struct accel_vulkan_api *api);
 static bool test_missing_required_function(struct rt_env *env);
 static bool test_version_cases(struct rt_env *env);
 static bool test_properties_resolution(struct rt_env *env);
+static bool test_device_enumeration(void);
 static bool test_device_selection(struct rt_env *env);
+static bool append_shader_instruction(struct accel_ir_builder *builder, int opcode, int result_type, uint32_t reference, uint32_t operand0);
+static bool spirv_has_opcode(const struct accel_vulkan_spirv *spirv, uint32_t requested_opcode);
+static bool test_scalar_result_shader(void);
 static bool expect_failure(struct rt_env *env, struct accel_vulkan_api *api, const char *gpu_name);
 
 /* Run the device-independent Vulkan initialization contract tests. */
@@ -70,6 +79,12 @@ main(
 	UNUSED_PARAMETER(argc);
 	UNUSED_PARAMETER(argv);
 
+	/* Exercise device listing before any VM or environment exists. */
+	success = test_device_enumeration();
+	if (!success)
+		return 1;
+
+	/* Create the environment required by backend creation diagnostics. */
 	noct_set_default_config(&config);
 	config.jit_enable = 0;
 	if (!noct_create_vm(&vm, &env, &config)) {
@@ -77,6 +92,7 @@ main(
 		return 1;
 	}
 
+	/* Run every environment-backed initialization contract. */
 	success = test_missing_required_function(env);
 	if (success)
 		success = test_version_cases(env);
@@ -84,6 +100,8 @@ main(
 		success = test_properties_resolution(env);
 	if (success)
 		success = test_device_selection(env);
+	if (success)
+		success = test_scalar_result_shader();
 
 	if (!noct_destroy_vm(vm))
 		success = false;
@@ -309,6 +327,14 @@ mock_device_wait_idle(
 {
 	UNUSED_PARAMETER(device);
 
+	/* Count every device-wide lifetime proof requested by teardown. */
+	mock.device_wait_idle_count++;
+
+	/* Preserve the selected backend when a final drain cannot be proved. */
+	if (mock.mode == MOCK_IDLE_FAILURE)
+		return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+	/* Report a proved-idle mock device. */
 	return VK_SUCCESS;
 }
 
@@ -447,6 +473,75 @@ test_properties_resolution(
 	return true;
 }
 
+/* Enumerate a suitable device without creating its logical device. */
+static bool
+test_device_enumeration(void)
+{
+	struct accel_vulkan_api api;
+	struct accel_device_list list;
+	char error[128];
+	bool success;
+
+	mock_reset(MOCK_SUCCESS);
+	mock_make_api(&api);
+	accel_device_list_init(&list);
+
+	/* Enumerate through the no-VM diagnostic path. */
+	success = accel_vulkan_enumerate_with_api(
+		&list,
+		&api,
+		error,
+		sizeof(error));
+
+	/* Require one deep-owned canonical Vulkan record. */
+	if (success && error[0] != '\0')
+		success = false;
+	if (success && list.count != 1)
+		success = false;
+	if (success && strcmp(list.device[0].name, "Mock GPU") != 0)
+		success = false;
+	if (success &&
+	    strcmp(list.device[0].selector, "vulkan:Mock GPU") != 0) {
+		success = false;
+	}
+
+	/* Prohibit logical-device creation during listing. */
+	if (success && mock.create_device_count != 0)
+		success = false;
+	if (success && mock.destroy_device_count != 0)
+		success = false;
+	if (success && mock.destroy_instance_count != 1)
+		success = false;
+
+	accel_device_list_destroy(&list);
+
+	/* Exercise one no-VM loader failure and its standalone diagnostic. */
+	if (success) {
+		mock_reset(MOCK_PROPERTIES_MISSING);
+		mock_make_api(&api);
+		accel_device_list_init(&list);
+		if (accel_vulkan_enumerate_with_api(
+			&list,
+			&api,
+			error,
+			sizeof(error))) {
+			success = false;
+		}
+		if (success && error[0] == '\0')
+			success = false;
+		if (success && list.count != 0)
+			success = false;
+		if (success && mock.create_device_count != 0)
+			success = false;
+		if (success && mock.destroy_instance_count != 1)
+			success = false;
+		accel_device_list_destroy(&list);
+	}
+
+	/* Report the complete enumeration contract result. */
+	return success;
+}
+
 /* Select an exact mock device and release all owned backend resources. */
 static bool
 test_device_selection(
@@ -480,13 +575,262 @@ test_device_selection(
 	if (mock.create_device_count != 1)
 		return false;
 
+	/* Release the ordinary backend through one successful final drain. */
 	ops->destroy_backend_state(backend_state);
+
+	/* Require exactly one ordinary final drain. */
+	if (mock.device_wait_idle_count != 1)
+		return false;
+
+	/* Require exactly one logical-device release. */
 	if (mock.destroy_device_count != 1)
 		return false;
+
+	/* Require exactly one instance release. */
+	if (mock.destroy_instance_count != 1)
+		return false;
+
+	/* Retain every backend object after an unproved final device drain. */
+	mock_reset(MOCK_IDLE_FAILURE);
+	mock_make_api(&api);
+	ops = NULL;
+	backend_state = NULL;
+	if (!accel_vulkan_create_with_api(
+		env,
+		"Mock GPU",
+		&api,
+		&ops,
+		&backend_state)) {
+		return false;
+	}
+	ops->destroy_backend_state(backend_state);
+
+	/* Require the failed teardown to attempt one final drain. */
+	if (mock.device_wait_idle_count != 1)
+		return false;
+
+	/* Preserve the logical device while its lifetime is unproved. */
+	if (mock.destroy_device_count != 0)
+		return false;
+
+	/* Preserve the parent instance with its retained logical device. */
+	if (mock.destroy_instance_count != 0)
+		return false;
+
+	/* Retry the preserved graph and release it after a proved idle result. */
+	mock.mode = MOCK_SUCCESS;
+	ops->destroy_backend_state(backend_state);
+
+	/* Require one failed and one successful final drain attempt. */
+	if (mock.device_wait_idle_count != 2)
+		return false;
+
+	/* Release the retained logical device exactly once. */
+	if (mock.destroy_device_count != 1)
+		return false;
+
+	/* Release the retained parent instance exactly once. */
 	if (mock.destroy_instance_count != 1)
 		return false;
 
 	return true;
+}
+
+/* Append one fully initialized scalar-result shader instruction. */
+static bool
+append_shader_instruction(
+	struct accel_ir_builder *builder,
+	int opcode,
+	int result_type,
+	uint32_t reference,
+	uint32_t operand0)
+{
+	struct accel_ir_instruction instruction;
+	bool success;
+
+	/* Initialize one complete target-neutral instruction. */
+	memset(&instruction, 0, sizeof(instruction));
+	instruction.opcode = opcode;
+	instruction.result_type = result_type;
+	instruction.result = ACCEL_IR_VALUE_NONE;
+	instruction.operand[0] = operand0;
+	instruction.operand[1] = ACCEL_IR_VALUE_NONE;
+	instruction.operand[2] = ACCEL_IR_VALUE_NONE;
+	instruction.reference = reference;
+
+	/* Append the instruction through the checked IR builder. */
+	success = accel_ir_builder_append(builder, &instruction, NULL);
+
+	/* Report whether the builder accepted the instruction. */
+	return success;
+}
+
+/* Find one opcode in a structurally bounded SPIR-V instruction stream. */
+static bool
+spirv_has_opcode(
+	const struct accel_vulkan_spirv *spirv,
+	uint32_t requested_opcode)
+{
+	size_t offset;
+	uint32_t word_count;
+	uint32_t opcode;
+
+	if (spirv == NULL || spirv->word == NULL || spirv->word_count < 5)
+		return false;
+
+	offset = 5;
+
+	/* Inspect each complete instruction after the five-word header. */
+	while (offset < spirv->word_count) {
+		word_count = spirv->word[offset] >> 16;
+		opcode = spirv->word[offset] & 0xffffU;
+		if (word_count == 0 || word_count > spirv->word_count - offset)
+			return false;
+		if (opcode == requested_opcode)
+			return true;
+		offset += word_count;
+	}
+
+	return false;
+}
+
+/* Assemble valid Vulkan modules for both sides of one scalar result. */
+static bool
+test_scalar_result_shader(
+	void)
+{
+	struct accel_program program;
+	struct accel_scalar_result scalar_result;
+	struct accel_kernel_plan kernel[2];
+	struct accel_ir_kernel *producer;
+	struct accel_ir_kernel *consumer;
+	struct accel_ir_builder builder;
+	struct accel_vulkan_spirv spirv;
+	shaderc_compiler_t compiler;
+	shaderc_compile_options_t options;
+	enum accel_compile_status status;
+	bool success;
+
+	/* Build one static I32 atomic producer. */
+	producer = accel_ir_kernel_create("result_producer", 1, 1, 0, 0);
+	if (producer == NULL)
+		return false;
+	accel_ir_builder_init(&builder, producer);
+	success = append_shader_instruction(
+		&builder,
+		ACCEL_IR_CONST_I32,
+		ACCEL_IR_I32,
+		ACCEL_IR_REFERENCE_NONE,
+		ACCEL_IR_VALUE_NONE);
+	if (success) {
+		producer->instruction[0].literal_bits = 7;
+		success = append_shader_instruction(
+			&builder,
+			ACCEL_IR_ATOMIC_ADD_I32,
+			ACCEL_IR_VOID,
+			0,
+			0);
+	}
+	if (!success) {
+		accel_ir_kernel_destroy(producer);
+		return false;
+	}
+
+	/* Build one later signed result load. */
+	consumer = accel_ir_kernel_create("result_consumer", 2, 2, 0, 0);
+	if (consumer == NULL) {
+		accel_ir_kernel_destroy(producer);
+		return false;
+	}
+	accel_ir_builder_init(&builder, consumer);
+	success = append_shader_instruction(
+		&builder,
+		ACCEL_IR_LOAD_RESULT_I32,
+		ACCEL_IR_I32,
+		0,
+		ACCEL_IR_VALUE_NONE);
+	if (!success) {
+		accel_ir_kernel_destroy(consumer);
+		accel_ir_kernel_destroy(producer);
+		return false;
+	}
+
+	/* Bind both kernels and one deterministic scalar-result entry. */
+	memset(&program, 0, sizeof(program));
+	memset(&scalar_result, 0, sizeof(scalar_result));
+	memset(kernel, 0, sizeof(kernel));
+	program.scalar_result_count = 1;
+	program.scalar_result = &scalar_result;
+	program.kernel_count = 2;
+	program.kernel = kernel;
+	scalar_result.name = "sum";
+	scalar_result.value_type = ACCEL_IR_I32;
+	scalar_result.producer_kernel = 0;
+	scalar_result.gpu_consumer_mask = (uint32_t)1U << 1;
+	kernel[0].kernel_index = 0;
+	kernel[0].source_line = 1;
+	kernel[0].ir = producer;
+	kernel[1].kernel_index = 1;
+	kernel[1].source_line = 2;
+	kernel[1].ir = consumer;
+
+	/* Initialize the same Vulkan 1.2/SPIR-V 1.5 assembler contract. */
+	compiler = shaderc_compiler_initialize();
+	if (compiler == NULL) {
+		accel_ir_kernel_destroy(consumer);
+		accel_ir_kernel_destroy(producer);
+		return false;
+	}
+	options = shaderc_compile_options_initialize();
+	if (options == NULL) {
+		shaderc_compiler_release(compiler);
+		accel_ir_kernel_destroy(consumer);
+		accel_ir_kernel_destroy(producer);
+		return false;
+	}
+	shaderc_compile_options_set_target_env(
+		options,
+		shaderc_target_env_vulkan,
+		shaderc_env_version_vulkan_1_2);
+	shaderc_compile_options_set_target_spirv(
+		options,
+		shaderc_spirv_version_1_5);
+	shaderc_compile_options_set_optimization_level(
+		options,
+		shaderc_optimization_level_zero);
+
+	/* Assemble the producer and require one real OpAtomicIAdd. */
+	status = accel_vulkan_shader_compile(
+		compiler,
+		options,
+		&program,
+		0,
+		&spirv);
+	success = status == ACCEL_COMPILE_APPLIED;
+	if (success)
+		success = spirv_has_opcode(
+			&spirv,
+			ACCEL_TEST_SPIRV_OP_ATOMIC_IADD);
+	accel_vulkan_shader_cleanup(&spirv);
+
+	/* Assemble the dependent load kernel through the same result binding. */
+	if (success) {
+		status = accel_vulkan_shader_compile(
+			compiler,
+			options,
+			&program,
+			1,
+			&spirv);
+		success = status == ACCEL_COMPILE_APPLIED;
+		accel_vulkan_shader_cleanup(&spirv);
+	}
+
+	shaderc_compile_options_release(options);
+	shaderc_compiler_release(compiler);
+	accel_ir_kernel_destroy(consumer);
+	accel_ir_kernel_destroy(producer);
+
+	return success;
 }
 
 /* Require a failed create call to leave both ownership outputs clear. */

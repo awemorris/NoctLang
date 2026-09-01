@@ -109,7 +109,8 @@ void show_usage(void)
 	wide_printf(N_TR("  -O, -O0..-O3, -O9    ... optimization preset\n"));
 	wide_printf(N_TR("  --simd-info          ... report successfully vectorized loops\n"));
 	wide_printf(N_TR("  --path=DIR1:DIR2     ... append source-module search paths\n"));
-	wide_printf(N_TR("  --gpu[=NAME]         ... use Vulkan acceleration for source execution\n"));
+	wide_printf(N_TR("  --gpu[=SELECTOR]     ... use GPU acceleration for source execution\n"));
+	wide_printf(N_TR("  --gpu-list           ... list suitable GPU device selectors\n"));
 	wide_printf(N_TR("  --gc-nursery-size=N  ... first GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-graduate-size=N ... second GC space size in bytes\n"));
 	wide_printf(N_TR("  --gc-tenure-size=N   ... final GC space size in bytes\n"));

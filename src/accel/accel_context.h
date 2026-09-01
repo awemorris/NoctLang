@@ -22,7 +22,8 @@ struct rt_vm;
 struct accel_live_session {
 	struct accel_live_session *prev;
 	struct accel_live_session *next;
-	void (*orphan_locked)(struct accel_live_session *session);
+	void *(*orphan_locked)(struct accel_live_session *session);
+	void (*destroy_orphan)(void *payload);
 	bool linked;
 };
 
@@ -31,12 +32,18 @@ struct accel_context {
 	struct accel_backend_ops ops;
 	void *backend_state;
 	struct accel_mutex state_mutex;
+	struct accel_condition state_condition;
 	struct accel_registry_entry **registry;
 	uint32_t registry_capacity;
 	uint32_t next_program_id;
+	uint32_t reference_count;
+	uint32_t active_operation_count;
 	struct accel_live_session *live_session_head;
 	struct accel_live_session *live_session_tail;
 	bool attached;
+	bool shutting_down;
+	bool destroying;
+	bool resources_destroyed;
 };
 
 struct accel_registry_commit_guard {
@@ -124,6 +131,42 @@ accel_context_state_unlock(
 bool
 accel_context_is_attached_locked(
 	const struct accel_context *context);
+
+/*
+ * Claims the context until one external operation has finished.
+ */
+bool
+accel_context_begin_operation(
+	struct accel_context *context);
+
+/*
+ * Releases one previously claimed external operation.
+ */
+void
+accel_context_end_operation(
+	struct accel_context *context);
+
+/*
+ * Claims backend cleanup for one still-linked session finalizer.
+ */
+bool
+accel_context_begin_session_cleanup(
+	struct accel_context *context,
+	struct accel_live_session *session);
+
+/*
+ * Retains the context shell for one non-owner wrapper.
+ */
+bool
+accel_context_retain(
+	struct accel_context *context);
+
+/*
+ * Releases one context-shell reference.
+ */
+void
+accel_context_release(
+	struct accel_context *context);
 
 /*
  * Borrows a prepared program while the context state is locked.

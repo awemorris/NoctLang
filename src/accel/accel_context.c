@@ -29,6 +29,7 @@ struct accel_registry_reservation {
 };
 
 static bool accel_context_ops_valid(const struct accel_backend_ops *ops);
+static bool accel_context_reserve_locked(struct accel_context *context, uint32_t count, struct accel_registry_reservation *reservation);
 static bool accel_context_reservation_range(struct accel_context *context, uint32_t count, uint32_t *last_id, uint32_t *required_capacity);
 static bool accel_context_grow_registry_locked(struct accel_context *context, uint32_t required_capacity);
 static void accel_context_free_reservation(struct accel_registry_reservation *reservation);
@@ -64,8 +65,14 @@ accel_context_create(
 	context->ops = *ops;
 	context->backend_state = backend_state;
 	context->next_program_id = 1;
+	context->reference_count = 1;
 
 	if (!accel_mutex_init(&context->state_mutex)) {
+		noct_free(context);
+		return false;
+	}
+	if (!accel_condition_init(&context->state_condition)) {
+		accel_mutex_destroy(&context->state_mutex);
 		noct_free(context);
 		return false;
 	}
@@ -85,9 +92,6 @@ accel_context_reserve_programs(
 	struct accel_registry_reservation **result)
 {
 	struct accel_registry_reservation *reservation;
-	uint32_t required_capacity;
-	uint32_t last_id;
-	uint32_t i;
 	bool success;
 
 	if (result == NULL)
@@ -112,45 +116,16 @@ accel_context_reserve_programs(
 
 	reservation->context = context;
 	reservation->count = count;
-	success = false;
 
+	/* Reserves all IDs and wrappers atomically with respect to shutdown. */
 	accel_mutex_lock(&context->state_mutex);
-	if (!context->attached)
-		goto unlock;
-
-	if (!accel_context_reservation_range(
-		context,
-		count,
-		&last_id,
-		&required_capacity)) {
-		goto unlock;
+	success = false;
+	if (context->attached && !context->shutting_down) {
+		success = accel_context_reserve_locked(
+			context,
+			count,
+			reservation);
 	}
-
-	if (!accel_context_grow_registry_locked(
-		context,
-		required_capacity)) {
-		goto unlock;
-	}
-
-	/* Preallocate every stable entry wrapper before consuming any ID. */
-	for (i = 0; i < count; i++) {
-		reservation->entry[i] = noct_calloc(
-			1,
-			sizeof(*reservation->entry[i]));
-		if (reservation->entry[i] == NULL)
-			goto unlock;
-	}
-
-	/* Assign the reserved IDs only after all publication storage exists. */
-	for (i = 0; i < count; i++) {
-		reservation->entry[i]->program_id =
-			context->next_program_id + i;
-	}
-
-	context->next_program_id = last_id + 1;
-	success = true;
-
-unlock:
 	accel_mutex_unlock(&context->state_mutex);
 
 	if (!success) {
@@ -346,6 +321,181 @@ accel_context_is_attached_locked(
 }
 
 /*
+ * Claims the context until one external operation has finished.
+ *
+ * Destruction closes the claim gate before waiting for every accepted
+ * operation.  A successful caller may therefore borrow context, registry,
+ * and backend state until it releases this claim.
+ */
+bool
+accel_context_begin_operation(
+	struct accel_context *context)
+{
+	bool claimed;
+
+	/* Rejects an absent context before acquiring its state mutex. */
+	if (context == NULL)
+		return false;
+
+	claimed = false;
+	accel_mutex_lock(&context->state_mutex);
+
+	/* Accepts work only while the context is attached and below its limit. */
+	if (context->attached &&
+	    !context->shutting_down &&
+	    context->active_operation_count != UINT32_MAX) {
+		context->active_operation_count++;
+		claimed = true;
+	}
+
+	accel_mutex_unlock(&context->state_mutex);
+
+	return claimed;
+}
+
+/*
+ * Releases one previously claimed external operation.
+ */
+void
+accel_context_end_operation(
+	struct accel_context *context)
+{
+	assert(context != NULL);
+
+	accel_mutex_lock(&context->state_mutex);
+	assert(context->active_operation_count != 0);
+
+	/* Releases the claim and wakes a destructor waiting for the last one. */
+	if (context->active_operation_count == 0) {
+		accel_mutex_unlock(&context->state_mutex);
+		abort();
+	}
+	context->active_operation_count--;
+	if (context->active_operation_count == 0)
+		accel_condition_wake_all(&context->state_condition);
+
+	accel_mutex_unlock(&context->state_mutex);
+}
+
+/*
+ * Claims backend cleanup for one still-linked session finalizer.
+ *
+ * A finalizer arriving before context destruction joins the normal operation
+ * drain.  One arriving after destruction has claimed the live list waits until
+ * that destructor detaches the session payload instead.
+ */
+bool
+accel_context_begin_session_cleanup(
+	struct accel_context *context,
+	struct accel_live_session *session)
+{
+	bool claimed;
+
+	/* Rejects incomplete finalizer state before acquiring its context. */
+	if (context == NULL || session == NULL)
+		return false;
+
+	claimed = false;
+	accel_mutex_lock(&context->state_mutex);
+
+	/* Waits for the destructor to detach a session it already owns. */
+	while (context->destroying && session->linked) {
+		accel_condition_wait(
+			&context->state_condition,
+			&context->state_mutex);
+	}
+
+	/* Joins the drain before unlinking and destroying a live payload. */
+	if (session->linked) {
+		if (context->resources_destroyed ||
+		    context->active_operation_count == UINT32_MAX) {
+			accel_mutex_unlock(&context->state_mutex);
+			abort();
+		}
+		context->active_operation_count++;
+		claimed = true;
+	}
+
+	accel_mutex_unlock(&context->state_mutex);
+
+	return claimed;
+}
+
+/*
+ * Retains the context shell for one non-owner wrapper.
+ */
+bool
+accel_context_retain(
+	struct accel_context *context)
+{
+	bool retained;
+
+	/* Rejects an absent context before acquiring its state mutex. */
+	if (context == NULL)
+		return false;
+
+	retained = false;
+	accel_mutex_lock(&context->state_mutex);
+
+	/* Retains only a live reference counter with available capacity. */
+	if (!context->destroying &&
+	    !context->resources_destroyed &&
+	    context->reference_count != 0 &&
+	    context->reference_count != UINT32_MAX) {
+		context->reference_count++;
+		retained = true;
+	}
+
+	accel_mutex_unlock(&context->state_mutex);
+
+	return retained;
+}
+
+/*
+ * Releases one context-shell reference.
+ *
+ * Backend resources are destroyed by the owner before it releases its
+ * reference.  Binding and session references keep the synchronization shell
+ * alive until no finalizer can still be waiting for its state mutex.
+ */
+void
+accel_context_release(
+	struct accel_context *context)
+{
+	bool destroy_shell;
+
+	assert(context != NULL);
+
+	destroy_shell = false;
+	accel_mutex_lock(&context->state_mutex);
+	assert(context->reference_count != 0);
+
+	/* Releases this reference and claims terminal shell ownership at zero. */
+	if (context->reference_count == 0) {
+		accel_mutex_unlock(&context->state_mutex);
+		abort();
+	}
+	context->reference_count--;
+	if (context->reference_count == 0) {
+		assert(context->resources_destroyed);
+		if (!context->resources_destroyed) {
+			accel_mutex_unlock(&context->state_mutex);
+			abort();
+		}
+		destroy_shell = true;
+	}
+
+	accel_mutex_unlock(&context->state_mutex);
+
+	/* Destroys synchronization only after every possible waiter released it. */
+	if (destroy_shell) {
+		accel_condition_destroy(&context->state_condition);
+		accel_mutex_destroy(&context->state_mutex);
+		noct_free(context);
+	}
+}
+
+/*
  * Borrows a prepared program while the context state is locked.
  */
 const struct accel_prepared_program *
@@ -430,10 +580,12 @@ accel_context_attach(
 
 	accel_mutex_lock(&context->state_mutex);
 	assert(!context->attached);
+	assert(!context->shutting_down);
 	assert(context->vm->accel_optimize_func == NULL);
 	assert(context->vm->accel_optimize_userdata == NULL);
 
 	if (context->attached ||
+	    context->shutting_down ||
 	    context->vm->accel_optimize_func != NULL ||
 	    context->vm->accel_optimize_userdata != NULL) {
 		accel_mutex_unlock(&context->state_mutex);
@@ -471,6 +623,7 @@ accel_context_detach(
 	context->vm->accel_optimize_func = NULL;
 	context->vm->accel_optimize_userdata = NULL;
 	context->attached = false;
+	context->shutting_down = true;
 	accel_mutex_unlock(&context->state_mutex);
 }
 
@@ -485,6 +638,7 @@ accel_context_link_session_locked(
 	assert(context != NULL);
 	assert(session != NULL);
 	assert(session->orphan_locked != NULL);
+	assert(session->destroy_orphan != NULL);
 	assert(!session->linked);
 	assert(session->prev == NULL);
 	assert(session->next == NULL);
@@ -492,6 +646,7 @@ accel_context_link_session_locked(
 	if (context == NULL ||
 	    session == NULL ||
 	    session->orphan_locked == NULL ||
+	    session->destroy_orphan == NULL ||
 	    session->linked ||
 	    session->prev != NULL ||
 	    session->next != NULL) {
@@ -522,7 +677,9 @@ accel_context_unlink_session_locked(
 	assert(session->prev != NULL || context->live_session_head == session);
 	assert(session->next != NULL || context->live_session_tail == session);
 
-	if (context == NULL || session == NULL || !session->linked)
+	if (context == NULL ||
+	    session == NULL ||
+	    !session->linked)
 		abort();
 	if (session->prev == NULL && context->live_session_head != session)
 		abort();
@@ -553,22 +710,46 @@ accel_context_destroy(
 {
 	struct accel_registry_entry *entry;
 	struct accel_live_session *session;
+	void (*destroy_orphan)(void *payload);
+	void *orphan;
 	uint32_t i;
 
+	/* Accepts destruction of an optional context. */
 	if (context == NULL)
 		return;
 
-	assert(!context->attached);
-	if (context->attached)
-		abort();
-
+	/* Closes the claim gate and drains every accepted backend operation. */
 	accel_mutex_lock(&context->state_mutex);
+	assert(!context->attached);
+	if (context->attached) {
+		accel_mutex_unlock(&context->state_mutex);
+		abort();
+	}
+	if (context->destroying || context->resources_destroyed) {
+		accel_mutex_unlock(&context->state_mutex);
+		abort();
+	}
+	context->destroying = true;
+	context->shutting_down = true;
+	while (context->active_operation_count != 0) {
+		accel_condition_wait(
+			&context->state_condition,
+			&context->state_mutex);
+	}
 
-	/* Orphan every unfinished session while backend state is still live. */
+	/* Detaches each payload before releasing it outside the state mutex. */
 	while (context->live_session_head != NULL) {
 		session = context->live_session_head;
+		destroy_orphan = session->destroy_orphan;
 		accel_context_unlink_session_locked(context, session);
-		session->orphan_locked(session);
+		orphan = session->orphan_locked(session);
+		accel_condition_wake_all(&context->state_condition);
+		accel_mutex_unlock(&context->state_mutex);
+
+		if (orphan != NULL)
+			destroy_orphan(orphan);
+
+		accel_mutex_lock(&context->state_mutex);
 	}
 
 	accel_mutex_unlock(&context->state_mutex);
@@ -586,9 +767,17 @@ accel_context_destroy(
 	}
 
 	noct_free(context->registry);
-	accel_mutex_destroy(&context->state_mutex);
 	context->ops.destroy_backend_state(context->backend_state);
-	noct_free(context);
+
+	/* Publishes backend teardown before releasing the owner's shell reference. */
+	accel_mutex_lock(&context->state_mutex);
+	context->registry = NULL;
+	context->registry_capacity = 0;
+	context->backend_state = NULL;
+	context->resources_destroyed = true;
+	accel_mutex_unlock(&context->state_mutex);
+
+	accel_context_release(context);
 }
 
 /* Validate the complete backend operation table. */
@@ -606,6 +795,48 @@ accel_context_ops_valid(
 		return false;
 	if (ops->destroy_backend_state == NULL)
 		return false;
+
+	return true;
+}
+
+/* Allocate publication wrappers and consume one contiguous ID range. */
+static bool
+accel_context_reserve_locked(
+	struct accel_context *context,
+	uint32_t count,
+	struct accel_registry_reservation *reservation)
+{
+	uint32_t required_capacity;
+	uint32_t last_id;
+	uint32_t i;
+
+	/* Computes and allocates every fallible part before consuming an ID. */
+	if (!accel_context_reservation_range(
+		context,
+		count,
+		&last_id,
+		&required_capacity)) {
+		return false;
+	}
+	if (!accel_context_grow_registry_locked(
+		context,
+		required_capacity)) {
+		return false;
+	}
+	for (i = 0; i < count; i++) {
+		reservation->entry[i] = noct_calloc(
+			1,
+			sizeof(*reservation->entry[i]));
+		if (reservation->entry[i] == NULL)
+			return false;
+	}
+
+	/* Assigns the stable IDs only after every wrapper is available. */
+	for (i = 0; i < count; i++) {
+		reservation->entry[i]->program_id =
+			context->next_program_id + i;
+	}
+	context->next_program_id = last_id + 1;
 
 	return true;
 }

@@ -13,6 +13,7 @@
 #define NOCT_ACCEL_VULKAN_H
 
 #include "accel_backend.h"
+#include "accel_device.h"
 
 #include <vulkan/vulkan.h>
 
@@ -66,6 +67,38 @@ struct accel_vulkan_api {
 	PFN_vkQueueSubmit queue_submit;
 	PFN_vkWaitForFences wait_for_fences;
 };
+
+/*
+ * Enumerates suitable Vulkan compute devices without opening logical devices.
+ */
+bool
+accel_vulkan_enumerate(
+	struct accel_device_list *list,
+	char *error,
+	size_t error_size);
+
+/*
+ * Enumerates suitable Vulkan devices through an injected function table.
+ */
+bool
+accel_vulkan_enumerate_with_api(
+	struct accel_device_list *list,
+	const struct accel_vulkan_api *api,
+	char *error,
+	size_t error_size);
+
+/*
+ * Creates the production Vulkan backend for one selected device record.
+ *
+ * The backend re-resolves the deep-owned name because enumeration-session
+ * identity values are not retained after device listing.
+ */
+bool
+accel_vulkan_create_selected(
+	struct rt_env *env,
+	const struct accel_device *device,
+	const struct accel_backend_ops **ops,
+	void **backend_state);
 
 /*
  * Creates the production Vulkan backend with the process loader table.

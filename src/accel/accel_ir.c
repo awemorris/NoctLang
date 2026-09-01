@@ -562,6 +562,30 @@ accel_ir_validate_input(
 		}
 
 		return accel_ir_unused_operand(instruction, 2);
+	case ACCEL_IR_ATOMIC_ADD_I32:
+		if (!accel_ir_result(instruction, defined_value_count, false))
+			return false;
+		if (instruction->reference == ACCEL_IR_REFERENCE_NONE)
+			return false;
+		if (!accel_ir_operand(
+			instruction,
+			0,
+			defined_value_count,
+			value_type,
+			ACCEL_IR_I32)) {
+			return false;
+		}
+
+		return accel_ir_unused_operand(instruction, 1);
+	case ACCEL_IR_LOAD_RESULT_I32:
+		if (!accel_ir_result(instruction, defined_value_count, true))
+			return false;
+		if (instruction->result_type != ACCEL_IR_I32)
+			return false;
+		if (instruction->reference == ACCEL_IR_REFERENCE_NONE)
+			return false;
+
+		return accel_ir_unused_operand(instruction, 0);
 	case ACCEL_IR_ADD:
 	case ACCEL_IR_SUB:
 	case ACCEL_IR_MUL:

@@ -15,6 +15,7 @@
 #include "accel_ir.h"
 
 #define ACCEL_PROGRAM_INDEX_NONE	((uint32_t)-1)
+#define ACCEL_ARGS_SLOT_NONE		((uint32_t)-1)
 
 enum accel_size_opcode {
 	ACCEL_SIZE_CONSTANT,
@@ -47,6 +48,17 @@ struct accel_scalar_binding {
 	int value_type;
 };
 
+struct accel_scalar_result {
+	char *name;
+	uint32_t result_entry_id;
+	uint32_t args_slot;
+	int value_type;
+	uint32_t identity_bits;
+	uint32_t producer_kernel;
+	uint32_t gpu_consumer_mask;
+	bool cpu_publication;
+};
+
 struct accel_buffer_effect {
 	bool read;
 	bool write;
@@ -65,6 +77,7 @@ struct accel_buffer_binding {
 	uint32_t required_first_expression;
 	uint32_t required_end_expression;
 	uint32_t required_byte_end_expression;
+	uint32_t extent_expression;
 	uint32_t kernel_required_first_expression[ACCEL_MAX_KERNELS];
 	uint32_t kernel_required_end_expression[ACCEL_MAX_KERNELS];
 	bool host_visible;
@@ -95,6 +108,7 @@ struct accel_program {
 	char *function_name;
 	int source_line;
 	uint32_t source_function_index;
+	uint32_t parameter_count;
 	uint32_t region_index;
 	int first_block_id;
 	int last_block_id;
@@ -107,6 +121,9 @@ struct accel_program {
 	uint32_t buffer_count;
 	uint32_t buffer_capacity;
 	struct accel_buffer_binding *buffer;
+	uint32_t scalar_result_count;
+	uint32_t scalar_result_capacity;
+	struct accel_scalar_result *scalar_result;
 	uint32_t kernel_count;
 	uint32_t kernel_capacity;
 	struct accel_kernel_plan *kernel;
@@ -130,6 +147,7 @@ accel_program_create(
 	const char *function_name,
 	int source_line,
 	uint32_t source_function_index,
+	uint32_t parameter_count,
 	uint32_t region_index,
 	int first_block_id,
 	int last_block_id);
@@ -156,6 +174,15 @@ accel_program_add_scalar(
 	struct accel_program *program,
 	const struct accel_scalar_binding *binding,
 	uint32_t *binding_index);
+
+/*
+ * Appends a deep-copied scalar result in deterministic entry order.
+ */
+bool
+accel_program_add_scalar_result(
+	struct accel_program *program,
+	const struct accel_scalar_result *result,
+	uint32_t *result_entry_id);
 
 /*
  * Appends a checked size-expression node.

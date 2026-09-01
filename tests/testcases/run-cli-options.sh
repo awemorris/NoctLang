@@ -95,6 +95,13 @@ printf 'func main() { }\n' > "$work/main.noct"
 "$NOCT" --compile "$work/main.noct"
 "$NOCT" --compile --app "$work/main.nap" "$work/main.noct"
 
+if "$NOCT" --gpu-list > "$work/gpu-list.out" 2>&1; then
+    echo 'accelerator-disabled build accepted --gpu-list' >&2
+    exit 1
+fi
+grep -q 'GPU acceleration is not available in this build.' \
+    "$work/gpu-list.out"
+
 if "$NOCT" --gpu "$work/main.noct" > "$work/gpu.out" 2>&1; then
     echo 'accelerator-disabled build accepted --gpu' >&2
     exit 1
@@ -146,6 +153,14 @@ if "$NOCT" --compile --gpu "$work/main.noct" \
 fi
 grep -q 'GPU acceleration is available only when running Noct source.' \
     "$work/gpu-compile.out"
+
+if "$NOCT" --compile --gpu-list "$work/main.noct" \
+        > "$work/gpu-list-compile.out" 2>&1; then
+    echo '--compile accepted --gpu-list' >&2
+    exit 1
+fi
+grep -q 'GPU acceleration is available only when running Noct source.' \
+    "$work/gpu-list-compile.out"
 
 if "$NOCT" --compile --app --gpu "$work/rejected.nap" \
         "$work/main.noct" > "$work/gpu-app.out" 2>&1; then

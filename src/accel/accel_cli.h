@@ -14,6 +14,22 @@
 
 #include "noct.h"
 
+#include <stddef.h>
+
+/*
+ * Enumerates suitable devices without creating a VM accelerator.
+ *
+ * The visitor borrows each canonical selector only for the duration of the
+ * call.  A false visitor result stops enumeration and reports failure.
+ */
+bool
+accel_list_devices(
+	bool (*visitor)(const char *selector, void *userdata),
+	void *userdata,
+	char *error,
+	size_t error_size,
+	size_t *device_count);
+
 /*
  * Initializes the selected accelerator for one VM.
  *

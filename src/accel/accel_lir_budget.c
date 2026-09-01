@@ -46,8 +46,15 @@ static bool accel_budget_visit_unary(struct accel_budget_state *state, struct hi
 static bool accel_budget_visit_binary(struct accel_budget_state *state, struct hir_block *block, const struct hir_expr *left, const struct hir_expr *right);
 static bool accel_budget_visit_call(struct accel_budget_state *state, struct hir_block *block, const struct hir_expr *function, uint32_t arg_count, struct hir_expr *const argument[]);
 static bool accel_budget_visit_thiscall(struct accel_budget_state *state, struct hir_block *block, const struct hir_expr *object, uint32_t arg_count, struct hir_expr *const argument[]);
-static bool accel_budget_visit_virtual_region(struct accel_budget_state *state, const struct accel_program *program);
+static bool accel_budget_visit_virtual_region(struct accel_budget_state *state, const struct accel_program *program, struct hir_block *first, struct hir_block *last);
 static bool accel_budget_find_region_last(struct accel_budget_state *state, const struct accel_program *program, struct hir_block *first, struct hir_block **last);
+static bool accel_budget_validate_initializer(struct accel_budget_state *state, const struct accel_program *program, struct hir_block *block, uint32_t before_kernel);
+static bool accel_budget_validate_device_initializer(struct accel_budget_state *state, const struct accel_program *program, struct hir_block *block);
+static bool accel_budget_args_count(struct accel_budget_state *state, const struct accel_program *program, uint32_t *count);
+static bool accel_budget_count_statement(struct accel_budget_state *state);
+static struct hir_local *accel_budget_find_local(const struct accel_budget_state *state, const char *symbol);
+static const char *accel_budget_symbol(const struct hir_expr *expression);
+static bool accel_budget_zero(const struct hir_expr *expression);
 static bool accel_budget_lhs_is_local(const struct accel_budget_state *state, const struct hir_expr *lhs);
 static bool accel_budget_typed_shift(const struct accel_budget_state *state, struct hir_block *block, const struct hir_expr *expression);
 static int accel_budget_expression_type(const struct accel_budget_state *state, struct hir_block *block, const struct hir_expr *expression);
@@ -250,8 +257,13 @@ accel_budget_visit_top_level(
 				&last)) {
 				return false;
 			}
-			if (!accel_budget_visit_virtual_region(state, program))
+			if (!accel_budget_visit_virtual_region(
+				state,
+				program,
+				block,
+				last)) {
 				return false;
+			}
 
 			block = last->succ;
 			region_index++;
@@ -916,24 +928,34 @@ accel_budget_visit_thiscall(
 	return state->status == ACCEL_COMPILE_APPLIED;
 }
 
-/* Account for the detached args/begin/dispatch/finish HIR shape. */
+/* Account for the exact detached region HIR shape. */
 static bool
 accel_budget_visit_virtual_region(
 	struct accel_budget_state *state,
-	const struct accel_program *program)
+	const struct accel_program *program,
+	struct hir_block *first,
+	struct hir_block *last)
 {
+	struct hir_block *block;
+	struct hir_stmt *initializer;
+	struct hir_local *local;
+	uint32_t args_count;
+	uint32_t kernel_index;
+	uint32_t slot;
 	uint32_t i;
 
 	if (program->kernel_count == 0)
 		return accel_budget_error(state, N_TR("Empty accelerator region program."));
 
-	if (state->func_block->val.func.param_count > HIR_PARAM_SIZE) {
-		return accel_budget_error(
-			state,
-			N_TR("Invalid accelerator parameter count."));
-	}
+	if (state->block_count++ >= ACCEL_BUDGET_MAX_BLOCKS)
+		return accel_budget_decline(state);
 
-	if (state->func_block->val.func.param_count != 0) {
+	/* Account for the generated args assignment and its array builder. */
+	if (!accel_budget_count_statement(state))
+		return false;
+	if (!accel_budget_args_count(state, program, &args_count))
+		return false;
+	if (args_count != 0) {
 		if (!accel_budget_push(state))
 			return false;
 		if (!accel_budget_push(state))
@@ -946,6 +968,8 @@ accel_budget_visit_virtual_region(
 	}
 
 	/* The begin assignment roots receiver, method, ID, and args. */
+	if (!accel_budget_count_statement(state))
+		return false;
 	for (i = 0; i < 4; i++) {
 		if (!accel_budget_push(state))
 			return false;
@@ -955,22 +979,58 @@ accel_budget_visit_virtual_region(
 	for (i = 0; i < 4; i++)
 		accel_budget_pop(state);
 
-	/* Each expression-statement dispatch also owns its destination slot. */
-	for (i = 0; i < program->kernel_count; i++) {
-		uint32_t slot;
+	kernel_index = 0;
+	block = first;
 
-		/* Root the destination, receiver, method, and two arguments. */
-		for (slot = 0; slot < 5; slot++) {
-			if (!accel_budget_push(state))
+	/* Interleave cloned declarations with their source-ordered dispatches. */
+	while (block != NULL) {
+		if (block->type == HIR_BLOCK_BASIC &&
+		    block->val.basic.stmt_list != NULL) {
+			initializer = block->val.basic.stmt_list;
+			if (kernel_index != 0) {
+				if (!accel_budget_visit_statement(
+					state,
+					block,
+					initializer)) {
+					return false;
+				}
+			}
+		} else if (block->type == HIR_BLOCK_FOR) {
+			if (kernel_index >= program->kernel_count)
+				return accel_budget_error(
+					state,
+					N_TR("Accelerator plan does not match live HIR."));
+
+			if (!accel_budget_count_statement(state))
 				return false;
+
+			/* Root destination, receiver, method, and two arguments. */
+			for (slot = 0; slot < 5; slot++) {
+				if (!accel_budget_push(state))
+					return false;
+			}
+
+			/* Release every dispatch-call scratch slot. */
+			for (slot = 0; slot < 5; slot++)
+				accel_budget_pop(state);
+
+			kernel_index++;
 		}
 
-		/* Release every dispatch-call scratch slot. */
-		for (slot = 0; slot < 5; slot++)
-			accel_budget_pop(state);
+		if (block == last)
+			break;
+		block = block->succ;
+	}
+
+	if (block != last || kernel_index != program->kernel_count) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
 	}
 
 	/* The finish expression statement has the same two-argument shape. */
+	if (!accel_budget_count_statement(state))
+		return false;
 	for (i = 0; i < 5; i++) {
 		if (!accel_budget_push(state))
 			return false;
@@ -979,6 +1039,41 @@ accel_budget_visit_virtual_region(
 	/* Release every finish-call scratch slot. */
 	for (i = 0; i < 5; i++)
 		accel_budget_pop(state);
+
+	/* Account for each explicit result publication after finish. */
+	for (i = 0; i < program->scalar_result_count; i++) {
+		if (!program->scalar_result[i].cpu_publication)
+			continue;
+		if (program->scalar_result[i].name == NULL) {
+			return accel_budget_error(
+				state,
+				N_TR("Invalid accelerator scalar result."));
+		}
+
+		local = accel_budget_find_local(
+			state,
+			program->scalar_result[i].name);
+		if (local == NULL) {
+			return accel_budget_error(
+				state,
+				N_TR("Accelerator scalar result has no local."));
+		}
+		if (program->scalar_result[i].args_slot >= HIR_PARAM_SIZE) {
+			return accel_budget_error(
+				state,
+				N_TR("Invalid accelerator scalar-result slot."));
+		}
+		if (!accel_budget_count_statement(state))
+			return false;
+
+		/* The args subscript retains its object and index operands. */
+		if (!accel_budget_push(state))
+			return false;
+		if (!accel_budget_push(state))
+			return false;
+		accel_budget_pop(state);
+		accel_budget_pop(state);
+	}
 
 	return state->status == ACCEL_COMPILE_APPLIED;
 }
@@ -993,9 +1088,12 @@ accel_budget_find_region_last(
 {
 	struct hir_block *block;
 	uint32_t kernel_index;
+	uint32_t initializer_mask;
 	uint32_t visited;
+	uint32_t i;
 
-	if (program->kernel_count == 0) {
+	if (program->kernel_count == 0 ||
+	    program->kernel_count > ACCEL_MAX_KERNELS) {
 		return accel_budget_error(
 			state,
 			N_TR("Empty accelerator region program."));
@@ -1004,6 +1102,7 @@ accel_budget_find_region_last(
 	*last = NULL;
 	block = first;
 	kernel_index = 0;
+	initializer_mask = 0;
 	visited = 0;
 
 	/* Match every source-ordered kernel until the inclusive last block. */
@@ -1031,9 +1130,21 @@ accel_budget_find_region_last(
 			kernel_index++;
 		} else if (block->type == HIR_BLOCK_BASIC) {
 			if (block->val.basic.stmt_list != NULL) {
-				return accel_budget_error(
+				if (kernel_index >= ACCEL_MAX_KERNELS ||
+				    (initializer_mask &
+				     ((uint32_t)1U << kernel_index)) != 0) {
+					return accel_budget_error(
+						state,
+						N_TR("Accelerator plan does not match live HIR."));
+				}
+				if (!accel_budget_validate_initializer(
 					state,
-					N_TR("Accelerator plan does not match live HIR."));
+					program,
+					block,
+					kernel_index)) {
+					return false;
+				}
+				initializer_mask |= (uint32_t)1U << kernel_index;
 			}
 		} else {
 			return accel_budget_error(
@@ -1053,6 +1164,350 @@ accel_budget_find_region_last(
 			state,
 			N_TR("Accelerator plan does not match live HIR."));
 	}
+
+	/* Require one declaration scaffold for every nonleading producer. */
+	for (i = 0; i < program->scalar_result_count; i++) {
+		if (program->scalar_result[i].producer_kernel == 0)
+			continue;
+		if (program->scalar_result[i].producer_kernel >=
+		    ACCEL_MAX_KERNELS) {
+			return accel_budget_error(
+				state,
+				N_TR("Accelerator plan does not match live HIR."));
+		}
+		if ((initializer_mask &
+		     ((uint32_t)1U <<
+		      program->scalar_result[i].producer_kernel)) == 0) {
+			return accel_budget_error(
+				state,
+				N_TR("Accelerator plan does not match live HIR."));
+		}
+	}
+
+	return true;
+}
+
+/* Validate one sole zero declaration before its DOSUM producer kernel. */
+static bool
+accel_budget_validate_initializer(
+	struct accel_budget_state *state,
+	const struct accel_program *program,
+	struct hir_block *block,
+	uint32_t before_kernel)
+{
+	const struct accel_scalar_result *result;
+	struct hir_local *local;
+	struct hir_stmt *statement;
+	const char *symbol;
+	uint32_t i;
+
+	/* Recognize the removable constructor before the first device producer. */
+	if (before_kernel == 0) {
+		return accel_budget_validate_device_initializer(
+			state,
+			program,
+			block);
+	}
+	if (before_kernel >= program->kernel_count) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	statement = block->val.basic.stmt_list;
+	if (statement == NULL || statement->next != NULL) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	result = NULL;
+
+	/* Match the upcoming producer to exactly one scalar result. */
+	for (i = 0; i < program->scalar_result_count; i++) {
+		if (program->scalar_result[i].producer_kernel != before_kernel)
+			continue;
+		if (result != NULL) {
+			return accel_budget_error(
+				state,
+				N_TR("Accelerator plan does not match live HIR."));
+		}
+		result = &program->scalar_result[i];
+	}
+
+	if (result == NULL) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+	if (result->name == NULL) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	symbol = accel_budget_symbol(statement->lhs);
+	if (symbol == NULL || strcmp(symbol, result->name) != 0) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+	if (!accel_budget_zero(statement->rhs)) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	local = accel_budget_find_local(state, result->name);
+	if (local == NULL ||
+	    local->declaration_kind != HIR_LOCAL_DECL_VAR ||
+	    local->declaration_stmt != statement ||
+	    local->initializer != statement->rhs) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	return true;
+}
+
+/* Validate one sole device-local constructor omitted from virtual HIR. */
+static bool
+accel_budget_validate_device_initializer(
+	struct accel_budget_state *state,
+	const struct accel_program *program,
+	struct hir_block *block)
+{
+	const struct accel_buffer_binding *buffer;
+	struct hir_local *local;
+	struct hir_stmt *statement;
+	const struct hir_expr *rhs;
+	const char *object_name;
+	const char *function_name;
+	const char *symbol;
+	uint32_t i;
+
+	statement = block->val.basic.stmt_list;
+	if (statement == NULL || statement->next != NULL) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+	symbol = accel_budget_symbol(statement->lhs);
+	if (symbol == NULL) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	buffer = NULL;
+
+	/* Match the declaration to exactly one device-only descriptor. */
+	for (i = 0; i < program->buffer_count; i++) {
+		if (program->buffer[i].origin != ACCEL_BUFFER_LOCAL_DEVICE)
+			continue;
+		if (strcmp(program->buffer[i].name, symbol) != 0)
+			continue;
+		if (buffer != NULL) {
+			return accel_budget_error(
+				state,
+				N_TR("Accelerator plan does not match live HIR."));
+		}
+		buffer = &program->buffer[i];
+	}
+	if (buffer == NULL) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	/* Revalidate the exact direct typed Packed constructor. */
+	rhs = statement->rhs;
+	if (rhs == NULL ||
+	    rhs->type != HIR_EXPR_THISCALL ||
+	    rhs->val.thiscall.arg_count != 1 ||
+	    rhs->val.thiscall.func == NULL) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+	object_name = accel_budget_symbol(rhs->val.thiscall.obj);
+	if (object_name == NULL || strcmp(object_name, "Packed") != 0) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+	function_name = NULL;
+	if (buffer->element_kind == NOCT_PACKED_INT32)
+		function_name = "int32";
+	else if (buffer->element_kind == NOCT_PACKED_UINT32)
+		function_name = "uint32";
+	else if (buffer->element_kind == NOCT_PACKED_FLOAT32)
+		function_name = "float32";
+	if (function_name == NULL ||
+	    strcmp(rhs->val.thiscall.func, function_name) != 0) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	/* Match the live local metadata without counting the removed statement. */
+	local = accel_budget_find_local(state, symbol);
+	if (local == NULL ||
+	    local->declaration_stmt != statement ||
+	    local->initializer != rhs ||
+	    local->declared_packed_type != buffer->element_kind) {
+		return accel_budget_error(
+			state,
+			N_TR("Accelerator plan does not match live HIR."));
+	}
+
+	/* Reports an exact constructor that contributes no virtual LIR scratch. */
+	return true;
+}
+
+/* Compute and validate the exact dense runtime args-array length. */
+static bool
+accel_budget_args_count(
+	struct accel_budget_state *state,
+	const struct accel_program *program,
+	uint32_t *count)
+{
+	bool occupied[HIR_PARAM_SIZE];
+	uint32_t param_count;
+	uint32_t slot;
+	uint32_t i;
+
+	memset(occupied, 0, sizeof(occupied));
+	param_count = state->func_block->val.func.param_count;
+	if (param_count > HIR_PARAM_SIZE) {
+		return accel_budget_error(
+			state,
+			N_TR("Invalid accelerator parameter count."));
+	}
+	if (program->parameter_count != param_count) {
+		return accel_budget_error(
+			state,
+			N_TR("Invalid accelerator parameter count."));
+	}
+
+	/* Reserve every ordinary function parameter in declaration order. */
+	for (i = 0; i < param_count; i++)
+		occupied[i] = true;
+
+	*count = param_count;
+
+	/* Append every CPU-backed local buffer at its planned argument slot. */
+	for (i = 0; i < program->buffer_count; i++) {
+		if (program->buffer[i].origin != ACCEL_BUFFER_LOCAL_HOST)
+			continue;
+
+		slot = program->buffer[i].args_slot;
+		if (slot >= HIR_PARAM_SIZE || occupied[slot]) {
+			return accel_budget_error(
+				state,
+				N_TR("Invalid accelerator buffer slot."));
+		}
+		occupied[slot] = true;
+		if (slot >= *count)
+			*count = slot + 1;
+	}
+
+	/* Reserve every scalar-result output after parameters and buffers. */
+	for (i = 0; i < program->scalar_result_count; i++) {
+		slot = program->scalar_result[i].args_slot;
+		if (slot >= HIR_PARAM_SIZE || occupied[slot]) {
+			return accel_budget_error(
+				state,
+				N_TR("Invalid accelerator scalar-result slot."));
+		}
+		occupied[slot] = true;
+		if (slot >= *count)
+			*count = slot + 1;
+	}
+
+	/* Reject a sparse argument namespace that rewrite construction cannot fill. */
+	for (i = 0; i < *count; i++) {
+		if (!occupied[i]) {
+			return accel_budget_error(
+				state,
+				N_TR("Invalid accelerator argument slots."));
+		}
+	}
+
+	return true;
+}
+
+/* Count one statement in the final virtual basic block. */
+static bool
+accel_budget_count_statement(
+	struct accel_budget_state *state)
+{
+	if (state->statement_count++ >= ACCEL_BUDGET_MAX_STATEMENTS)
+		return accel_budget_decline(state);
+
+	return true;
+}
+
+/* Find one live function local by source symbol. */
+static struct hir_local *
+accel_budget_find_local(
+	const struct accel_budget_state *state,
+	const char *symbol)
+{
+	struct hir_local *local;
+
+	if (symbol == NULL)
+		return NULL;
+
+	local = state->func_block->val.func.local;
+
+	/* Search every current local in declaration order. */
+	while (local != NULL) {
+		if (strcmp(local->symbol, symbol) == 0)
+			return local;
+		local = local->next;
+	}
+
+	return NULL;
+}
+
+/* Extract one optionally parenthesized local symbol. */
+static const char *
+accel_budget_symbol(
+	const struct hir_expr *expression)
+{
+	/* Remove redundant source parentheses. */
+	while (expression != NULL && expression->type == HIR_EXPR_PAR)
+		expression = expression->val.unary.expr;
+
+	if (expression == NULL || expression->type != HIR_EXPR_TERM)
+		return NULL;
+	if (expression->val.term.term == NULL ||
+	    expression->val.term.term->type != HIR_TERM_SYMBOL) {
+		return NULL;
+	}
+
+	return expression->val.term.term->val.symbol;
+}
+
+/* Recognize one optionally parenthesized integer zero identity. */
+static bool
+accel_budget_zero(
+	const struct hir_expr *expression)
+{
+	/* Remove redundant source parentheses. */
+	while (expression != NULL && expression->type == HIR_EXPR_PAR)
+		expression = expression->val.unary.expr;
+
+	if (expression == NULL || expression->type != HIR_EXPR_TERM)
+		return false;
+	if (expression->val.term.term == NULL ||
+	    expression->val.term.term->type != HIR_TERM_INT) {
+		return false;
+	}
+	if (expression->val.term.term->val.i != 0)
+		return false;
 
 	return true;
 }

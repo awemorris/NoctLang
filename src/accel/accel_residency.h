@@ -22,6 +22,23 @@ enum accel_residency_class {
 	ACCEL_RESIDENCY_UNSUPPORTED
 };
 
+struct accel_device_local_facts {
+	bool exact_constructor;
+	bool declaration_adjacent;
+	bool unique_region;
+	bool immutable_extent;
+	bool cpu_read;
+	bool cpu_write;
+	bool returned;
+	bool escaped;
+	bool unknown_call;
+	bool reassigned;
+	bool first_kernel_reads;
+	bool first_kernel_writes;
+	bool first_kernel_full_overwrite;
+	bool first_kernel_exact_extent;
+};
+
 /*
  * Classifies one GPU-visible logical buffer without changing its HIR.
  */
@@ -29,5 +46,13 @@ int
 accel_residency_classify_buffer(
 	const struct hir_memory_object *object,
 	bool reassigned);
+
+/*
+ * Classifies a proven single-session local for device-only residency.
+ */
+int
+accel_residency_classify_device_local(
+	const struct hir_memory_object *object,
+	const struct accel_device_local_facts *facts);
 
 #endif
