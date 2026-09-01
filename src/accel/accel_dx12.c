@@ -35,6 +35,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Missing macro */
+#ifndef D3D12_PS_CS_UAV_REGISTER_COUNT
+#define D3D12_PS_CS_UAV_REGISTER_COUNT 8U
+#endif
+
 #define ACCEL_DX12_WORKGROUP_SIZE	64U
 #define ACCEL_DX12_MAX_GROUPS		65535U
 #define ACCEL_DX12_BACKEND_PRIORITY	400U
