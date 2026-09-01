@@ -788,11 +788,6 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build-pc98",
             "toolchainFile": "${sourceDir}/cmake/toolchains/openwatcom-dos4gw.cmake",
-            "environment": {
-                "WATCOM": "$penv{HOME}/opt/openwatcom-1.9",
-                "INCLUDE": "$penv{HOME}/opt/openwatcom-1.9/h",
-                "PATH": "$penv{HOME}/opt/openwatcom-1.9/binl:$penv{PATH}"
-            },
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "NOCT_TARGET_PC98DOS": "ON",
