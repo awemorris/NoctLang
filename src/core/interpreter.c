@@ -10,8 +10,8 @@
  */
 
 #include <noct/noct.h>
+#include <noct/executor.h>
 #include "runtime.h"
-#include "interpreter.h"
 #include "bytecode.h"
 #include "objectmodel.h"
 

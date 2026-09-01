@@ -10,7 +10,6 @@
  */
 
 #include "runtime.h"
-#include "intrinsics.h"
 #include "objectmodel.h"
 
 #include <stdio.h>

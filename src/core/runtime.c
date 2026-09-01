@@ -14,8 +14,6 @@
 #include "ast.h"
 #include "hir.h"
 #include "lir.h"
-#include "intrinsics.h"
-#include "interpreter.h"
 #include "gc.h"
 #include "objectmodel.h"
 
