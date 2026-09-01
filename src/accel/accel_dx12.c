@@ -1250,8 +1250,14 @@ accel_dx12_dispatch_execution(
 	ID3D12GraphicsCommandList_SetPipelineState(
 		current->command_list,
 		kernel->pipeline);
+#if defined(__MINGW32__)
 	table = ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(
 		current->descriptor_heap);
+#else
+	ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(
+		current->descriptor_heap,
+		&table);
+#endif
 	ID3D12GraphicsCommandList_SetComputeRootDescriptorTable(
 		current->command_list,
 		0,
@@ -2302,8 +2308,14 @@ accel_dx12_write_descriptor(
 	increment = ID3D12Device_GetDescriptorHandleIncrementSize(
 		execution->backend->device,
 		D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+#if defined(__MINGW32__)
 	handle = ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(
 		execution->descriptor_heap);
+#else
+	ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(
+		execution->descriptor_heap,
+		&handle);
+#endif
 	handle.ptr += (SIZE_T)index * increment;
 
 	/* Describe a tightly packed array of raw 32-bit words. */
