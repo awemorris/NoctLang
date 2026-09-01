@@ -1,7 +1,7 @@
 /* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
 
 /*
- * zedBSD
+ * Noct Programming Language
  * Copyright (C) 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib

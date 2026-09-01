@@ -440,8 +440,8 @@ The copyright header then begins with:
 
 ```
 /*
- * zedBSD
- * Copyright (C) 2026 Awe Morris
+ * Noct Programming Language
+ * Copyright (C) 2025, 2026 Awe Morris
  *
  * SPDX-License-Identifier: Zlib
  */
