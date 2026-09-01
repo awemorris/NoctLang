@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(Noct VERSION 1.0 LANGUAGES C)
 
+# Let modern Apple linkers resolve archive dependencies without duplicates.
+if(APPLE AND POLICY CMP0156)
+  cmake_policy(SET CMP0156 NEW)
+endif()
+if(APPLE AND POLICY CMP0179)
+  cmake_policy(SET CMP0179 NEW)
+endif()
+
 #
 # Build Configuration
 #
