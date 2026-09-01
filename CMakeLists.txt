@@ -528,6 +528,12 @@ if(NOCT_ENABLE_MULTITHREAD)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_USE_MULTITHREAD)
 endif()
 
+# Require Windows Vista or later for SRW locks, condition variables, and
+# strict UTF-16 to UTF-8 conversion flags used by the Windows backends.
+if(WIN32)
+  list(APPEND NOCT_PRIVATE_CPPFLAGS _WIN32_WINNT=0x0600)
+endif()
+
 # Optimizer.
 if(NOCT_ENABLE_OPTIMIZER)
   list(APPEND NOCT_PRIVATE_CPPFLAGS NOCT_USE_OPTIMIZER)
