@@ -73,14 +73,13 @@
 
 /* Forward declaration. */
 static bool jit_debug_enabled(void);
-static void jit_debug_memory(const char *operation, size_t size,
-			     bool success, unsigned long error);
-#if defined(NOCT_USE_OPTIMIZER)
-static uint32_t jit_apply_simd_max(uint32_t detected);
-#endif
+static void jit_debug_memory(const char *operation, size_t size,bool success, unsigned long error);
 static size_t jit_page_size(void);
 static size_t jit_align_up(size_t value, size_t alignment);
 static bool jit_slab_allocate(struct rt_env *env, size_t requested_size, struct rt_jit_slab **result);
+#if defined(NOCT_USE_OPTIMIZER)
+static uint32_t jit_apply_simd_max(uint32_t detected);
+#endif
 
 /* Architecture-neutral JIT helpers. */
 size_t
@@ -764,14 +763,14 @@ rt_jit_context_init_tables(struct rt_jit_context *ctx)
 	size_t branch_capacity;
 
 	if (ctx->func->bytecode_size == UINT32_MAX) {
-		rt_error(ctx->env, "JIT bytecode is too large.");
+		rt_error(ctx->env, N_TR("JIT bytecode is too large."));
 		return false;
 	}
 	pc_capacity = (size_t)ctx->func->bytecode_size + 1;
 	branch_capacity = (size_t)ctx->func->bytecode_size;
 	if (pc_capacity > SIZE_MAX / sizeof(*ctx->pc_entry) ||
 	    branch_capacity > SIZE_MAX / sizeof(*ctx->branch_patch)) {
-		rt_error(ctx->env, "JIT bytecode is too large.");
+		rt_error(ctx->env, N_TR("JIT bytecode is too large."));
 		return false;
 	}
 	ctx->pc_entry = noct_malloc(pc_capacity * sizeof(*ctx->pc_entry));
@@ -808,7 +807,7 @@ rt_jit_context_init_regcache(struct rt_jit_context *ctx)
 	if (tmp_capacity > SIZE_MAX / sizeof(*ctx->gpr_tmp_reg) ||
 	    tmp_capacity > SIZE_MAX / sizeof(*ctx->gpr_range_min) ||
 	    tmp_capacity > SIZE_MAX / sizeof(*ctx->gpr_range_max)) {
-		rt_error(ctx->env, "JIT temporary-variable table is too large.");
+		rt_error(ctx->env, N_TR("JIT temporary-variable table is too large."));
 		return false;
 	}
 #if defined(NOCT_ARCH_X86) || defined(NOCT_ARCH_ARM32) || \
@@ -816,7 +815,7 @@ rt_jit_context_init_regcache(struct rt_jit_context *ctx)
 	defined(NOCT_ARCH_RISCV32)
 	if ((size_t)ctx->func->bytecode_size >
 	    SIZE_MAX / sizeof(*ctx->packed_access_disp)) {
-		rt_error(ctx->env, "JIT bytecode analysis table is too large.");
+		rt_error(ctx->env, N_TR("JIT bytecode analysis table is too large."));
 		return false;
 	}
 #endif
@@ -1308,9 +1307,8 @@ rt_jit_map_memory_region(
 		regs.w.dx = 0x000F;
 		int386(0x31, &regs, &regs);
 		if (regs.w.cflag != 0) {
-			printf("Failed to expand the CS segment limit.\n");
-			jit_debug_memory("mmap-rw", size, false,
-					 (unsigned long)regs.w.ax);
+			printf(N_TR("Failed to expand the CS segment limit.\n"));
+			jit_debug_memory("mmap-rw", size, false, (unsigned long)regs.w.ax);
 			return false;
 		}
 	}
@@ -1721,7 +1719,7 @@ jit_slab_allocate(
 
 	if (!rt_jit_map_memory_region((void **)&slab->base, size)) {
 		noct_free(slab);
-		rt_error(env, "Memory mapping failed.");
+		rt_error(env, N_TR("Memory mapping failed."));
 		return false;
 	}
 

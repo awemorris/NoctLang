@@ -2172,14 +2172,14 @@ rt_visit_subjnz_op(
 	GET_U32(&target);
 
 	if (target >= func->bytecode_size) {
-		rt_error(env, "Broken bytecode.");
+		rt_error(env, N_TR("Broken bytecode."));
 		return false;
 	}
 
 	v = &env->frame->tmpvar[value];
 
 	if (v->type != NOCT_VALUE_INT) {
-		rt_error(env, "SUBJNZ operand is not an integer.");
+		rt_error(env, N_TR("SUBJNZ operand is not an integer."));
 		return false;
 	}
 
@@ -2932,7 +2932,7 @@ rt_visit_op(
 			return false;
 		break;
         default:
-                rt_error(env, "Unknown opcode %d at pc=%d.", func->bytecode[*pc], *pc);
+                rt_error(env, N_TR("Unknown opcode %d at pc=%d."), func->bytecode[*pc], *pc);
                 return false;
         }
 

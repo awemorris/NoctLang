@@ -53,7 +53,7 @@ command_transpile_c(
 			continue;
 		}
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_INVALID) {
-			printf("Invalid optimize-level option %s.\n", argv[first]);
+			printf(N_TR("Invalid optimize-level option %s.\n"), argv[first]);
 			return 1;
 		}
 		if (strcmp(argv[first], "--simd-info") == 0) {

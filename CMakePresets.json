@@ -277,6 +277,36 @@
             }
         },
         {
+            "name": "windows-mingw-x86_64-accel",
+            "displayName": "MinGW x86_64 accel",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-mingw-x86_64-accel",
+            "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-x86_64.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NOCT_ENABLE_STATIC": "ON",
+                "NOCT_ENABLE_CLI": "ON",
+                "NOCT_ENABLE_JIT": "ON",
+                "NOCT_ENABLE_MULTITHREAD": "ON",
+                "NOCT_ENABLE_OPTIMIZER": "ON",
+                "NOCT_ENABLE_ACCEL": "OFF",
+                "NOCT_ENABLE_I18N": "OFF",
+                "NOCT_ENABLE_API": "ON",
+                "NOCT_ENABLE_API_SYSTEM": "ON",
+                "NOCT_ENABLE_API_CONSOLE": "ON",
+                "NOCT_ENABLE_API_FILE": "ON",
+                "NOCT_ENABLE_API_THREAD": "ON",
+                "NOCT_ENABLE_API_HTTPSERVER": "ON",
+                "NOCT_ENABLE_API_TERM": "ON",
+                "NOCT_ENABLE_INSTALL": "ON",
+                "NOCT_ENABLE_BCBACKEND": "ON",
+                "NOCT_ENABLE_CBACKEND": "ON",
+                "NOCT_ENABLE_ELBACKEND": "ON",
+                "NOCT_ENABLE_SCMBACKEND": "ON",
+                "NOCT_ENABLE_REPL": "ON"
+            }
+        },
+        {
             "name": "windows-mingw-arm64",
             "displayName": "MinGW Arm64",
             "generator": "Ninja",
@@ -931,6 +961,10 @@
         {
             "name": "windows-mingw-x86_64",
             "configurePreset": "windows-mingw-x86_64"
+        },
+        {
+            "name": "windows-mingw-x86_64-accel",
+            "configurePreset": "windows-mingw-x86_64-accel"
         },
         {
             "name": "windows-mingw-arm64",

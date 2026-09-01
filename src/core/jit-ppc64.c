@@ -148,7 +148,7 @@ jit_build(
 
 		if ((uint8_t *)ctx.code + 24 > (uint8_t *)ctx.code_end) {
 			ctx.code_overflow = true;
-			rt_error(env, "Code too big.");
+			rt_error(env, N_TR("Code too big."));
 		} else {
 			desc.entry = (void *)(ctx.code + 24);
 			desc.toc = ppc64_elf_v1_get_toc();
@@ -186,7 +186,7 @@ jit_build(
 				       (uintptr_t)~0xf);
 		if ((uint8_t *)aligned_end > (uint8_t *)ctx.code_end) {
 			ctx.code_overflow = true;
-			rt_error(env, "Code too big.");
+			rt_error(env, N_TR("Code too big."));
 			if (attempt == 0 &&
 			    ((uint8_t *)code_top != slab->base ||
 			     slab->size < rt_jit_get_code_size(env))) {
@@ -253,7 +253,7 @@ jit_put_word(
 
         if ((uint32_t *)ctx->code >= (uint32_t *)ctx->code_end) {
 		ctx->code_overflow = true;
-                rt_error(ctx->env, "Code too big.");
+                rt_error(ctx->env, N_TR("Code too big."));
                 return false;
         }
 
@@ -402,7 +402,7 @@ static INLINE bool jit_put_exception_if_equal(struct rt_jit_context *ctx)
                 return false;
         offset = (intptr_t)ctx->exception_code - (intptr_t)ctx->code;
         if (offset < -33554432 || offset > 33554428) {
-                rt_error(ctx->env, "Exception target too far.");
+                rt_error(ctx->env, N_TR("Exception target too far."));
                 return false;
         }
         return jit_put_word(ctx,
@@ -4577,7 +4577,7 @@ jit_visit_bytecode(
         while (ctx->lpc < ctx->func->bytecode_size) {
                 /* Save LPC and addr. */
                 if (ctx->pc_entry_count >= PC_ENTRY_MAX) {
-                        rt_error(ctx->env, "Code too big.");
+                        rt_error(ctx->env, N_TR("Code too big."));
                         return false;
                 }
                 ctx->pc_entry[ctx->pc_entry_count].lpc = (uint32_t)ctx->lpc;
@@ -5114,7 +5114,7 @@ jit_patch_branch(
 
         }
         if (target_code == NULL) {
-                rt_error(ctx->env, "Branch target not found.");
+                rt_error(ctx->env, N_TR("Branch target not found."));
                 return false;
         }
 
@@ -5127,7 +5127,7 @@ jit_patch_branch(
         /* Assemble. */
         if (ctx->branch_patch[patch_index].type == PATCH_BAL) {
                 if (offset < -33554432 || offset > 33554428) {
-                        rt_error(ctx->env, "Branch target too far.");
+                        rt_error(ctx->env, N_TR("Branch target too far."));
                         return false;
                 }
 

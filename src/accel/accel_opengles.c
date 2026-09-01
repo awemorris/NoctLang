@@ -154,14 +154,14 @@ accel_opengles_enumerate(
 
 	/* Reject an absent shared device registry. */
 	if (list == NULL)
-		return accel_opengles_set_error(error, error_size, "Invalid OpenGL ES device list.");
+		return accel_opengles_set_error(error, error_size, N_TR("Invalid OpenGL ES device list."));
 
 	/* Open a temporary headless context and inspect its compute limits. */
 	accel_opengles_reset_backend(&backend);
 	status = accel_opengles_open(&backend);
 	if (status == ACCEL_OPENGLES_OPEN_FAILED) {
 		accel_opengles_close(&backend);
-		return accel_opengles_set_error(error, error_size, "Failed to initialize a headless OpenGL ES 3.1 context.");
+		return accel_opengles_set_error(error, error_size, N_TR("Failed to initialize a headless OpenGL ES 3.1 context."));
 	}
 
 	/* Treat a working but unsuitable implementation as an empty backend. */
@@ -180,7 +180,7 @@ accel_opengles_enumerate(
 		(uintptr_t)0);
 	accel_opengles_close(&backend);
 	if (!appended)
-		return accel_opengles_set_error(error, error_size, "Out of memory while enumerating OpenGL ES devices.");
+		return accel_opengles_set_error(error, error_size, N_TR("Out of memory while enumerating OpenGL ES devices."));
 
 	/* Report a complete enumeration transaction. */
 	return true;
@@ -709,7 +709,7 @@ accel_opengles_acquire(
 		backend->surface,
 		backend->context)) {
 		accel_mutex_unlock(&backend->mutex);
-		return accel_opengles_set_error(error, error_size, "Failed to make the OpenGL ES context current.");
+		return accel_opengles_set_error(error, error_size, N_TR("Failed to make the OpenGL ES context current."));
 	}
 
 	/* Remove stale driver errors before executing one backend operation. */
@@ -742,7 +742,7 @@ accel_opengles_release(
 
 	/* Diagnose a failed ownership transfer after unlocking the backend. */
 	if (!released)
-		return accel_opengles_set_error(error, error_size, "Failed to release the OpenGL ES context.");
+		return accel_opengles_set_error(error, error_size, N_TR("Failed to release the OpenGL ES context."));
 
 	/* Report successful context release. */
 	return true;
@@ -1201,11 +1201,11 @@ accel_opengles_validate_dispatch_limit(
 	if (backend == NULL ||
 	    prepared == NULL ||
 	    prepared->payload == NULL) {
-		return accel_opengles_set_error(error, error_size, "Invalid OpenGL ES dispatch limit request.");
+		return accel_opengles_set_error(error, error_size, N_TR("Invalid OpenGL ES dispatch limit request."));
 	}
 	payload = prepared->payload;
 	if (kernel_index >= payload->kernel_count)
-		return accel_opengles_set_error(error, error_size, "Invalid OpenGL ES kernel index.");
+		return accel_opengles_set_error(error, error_size, N_TR("Invalid OpenGL ES kernel index."));
 
 	/* Empty source loops require no device dispatch. */
 	if (trip == 0)
@@ -1218,7 +1218,7 @@ accel_opengles_validate_dispatch_limit(
 
 	/* Decline a dispatch larger than the selected device can represent. */
 	if (group_count > (uint32_t)backend->max_group_count_x)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES dispatch exceeds the device workgroup-count limit.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES dispatch exceeds the device workgroup-count limit."));
 
 	/* Report a representable one-dimensional dispatch. */
 	return true;
@@ -1278,13 +1278,13 @@ accel_opengles_create_execution(
 	if (execution != NULL)
 		*execution = NULL;
 	if (execution == NULL)
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES execution output.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES execution output."));
 
 	backend = backend_state;
 
 	/* Recover immutable program metadata from the published payload. */
 	if (prepared == NULL || prepared->payload == NULL)
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES prepared program.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES prepared program."));
 	payload = prepared->payload;
 
 	/* Validate all plain input arrays before allocating device objects. */
@@ -1305,7 +1305,7 @@ accel_opengles_create_execution(
 	/* Allocate one execution wrapper and its GL buffer metadata. */
 	created = noct_calloc(1, sizeof(*created));
 	if (created == NULL)
-		return accel_opengles_set_error(error, error_size, "Out of memory while creating an OpenGL ES execution.");
+		return accel_opengles_set_error(error, error_size, N_TR("Out of memory while creating an OpenGL ES execution."));
 	created->backend = backend;
 	created->prepared = payload;
 	created->buffer_count = buffer_count;
@@ -1325,7 +1325,7 @@ accel_opengles_create_execution(
 			sizeof(*created->scalar_word));
 		if (created->scalar_word == NULL) {
 			noct_free(created);
-			return accel_opengles_set_error(error, error_size, "Out of memory while copying OpenGL ES scalar metadata.");
+			return accel_opengles_set_error(error, error_size, N_TR("Out of memory while copying OpenGL ES scalar metadata."));
 		}
 		memcpy(
 			created->scalar_word,
@@ -1341,7 +1341,7 @@ accel_opengles_create_execution(
 			sizeof(*created->buffer));
 		if (created->buffer == NULL) {
 			accel_opengles_free_execution(created);
-			return accel_opengles_set_error(error, error_size, "Out of memory while creating OpenGL ES buffers.");
+			return accel_opengles_set_error(error, error_size, N_TR("Out of memory while creating OpenGL ES buffers."));
 		}
 	}
 
@@ -1457,30 +1457,30 @@ accel_opengles_validate_execution_inputs(
 	if (backend == NULL ||
 	    prepared == NULL ||
 	    prepared->program == NULL) {
-		return accel_opengles_set_error(error, error_size, "Invalid OpenGL ES execution request.");
+		return accel_opengles_set_error(error, error_size, N_TR("Invalid OpenGL ES execution request."));
 	}
 
 	/* Match every data buffer to the compiled binding namespace. */
 	if (buffer_count != prepared->program->buffer_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES buffer table does not match the prepared program.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES buffer table does not match the prepared program."));
 	if (buffer_count != 0 && buffer == NULL)
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES buffer descriptors.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES buffer descriptors."));
 
 	/* Match scalar values followed by two range words per kernel. */
 	expected_scalar_count = prepared->program->scalar_count;
 	expected_scalar_count += (size_t)prepared->program->kernel_count * 2;
 	if ((size_t)scalar_word_count != expected_scalar_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES scalar block does not match the prepared program.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES scalar block does not match the prepared program."));
 	if (scalar_word_count != 0 && scalar_word == NULL)
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES scalar words.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES scalar words."));
 
 	/* Match the optional result block and preserve the zero-count ABI. */
 	if (result_word_count != prepared->program->scalar_result_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES result block does not match the prepared program.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES result block does not match the prepared program."));
 	if (result_word_count == 0 && result_word != NULL)
-		return accel_opengles_set_error(error, error_size, "Unexpected OpenGL ES result words.");
+		return accel_opengles_set_error(error, error_size, N_TR("Unexpected OpenGL ES result words."));
 	if (result_word_count != 0 && result_word == NULL)
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES result words.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES result words."));
 	has_active_dispatch =
 		accel_opengles_count_active_dispatches(
 			prepared->program,
@@ -1495,58 +1495,58 @@ accel_opengles_validate_execution_inputs(
 		    buffer[i].args_slot != binding->args_slot ||
 		    buffer[i].element_kind != binding->element_kind ||
 		    buffer[i].element_width != binding->element_width) {
-			return accel_opengles_set_error(error, error_size, "OpenGL ES buffer metadata does not match the prepared program.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES buffer metadata does not match the prepared program."));
 		}
 
 		/* Validate the runtime extent and dynamic transfer plan. */
 		if (buffer[i].element_width != sizeof(uint32_t))
-			return accel_opengles_set_error(error, error_size, "OpenGL ES supports only 32-bit accelerator buffers.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES supports only 32-bit accelerator buffers."));
 		if (buffer[i].element_count >
 		    (size_t)-1 / buffer[i].element_width ||
 		    buffer[i].element_count * buffer[i].element_width !=
 		    buffer[i].byte_count) {
-			return accel_opengles_set_error(error, error_size, "OpenGL ES buffer extent metadata is inconsistent.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES buffer extent metadata is inconsistent."));
 		}
 		if (!buffer[i].active &&
 		    (buffer[i].upload || buffer[i].download)) {
-			return accel_opengles_set_error(error, error_size, "Inactive OpenGL ES buffers cannot request host transfers.");
+			return accel_opengles_set_error(error, error_size, N_TR("Inactive OpenGL ES buffers cannot request host transfers."));
 		}
 		if (buffer[i].active &&
 		    buffer[i].byte_count >
 		    (size_t)backend->max_storage_block_size) {
-			return accel_opengles_set_error(error, error_size, "OpenGL ES buffer exceeds the device storage-block limit.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES buffer exceeds the device storage-block limit."));
 		}
 		if (buffer[i].upload &&
 		    buffer[i].byte_count != 0 &&
 		    buffer[i].snapshot == NULL) {
-			return accel_opengles_set_error(error, error_size, "Missing OpenGL ES upload snapshot.");
+			return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES upload snapshot."));
 		}
 		if (buffer[i].download &&
 		    buffer[i].byte_count != 0 &&
 		    buffer[i].snapshot == NULL) {
-			return accel_opengles_set_error(error, error_size, "Missing OpenGL ES download snapshot.");
+			return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES download snapshot."));
 		}
 	}
 
 	/* Validate the scalar SSBO against the same device block-size limit. */
 	if (expected_scalar_count > (size_t)-1 / sizeof(uint32_t))
-		return accel_opengles_set_error(error, error_size, "OpenGL ES scalar block size overflowed.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES scalar block size overflowed."));
 	if (has_active_dispatch &&
 	    expected_scalar_count * sizeof(uint32_t) >
 	    (size_t)backend->max_storage_block_size) {
-		return accel_opengles_set_error(error, error_size, "OpenGL ES scalar block exceeds the device storage-block limit.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES scalar block exceeds the device storage-block limit."));
 	}
 
 	/* Validate the optional result SSBO against the same block-size limit. */
 	result_byte_count = (size_t)result_word_count * sizeof(uint32_t);
 	if (result_word_count != 0 &&
 	    result_byte_count / sizeof(uint32_t) != result_word_count) {
-		return accel_opengles_set_error(error, error_size, "OpenGL ES result block size overflowed.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES result block size overflowed."));
 	}
 	if (has_active_dispatch &&
 	    result_byte_count >
 	    (size_t)backend->max_storage_block_size) {
-		return accel_opengles_set_error(error, error_size, "OpenGL ES result block exceeds the device storage-block limit.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES result block exceeds the device storage-block limit."));
 	}
 
 	/* Report a complete and representable execution snapshot. */
@@ -1582,12 +1582,12 @@ accel_opengles_create_buffer_current(
 	/* Reject a size that the platform GLsizeiptr cannot represent. */
 	gl_size = (GLsizeiptr)allocation_size;
 	if (gl_size < 0 || (size_t)gl_size != allocation_size)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES buffer size is not representable.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES buffer size is not representable."));
 
 	/* Allocate and initialize one complete storage buffer. */
 	glGenBuffers(1, result);
 	if (*result == 0)
-		return accel_opengles_set_error(error, error_size, "Failed to allocate an OpenGL ES buffer name.");
+		return accel_opengles_set_error(error, error_size, N_TR("Failed to allocate an OpenGL ES buffer name."));
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, *result);
 	glBufferData(
 		GL_SHADER_STORAGE_BUFFER,
@@ -1674,19 +1674,19 @@ accel_opengles_dispatch_execution(
 
 	/* Validate the shared runtime's published execution and kernel index. */
 	if (active == NULL || active->prepared == NULL)
-		return accel_opengles_set_error(error, error_size, "Invalid OpenGL ES execution.");
+		return accel_opengles_set_error(error, error_size, N_TR("Invalid OpenGL ES execution."));
 	if (active->finished)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES execution was already finished.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES execution was already finished."));
 	if (!active->has_active_dispatch)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES execution has no active dispatch.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES execution has no active dispatch."));
 	if (kernel_index >= active->prepared->kernel_count)
-		return accel_opengles_set_error(error, error_size, "Invalid OpenGL ES kernel index.");
+		return accel_opengles_set_error(error, error_size, N_TR("Invalid OpenGL ES kernel index."));
 	if (trip == 0)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES received an empty active dispatch.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES received an empty active dispatch."));
 	if (active->dispatched && kernel_index <= active->last_kernel)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES kernels were dispatched out of order.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES kernels were dispatched out of order."));
 	if (active->dispatch_count >= active->expected_dispatch_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES received too many active dispatches.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES received too many active dispatches."));
 
 	program = active->prepared->program;
 	range_word = program->scalar_count + kernel_index * 2;
@@ -1694,11 +1694,11 @@ accel_opengles_dispatch_execution(
 	/* Validate the duplicated callback range against the immutable SSBO. */
 	if (active->scalar_word == NULL ||
 	    range_word + 1 >= active->scalar_word_count) {
-		return accel_opengles_set_error(error, error_size, "OpenGL ES dispatch range is missing from the scalar block.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES dispatch range is missing from the scalar block."));
 	}
 	if (active->scalar_word[range_word] != start ||
 	    active->scalar_word[range_word + 1] != trip) {
-		return accel_opengles_set_error(error, error_size, "OpenGL ES dispatch range changed after execution creation.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES dispatch range changed after execution creation."));
 	}
 
 	/* Round the checked active trip count to 64-lane workgroups. */
@@ -1896,53 +1896,53 @@ accel_opengles_validate_finish(
 
 	/* Require the complete execution and exact buffer table. */
 	if (execution == NULL || execution->backend == NULL)
-		return accel_opengles_set_error(error, error_size, "Invalid OpenGL ES finish request.");
+		return accel_opengles_set_error(error, error_size, N_TR("Invalid OpenGL ES finish request."));
 	if (execution->finished)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES execution was already finished.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES execution was already finished."));
 	if (buffer_count != execution->buffer_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES finish buffer table changed.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES finish buffer table changed."));
 	if (buffer_count != 0 && buffer == NULL)
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES finish buffers.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES finish buffers."));
 	if (result_word_count != execution->result_word_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES finish result table changed.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES finish result table changed."));
 	if (result_word_count == 0 && result_word != NULL)
-		return accel_opengles_set_error(error, error_size, "Unexpected OpenGL ES finish result words.");
+		return accel_opengles_set_error(error, error_size, N_TR("Unexpected OpenGL ES finish result words."));
 	if (result_word_count != 0 && result_word == NULL)
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES finish result words.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES finish result words."));
 	if (execution->has_active_dispatch &&
 	    execution->dispatch_count != execution->expected_dispatch_count) {
-		return accel_opengles_set_error(error, error_size, "OpenGL ES active dispatch sequence is incomplete.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES active dispatch sequence is incomplete."));
 	}
 	if (execution->has_active_dispatch &&
 	    result_word_count != 0 &&
 	    execution->result_buffer == 0) {
-		return accel_opengles_set_error(error, error_size, "Missing OpenGL ES result buffer.");
+		return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES result buffer."));
 	}
 
 	/* Match every output extent and snapshot to its created SSBO. */
 	for (i = 0; i < buffer_count; i++) {
 		if (buffer[i].origin != execution->buffer[i].origin)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer origin changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer origin changed."));
 		if (buffer[i].args_slot != execution->buffer[i].args_slot)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer slot changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer slot changed."));
 		if (buffer[i].element_kind != execution->buffer[i].element_kind)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer element type changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer element type changed."));
 		if (buffer[i].element_width != execution->buffer[i].element_width)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer element width changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer element width changed."));
 		if (buffer[i].element_count != execution->buffer[i].element_count)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer extent changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer extent changed."));
 		if (buffer[i].byte_count != execution->buffer[i].byte_count)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer size changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer size changed."));
 		if (buffer[i].active != execution->buffer[i].active)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer activity changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer activity changed."));
 		if (buffer[i].upload != execution->buffer[i].upload)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output upload plan changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output upload plan changed."));
 		if (buffer[i].download != execution->buffer[i].download)
-			return accel_opengles_set_error(error, error_size, "OpenGL ES output transfer plan changed.");
+			return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output transfer plan changed."));
 		if (buffer[i].download &&
 		    buffer[i].byte_count != 0 &&
 		    buffer[i].snapshot == NULL) {
-			return accel_opengles_set_error(error, error_size, "Missing OpenGL ES output snapshot.");
+			return accel_opengles_set_error(error, error_size, N_TR("Missing OpenGL ES output snapshot."));
 		}
 	}
 
@@ -1969,7 +1969,7 @@ accel_opengles_read_buffer_current(
 	/* Convert the already-validated allocation extent for the map API. */
 	gl_size = (GLsizeiptr)destination->byte_count;
 	if (gl_size < 0 || (size_t)gl_size != destination->byte_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES output size is not representable.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output size is not representable."));
 
 	/* Map, copy, and unmap the complete raw-word output synchronously. */
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, source->name);
@@ -1979,11 +1979,11 @@ accel_opengles_read_buffer_current(
 		gl_size,
 		GL_MAP_READ_BIT);
 	if (mapped == NULL)
-		return accel_opengles_set_error(error, error_size, "Failed to map an OpenGL ES output buffer.");
+		return accel_opengles_set_error(error, error_size, N_TR("Failed to map an OpenGL ES output buffer."));
 	memcpy(destination->snapshot, mapped, destination->byte_count);
 	unmapped = glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	if (unmapped != GL_TRUE)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES output buffer became invalid while unmapping.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES output buffer became invalid while unmapping."));
 
 	/* Report a complete plain readback snapshot. */
 	return accel_opengles_check_gl(
@@ -2010,7 +2010,7 @@ accel_opengles_read_result_current(
 	byte_count = (size_t)result_word_count * sizeof(*result_word);
 	gl_size = (GLsizeiptr)byte_count;
 	if (gl_size <= 0 || (size_t)gl_size != byte_count)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES result size is not representable.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES result size is not representable."));
 
 	/* Maps, copies, and unmaps every completed result word synchronously. */
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, execution->result_buffer);
@@ -2020,11 +2020,11 @@ accel_opengles_read_result_current(
 		gl_size,
 		GL_MAP_READ_BIT);
 	if (mapped == NULL)
-		return accel_opengles_set_error(error, error_size, "Failed to map the OpenGL ES result buffer.");
+		return accel_opengles_set_error(error, error_size, N_TR("Failed to map the OpenGL ES result buffer."));
 	memcpy(result_word, mapped, byte_count);
 	unmapped = glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	if (unmapped != GL_TRUE)
-		return accel_opengles_set_error(error, error_size, "OpenGL ES result buffer became invalid while unmapping.");
+		return accel_opengles_set_error(error, error_size, N_TR("OpenGL ES result buffer became invalid while unmapping."));
 
 	return accel_opengles_check_gl(
 		error,

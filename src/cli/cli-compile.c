@@ -70,7 +70,7 @@ command_compile(
 			continue;
 		}
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_INVALID) {
-			printf("Invalid optimize-level option %s.\n", argv[first]);
+			printf(N_TR("Invalid optimize-level option %s.\n"), argv[first]);
 			goto cleanup;
 		}
 		if (strcmp(argv[first], "--simd-info") == 0) {
@@ -80,7 +80,7 @@ command_compile(
 		}
 		if (strcmp(argv[first], "--app") == 0) {
 			if (app_mode) {
-				printf("The --app option may be specified only once.\n");
+				printf(N_TR("The --app option may be specified only once.\n"));
 				goto cleanup;
 			}
 			app_mode = true;
@@ -89,7 +89,7 @@ command_compile(
 		}
 		if (strncmp(argv[first], "--path=", 7) == 0) {
 			if (!cli_module_add_path(argv[first] + 7)) {
-				printf("Invalid module path option %s.\n", argv[first]);
+				printf(N_TR("Invalid module path option %s.\n"), argv[first]);
 				goto cleanup;
 			}
 			first++;
@@ -99,7 +99,7 @@ command_compile(
 		    strncmp(argv[first], "--gpu=", 6) == 0 ||
 		    strcmp(argv[first], "--gpu-list") == 0) {
 			printf(
-				"GPU acceleration is available only when running Noct source.\n");
+				N_TR("GPU acceleration is available only when running Noct source.\n"));
 			goto cleanup;
 		}
 		break;
@@ -113,7 +113,7 @@ command_compile(
 
 		app_output = compile_copy_path(argv[first]);
 		if (app_output == NULL) {
-			printf("Cannot allocate application output path.\n");
+			printf(N_TR("Cannot allocate application output path.\n"));
 			goto cleanup;
 		}
 
@@ -127,7 +127,7 @@ command_compile(
 			root_count,
 			(const char *const *)root,
 			cli_module_resolve)) {
-			printf("%s\n", cli_module_get_error());
+			printf(N_TR("%s\n"), cli_module_get_error());
 			goto cleanup;
 		}
 
@@ -150,7 +150,7 @@ command_compile(
 		root_count,
 		(const char *const *)root,
 		cli_module_resolve)) {
-		printf("%s\n", cli_module_get_error());
+		printf(N_TR("%s\n"), cli_module_get_error());
 		goto cleanup;
 	}
 
@@ -277,20 +277,20 @@ compile_preflight_outputs(
 
 	table = calloc((size_t)input_count, sizeof(*table));
 	if (table == NULL) {
-		printf("Cannot allocate bytecode output paths.\n");
+		printf(N_TR("Cannot allocate bytecode output paths.\n"));
 		return false;
 	}
 
 	/* Build every final name before any writer can be opened. */
 	for (i = 0; i < input_count; i++) {
 		if (compile_has_suffix(input[i], ".nbc")) {
-			printf("Bytecode input is not recompiled: %s\n", input[i]);
+			printf(N_TR("Bytecode input is not recompiled: %s\n"), input[i]);
 			goto failure;
 		}
 
 		table[i] = compile_make_output_path(input[i]);
 		if (table[i] == NULL) {
-			printf("Cannot allocate output path for %s.\n", input[i]);
+			printf(N_TR("Cannot allocate output path for %s.\n"), input[i]);
 			goto failure;
 		}
 	}
@@ -300,7 +300,7 @@ compile_preflight_outputs(
 		for (j = i + 1; j < input_count; j++) {
 			if (strcmp(table[i], table[j]) == 0) {
 				printf(
-					"Inputs %s and %s map to the same output %s.\n",
+					N_TR("Inputs %s and %s map to the same output %s.\n"),
 					input[i],
 					input[j],
 					table[i]);
@@ -314,7 +314,7 @@ compile_preflight_outputs(
 		for (j = 0; j < input_count; j++) {
 			if (strcmp(table[i], input[j]) == 0) {
 				printf(
-					"Output %s for input %s collides with input %s.\n",
+					N_TR("Output %s for input %s collides with input %s.\n"),
 					table[i],
 					input[i],
 					input[j]);
@@ -346,7 +346,7 @@ compile_check_app_output(
 	for (i = 0; i < root_count; i++) {
 		if (strcmp(output, root[i]) == 0) {
 			printf(
-				"Application output %s collides with input %s.\n",
+				N_TR("Application output %s collides with input %s.\n"),
 				output,
 				root[i]);
 			return false;
@@ -431,7 +431,7 @@ compile_application(
 			goto cleanup;
 		if (strcmp(output_path, artifact->physical_path) == 0) {
 			printf(
-				"Application output %s collides with input %s.\n",
+				N_TR("Application output %s collides with input %s.\n"),
 				output_path,
 				artifact->physical_path);
 			goto cleanup;
@@ -536,7 +536,7 @@ cleanup:
 	free(module);
 
 	if (!succeeded)
-		printf("Cannot create application %s.\n", output_path);
+		printf(N_TR("Cannot create application %s.\n"), output_path);
 
 	return succeeded;
 }

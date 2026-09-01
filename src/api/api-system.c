@@ -633,7 +633,7 @@ cfunc_System_runCommand(
 
 	/* Records a Windows process creation error. */
 	if (!created)
-		noct_error(env, "CreateProcess() failed.");
+		noct_error(env, N_TR("CreateProcess() failed."));
 
 	/* Collects the requested process status. */
 	if (process_info.hProcess != NULL) {
@@ -671,7 +671,7 @@ cfunc_System_runCommand(
 
 	/* Reports a failed process creation. */
 	if (child < 0) {
-		noct_error(env, "fork() failed.");
+		noct_error(env, N_TR("fork() failed."));
 		return false;
 	}
 
@@ -681,7 +681,7 @@ cfunc_System_runCommand(
 		if (strcmp(work_directory, "") != 0) {
 			/* Reports a failed directory change in the child. */
 			if (chdir(work_directory) != 0) {
-				printf("chdir() failed.\n");
+				printf(N_TR("chdir() failed.\n"));
 				return EXIT_FAILURE;
 			}
 		}
@@ -703,7 +703,7 @@ cfunc_System_runCommand(
 		execvp(argv[0], argv);
 
 		/* Reports an exec failure in the child process. */
-		printf("execvp() failed for %s.\n", argv[0]);
+		printf(N_TR("execvp() failed for %s.\n"), argv[0]);
 		noct_free(command_copy);
 
 		/* Preserves the existing child failure result. */
@@ -1041,7 +1041,7 @@ cfunc_System_error(
 	}
 
 	/* Raises the requested runtime error. */
-	noct_error(env, "%s", text);
+	noct_error(env, N_TR("%s"), text);
 
 	/* Releases the message root after copying its text. */
 	(void)noct_unpin_local(env, 1, &message);

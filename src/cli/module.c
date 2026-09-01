@@ -203,24 +203,24 @@ cli_module_build_graph(
 	succeeded = false;
 
 	if (root_count == 0 || root_path == NULL) {
-		cli_module_set_error("No input module was specified.", NULL);
+		cli_module_set_error(N_TR("No input module was specified."), NULL);
 		goto cleanup;
 	}
 
 	/* Add every explicit root before traversing dependency edges. */
 	for (i = 0; i < root_count; i++) {
 		if (root_path[i] == NULL || root_path[i][0] == '\0') {
-			cli_module_set_error("Invalid input module path.", NULL);
+			cli_module_set_error(N_TR("Invalid input module path."), NULL);
 			goto cleanup;
 		}
 		if (cli_module_find_artifact(root_path[i]) >= 0) {
 			if (mode == CLI_MODULE_GRAPH_APP) {
 				cli_module_set_error(
-					"Duplicate Noct App input: %s",
+					N_TR("Duplicate Noct App input: %s"),
 					root_path[i]);
 			} else {
 				cli_module_set_error(
-					"Duplicate input module path: %s",
+					N_TR("Duplicate input module path: %s"),
 					root_path[i]);
 			}
 			goto cleanup;
@@ -238,7 +238,7 @@ cli_module_build_graph(
 			&cli_module_root,
 			&cli_module_root_capacity,
 			cli_module_root_count + 1)) {
-			cli_module_set_error("Out of memory building module graph.", NULL);
+			cli_module_set_error(N_TR("Out of memory building module graph."), NULL);
 			goto cleanup;
 		}
 		cli_module_root[cli_module_root_count] = artifact_index;
@@ -296,7 +296,7 @@ cli_module_build_input_graph(
 	if (root_path == NULL ||
 	    root_path[0] == '\0' ||
 	    data == NULL) {
-		cli_module_set_error("Invalid input module.", NULL);
+		cli_module_set_error(N_TR("Invalid input module."), NULL);
 		goto cleanup;
 	}
 
@@ -309,7 +309,7 @@ cli_module_build_input_graph(
 	}
 	if (kind == BYTECODE_FILE_APP_UNKNOWN) {
 		cli_module_set_error(
-			"Unsupported or malformed application version: %s",
+			N_TR("Unsupported or malformed application version: %s"),
 			root_path);
 		goto cleanup;
 	}
@@ -325,7 +325,7 @@ cli_module_build_input_graph(
 		&cli_module_root,
 		&cli_module_root_capacity,
 		1)) {
-		cli_module_set_error("Out of memory building module graph.", NULL);
+		cli_module_set_error(N_TR("Out of memory building module graph."), NULL);
 		goto cleanup;
 	}
 	cli_module_root[0] = artifact_index;
@@ -827,7 +827,7 @@ cli_module_read_file(
 
 	stream = fopen(path, "rb");
 	if (stream == NULL) {
-		cli_module_set_error("Cannot open module %s.", path);
+		cli_module_set_error(N_TR("Cannot open module %s."), path);
 		return false;
 	}
 
@@ -847,7 +847,7 @@ cli_module_read_file(
 
 	*storage = malloc(read_size + 1);
 	if (*storage == NULL) {
-		cli_module_set_error("Out of memory reading module %s.", path);
+		cli_module_set_error(N_TR("Out of memory reading module %s."), path);
 		goto cleanup;
 	}
 	if (fread(*storage, 1, read_size, stream) != read_size)
@@ -863,7 +863,7 @@ cleanup:
 		free(*storage);
 		*storage = NULL;
 		*size = 0;
-		cli_module_set_error("Cannot read module %s.", path);
+		cli_module_set_error(N_TR("Cannot read module %s."), path);
 	}
 
 	return succeeded;
@@ -1262,7 +1262,7 @@ cli_module_add_artifact(
 	size = 0;
 
 	if (!cli_module_grow_records()) {
-		cli_module_set_error("Out of memory building module graph.", NULL);
+		cli_module_set_error(N_TR("Out of memory building module graph."), NULL);
 		return false;
 	}
 	if (!cli_module_read_file(path, &storage, &size))
@@ -1285,7 +1285,7 @@ cli_module_add_artifact(
 		free(physical_path);
 		free(storage);
 		cli_module_set_error(
-			"Cannot derive a portable source name for %s.",
+			N_TR("Cannot derive a portable source name for %s."),
 			path);
 		return false;
 	}
@@ -1295,7 +1295,7 @@ cli_module_add_artifact(
 		free(physical_path);
 		free(storage);
 		cli_module_set_error(
-			"Duplicate logical source name for %s.",
+			N_TR("Duplicate logical source name for %s."),
 			path);
 		return false;
 	}
@@ -1320,7 +1320,7 @@ oom:
 	free(logical_source);
 	free(physical_path);
 	free(storage);
-	cli_module_set_error("Out of memory building module graph.", NULL);
+	cli_module_set_error(N_TR("Out of memory building module graph."), NULL);
 
 	return false;
 }
@@ -1373,7 +1373,7 @@ cli_module_add_input_artifact(
 oom:
 	free(logical_source);
 	free(physical_path);
-	cli_module_set_error("Out of memory building module graph.", NULL);
+	cli_module_set_error(N_TR("Out of memory building module graph."), NULL);
 
 	return false;
 }
@@ -1532,7 +1532,7 @@ cli_module_validate_symbols(
 
 	reachable = calloc((size_t)cli_module_record_count, sizeof(*reachable));
 	if (reachable == NULL) {
-		cli_module_set_error("Out of memory validating module graph.", NULL);
+		cli_module_set_error(N_TR("Out of memory validating module graph."), NULL);
 		return false;
 	}
 	succeeded = false;
@@ -1650,7 +1650,7 @@ cli_module_validate_reachable_symbols(
 							previous_function],
 						name) == 0) {
 							cli_module_set_error(
-								"Duplicate public symbol \"%s\" (Duplicate function in module closure).",
+								N_TR("Duplicate public symbol \"%s\" (Duplicate function in module closure)."),
 								name);
 						return false;
 					}
@@ -1660,7 +1660,7 @@ cli_module_validate_reachable_symbols(
 
 		if (initializer_count > 1) {
 			cli_module_set_error(
-				"Multiple initializers in module: %s",
+				N_TR("Multiple initializers in module: %s"),
 				record->artifact.physical_path);
 			return false;
 		}
@@ -1734,7 +1734,7 @@ cleanup:
 
 	if (!succeeded) {
 		cli_module_set_error(
-			"Cannot inspect source module %s.",
+			N_TR("Cannot inspect source module %s."),
 			record->artifact.physical_path);
 	}
 
@@ -1754,7 +1754,7 @@ cli_module_prepare_bytecode(
 	if (cli_module_mode == CLI_MODULE_GRAPH_APP &&
 	    kind == BYTECODE_FILE_MODULE_1_0) {
 		cli_module_set_error(
-			"Legacy 1.0 bytecode cannot be embedded in an application: %s",
+			N_TR("Legacy 1.0 bytecode cannot be embedded in an application: %s"),
 			record->artifact.physical_path);
 		return false;
 	}
@@ -1771,14 +1771,14 @@ cli_module_prepare_bytecode(
 	}
 	if (!cli_module_copy_bytecode_functions(record, &record->bytecode)) {
 		cli_module_set_error(
-			"Cannot collect bytecode link names from %s.",
+			N_TR("Cannot collect bytecode link names from %s."),
 			record->artifact.physical_path);
 		return false;
 	}
 
 	if (!cli_module_add_bytecode_prototypes(&record->bytecode)) {
 		cli_module_set_error(
-			"Cannot collect bytecode prototypes from %s.",
+			N_TR("Cannot collect bytecode prototypes from %s."),
 			record->artifact.physical_path);
 		return false;
 	}
@@ -1786,7 +1786,7 @@ cli_module_prepare_bytecode(
 		record,
 		record->bytecode.require_count,
 		(const char *const *)record->bytecode.require_name)) {
-		cli_module_set_error("Out of memory building module graph.", NULL);
+		cli_module_set_error(N_TR("Out of memory building module graph."), NULL);
 		return false;
 	}
 
@@ -1829,21 +1829,21 @@ cli_module_classify(
 	    record->artifact.is_explicit_root &&
 	    cli_module_has_suffix(record->artifact.physical_path, ".nbc")) {
 		cli_module_set_error(
-			"Bytecode input is not recompiled: %s",
+			N_TR("Bytecode input is not recompiled: %s"),
 			record->artifact.physical_path);
 		return false;
 	}
 
 	if (kind == BYTECODE_FILE_MODULE_UNKNOWN) {
 		cli_module_set_error(
-			"Unsupported or malformed bytecode version: %s",
+			N_TR("Unsupported or malformed bytecode version: %s"),
 			record->artifact.physical_path);
 		return false;
 	}
 	if (kind == BYTECODE_FILE_APP_UNKNOWN ||
 	    kind == BYTECODE_FILE_APP_1_0) {
 		cli_module_set_error(
-			"Application container cannot be used as a module: %s",
+			N_TR("Application container cannot be used as a module: %s"),
 			record->artifact.physical_path);
 		return false;
 	}
@@ -1851,7 +1851,7 @@ cli_module_classify(
 	if (kind == BYTECODE_FILE_UNKNOWN) {
 		if (memchr(payload, '\0', payload_size) != NULL) {
 			cli_module_set_error(
-				"NUL in source module: %s",
+				N_TR("NUL in source module: %s"),
 				record->artifact.physical_path);
 			return false;
 		}
@@ -1862,13 +1862,13 @@ cli_module_classify(
 	if (record->artifact.is_explicit_root &&
 	    cli_module_mode == CLI_MODULE_GRAPH_COMPILE) {
 		cli_module_set_error(
-			"Bytecode input is not recompiled: %s",
+			N_TR("Bytecode input is not recompiled: %s"),
 			record->artifact.physical_path);
 		return false;
 	}
 	if (has_shebang && !record->artifact.is_explicit_root) {
 		cli_module_set_error(
-			"Executable bytecode wrapper cannot be required: %s",
+			N_TR("Executable bytecode wrapper cannot be required: %s"),
 			record->artifact.physical_path);
 		return false;
 	}
@@ -1876,7 +1876,7 @@ cli_module_classify(
 		payload_size,
 		&registration_size)) {
 		cli_module_set_error(
-			"Bytecode module is too large: %s",
+			N_TR("Bytecode module is too large: %s"),
 			record->artifact.physical_path);
 		return false;
 	}
@@ -1937,7 +1937,7 @@ cli_module_prepare(
 		return true;
 	if (record->state == CLI_MODULE_VISITING) {
 		cli_module_set_error(
-			"Circular require involving %s.",
+			N_TR("Circular require involving %s."),
 			record->artifact.physical_path);
 		return false;
 	}
@@ -1958,14 +1958,14 @@ cli_module_prepare(
 		} else {
 			if (cli_module_require_resolver == NULL) {
 				cli_module_set_error(
-					"No resolver is available for required module '%s'.",
+					N_TR("No resolver is available for required module '%s'."),
 					require_name);
 				return false;
 			}
 			resolved_path = cli_module_require_resolver(require_name);
 			if (resolved_path == NULL) {
 				cli_module_set_error(
-					"Cannot resolve required module '%s'.",
+					N_TR("Cannot resolve required module '%s'."),
 					require_name);
 				return false;
 			}
@@ -1989,7 +1989,7 @@ cli_module_prepare(
 
 			if (!cli_module_add_binding(require_name, dependency_index)) {
 				cli_module_set_error(
-					"Out of memory building module graph.",
+					N_TR("Out of memory building module graph."),
 					NULL);
 				return false;
 			}
@@ -2003,7 +2003,7 @@ cli_module_prepare(
 		&cli_module_postorder,
 		&cli_module_postorder_capacity,
 		cli_module_postorder_count + 1)) {
-		cli_module_set_error("Out of memory building module graph.", NULL);
+		cli_module_set_error(N_TR("Out of memory building module graph."), NULL);
 		return false;
 	}
 	cli_module_postorder[cli_module_postorder_count] = artifact_index;
@@ -2087,7 +2087,7 @@ cli_module_build_app(
 		size,
 		&cli_module_app,
 		&error)) {
-		cli_module_set_error("Malformed application container.", NULL);
+		cli_module_set_error(N_TR("Malformed application container."), NULL);
 		goto cleanup;
 	}
 
@@ -2095,7 +2095,7 @@ cli_module_build_app(
 		(size_t)cli_module_app.module_count *
 		sizeof(*cli_module_app_order));
 	if (cli_module_app_order == NULL) {
-		cli_module_set_error("Out of memory inspecting application.", NULL);
+		cli_module_set_error(N_TR("Out of memory inspecting application."), NULL);
 		goto cleanup;
 	}
 
@@ -2103,7 +2103,7 @@ cli_module_build_app(
 		(size_t)cli_module_app.module_count,
 		sizeof(*state));
 	if (state == NULL) {
-		cli_module_set_error("Out of memory inspecting application.", NULL);
+		cli_module_set_error(N_TR("Out of memory inspecting application."), NULL);
 		goto cleanup;
 	}
 
@@ -2111,14 +2111,14 @@ cli_module_build_app(
 	for (i = 0; i < cli_module_app.root_count; i++) {
 		if (!cli_module_visit_app(cli_module_app.root_index[i], state)) {
 			cli_module_set_error(
-				"Invalid application dependency graph.",
+				N_TR("Invalid application dependency graph."),
 				NULL);
 			goto cleanup;
 		}
 	}
 	if (cli_module_app_order_count != cli_module_app.module_count) {
 		cli_module_set_error(
-			"Application contains an unreachable module.",
+			N_TR("Application contains an unreachable module."),
 			NULL);
 		goto cleanup;
 	}

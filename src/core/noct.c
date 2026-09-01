@@ -1505,7 +1505,7 @@ noct_error(
 	vsnprintf(tmp, sizeof(tmp), msg, ap);
 	va_end(ap);
 
-	rt_error(env, "%s", tmp);
+	rt_error(env, N_TR("%s"), tmp);
 }
 
 NOCT_DLL
@@ -1513,7 +1513,7 @@ void
 noct_out_of_memory(
 	NoctEnv *env)
 {
-	noct_error(env, "Out-of-memory.");
+	noct_error(env, N_TR("Out-of-memory."));
 }
 
 /*

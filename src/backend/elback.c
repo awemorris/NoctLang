@@ -1324,5 +1324,5 @@ elback_fatal(
 static void
 elback_out_of_memory(void)
 {
-	printf("Out of memory.\n");
+	printf(N_TR("Out of memory.\n"));
 }

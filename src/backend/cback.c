@@ -121,7 +121,7 @@ noct_cback_start(
 
 	fp = fopen(fname, "wb");
 	if (fp == NULL) {
-		printf("Failed to open file \"%s\".\n", fname);
+		printf(N_TR("Failed to open file \"%s\".\n"), fname);
 		return false;
 	}
 
@@ -156,7 +156,7 @@ noct_cback_translate(
 		return false;
 	}
 	if (ast_get_require_count() != 0) {
-		printf("%s", N_TR("Error: require is not supported by the C transpiler.\n"));
+		printf(N_TR("%s"), N_TR("Error: require is not supported by the C transpiler.\n"));
 		ast_cleanup();
 		return false;
 	}
@@ -241,7 +241,7 @@ cback_translate_func(
 	uint32_t i;
 
 	if (func_count >= FUNC_MAX || func->param_count > CBACK_ARG_MAX) {
-		printf("Too many functions or function parameters.\n");
+		printf(N_TR("Too many functions or function parameters.\n"));
 		return false;
 	}
 
@@ -249,14 +249,14 @@ cback_translate_func(
 
 	entry.c_name = cback_make_c_name(func->func_name);
 	if (entry.c_name == NULL) {
-		printf("Out of memory.\n");
+		printf(N_TR("Out of memory.\n"));
 		return false;
 	}
 
 	/* Save a function name. */
 	entry.name = strdup(func->func_name);
 	if (entry.name == NULL) {
-		printf("Out of memory.\n");
+		printf(N_TR("Out of memory.\n"));
 		cback_free_func_entry(&entry);
 		return false;
 	}
@@ -270,7 +270,7 @@ cback_translate_func(
 	if (entry.is_fast) {
 		entry.fast_info = fast_info_clone(func->fast_info);
 		if (entry.fast_info == NULL) {
-			printf("Out of memory.\n");
+			printf(N_TR("Out of memory.\n"));
 			cback_free_func_entry(&entry);
 			return false;
 		}
@@ -281,7 +281,7 @@ cback_translate_func(
 	for (i = 0; i < func->param_count; i++) {
 		entry.param_name[i] = strdup(func->param_name[i]);
 		if (entry.param_name[i] == NULL) {
-			printf("Out of memory.\n");
+			printf(N_TR("Out of memory.\n"));
 			cback_free_func_entry(&entry);
 			return false;
 		}
@@ -2266,7 +2266,7 @@ cback_visit_op(
 			return false;
 		break;
 	default:
-		printf("Unknown opcode.");
+		printf(N_TR("Unknown opcode."));
 		return false;
 	}
 

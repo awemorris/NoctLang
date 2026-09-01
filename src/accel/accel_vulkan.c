@@ -654,7 +654,7 @@ accel_vulkan_diagnostic_error(
 
 	/* Publish the runtime error when an environment owns the operation. */
 	if (diagnostic->env != NULL)
-		rt_error(diagnostic->env, "%s", message);
+		rt_error(diagnostic->env, N_TR("%s"), message);
 
 	/* Ignore an absent optional text buffer. */
 	if (diagnostic->message == NULL || diagnostic->message_size == 0)
@@ -693,7 +693,7 @@ accel_vulkan_initialization_error(
 	struct rt_env *env,
 	const char *message)
 {
-	rt_error(env, "%s", message);
+	rt_error(env, N_TR("%s"), message);
 }
 
 /* Require a working Vulkan 1.2 loader before creating an instance. */
@@ -1789,7 +1789,7 @@ accel_vulkan_validate_dispatch_limit(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Invalid Vulkan dispatch limit request.");
+			N_TR("Invalid Vulkan dispatch limit request."));
 		return false;
 	}
 
@@ -1799,7 +1799,7 @@ accel_vulkan_validate_dispatch_limit(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Invalid Vulkan kernel index.");
+			N_TR("Invalid Vulkan kernel index."));
 		return false;
 	}
 
@@ -1811,7 +1811,7 @@ accel_vulkan_validate_dispatch_limit(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"The Vulkan accelerator device is unavailable.");
+			N_TR("The Vulkan accelerator device is unavailable."));
 		return false;
 	}
 
@@ -1827,7 +1827,7 @@ accel_vulkan_validate_dispatch_limit(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan dispatch exceeds the device workgroup-count limit.");
+			N_TR("Vulkan dispatch exceeds the device workgroup-count limit."));
 		return false;
 	}
 
@@ -1859,7 +1859,7 @@ accel_vulkan_create_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Missing Vulkan execution output.");
+			N_TR("Missing Vulkan execution output."));
 		return false;
 	}
 
@@ -1872,7 +1872,7 @@ accel_vulkan_create_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Missing Vulkan prepared program.");
+			N_TR("Missing Vulkan prepared program."));
 		return false;
 	}
 	payload = prepared->payload;
@@ -1898,7 +1898,7 @@ accel_vulkan_create_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Out of memory while creating a Vulkan execution.");
+			N_TR("Out of memory while creating a Vulkan execution."));
 		return false;
 	}
 	created->backend = backend;
@@ -1959,7 +1959,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Invalid Vulkan execution request.");
+			N_TR("Invalid Vulkan execution request."));
 		return false;
 	}
 
@@ -1974,7 +1974,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"The Vulkan accelerator device is unavailable.");
+			N_TR("The Vulkan accelerator device is unavailable."));
 		return false;
 	}
 
@@ -1983,7 +1983,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan buffer table does not match the prepared program.");
+			N_TR("Vulkan buffer table does not match the prepared program."));
 		return false;
 	}
 
@@ -1992,7 +1992,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Missing Vulkan buffer descriptors.");
+			N_TR("Missing Vulkan buffer descriptors."));
 		return false;
 	}
 
@@ -2003,7 +2003,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan scalar block does not match the prepared program.");
+			N_TR("Vulkan scalar block does not match the prepared program."));
 		return false;
 	}
 
@@ -2012,7 +2012,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Missing Vulkan scalar words.");
+			N_TR("Missing Vulkan scalar words."));
 		return false;
 	}
 
@@ -2036,7 +2036,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan scalar block exceeds the device storage-buffer limit.");
+			N_TR("Vulkan scalar block exceeds the device storage-buffer limit."));
 		return false;
 	}
 
@@ -2045,7 +2045,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan result block does not match the prepared program.");
+			N_TR("Vulkan result block does not match the prepared program."));
 		return false;
 	}
 
@@ -2054,7 +2054,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Unexpected Vulkan scalar-result identities.");
+			N_TR("Unexpected Vulkan scalar-result identities."));
 		return false;
 	}
 
@@ -2063,7 +2063,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Missing Vulkan scalar-result identities.");
+			N_TR("Missing Vulkan scalar-result identities."));
 		return false;
 	}
 
@@ -2074,7 +2074,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Vulkan scalar-result identity changed.");
+				N_TR("Vulkan scalar-result identity changed."));
 			return false;
 		}
 	}
@@ -2087,7 +2087,7 @@ accel_vulkan_validate_execution_inputs(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan result block exceeds the device storage-buffer limit.");
+			N_TR("Vulkan result block exceeds the device storage-buffer limit."));
 		return false;
 	}
 
@@ -2101,7 +2101,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Vulkan buffer metadata changed after planning.");
+				N_TR("Vulkan buffer metadata changed after planning."));
 			return false;
 		}
 
@@ -2110,7 +2110,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Vulkan supports only 32-bit accelerator buffers.");
+				N_TR("Vulkan supports only 32-bit accelerator buffers."));
 			return false;
 		}
 
@@ -2122,7 +2122,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Vulkan buffer extent is inconsistent.");
+				N_TR("Vulkan buffer extent is inconsistent."));
 			return false;
 		}
 
@@ -2131,7 +2131,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"An active Vulkan buffer has no storage.");
+				N_TR("An active Vulkan buffer has no storage."));
 			return false;
 		}
 
@@ -2141,7 +2141,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"An inactive Vulkan buffer requested a transfer.");
+				N_TR("An inactive Vulkan buffer requested a transfer."));
 			return false;
 		}
 
@@ -2152,7 +2152,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Vulkan buffer exceeds the device storage-buffer limit.");
+				N_TR("Vulkan buffer exceeds the device storage-buffer limit."));
 			return false;
 		}
 
@@ -2163,7 +2163,7 @@ accel_vulkan_validate_execution_inputs(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Missing Vulkan buffer snapshot.");
+				N_TR("Missing Vulkan buffer snapshot."));
 			return false;
 		}
 	}
@@ -2205,7 +2205,7 @@ accel_vulkan_create_execution_resources(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Out of memory while creating Vulkan buffers.");
+				N_TR("Out of memory while creating Vulkan buffers."));
 			return false;
 		}
 	}
@@ -2252,7 +2252,7 @@ accel_vulkan_create_execution_resources(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Failed to create a Vulkan data buffer.");
+				N_TR("Failed to create a Vulkan data buffer."));
 			return false;
 		}
 		execution->buffer[i].upload = buffer[i].upload;
@@ -2277,7 +2277,7 @@ accel_vulkan_create_execution_resources(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to create the Vulkan scalar buffer.");
+			N_TR("Failed to create the Vulkan scalar buffer."));
 		return false;
 	}
 	execution->scalar_buffer.upload = true;
@@ -2297,7 +2297,7 @@ accel_vulkan_create_execution_resources(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Failed to create the Vulkan scalar-result buffer.");
+				N_TR("Failed to create the Vulkan scalar-result buffer."));
 			return false;
 		}
 		execution->result_buffer.upload = true;
@@ -2589,7 +2589,7 @@ accel_vulkan_create_descriptors(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to create the Vulkan descriptor pool.");
+			N_TR("Failed to create the Vulkan descriptor pool."));
 		return false;
 	}
 
@@ -2599,7 +2599,7 @@ accel_vulkan_create_descriptors(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Out of memory while creating Vulkan descriptor sets.");
+			N_TR("Out of memory while creating Vulkan descriptor sets."));
 		return false;
 	}
 
@@ -2616,7 +2616,7 @@ accel_vulkan_create_descriptors(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Out of memory while storing Vulkan descriptor sets.");
+			N_TR("Out of memory while storing Vulkan descriptor sets."));
 		return false;
 	}
 	memset(&allocate_info, 0, sizeof(allocate_info));
@@ -2633,7 +2633,7 @@ accel_vulkan_create_descriptors(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to allocate Vulkan descriptor sets.");
+			N_TR("Failed to allocate Vulkan descriptor sets."));
 		return false;
 	}
 
@@ -2643,7 +2643,7 @@ accel_vulkan_create_descriptors(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Out of memory while writing Vulkan descriptors.");
+			N_TR("Out of memory while writing Vulkan descriptors."));
 		return false;
 	}
 
@@ -2654,7 +2654,7 @@ accel_vulkan_create_descriptors(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Out of memory while writing Vulkan descriptors.");
+			N_TR("Out of memory while writing Vulkan descriptors."));
 		return false;
 	}
 
@@ -2803,7 +2803,7 @@ accel_vulkan_record_begin(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to create a Vulkan command pool.");
+			N_TR("Failed to create a Vulkan command pool."));
 		return false;
 	}
 
@@ -2821,7 +2821,7 @@ accel_vulkan_record_begin(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to allocate a Vulkan command buffer.");
+			N_TR("Failed to allocate a Vulkan command buffer."));
 		return false;
 	}
 
@@ -2836,7 +2836,7 @@ accel_vulkan_record_begin(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to begin a Vulkan command buffer.");
+			N_TR("Failed to begin a Vulkan command buffer."));
 		return false;
 	}
 	execution->command_started = true;
@@ -2872,7 +2872,7 @@ accel_vulkan_record_begin(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to create a Vulkan completion fence.");
+			N_TR("Failed to create a Vulkan completion fence."));
 		return false;
 	}
 
@@ -2918,7 +2918,7 @@ accel_vulkan_flush_execution(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Failed to flush Vulkan data-buffer memory.");
+				N_TR("Failed to flush Vulkan data-buffer memory."));
 			return false;
 		}
 	}
@@ -2939,7 +2939,7 @@ accel_vulkan_flush_execution(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Failed to flush Vulkan scalar memory.");
+				N_TR("Failed to flush Vulkan scalar memory."));
 			return false;
 		}
 	}
@@ -2960,7 +2960,7 @@ accel_vulkan_flush_execution(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Failed to flush Vulkan scalar-result memory.");
+				N_TR("Failed to flush Vulkan scalar-result memory."));
 			return false;
 		}
 	}
@@ -2998,7 +2998,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Invalid Vulkan execution.");
+			N_TR("Invalid Vulkan execution."));
 		return false;
 	}
 
@@ -3007,7 +3007,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Invalid Vulkan kernel index.");
+			N_TR("Invalid Vulkan kernel index."));
 		return false;
 	}
 
@@ -3016,7 +3016,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan received an empty active dispatch.");
+			N_TR("Vulkan received an empty active dispatch."));
 		return false;
 	}
 
@@ -3025,7 +3025,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan kernels were dispatched out of order.");
+			N_TR("Vulkan kernels were dispatched out of order."));
 		return false;
 	}
 
@@ -3034,7 +3034,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan execution has no recording command buffer.");
+			N_TR("Vulkan execution has no recording command buffer."));
 		return false;
 	}
 
@@ -3050,7 +3050,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"The Vulkan accelerator device is unavailable.");
+			N_TR("The Vulkan accelerator device is unavailable."));
 		return false;
 	}
 
@@ -3060,7 +3060,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan dispatch range is missing from the scalar block.");
+			N_TR("Vulkan dispatch range is missing from the scalar block."));
 		return false;
 	}
 
@@ -3071,7 +3071,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan dispatch range changed after execution creation.");
+			N_TR("Vulkan dispatch range changed after execution creation."));
 		return false;
 	}
 
@@ -3085,7 +3085,7 @@ accel_vulkan_dispatch_execution(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Vulkan active kernel has an inactive data buffer.");
+				N_TR("Vulkan active kernel has an inactive data buffer."));
 			return false;
 		}
 	}
@@ -3098,7 +3098,7 @@ accel_vulkan_dispatch_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan dispatch exceeds the device workgroup-count limit.");
+			N_TR("Vulkan dispatch exceeds the device workgroup-count limit."));
 		return false;
 	}
 
@@ -3212,7 +3212,7 @@ accel_vulkan_finish_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Failed to finish the Vulkan command buffer.");
+			N_TR("Failed to finish the Vulkan command buffer."));
 		return false;
 	}
 	active->command_started = false;
@@ -3258,7 +3258,7 @@ accel_vulkan_validate_finish(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Invalid Vulkan finish request.");
+			N_TR("Invalid Vulkan finish request."));
 		return false;
 	}
 
@@ -3267,7 +3267,7 @@ accel_vulkan_validate_finish(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan execution was already submitted.");
+			N_TR("Vulkan execution was already submitted."));
 		return false;
 	}
 
@@ -3276,7 +3276,7 @@ accel_vulkan_validate_finish(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan scalar-result table changed.");
+			N_TR("Vulkan scalar-result table changed."));
 		return false;
 	}
 
@@ -3285,7 +3285,7 @@ accel_vulkan_validate_finish(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Unexpected Vulkan scalar-result destination.");
+			N_TR("Unexpected Vulkan scalar-result destination."));
 		return false;
 	}
 
@@ -3294,7 +3294,7 @@ accel_vulkan_validate_finish(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Missing Vulkan scalar-result destination.");
+			N_TR("Missing Vulkan scalar-result destination."));
 		return false;
 	}
 
@@ -3303,7 +3303,7 @@ accel_vulkan_validate_finish(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan finish buffer table changed.");
+			N_TR("Vulkan finish buffer table changed."));
 		return false;
 	}
 
@@ -3312,7 +3312,7 @@ accel_vulkan_validate_finish(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Missing Vulkan finish buffers.");
+			N_TR("Missing Vulkan finish buffers."));
 		return false;
 	}
 
@@ -3326,7 +3326,7 @@ accel_vulkan_validate_finish(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Vulkan output transfer plan changed.");
+				N_TR("Vulkan output transfer plan changed."));
 			return false;
 		}
 
@@ -3337,7 +3337,7 @@ accel_vulkan_validate_finish(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Missing Vulkan output snapshot.");
+				N_TR("Missing Vulkan output snapshot."));
 			return false;
 		}
 	}
@@ -3377,7 +3377,7 @@ accel_vulkan_submit_and_wait(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"The Vulkan accelerator device is unavailable.");
+			N_TR("The Vulkan accelerator device is unavailable."));
 		return false;
 	}
 
@@ -3432,7 +3432,7 @@ accel_vulkan_submit_and_wait(
 	accel_vulkan_set_runtime_error(
 		error,
 		error_size,
-		"Vulkan accelerator submission failed.");
+		N_TR("Vulkan accelerator submission failed."));
 	return false;
 }
 
@@ -3456,7 +3456,7 @@ accel_vulkan_invalidate_execution(
 		accel_vulkan_set_runtime_error(
 			error,
 			error_size,
-			"Vulkan output was requested before completion.");
+			N_TR("Vulkan output was requested before completion."));
 		return false;
 	}
 
@@ -3483,7 +3483,7 @@ accel_vulkan_invalidate_execution(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Failed to invalidate Vulkan output memory.");
+				N_TR("Failed to invalidate Vulkan output memory."));
 			return false;
 		}
 	}
@@ -3504,7 +3504,7 @@ accel_vulkan_invalidate_execution(
 			accel_vulkan_set_runtime_error(
 				error,
 				error_size,
-				"Failed to invalidate Vulkan scalar-result memory.");
+				N_TR("Failed to invalidate Vulkan scalar-result memory."));
 			return false;
 		}
 	}

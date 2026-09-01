@@ -99,7 +99,7 @@ noct_bcback_start(
 		return false;
 
 	if (!bcback_output_open(&bcback_current_output, out_file_name)) {
-		printf("Failed to open file \"%s\".\n", out_file_name);
+		printf(N_TR("Failed to open file \"%s\".\n"), out_file_name);
 		return false;
 	}
 
@@ -200,7 +200,7 @@ bcback_build_module(
 	succeeded = false;
 
 	if (!bcback_metadata_valid(source_name, false)) {
-		printf("Error: Invalid bytecode source name.\n");
+		printf(N_TR("Error: Invalid bytecode source name.\n"));
 		return false;
 	}
 	if (source_text == NULL)

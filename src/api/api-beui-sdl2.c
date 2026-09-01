@@ -1720,7 +1720,7 @@ cfunc_BeUI_initWithHint(
 	converted = get_int_arg(env, 0, &bits_per_pixel);
 	if (!converted ||
 	    (bits_per_pixel != 8 && bits_per_pixel != 24)) {
-		noct_error(env, "BeUI.initWithHint expects 8 or 24 bits per pixel.");
+		noct_error(env, N_TR("BeUI.initWithHint expects 8 or 24 bits per pixel."));
 		return false;
 	}
 
@@ -1781,7 +1781,7 @@ cfunc_BeUI_getWidth(
 	/* Reads the active display description. */
 	available = beui_get_display_info(&info);
 	if (!available) {
-		noct_error(env, "BeUI is not open.");
+		noct_error(env, N_TR("BeUI is not open."));
 		return false;
 	}
 
@@ -1804,7 +1804,7 @@ cfunc_BeUI_getHeight(
 	/* Reads the active display description. */
 	available = beui_get_display_info(&info);
 	if (!available) {
-		noct_error(env, "BeUI is not open.");
+		noct_error(env, N_TR("BeUI is not open."));
 		return false;
 	}
 
@@ -1844,7 +1844,7 @@ cfunc_BeUI_flush(
 	/* Flushes pending display output. */
 	flushed = beui_flush();
 	if (!flushed) {
-		noct_error(env, "BeUI.flush failed.");
+		noct_error(env, N_TR("BeUI.flush failed."));
 		return false;
 	}
 
@@ -1873,35 +1873,35 @@ cfunc_BeUI_fill(
 	/* Reads the horizontal rectangle coordinate. */
 	valid = get_int_arg(env, 0, &x);
 	if (!valid) {
-		noct_error(env, "BeUI.fill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.fill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the vertical rectangle coordinate. */
 	valid = get_int_arg(env, 1, &y);
 	if (!valid) {
-		noct_error(env, "BeUI.fill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.fill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the rectangle width. */
 	valid = get_int_arg(env, 2, &width);
 	if (!valid) {
-		noct_error(env, "BeUI.fill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.fill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the rectangle height. */
 	valid = get_int_arg(env, 3, &height);
 	if (!valid) {
-		noct_error(env, "BeUI.fill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.fill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the solid fill color. */
 	valid = get_int_arg(env, 4, &color);
 	if (!valid) {
-		noct_error(env, "BeUI.fill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.fill received an invalid argument."));
 		return false;
 	}
 
@@ -1912,7 +1912,7 @@ cfunc_BeUI_fill(
 	    height <= 0 ||
 	    color < 0 ||
 	    color > 0xffffff) {
-		noct_error(env, "BeUI.fill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.fill received an invalid argument."));
 		return false;
 	}
 
@@ -1925,7 +1925,7 @@ cfunc_BeUI_fill(
 	/* Fills the requested display rectangle. */
 	filled = beui_fill(&rectangle, (uint32_t)color);
 	if (!filled) {
-		noct_error(env, "BeUI.fill failed.");
+		noct_error(env, N_TR("BeUI.fill failed."));
 		return false;
 	}
 
@@ -1953,35 +1953,35 @@ cfunc_BeUI_line(
 	/* Reads the first horizontal endpoint. */
 	valid = get_int_arg(env, 0, &x0);
 	if (!valid) {
-		noct_error(env, "BeUI.line received an invalid argument.");
+		noct_error(env, N_TR("BeUI.line received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the first vertical endpoint. */
 	valid = get_int_arg(env, 1, &y0);
 	if (!valid) {
-		noct_error(env, "BeUI.line received an invalid argument.");
+		noct_error(env, N_TR("BeUI.line received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the second horizontal endpoint. */
 	valid = get_int_arg(env, 2, &x1);
 	if (!valid) {
-		noct_error(env, "BeUI.line received an invalid argument.");
+		noct_error(env, N_TR("BeUI.line received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the second vertical endpoint. */
 	valid = get_int_arg(env, 3, &y1);
 	if (!valid) {
-		noct_error(env, "BeUI.line received an invalid argument.");
+		noct_error(env, N_TR("BeUI.line received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the solid line color. */
 	valid = get_int_arg(env, 4, &color);
 	if (!valid) {
-		noct_error(env, "BeUI.line received an invalid argument.");
+		noct_error(env, N_TR("BeUI.line received an invalid argument."));
 		return false;
 	}
 
@@ -1992,7 +1992,7 @@ cfunc_BeUI_line(
 	    y1 < 0 ||
 	    color < 0 ||
 	    color > 0xffffff) {
-		noct_error(env, "BeUI.line received an invalid argument.");
+		noct_error(env, N_TR("BeUI.line received an invalid argument."));
 		return false;
 	}
 
@@ -2004,7 +2004,7 @@ cfunc_BeUI_line(
 		(unsigned)y1,
 		(uint32_t)color);
 	if (!drawn) {
-		noct_error(env, "BeUI.line failed.");
+		noct_error(env, N_TR("BeUI.line failed."));
 		return false;
 	}
 
@@ -2038,35 +2038,35 @@ cfunc_BeUI_patternFill(
 	/* Reads the horizontal rectangle coordinate. */
 	valid = get_int_arg(env, 0, &x);
 	if (!valid) {
-		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.patternFill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the vertical rectangle coordinate. */
 	valid = get_int_arg(env, 1, &y);
 	if (!valid) {
-		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.patternFill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the rectangle width. */
 	valid = get_int_arg(env, 2, &width);
 	if (!valid) {
-		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.patternFill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the rectangle height. */
 	valid = get_int_arg(env, 3, &height);
 	if (!valid) {
-		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.patternFill received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the patterned-fill color. */
 	valid = get_int_arg(env, 4, &color);
 	if (!valid) {
-		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.patternFill received an invalid argument."));
 		return false;
 	}
 
@@ -2077,7 +2077,7 @@ cfunc_BeUI_patternFill(
 	    height <= 0 ||
 	    color < 0 ||
 	    color > 0xffffff) {
-		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.patternFill received an invalid argument."));
 		return false;
 	}
 
@@ -2104,7 +2104,7 @@ cfunc_BeUI_patternFill(
 
 	/* Reports an invalid pattern through the existing API error. */
 	if (!converted) {
-		noct_error(env, "BeUI.patternFill received an invalid argument.");
+		noct_error(env, N_TR("BeUI.patternFill received an invalid argument."));
 		return false;
 	}
 
@@ -2117,7 +2117,7 @@ cfunc_BeUI_patternFill(
 	/* Fills the requested rectangle through the supplied pattern. */
 	filled = beui_pattern_fill(&rectangle, (uint32_t)color, (uint64_t)pattern);
 	if (!filled) {
-		noct_error(env, "BeUI.patternFill failed.");
+		noct_error(env, N_TR("BeUI.patternFill failed."));
 		return false;
 	}
 
@@ -2153,7 +2153,7 @@ measure_text_arg(
 	/* Reads the borrowed UTF-8 string. */
 	read = noct_get_arg_check_string(env, 0, &value, &text);
 	if (!read) {
-		noct_error(env, "%s failed.", api);
+		noct_error(env, N_TR("%s failed."), api);
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2161,7 +2161,7 @@ measure_text_arg(
 	/* Measures the string while its owner remains pinned. */
 	measured = beui_measure_text(text, width, height);
 	if (!measured) {
-		noct_error(env, "%s failed.", api);
+		noct_error(env, N_TR("%s failed."), api);
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2241,28 +2241,28 @@ cfunc_BeUI_drawText(
 	/* Reads the horizontal text coordinate. */
 	valid = get_int_arg(env, 1, &x);
 	if (!valid) {
-		noct_error(env, "BeUI.drawText received an invalid argument.");
+		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the vertical text coordinate. */
 	valid = get_int_arg(env, 2, &y);
 	if (!valid) {
-		noct_error(env, "BeUI.drawText received an invalid argument.");
+		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the foreground color. */
 	valid = get_int_arg(env, 3, &foreground);
 	if (!valid) {
-		noct_error(env, "BeUI.drawText received an invalid argument.");
+		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 		return false;
 	}
 
 	/* Reads the background color. */
 	valid = get_int_arg(env, 4, &background);
 	if (!valid) {
-		noct_error(env, "BeUI.drawText received an invalid argument.");
+		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 		return false;
 	}
 
@@ -2273,7 +2273,7 @@ cfunc_BeUI_drawText(
 	    foreground > 0xffffff ||
 	    background < 0 ||
 	    background > 0xffffff) {
-		noct_error(env, "BeUI.drawText received an invalid argument.");
+		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 		return false;
 	}
 
@@ -2288,7 +2288,7 @@ cfunc_BeUI_drawText(
 	/* Reads the borrowed UTF-8 string. */
 	read = noct_get_arg_check_string(env, 0, &value, &text);
 	if (!read) {
-		noct_error(env, "BeUI.drawText failed.");
+		noct_error(env, N_TR("BeUI.drawText failed."));
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2296,7 +2296,7 @@ cfunc_BeUI_drawText(
 	/* Draws the text while its owner remains pinned. */
 	drawn = beui_draw_text(text, (unsigned)x, (unsigned)y, (uint32_t)foreground, (uint32_t)background);
 	if (!drawn) {
-		noct_error(env, "BeUI.drawText failed.");
+		noct_error(env, N_TR("BeUI.drawText failed."));
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2323,7 +2323,7 @@ cfunc_BeUI_getMilliseconds(
 	/* Reads the SDL2 clock. */
 	available = beui_get_milliseconds(&milliseconds);
 	if (!available) {
-		noct_error(env, "BeUI.getMilliseconds is unavailable.");
+		noct_error(env, N_TR("BeUI.getMilliseconds is unavailable."));
 		return false;
 	}
 
@@ -2347,14 +2347,14 @@ cfunc_BeUI_sleep(
 	/* Reads and validates the bounded sleep interval. */
 	converted = get_int_arg(env, 0, &milliseconds);
 	if (!converted || milliseconds < 0 || milliseconds > 3600000) {
-		noct_error(env, "BeUI.sleep received an invalid argument.");
+		noct_error(env, N_TR("BeUI.sleep received an invalid argument."));
 		return false;
 	}
 
 	/* Sleeps through the SDL2 clock. */
 	slept = beui_sleep((unsigned)milliseconds);
 	if (!slept) {
-		noct_error(env, "BeUI.sleep is unavailable.");
+		noct_error(env, N_TR("BeUI.sleep is unavailable."));
 		return false;
 	}
 
@@ -2378,7 +2378,7 @@ cfunc_BeUI_isKeyDown(
 	/* Reads and validates the requested key code. */
 	converted = get_int_arg(env, 0, &key);
 	if (!converted || key < 0) {
-		noct_error(env, "BeUI.isKeyDown received an invalid argument.");
+		noct_error(env, N_TR("BeUI.isKeyDown received an invalid argument."));
 		return false;
 	}
 
@@ -2406,7 +2406,7 @@ pointer_field(
 	/* Copies the requested pointer state field. */
 	available = beui_get_pointer(x, y, buttons);
 	if (!available) {
-		noct_error(env, "%s is unavailable.", api);
+		noct_error(env, N_TR("%s is unavailable."), api);
 		return false;
 	}
 
@@ -2517,7 +2517,7 @@ cfunc_BeUI_loadImage(
 					  &value,
 					  NOCT_PACKED_UINT8);
 	if (!valid) {
-		noct_error(env, "BeUI.loadImage expects a byte array.");
+		noct_error(env, N_TR("BeUI.loadImage expects a byte array."));
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2525,7 +2525,7 @@ cfunc_BeUI_loadImage(
 	/* Reads the byte-array length. */
 	valid = noct_get_packed_size(env, &value, &size);
 	if (!valid) {
-		noct_error(env, "BeUI.loadImage expects a byte array.");
+		noct_error(env, N_TR("BeUI.loadImage expects a byte array."));
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2533,7 +2533,7 @@ cfunc_BeUI_loadImage(
 	/* Reads the byte-array storage. */
 	valid = noct_get_packed_pointer(env, &value, &data);
 	if (!valid) {
-		noct_error(env, "BeUI.loadImage expects a byte array.");
+		noct_error(env, N_TR("BeUI.loadImage expects a byte array."));
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2541,7 +2541,7 @@ cfunc_BeUI_loadImage(
 	/* Decodes and retains the BMP image. */
 	handle = image_load_bmp(data, size);
 	if (handle == 0) {
-		noct_error(env, "BeUI.loadImage received an unsupported image.");
+		noct_error(env, N_TR("BeUI.loadImage received an unsupported image."));
 		(void)noct_unpin_local(env, 1, &value);
 		return false;
 	}
@@ -2571,7 +2571,7 @@ cfunc_BeUI_getImageWidth(
 	if (!valid) {
 		noct_error(
 			env,
-			"BeUI.getImageWidth received an invalid handle.");
+			N_TR("BeUI.getImageWidth received an invalid handle."));
 		return false;
 	}
 
@@ -2579,7 +2579,7 @@ cfunc_BeUI_getImageWidth(
 	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env,
-			   "BeUI.getImageWidth received an invalid handle.");
+			   N_TR("BeUI.getImageWidth received an invalid handle."));
 		return false;
 	}
 
@@ -2605,7 +2605,7 @@ cfunc_BeUI_getImageHeight(
 	if (!valid) {
 		noct_error(
 			env,
-			"BeUI.getImageHeight received an invalid handle.");
+			N_TR("BeUI.getImageHeight received an invalid handle."));
 		return false;
 	}
 
@@ -2613,7 +2613,7 @@ cfunc_BeUI_getImageHeight(
 	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env,
-			   "BeUI.getImageHeight received an invalid handle.");
+			   N_TR("BeUI.getImageHeight received an invalid handle."));
 		return false;
 	}
 
@@ -2640,41 +2640,41 @@ cfunc_BeUI_drawImage(
 	/* Reads the image handle. */
 	valid = get_int_arg(env, 0, &handle);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImage failed.");
+		noct_error(env, N_TR("BeUI.drawImage failed."));
 		return false;
 	}
 
 	/* Reads the horizontal destination coordinate. */
 	valid = get_int_arg(env, 1, &x);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImage failed.");
+		noct_error(env, N_TR("BeUI.drawImage failed."));
 		return false;
 	}
 
 	/* Reads the vertical destination coordinate. */
 	valid = get_int_arg(env, 2, &y);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImage failed.");
+		noct_error(env, N_TR("BeUI.drawImage failed."));
 		return false;
 	}
 
 	/* Rejects destinations outside the unsigned coordinate space. */
 	if (x < 0 || y < 0) {
-		noct_error(env, "BeUI.drawImage failed.");
+		noct_error(env, N_TR("BeUI.drawImage failed."));
 		return false;
 	}
 
 	/* Resolves the image handle. */
 	image = image_get(handle);
 	if (image == NULL) {
-		noct_error(env, "BeUI.drawImage failed.");
+		noct_error(env, N_TR("BeUI.drawImage failed."));
 		return false;
 	}
 
 	/* Draws the image at the requested destination. */
 	drawn = beui_draw_image((unsigned)x, (unsigned)y, image);
 	if (!drawn) {
-		noct_error(env, "BeUI.drawImage failed.");
+		noct_error(env, N_TR("BeUI.drawImage failed."));
 		return false;
 	}
 
@@ -2705,49 +2705,49 @@ cfunc_BeUI_drawImageRegion(
 	/* Reads the image handle. */
 	valid = get_int_arg(env, 0, &handle);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
 	/* Reads the horizontal source coordinate. */
 	valid = get_int_arg(env, 1, &source_x);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
 	/* Reads the vertical source coordinate. */
 	valid = get_int_arg(env, 2, &source_y);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
 	/* Reads the source width. */
 	valid = get_int_arg(env, 3, &width);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
 	/* Reads the source height. */
 	valid = get_int_arg(env, 4, &height);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
 	/* Reads the horizontal destination coordinate. */
 	valid = get_int_arg(env, 5, &x);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
 	/* Reads the vertical destination coordinate. */
 	valid = get_int_arg(env, 6, &y);
 	if (!valid) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
@@ -2758,14 +2758,14 @@ cfunc_BeUI_drawImageRegion(
 	    height <= 0 ||
 	    x < 0 ||
 	    y < 0) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
 	/* Resolves the image handle. */
 	image = image_get(handle);
 	if (image == NULL) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
@@ -2778,7 +2778,7 @@ cfunc_BeUI_drawImageRegion(
 				       (unsigned)x,
 				       (unsigned)y);
 	if (!drawn) {
-		noct_error(env, "BeUI.drawImageRegion failed.");
+		noct_error(env, N_TR("BeUI.drawImageRegion failed."));
 		return false;
 	}
 
@@ -2809,7 +2809,7 @@ cfunc_BeUI_drawImagePattern(
 	valid = get_int_arg(env, 0, &handle);
 	if (!valid) {
 		noct_error(env,
-			   "BeUI.drawImagePattern received an invalid argument.");
+			   N_TR("BeUI.drawImagePattern received an invalid argument."));
 		return false;
 	}
 
@@ -2817,7 +2817,7 @@ cfunc_BeUI_drawImagePattern(
 	valid = get_int_arg(env, 1, &x);
 	if (!valid) {
 		noct_error(env,
-			   "BeUI.drawImagePattern received an invalid argument.");
+			   N_TR("BeUI.drawImagePattern received an invalid argument."));
 		return false;
 	}
 
@@ -2825,14 +2825,14 @@ cfunc_BeUI_drawImagePattern(
 	valid = get_int_arg(env, 2, &y);
 	if (!valid) {
 		noct_error(env,
-			   "BeUI.drawImagePattern received an invalid argument.");
+			   N_TR("BeUI.drawImagePattern received an invalid argument."));
 		return false;
 	}
 
 	/* Rejects destinations outside the unsigned coordinate space. */
 	if (x < 0 || y < 0) {
 		noct_error(env,
-			   "BeUI.drawImagePattern received an invalid argument.");
+			   N_TR("BeUI.drawImagePattern received an invalid argument."));
 		return false;
 	}
 
@@ -2857,14 +2857,14 @@ cfunc_BeUI_drawImagePattern(
 
 	/* Rejects a pattern that could not be converted. */
 	if (!valid) {
-		noct_error(env, "BeUI.drawImagePattern failed.");
+		noct_error(env, N_TR("BeUI.drawImagePattern failed."));
 		return false;
 	}
 
 	/* Resolves the image handle. */
 	image = image_get(handle);
 	if (image == NULL) {
-		noct_error(env, "BeUI.drawImagePattern failed.");
+		noct_error(env, N_TR("BeUI.drawImagePattern failed."));
 		return false;
 	}
 
@@ -2874,7 +2874,7 @@ cfunc_BeUI_drawImagePattern(
 					image,
 					(uint64_t)pattern);
 	if (!drawn) {
-		noct_error(env, "BeUI.drawImagePattern failed.");
+		noct_error(env, N_TR("BeUI.drawImagePattern failed."));
 		return false;
 	}
 
@@ -2898,14 +2898,14 @@ cfunc_BeUI_destroyImage(
 	/* Reads the image handle. */
 	valid = get_int_arg(env, 0, &handle);
 	if (!valid) {
-		noct_error(env, "BeUI.destroyImage received an invalid handle.");
+		noct_error(env, N_TR("BeUI.destroyImage received an invalid handle."));
 		return false;
 	}
 
 	/* Destroys the selected image. */
 	destroyed = image_destroy(handle);
 	if (!destroyed) {
-		noct_error(env, "BeUI.destroyImage received an invalid handle.");
+		noct_error(env, N_TR("BeUI.destroyImage received an invalid handle."));
 		return false;
 	}
 

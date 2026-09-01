@@ -372,7 +372,7 @@ rt_register_source(
 		/* Publishes the AST diagnostic to the runtime environment. */
 		rt_set_error_file(env, error_file);
 		env->line = error_line;
-		rt_error(env, "%s", error_message);
+		rt_error(env, N_TR("%s"), error_message);
 
 		/* Releases the failed AST construction. */
 		ast_cleanup();
@@ -389,7 +389,7 @@ rt_register_source(
 		/* Publishes the HIR diagnostic to the runtime environment. */
 		rt_set_error_file(env, error_file);
 		env->line = error_line;
-		rt_error(env, "%s", error_message);
+		rt_error(env, N_TR("%s"), error_message);
 
 		/* Releases the failed HIR and its source AST. */
 		hir_cleanup();
@@ -443,7 +443,7 @@ rt_register_source(
 			/* Publishes the optimizer diagnostic. */
 			rt_set_error_file(env, error_file);
 			env->line = error_line;
-			rt_error(env, "%s", error_message);
+			rt_error(env, N_TR("%s"), error_message);
 
 			/* Releases the incomplete compilation unit. */
 			rt_cleanup_lir_array(function_count, function);
@@ -462,7 +462,7 @@ rt_register_source(
 			/* Publishes the LIR diagnostic. */
 			rt_set_error_file(env, error_file);
 			env->line = error_line;
-			rt_error(env, "%s", error_message);
+			rt_error(env, N_TR("%s"), error_message);
 
 			/* Releases the incomplete compilation unit. */
 			rt_cleanup_lir_array(function_count, function);

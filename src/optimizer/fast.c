@@ -168,12 +168,12 @@ fast_signature_build(
 			fast_set_error(
 				error,
 				error_size,
-				"Too many __fast parameters.");
+				N_TR("Too many __fast parameters."));
 		} else {
 			fast_set_error(
 				error,
 				error_size,
-				"Too many function parameters.");
+				N_TR("Too many function parameters."));
 		}
 		return false;
 	}
@@ -183,7 +183,7 @@ fast_signature_build(
 		fast_set_error(
 			error,
 			error_size,
-			"A function return type cannot have a shape.");
+			N_TR("A function return type cannot have a shape."));
 		return false;
 	}
 
@@ -191,7 +191,7 @@ fast_signature_build(
 		fast_set_error(
 			error,
 			error_size,
-			"Invalid function parameter metadata.");
+			N_TR("Invalid function parameter metadata."));
 		return false;
 	}
 
@@ -203,7 +203,7 @@ fast_signature_build(
 				fast_set_error(
 					error,
 					error_size,
-					"Shaped parameter types are valid only on __fast func.");
+					N_TR("Shaped parameter types are valid only on __fast func."));
 				return false;
 			}
 		}
@@ -223,7 +223,7 @@ fast_signature_build(
 		fast_set_error(
 			error,
 			error_size,
-			"Invalid __fast signature metadata.");
+			N_TR("Invalid __fast signature metadata."));
 		return false;
 	}
 
@@ -231,7 +231,7 @@ fast_signature_build(
 		fast_set_error(
 			error,
 			error_size,
-			"A __fast func must declare its return type.");
+			N_TR("A __fast func must declare its return type."));
 		return false;
 	}
 
@@ -240,14 +240,14 @@ fast_signature_build(
 			fast_set_error(
 				error,
 				error_size,
-				"A __fast func return type must be void, int, long, float, or double.");
+				N_TR("A __fast func return type must be void, int, long, float, or double."));
 			return false;
 		}
 	} else if (!fast_primitive_spelling(return_annotation, return_type)) {
 		fast_set_error(
 			error,
 			error_size,
-			"A __fast func return type must be void, int, long, float, or double.");
+			N_TR("A __fast func return type must be void, int, long, float, or double."));
 		return false;
 	}
 
@@ -257,7 +257,7 @@ fast_signature_build(
 			fast_set_error(
 				error,
 				error_size,
-				"Invalid __fast signature metadata.");
+				N_TR("Invalid __fast signature metadata."));
 			return false;
 		}
 	}
@@ -274,7 +274,7 @@ fast_signature_build(
 			fast_set_error(
 				error,
 				error_size,
-				"Out of memory while building __fast signature.");
+				N_TR("Out of memory while building __fast signature."));
 			return false;
 		}
 	}
@@ -997,7 +997,7 @@ fast_parse_shape(
 		fast_set_error(
 			error,
 			error_size,
-			"A restricted packed __fast parameter requires an exact shape.");
+			N_TR("A restricted packed __fast parameter requires an exact shape."));
 		return false;
 	}
 
@@ -1008,7 +1008,7 @@ fast_parse_shape(
 		fast_set_error(
 			error,
 			error_size,
-			"Invalid __fast parameter shape.");
+			N_TR("Invalid __fast parameter shape."));
 		return false;
 	}
 
@@ -1021,7 +1021,7 @@ fast_parse_shape(
 			fast_set_error(
 				error,
 				error_size,
-				"A __fast parameter shape has more than 8 dimensions.");
+				N_TR("A __fast parameter shape has more than 8 dimensions."));
 			return false;
 		}
 
@@ -1036,7 +1036,7 @@ fast_parse_shape(
 			fast_set_error(
 				error,
 				error_size,
-				"Invalid empty __fast shape extent.");
+				N_TR("Invalid empty __fast shape extent."));
 			return false;
 		}
 
@@ -1049,21 +1049,21 @@ fast_parse_shape(
 				fast_set_error(
 					error,
 					error_size,
-					"__fast shape extent is too large.");
+					N_TR("__fast shape extent is too large."));
 				return false;
 			}
 			if (decimal_result == FAST_DECIMAL_ZERO) {
 				fast_set_error(
 					error,
 					error_size,
-					"A __fast shape extent must be positive.");
+					N_TR("A __fast shape extent must be positive."));
 				return false;
 			}
 			if (decimal_result != FAST_DECIMAL_OK) {
 				fast_set_error(
 					error,
 					error_size,
-					"Invalid __fast shape extent.");
+					N_TR("Invalid __fast shape extent."));
 				return false;
 			}
 
@@ -1074,7 +1074,7 @@ fast_parse_shape(
 				fast_set_error(
 					error,
 					error_size,
-					"Invalid __fast shape extent.");
+					N_TR("Invalid __fast shape extent."));
 				return false;
 			}
 
@@ -1087,7 +1087,7 @@ fast_parse_shape(
 				fast_set_error(
 					error,
 					error_size,
-					"A dynamic __fast shape extent must name an int or long parameter.");
+					N_TR("A dynamic __fast shape extent must name an int or long parameter."));
 				return false;
 			}
 			if (param_type[param_index] != NOCT_VALUE_INT &&
@@ -1095,7 +1095,7 @@ fast_parse_shape(
 				fast_set_error(
 					error,
 					error_size,
-					"A dynamic __fast shape extent must name an int or long parameter.");
+					N_TR("A dynamic __fast shape extent must name an int or long parameter."));
 				return false;
 			}
 
@@ -1112,7 +1112,7 @@ fast_parse_shape(
 				fast_set_error(
 					error,
 					error_size,
-					"Invalid empty __fast shape extent.");
+					N_TR("Invalid empty __fast shape extent."));
 				return false;
 			}
 		}
@@ -1150,7 +1150,7 @@ fast_build_param(
 		fast_set_error(
 			error,
 			error_size,
-			"Every __fast func parameter requires a type annotation.");
+			N_TR("Every __fast func parameter requires a type annotation."));
 		return false;
 	}
 
@@ -1162,7 +1162,7 @@ fast_build_param(
 		fast_set_error(
 			error,
 			error_size,
-			"Invalid __fast parameter type.");
+			N_TR("Invalid __fast parameter type."));
 		return false;
 	}
 
@@ -1171,7 +1171,7 @@ fast_build_param(
 			fast_set_error(
 				error,
 				error_size,
-				"A __fast func parameter must be primitive or shaped rpacked.");
+				N_TR("A __fast func parameter must be primitive or shaped rpacked."));
 			return false;
 		}
 
@@ -1179,7 +1179,7 @@ fast_build_param(
 			fast_set_error(
 				error,
 				error_size,
-				"A primitive __fast parameter must use int, long, float, or double exactly.");
+				N_TR("A primitive __fast parameter must use int, long, float, or double exactly."));
 			return false;
 		}
 
@@ -1187,7 +1187,7 @@ fast_build_param(
 			fast_set_error(
 				error,
 				error_size,
-				"A primitive __fast parameter cannot have a shape.");
+				N_TR("A primitive __fast parameter cannot have a shape."));
 			return false;
 		}
 
@@ -1207,7 +1207,7 @@ fast_build_param(
 		fast_set_error(
 			error,
 			error_size,
-			"A __fast func parameter must be primitive or shaped rpacked.");
+			N_TR("A __fast func parameter must be primitive or shaped rpacked."));
 		return false;
 	}
 
@@ -1215,7 +1215,7 @@ fast_build_param(
 		fast_set_error(
 			error,
 			error_size,
-			"A __fast func parameter must be primitive or shaped rpacked.");
+			N_TR("A __fast func parameter must be primitive or shaped rpacked."));
 		return false;
 	}
 
@@ -1223,7 +1223,7 @@ fast_build_param(
 		fast_set_error(
 			error,
 			error_size,
-			"A restricted packed __fast parameter requires an exact shape.");
+			N_TR("A restricted packed __fast parameter requires an exact shape."));
 		return false;
 	}
 
@@ -1248,7 +1248,7 @@ fast_build_param(
 		fast_set_error(
 			error,
 			error_size,
-			"Out of memory while building __fast signature.");
+			N_TR("Out of memory while building __fast signature."));
 		return false;
 	}
 

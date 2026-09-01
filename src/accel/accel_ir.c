@@ -244,19 +244,19 @@ accel_ir_kernel_validate(
 	bool valid;
 
 	if (kernel == NULL)
-		return accel_ir_error(error, error_size, "null kernel");
+		return accel_ir_error(error, error_size, N_TR("null kernel"));
 	if (kernel->name == NULL)
-		return accel_ir_error(error, error_size, "missing kernel name");
+		return accel_ir_error(error, error_size, N_TR("missing kernel name"));
 	if (kernel->scalar_binding_count > ACCEL_MAX_SCALAR_BINDINGS)
-		return accel_ir_error(error, error_size, "scalar binding limit exceeded");
+		return accel_ir_error(error, error_size, N_TR("scalar binding limit exceeded"));
 	if (kernel->buffer_binding_count > ACCEL_MAX_BUFFER_BINDINGS)
-		return accel_ir_error(error, error_size, "buffer binding limit exceeded");
+		return accel_ir_error(error, error_size, N_TR("buffer binding limit exceeded"));
 	if (kernel->instruction_count > ACCEL_MAX_IR_INSTRUCTIONS)
-		return accel_ir_error(error, error_size, "instruction limit exceeded");
+		return accel_ir_error(error, error_size, N_TR("instruction limit exceeded"));
 	if (kernel->value_count > ACCEL_MAX_IR_VALUES)
-		return accel_ir_error(error, error_size, "value limit exceeded");
+		return accel_ir_error(error, error_size, N_TR("value limit exceeded"));
 	if (kernel->instruction_count != 0 && kernel->instruction == NULL)
-		return accel_ir_error(error, error_size, "missing instruction table");
+		return accel_ir_error(error, error_size, N_TR("missing instruction table"));
 
 	/* Validate every declared buffer element type. */
 	for (i = 0; i < kernel->buffer_binding_count; i++) {
@@ -265,7 +265,7 @@ accel_ir_kernel_validate(
 			return accel_ir_error(
 				error,
 				error_size,
-				"invalid buffer value type");
+				N_TR("invalid buffer value type"));
 		}
 	}
 
@@ -279,7 +279,7 @@ accel_ir_kernel_validate(
 			return accel_ir_error(
 				error,
 				error_size,
-				"invalid instruction result type");
+				N_TR("invalid instruction result type"));
 		}
 
 		valid = accel_ir_validate_input(
@@ -288,7 +288,7 @@ accel_ir_kernel_validate(
 			defined_value_count,
 			value_type);
 		if (!valid)
-			return accel_ir_error(error, error_size, "invalid instruction");
+			return accel_ir_error(error, error_size, N_TR("invalid instruction"));
 
 		if (instruction->opcode == ACCEL_IR_DIV_I32 ||
 		    instruction->opcode == ACCEL_IR_MOD_I32) {
@@ -296,13 +296,13 @@ accel_ir_kernel_validate(
 				return accel_ir_error(
 					error,
 					error_size,
-					"nonconstant integer divisor");
+					N_TR("nonconstant integer divisor"));
 			}
 			if (constant_value[instruction->operand[1]] <= 0) {
 				return accel_ir_error(
 					error,
 					error_size,
-					"nonpositive integer divisor");
+					N_TR("nonpositive integer divisor"));
 			}
 		}
 		if (instruction->opcode == ACCEL_IR_SHIFT_LEFT ||
@@ -311,14 +311,14 @@ accel_ir_kernel_validate(
 				return accel_ir_error(
 					error,
 					error_size,
-					"nonconstant shift count");
+					N_TR("nonconstant shift count"));
 			}
 			if (constant_value[instruction->operand[1]] < 0 ||
 			    constant_value[instruction->operand[1]] > 31) {
 				return accel_ir_error(
 					error,
 					error_size,
-					"shift count out of range");
+					N_TR("shift count out of range"));
 			}
 		}
 
@@ -335,7 +335,7 @@ accel_ir_kernel_validate(
 	}
 
 	if (defined_value_count != kernel->value_count)
-		return accel_ir_error(error, error_size, "incorrect value count");
+		return accel_ir_error(error, error_size, N_TR("incorrect value count"));
 
 	if (error != NULL && error_size != 0)
 		error[0] = '\0';

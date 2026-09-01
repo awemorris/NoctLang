@@ -123,14 +123,14 @@ noct_repl_submit(NoctReplSession *session, const char *line)
 	}
 
 	if (!repl_append(session, line)) {
-		noct_error(session->env, "REPL input is too large.");
+		noct_error(session->env, N_TR("REPL input is too large."));
 		repl_reset(session);
 		return NOCT_REPL_ERROR;
 	}
 
 	repl_scan_source(session->source, &scan);
 	if (scan.invalid) {
-		noct_error(session->env, "REPL input has unmatched delimiters.");
+		noct_error(session->env, N_TR("REPL input has unmatched delimiters."));
 		repl_reset(session);
 		return NOCT_REPL_ERROR;
 	}
@@ -143,7 +143,7 @@ noct_repl_submit(NoctReplSession *session, const char *line)
 
 	is_function = repl_word_is(&scan, "func");
 	if (!is_function && !repl_prepare_statement(session, &scan)) {
-		noct_error(session->env, "REPL input is too large.");
+		noct_error(session->env, N_TR("REPL input is too large."));
 		repl_reset(session);
 		return NOCT_REPL_ERROR;
 	}

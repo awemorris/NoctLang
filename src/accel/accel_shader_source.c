@@ -80,7 +80,7 @@ accel_shader_source_generate(
 
 	/* Reject a missing output before attempting to clear it. */
 	if (result == NULL)
-		return accel_shader_source_error(error, error_size, "missing shader output");
+		return accel_shader_source_error(error, error_size, N_TR("missing shader output"));
 
 	result->data = NULL;
 	result->length = 0;
@@ -108,17 +108,17 @@ accel_shader_source_generate(
 			accel_shader_source_error(
 				error,
 				error_size,
-				"out of memory while generating shader source");
+				N_TR("out of memory while generating shader source"));
 		} else if (builder.text.format_error) {
 			accel_shader_source_error(
 				error,
 				error_size,
-				"shader source fragment exceeded its limit");
+				N_TR("shader source fragment exceeded its limit"));
 		} else {
 			accel_shader_source_error(
 				error,
 				error_size,
-				"unsupported typed shader instruction");
+				N_TR("unsupported typed shader instruction"));
 		}
 		accel_shader_text_cleanup(&builder.text);
 		return false;
@@ -194,37 +194,37 @@ accel_shader_source_validate(
 		return accel_shader_source_error(
 			error,
 			error_size,
-			"unsupported shader source dialect");
+			N_TR("unsupported shader source dialect"));
 	}
 
 	/* Require a bounded program and a present kernel table. */
 	if (program == NULL)
-		return accel_shader_source_error(error, error_size, "missing accelerator program");
+		return accel_shader_source_error(error, error_size, N_TR("missing accelerator program"));
 	if (program->scalar_count > ACCEL_MAX_SCALAR_BINDINGS)
-		return accel_shader_source_error(error, error_size, "scalar binding limit exceeded");
+		return accel_shader_source_error(error, error_size, N_TR("scalar binding limit exceeded"));
 	if (program->buffer_count > ACCEL_MAX_BUFFER_BINDINGS)
-		return accel_shader_source_error(error, error_size, "buffer binding limit exceeded");
+		return accel_shader_source_error(error, error_size, N_TR("buffer binding limit exceeded"));
 	if (program->scalar_result_count > ACCEL_MAX_SCALAR_BINDINGS)
-		return accel_shader_source_error(error, error_size, "scalar result limit exceeded");
+		return accel_shader_source_error(error, error_size, N_TR("scalar result limit exceeded"));
 	if (program->scalar_result_count != 0 && program->scalar_result == NULL)
-		return accel_shader_source_error(error, error_size, "missing scalar result table");
+		return accel_shader_source_error(error, error_size, N_TR("missing scalar result table"));
 	if (program->kernel_count > ACCEL_MAX_KERNELS)
-		return accel_shader_source_error(error, error_size, "kernel limit exceeded");
+		return accel_shader_source_error(error, error_size, N_TR("kernel limit exceeded"));
 	if (kernel_index >= program->kernel_count)
-		return accel_shader_source_error(error, error_size, "invalid shader kernel index");
+		return accel_shader_source_error(error, error_size, N_TR("invalid shader kernel index"));
 	if (program->kernel == NULL)
-		return accel_shader_source_error(error, error_size, "missing accelerator kernel table");
+		return accel_shader_source_error(error, error_size, N_TR("missing accelerator kernel table"));
 
 	/* Match the selected typed kernel to its program binding namespace. */
 	kernel = &program->kernel[kernel_index];
 	if (kernel->kernel_index != kernel_index)
-		return accel_shader_source_error(error, error_size, "nondeterministic shader kernel index");
+		return accel_shader_source_error(error, error_size, N_TR("nondeterministic shader kernel index"));
 	if (kernel->ir == NULL)
-		return accel_shader_source_error(error, error_size, "missing typed shader kernel");
+		return accel_shader_source_error(error, error_size, N_TR("missing typed shader kernel"));
 	if (kernel->ir->scalar_binding_count != program->scalar_count)
-		return accel_shader_source_error(error, error_size, "shader scalar table mismatch");
+		return accel_shader_source_error(error, error_size, N_TR("shader scalar table mismatch"));
 	if (kernel->ir->buffer_binding_count != program->buffer_count)
-		return accel_shader_source_error(error, error_size, "shader buffer table mismatch");
+		return accel_shader_source_error(error, error_size, N_TR("shader buffer table mismatch"));
 
 	/* Validate the complete use-before-definition-safe typed stream. */
 	if (!accel_ir_kernel_validate(kernel->ir, ir_error, sizeof(ir_error)))
@@ -241,7 +241,7 @@ accel_shader_source_validate(
 			return accel_shader_source_error(
 				error,
 				error_size,
-				"scalar result reference out of range");
+				N_TR("scalar result reference out of range"));
 		}
 	}
 

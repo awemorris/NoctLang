@@ -1254,7 +1254,7 @@ scmback_visit_expr(
 			return false;
 		break;
 	default:
-		printf("unimplemented expr: %d\n", expr->type);
+		printf(N_TR("unimplemented expr: %d\n"), expr->type);
 		assert(NEVER_COME_HERE);
 		abort();
 		break;
@@ -1695,5 +1695,5 @@ scmback_fatal(
 static void
 scmback_out_of_memory(void)
 {
-	printf("Out of memory.\n");
+	printf(N_TR("Out of memory.\n"));
 }

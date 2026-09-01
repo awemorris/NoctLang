@@ -127,7 +127,7 @@ jit_put_word(
 {
         if (ctx->code >= ctx->code_end) {
 		ctx->code_overflow = true;
-                rt_error(ctx->env, "Code too big.");
+                rt_error(ctx->env, N_TR("Code too big."));
                 return false;
         }
 
@@ -4557,7 +4557,7 @@ jit_patch_branch(
 
         }
         if (target_code == NULL) {
-                rt_error(ctx->env, "Branch target not found.");
+                rt_error(ctx->env, N_TR("Branch target not found."));
                 return false;
         }
 

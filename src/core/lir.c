@@ -1666,7 +1666,7 @@ lir_vfor_emit_fma(struct vfor_plan *plan, int dst, int sp,
 	if (va < 0) {
 		va = lir_vfor_physical_reg(plan, sp);
 		if (va < 0) {
-			lir_fatal("SIMD FMA: vreg stack overflow.");
+			lir_fatal(N_TR("SIMD FMA: vreg stack overflow."));
 			return false;
 		}
 		if (!lir_vfor_expr(plan, va, sp + 1, a))
@@ -1677,7 +1677,7 @@ lir_vfor_emit_fma(struct vfor_plan *plan, int dst, int sp,
 	if (vb < 0) {
 		vb = lir_vfor_physical_reg(plan, sp);
 		if (vb < 0) {
-			lir_fatal("SIMD FMA: vreg stack overflow.");
+			lir_fatal(N_TR("SIMD FMA: vreg stack overflow."));
 			return false;
 		}
 		if (!lir_vfor_expr(plan, vb, sp + 1, b))
@@ -1710,7 +1710,7 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 	e = lir_vfor_strip_par(e);
 	dst = lir_vfor_physical_reg(plan, dst);
 	if (dst < 0) {
-		lir_fatal("SIMD: vreg stack overflow.");
+		lir_fatal(N_TR("SIMD: vreg stack overflow."));
 		return false;
 	}
 	cached = lir_vfor_cached_reg(plan, e);
@@ -1725,7 +1725,7 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 	{
 		int src = lir_vfor_term_vreg(plan, e);
 		if (src < 0) {
-			lir_fatal("SIMD: unplanned term.");
+			lir_fatal(N_TR("SIMD: unplanned term."));
 			return false;
 		}
 		if (src == dst)
@@ -1804,7 +1804,7 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 		if (vb < 0) {
 			vb = lir_vfor_physical_reg(plan, sp);
 			if (vb < 0) {
-				lir_fatal("SIMD: vreg stack overflow.");
+				lir_fatal(N_TR("SIMD: vreg stack overflow."));
 				return false;
 			}
 			if (!lir_vfor_expr(plan, vb, sp + 1, r))
@@ -2007,7 +2007,7 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 			}
 			/* SUB needs operand order: rhs into a slot. */
 			if (lir_vfor_physical_reg(plan, sp) < 0) {
-				lir_fatal("SIMD: vreg stack overflow.");
+				lir_fatal(N_TR("SIMD: vreg stack overflow."));
 				return false;
 			}
 			if (!lir_vfor_expr(plan, sp, sp + 1, r))
@@ -2019,7 +2019,7 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 		if (!lir_vfor_expr(plan, dst, sp, l))
 			return false;
 		if (lir_vfor_physical_reg(plan, sp) < 0) {
-			lir_fatal("SIMD: vreg stack overflow.");
+			lir_fatal(N_TR("SIMD: vreg stack overflow."));
 			return false;
 		}
 		if (!lir_vfor_expr(plan, sp, sp + 1, r))
@@ -2028,7 +2028,7 @@ lir_vfor_expr(struct vfor_plan *plan, int dst, int sp, struct hir_expr *e)
 				     lir_vfor_physical_reg(plan, sp), 1);
 	}
 	default:
-		lir_fatal("SIMD: unexpected vector expression.");
+		lir_fatal(N_TR("SIMD: unexpected vector expression."));
 		return false;
 	}
 }
@@ -2078,7 +2078,7 @@ lir_visit_vfor_block(
 			}
 			if (!have) {
 				if (plan.temp_count >= VFOR_MAX_LOCALS) {
-					lir_fatal("SIMD: too many temps.");
+					lir_fatal(N_TR("SIMD: too many temps."));
 					return false;
 				}
 				plan.temp[plan.temp_count] = sym;
@@ -2160,7 +2160,7 @@ lir_visit_vfor_block(
 	while (!lir_vfor_plan_fits(&plan, block, i) && plan.cache_count > 0)
 		plan.cache_count--;
 	if (!lir_vfor_plan_fits(&plan, block, i)) {
-		lir_fatal("SIMD: vreg budget exceeded.");
+		lir_fatal(N_TR("SIMD: vreg budget exceeded."));
 		return false;
 	}
 	/* Materialization must be child-before-parent even though selection was
@@ -2176,7 +2176,7 @@ lir_visit_vfor_block(
 	}
 	if (!lir_vfor_plan_fits(&plan, block,
 		plan.const_count + plan.inv_count + plan.temp_count)) {
-		lir_fatal("SIMD: ranked cache dependency plan exceeded vreg budget.");
+		lir_fatal(N_TR("SIMD: ranked cache dependency plan exceeded vreg budget."));
 		return false;
 	}
 	/* Masked stores no longer inflate the architecture-neutral logical
@@ -2364,7 +2364,7 @@ lir_visit_vfor_block(
 			if (v->type == HIR_EXPR_TERM) {
 				vs = lir_vfor_term_vreg(&plan, v);
 				if (vs < 0) {
-					lir_fatal("SIMD: unplanned term.");
+					lir_fatal(N_TR("SIMD: unplanned term."));
 					return false;
 				}
 			} else {

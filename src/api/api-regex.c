@@ -379,7 +379,7 @@ rx_new_node(
 
 	/* Rejects a parse tree beyond the fixed node budget. */
 	if (c->nnodes >= RX_MAX_NODES) {
-		rx_error(c, "Regex too large.");
+		rx_error(c, N_TR("Regex too large."));
 		return &c->nodes[0];
 	}
 
@@ -542,7 +542,7 @@ rx_alloc_class(
 
 	/* Rejects a class beyond the fixed program budget. */
 	if (c->prog->ncls >= RX_MAX_CLASSES) {
-		rx_error(c, "Too many character classes.");
+		rx_error(c, N_TR("Too many character classes."));
 		return 0;
 	}
 
@@ -624,7 +624,7 @@ rx_parse_class(
 	while (true) {
 		/* Reports an unterminated character class. */
 		if (c->pos >= c->patlen) {
-			rx_error(c, "Unterminated character class.");
+			rx_error(c, N_TR("Unterminated character class."));
 			break;
 		}
 
@@ -667,19 +667,19 @@ rx_parse_class(
 
 			/* Reports and normalizes a descending range. */
 			if (hi < lo) {
-				rx_error(c, "Invalid character range.");
+				rx_error(c, N_TR("Invalid character range."));
 				hi = lo;
 			}
 
 			/* Appends the completed range. */
 			add_result = rx_class_add(cl, lo, hi);
 			if (add_result < 0)
-				rx_error(c, "Character class too large.");
+				rx_error(c, N_TR("Character class too large."));
 		} else {
 			/* Appends one literal class codepoint. */
 			add_result = rx_class_add(cl, lo, lo);
 			if (add_result < 0)
-				rx_error(c, "Character class too large.");
+				rx_error(c, N_TR("Character class too large."));
 		}
 	}
 
@@ -730,7 +730,7 @@ rx_parse_atom(
 			rx_next(c);
 			cp = rx_next(c);
 			if (cp != ':') {
-				rx_error(c, "Unsupported (?...) construct.");
+				rx_error(c, N_TR("Unsupported (?...) construct."));
 				n = rx_new_node(c, RX_N_EMPTY);
 				break;
 			}
@@ -741,7 +741,7 @@ rx_parse_atom(
 		if (capture) {
 			/* Rejects a group beyond the supported capture budget. */
 			if (c->ngroups >= 9) {
-				rx_error(c, "Too many capture groups.");
+				rx_error(c, N_TR("Too many capture groups."));
 				n = rx_new_node(c, RX_N_EMPTY);
 				break;
 			}
@@ -756,11 +756,11 @@ rx_parse_atom(
 		/* Requires the closing parenthesis. */
 		cp = rx_next(c);
 		if (cp != ')')
-			rx_error(c, "Unmatched parenthesis.");
+			rx_error(c, N_TR("Unmatched parenthesis."));
 
 		break;
 	case ')':
-		rx_error(c, "Unmatched parenthesis.");
+		rx_error(c, N_TR("Unmatched parenthesis."));
 		n = rx_new_node(c, RX_N_EMPTY);
 		break;
 	case '\\':
@@ -1024,7 +1024,7 @@ rx_emit(
 
 	/* Rejects an instruction beyond the fixed program budget. */
 	if (p->ninst >= RX_MAX_INSTS) {
-		rx_error(c, "Regex too large.");
+		rx_error(c, N_TR("Regex too large."));
 		return p->ninst - 1;
 	}
 
@@ -1201,7 +1201,7 @@ noct_rx_compile(
 
 	/* Reports pattern text left after the top-level parse. */
 	if (c->pos < c->patlen && !c->failed)
-		rx_error(c, "Unmatched parenthesis.");
+		rx_error(c, N_TR("Unmatched parenthesis."));
 
 	/* Emits the parsed expression body. */
 	rx_gen(c, root);

@@ -538,34 +538,34 @@ accel_program_validate(
 	size_t error_size)
 {
 	if (program == NULL)
-		return accel_program_error(error, error_size, "null program");
+		return accel_program_error(error, error_size, N_TR("null program"));
 	if (program->source_name == NULL)
-		return accel_program_error(error, error_size, "missing source name");
+		return accel_program_error(error, error_size, N_TR("missing source name"));
 	if (program->function_name == NULL)
-		return accel_program_error(error, error_size, "missing function name");
+		return accel_program_error(error, error_size, N_TR("missing function name"));
 	if (program->first_block_id < 0 || program->last_block_id < 0)
-		return accel_program_error(error, error_size, "invalid region block id");
+		return accel_program_error(error, error_size, N_TR("invalid region block id"));
 	if (program->kernel_count == 0)
-		return accel_program_error(error, error_size, "empty accelerator region");
+		return accel_program_error(error, error_size, N_TR("empty accelerator region"));
 	if (program->parameter_count > HIR_PARAM_SIZE)
-		return accel_program_error(error, error_size, "parameter count limit exceeded");
+		return accel_program_error(error, error_size, N_TR("parameter count limit exceeded"));
 	if (program->scalar_count > ACCEL_MAX_SCALAR_BINDINGS)
-		return accel_program_error(error, error_size, "scalar binding limit exceeded");
+		return accel_program_error(error, error_size, N_TR("scalar binding limit exceeded"));
 	if (program->buffer_count > ACCEL_MAX_BUFFER_BINDINGS)
-		return accel_program_error(error, error_size, "buffer binding limit exceeded");
+		return accel_program_error(error, error_size, N_TR("buffer binding limit exceeded"));
 	if (program->scalar_result_count > ACCEL_MAX_SCALAR_BINDINGS)
-		return accel_program_error(error, error_size, "scalar result limit exceeded");
+		return accel_program_error(error, error_size, N_TR("scalar result limit exceeded"));
 	if (program->kernel_count > ACCEL_MAX_KERNELS)
-		return accel_program_error(error, error_size, "kernel limit exceeded");
+		return accel_program_error(error, error_size, N_TR("kernel limit exceeded"));
 	if (program->size_expression_count > ACCEL_MAX_SIZE_EXPRESSIONS) {
 		return accel_program_error(
 			error,
 			error_size,
-			"size expression limit exceeded");
+			N_TR("size expression limit exceeded"));
 	}
 	if ((program->backend_payload == NULL) !=
 	    (program->destroy_backend_payload == NULL)) {
-		return accel_program_error(error, error_size, "invalid backend payload owner");
+		return accel_program_error(error, error_size, N_TR("invalid backend payload owner"));
 	}
 
 	if (!accel_program_validate_size_expressions(program, error, error_size))
@@ -943,7 +943,7 @@ accel_program_validate_size_expressions(
 
 	if (program->size_expression_count != 0 &&
 	    program->size_expression == NULL) {
-		return accel_program_error(error, error_size, "missing size expression table");
+		return accel_program_error(error, error_size, N_TR("missing size expression table"));
 	}
 
 	/* Validate every expression against only earlier nodes. */
@@ -957,7 +957,7 @@ accel_program_validate_size_expressions(
 				return accel_program_error(
 					error,
 					error_size,
-					"negative size constant");
+					N_TR("negative size constant"));
 			}
 			break;
 		case ACCEL_SIZE_SCALAR:
@@ -965,14 +965,14 @@ accel_program_validate_size_expressions(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid size scalar reference");
+					N_TR("invalid size scalar reference"));
 			}
 			if (program->scalar[expression->reference].value_type !=
 			    ACCEL_IR_I32) {
 				return accel_program_error(
 					error,
 					error_size,
-					"noninteger size scalar");
+					N_TR("noninteger size scalar"));
 			}
 			break;
 		case ACCEL_SIZE_ADD:
@@ -983,7 +983,7 @@ accel_program_validate_size_expressions(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid binary size expression");
+					N_TR("invalid binary size expression"));
 			}
 			break;
 		case ACCEL_SIZE_MUL_CONSTANT:
@@ -991,7 +991,7 @@ accel_program_validate_size_expressions(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid size multiplication");
+					N_TR("invalid size multiplication"));
 			}
 			break;
 		case ACCEL_SIZE_MAX_ZERO:
@@ -999,11 +999,11 @@ accel_program_validate_size_expressions(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid zero-clamped size expression");
+					N_TR("invalid zero-clamped size expression"));
 			}
 			break;
 		default:
-			return accel_program_error(error, error_size, "invalid size opcode");
+			return accel_program_error(error, error_size, N_TR("invalid size opcode"));
 		}
 	}
 
@@ -1021,17 +1021,17 @@ accel_program_validate_scalars(
 	uint32_t j;
 
 	if (program->scalar_count != 0 && program->scalar == NULL)
-		return accel_program_error(error, error_size, "missing scalar table");
+		return accel_program_error(error, error_size, N_TR("missing scalar table"));
 
 	/* Validate every scalar descriptor and compare prior slots. */
 	for (i = 0; i < program->scalar_count; i++) {
 		if (program->scalar[i].name == NULL)
-			return accel_program_error(error, error_size, "missing scalar name");
+			return accel_program_error(error, error_size, N_TR("missing scalar name"));
 		if (program->scalar[i].args_slot >= program->parameter_count)
-			return accel_program_error(error, error_size, "invalid scalar argument slot");
+			return accel_program_error(error, error_size, N_TR("invalid scalar argument slot"));
 		if (program->scalar[i].value_type != ACCEL_IR_I32 &&
 		    program->scalar[i].value_type != ACCEL_IR_F32) {
-			return accel_program_error(error, error_size, "invalid scalar type");
+			return accel_program_error(error, error_size, N_TR("invalid scalar type"));
 		}
 
 		/* Reject a second descriptor for the same runtime argument. */
@@ -1041,7 +1041,7 @@ accel_program_validate_scalars(
 				return accel_program_error(
 					error,
 					error_size,
-					"duplicate scalar argument slot");
+					N_TR("duplicate scalar argument slot"));
 			}
 		}
 	}
@@ -1062,17 +1062,17 @@ accel_program_validate_buffers(
 	int value_type;
 
 	if (program->buffer_count != 0 && program->buffer == NULL)
-		return accel_program_error(error, error_size, "missing buffer table");
+		return accel_program_error(error, error_size, N_TR("missing buffer table"));
 
 	/* Validate every buffer descriptor and compare prior namespaces. */
 	for (i = 0; i < program->buffer_count; i++) {
 		buffer = &program->buffer[i];
 		if (buffer->name == NULL)
-			return accel_program_error(error, error_size, "missing buffer name");
+			return accel_program_error(error, error_size, N_TR("missing buffer name"));
 		if (buffer->origin != ACCEL_BUFFER_PARAMETER &&
 		    buffer->origin != ACCEL_BUFFER_LOCAL_HOST &&
 		    buffer->origin != ACCEL_BUFFER_LOCAL_DEVICE) {
-			return accel_program_error(error, error_size, "unsupported buffer origin");
+			return accel_program_error(error, error_size, N_TR("unsupported buffer origin"));
 		}
 
 		/* Enforce the host representation selected by the buffer origin. */
@@ -1081,7 +1081,7 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"device buffer has a host argument slot");
+					N_TR("device buffer has a host argument slot"));
 			}
 			if (buffer->host_visible ||
 			    buffer->cpu_read ||
@@ -1093,7 +1093,7 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"device buffer escapes its GPU session");
+					N_TR("device buffer escapes its GPU session"));
 			}
 			if (buffer->upload_required ||
 			    buffer->download_required ||
@@ -1101,14 +1101,14 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"device buffer requires host materialization");
+					N_TR("device buffer requires host materialization"));
 			}
 			if (buffer->extent_expression >=
 			    program->size_expression_count) {
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid device buffer extent");
+					N_TR("invalid device buffer extent"));
 			}
 		} else {
 			if (buffer->origin == ACCEL_BUFFER_PARAMETER &&
@@ -1116,7 +1116,7 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid buffer argument slot");
+					N_TR("invalid buffer argument slot"));
 			}
 			if (buffer->origin == ACCEL_BUFFER_LOCAL_HOST &&
 			    (buffer->args_slot < program->parameter_count ||
@@ -1124,34 +1124,34 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid local buffer argument slot");
+					N_TR("invalid local buffer argument slot"));
 			}
 			if (!buffer->host_visible) {
 				return accel_program_error(
 					error,
 					error_size,
-					"host buffer is not host visible");
+					N_TR("host buffer is not host visible"));
 			}
 		}
 		if (buffer->device_binding != i)
-			return accel_program_error(error, error_size, "nondeterministic buffer binding");
+			return accel_program_error(error, error_size, N_TR("nondeterministic buffer binding"));
 		if (buffer->element_width != 4)
-			return accel_program_error(error, error_size, "invalid buffer element width");
+			return accel_program_error(error, error_size, N_TR("invalid buffer element width"));
 
 		value_type = accel_program_buffer_value_type(buffer->element_kind);
 		if (value_type == ACCEL_IR_VOID)
-			return accel_program_error(error, error_size, "invalid buffer element kind");
+			return accel_program_error(error, error_size, N_TR("invalid buffer element kind"));
 		if (buffer->required_first_expression >=
 		    program->size_expression_count) {
-			return accel_program_error(error, error_size, "invalid buffer range start");
+			return accel_program_error(error, error_size, N_TR("invalid buffer range start"));
 		}
 		if (buffer->required_end_expression >=
 		    program->size_expression_count) {
-			return accel_program_error(error, error_size, "invalid buffer range end");
+			return accel_program_error(error, error_size, N_TR("invalid buffer range end"));
 		}
 		if (buffer->required_byte_end_expression >=
 		    program->size_expression_count) {
-			return accel_program_error(error, error_size, "invalid buffer byte range");
+			return accel_program_error(error, error_size, N_TR("invalid buffer byte range"));
 		}
 
 		/* Validate the exact range owned by every kernel effect. */
@@ -1164,7 +1164,7 @@ accel_program_validate_buffers(
 					return accel_program_error(
 						error,
 						error_size,
-						"unused kernel has a buffer range");
+						N_TR("unused kernel has a buffer range"));
 				}
 				continue;
 			}
@@ -1173,14 +1173,14 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid kernel buffer range start");
+					N_TR("invalid kernel buffer range start"));
 			}
 			if (buffer->kernel_required_end_expression[j] >=
 			    program->size_expression_count) {
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid kernel buffer range end");
+					N_TR("invalid kernel buffer range end"));
 			}
 		}
 		/* Reject collisions in either runtime or device binding namespace. */
@@ -1190,14 +1190,14 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"duplicate buffer argument slot");
+					N_TR("duplicate buffer argument slot"));
 			}
 			if (program->buffer[j].device_binding ==
 			    buffer->device_binding) {
 				return accel_program_error(
 					error,
 					error_size,
-					"duplicate device binding");
+					N_TR("duplicate device binding"));
 			}
 		}
 
@@ -1210,7 +1210,7 @@ accel_program_validate_buffers(
 				return accel_program_error(
 					error,
 					error_size,
-					"argument has two binding types");
+					N_TR("argument has two binding types"));
 			}
 		}
 	}
@@ -1232,27 +1232,27 @@ accel_program_validate_kernels(
 	int value_type;
 
 	if (program->kernel_count != 0 && program->kernel == NULL)
-		return accel_program_error(error, error_size, "missing kernel table");
+		return accel_program_error(error, error_size, N_TR("missing kernel table"));
 
 	/* Validate every kernel and its program-level range expressions. */
 	for (i = 0; i < program->kernel_count; i++) {
 		kernel = &program->kernel[i];
 		if (kernel->kernel_index != i)
-			return accel_program_error(error, error_size, "nondeterministic kernel index");
+			return accel_program_error(error, error_size, N_TR("nondeterministic kernel index"));
 		if (kernel->loop_block_id < 0)
-			return accel_program_error(error, error_size, "invalid loop block id");
+			return accel_program_error(error, error_size, N_TR("invalid loop block id"));
 		if (kernel->start_expression >= program->size_expression_count)
-			return accel_program_error(error, error_size, "invalid kernel start");
+			return accel_program_error(error, error_size, N_TR("invalid kernel start"));
 		if (kernel->stop_expression >= program->size_expression_count)
-			return accel_program_error(error, error_size, "invalid kernel stop");
+			return accel_program_error(error, error_size, N_TR("invalid kernel stop"));
 		if (kernel->trip_expression >= program->size_expression_count)
-			return accel_program_error(error, error_size, "invalid kernel trip");
+			return accel_program_error(error, error_size, N_TR("invalid kernel trip"));
 		if (kernel->ir == NULL)
-			return accel_program_error(error, error_size, "missing typed kernel");
+			return accel_program_error(error, error_size, N_TR("missing typed kernel"));
 		if (kernel->ir->scalar_binding_count != program->scalar_count)
-			return accel_program_error(error, error_size, "kernel scalar table mismatch");
+			return accel_program_error(error, error_size, N_TR("kernel scalar table mismatch"));
 		if (kernel->ir->buffer_binding_count != program->buffer_count)
-			return accel_program_error(error, error_size, "kernel buffer table mismatch");
+			return accel_program_error(error, error_size, N_TR("kernel buffer table mismatch"));
 
 		/* Match each kernel buffer type to the program descriptor. */
 		for (j = 0; j < program->buffer_count; j++) {
@@ -1262,7 +1262,7 @@ accel_program_validate_kernels(
 				return accel_program_error(
 					error,
 					error_size,
-					"kernel buffer type mismatch");
+					N_TR("kernel buffer type mismatch"));
 			}
 		}
 
@@ -1291,7 +1291,7 @@ accel_program_validate_scalar_results(
 
 	if (program->scalar_result_count != 0 &&
 	    program->scalar_result == NULL) {
-		return accel_program_error(error, error_size, "missing scalar result table");
+		return accel_program_error(error, error_size, N_TR("missing scalar result table"));
 	}
 
 	memset(producer_count, 0, sizeof(producer_count));
@@ -1301,19 +1301,19 @@ accel_program_validate_scalar_results(
 	for (i = 0; i < program->scalar_result_count; i++) {
 		result = &program->scalar_result[i];
 		if (result->name == NULL)
-			return accel_program_error(error, error_size, "missing scalar result name");
+			return accel_program_error(error, error_size, N_TR("missing scalar result name"));
 		if (result->result_entry_id != i)
-			return accel_program_error(error, error_size, "nondeterministic scalar result entry");
+			return accel_program_error(error, error_size, N_TR("nondeterministic scalar result entry"));
 		if (result->args_slot < program->parameter_count ||
 		    result->args_slot >= HIR_PARAM_SIZE) {
-			return accel_program_error(error, error_size, "invalid scalar result argument slot");
+			return accel_program_error(error, error_size, N_TR("invalid scalar result argument slot"));
 		}
 		if (result->value_type != ACCEL_IR_I32)
-			return accel_program_error(error, error_size, "invalid scalar result type");
+			return accel_program_error(error, error_size, N_TR("invalid scalar result type"));
 		if (result->identity_bits != 0)
-			return accel_program_error(error, error_size, "invalid scalar result identity");
+			return accel_program_error(error, error_size, N_TR("invalid scalar result identity"));
 		if (result->producer_kernel >= program->kernel_count)
-			return accel_program_error(error, error_size, "invalid scalar result producer");
+			return accel_program_error(error, error_size, N_TR("invalid scalar result producer"));
 
 		/* Reject a reused result argument slot. */
 		for (j = 0; j < i; j++) {
@@ -1321,7 +1321,7 @@ accel_program_validate_scalar_results(
 				return accel_program_error(
 					error,
 					error_size,
-					"duplicate scalar result argument slot");
+					N_TR("duplicate scalar result argument slot"));
 			}
 		}
 
@@ -1331,7 +1331,7 @@ accel_program_validate_scalar_results(
 				return accel_program_error(
 					error,
 					error_size,
-					"scalar result collides with scalar input");
+					N_TR("scalar result collides with scalar input"));
 			}
 		}
 		for (j = 0; j < program->buffer_count; j++) {
@@ -1341,7 +1341,7 @@ accel_program_validate_scalar_results(
 				return accel_program_error(
 					error,
 					error_size,
-					"scalar result collides with buffer input");
+					N_TR("scalar result collides with buffer input"));
 			}
 		}
 	}
@@ -1360,7 +1360,7 @@ accel_program_validate_scalar_results(
 				return accel_program_error(
 					error,
 					error_size,
-					"scalar result reference out of range");
+					N_TR("scalar result reference out of range"));
 			}
 
 			result = &program->scalar_result[result_entry_id];
@@ -1369,7 +1369,7 @@ accel_program_validate_scalar_results(
 					return accel_program_error(
 						error,
 						error_size,
-						"scalar result has a foreign producer");
+						N_TR("scalar result has a foreign producer"));
 				}
 				producer_count[result_entry_id]++;
 				continue;
@@ -1379,7 +1379,7 @@ accel_program_validate_scalar_results(
 				return accel_program_error(
 					error,
 					error_size,
-					"scalar result load precedes its producer");
+					N_TR("scalar result load precedes its producer"));
 			}
 			consumer_mask[result_entry_id] |= (uint32_t)1U << i;
 		}
@@ -1388,12 +1388,12 @@ accel_program_validate_scalar_results(
 	/* Match the recorded producer and consumer contracts exactly. */
 	for (k = 0; k < program->scalar_result_count; k++) {
 		if (producer_count[k] != 1)
-			return accel_program_error(error, error_size, "scalar result producer is not unique");
+			return accel_program_error(error, error_size, N_TR("scalar result producer is not unique"));
 		if (consumer_mask[k] != program->scalar_result[k].gpu_consumer_mask) {
 			return accel_program_error(
 				error,
 				error_size,
-				"scalar result consumer metadata mismatch");
+				N_TR("scalar result consumer metadata mismatch"));
 		}
 	}
 
@@ -1423,7 +1423,7 @@ accel_program_validate_argument_namespace(
 	for (i = 0; i < program->scalar_count; i++) {
 		slot = program->scalar[i].args_slot;
 		if (slot >= program->parameter_count)
-			return accel_program_error(error, error_size, "invalid scalar argument slot");
+			return accel_program_error(error, error_size, N_TR("invalid scalar argument slot"));
 	}
 
 	/* Claim host-local slots after accepting parameter references in the prefix. */
@@ -1436,14 +1436,14 @@ accel_program_validate_argument_namespace(
 				return accel_program_error(
 					error,
 					error_size,
-					"invalid buffer argument slot");
+					N_TR("invalid buffer argument slot"));
 			}
 			continue;
 		}
 		if (slot < program->parameter_count || slot >= HIR_PARAM_SIZE)
-			return accel_program_error(error, error_size, "invalid buffer argument slot");
+			return accel_program_error(error, error_size, N_TR("invalid buffer argument slot"));
 		if (occupied[slot])
-			return accel_program_error(error, error_size, "duplicate runtime argument slot");
+			return accel_program_error(error, error_size, N_TR("duplicate runtime argument slot"));
 		occupied[slot] = true;
 		argument_count++;
 	}
@@ -1452,9 +1452,9 @@ accel_program_validate_argument_namespace(
 	for (i = 0; i < program->scalar_result_count; i++) {
 		slot = program->scalar_result[i].args_slot;
 		if (slot >= HIR_PARAM_SIZE)
-			return accel_program_error(error, error_size, "invalid scalar result argument slot");
+			return accel_program_error(error, error_size, N_TR("invalid scalar result argument slot"));
 		if (occupied[slot])
-			return accel_program_error(error, error_size, "duplicate runtime argument slot");
+			return accel_program_error(error, error_size, N_TR("duplicate runtime argument slot"));
 		occupied[slot] = true;
 		argument_count++;
 	}
@@ -1462,7 +1462,7 @@ accel_program_validate_argument_namespace(
 	/* Reject a sparse namespace that would require a fake Array placeholder. */
 	for (i = 0; i < argument_count; i++) {
 		if (!occupied[i])
-			return accel_program_error(error, error_size, "sparse runtime argument namespace");
+			return accel_program_error(error, error_size, N_TR("sparse runtime argument namespace"));
 	}
 
 	/* Reports a complete dense namespace. */
@@ -1513,19 +1513,19 @@ accel_program_validate_device_buffer(
 	/* Limit device allocation extents to one positive literal or I32 input. */
 	if (extent->opcode == ACCEL_SIZE_CONSTANT) {
 		if (extent->value <= 0)
-			return accel_program_error(error, error_size, "nonpositive device buffer extent");
+			return accel_program_error(error, error_size, N_TR("nonpositive device buffer extent"));
 	} else if (extent->opcode != ACCEL_SIZE_SCALAR) {
-		return accel_program_error(error, error_size, "unsupported device buffer extent");
+		return accel_program_error(error, error_size, N_TR("unsupported device buffer extent"));
 	}
 
 	/* Require byte sizing to derive directly from the validated extent. */
 	if (buffer->required_byte_end_expression >= program->size_expression_count)
-		return accel_program_error(error, error_size, "invalid device buffer byte extent");
+		return accel_program_error(error, error_size, N_TR("invalid device buffer byte extent"));
 	byte_end = &program->size_expression[buffer->required_byte_end_expression];
 	if (byte_end->opcode != ACCEL_SIZE_MUL_CONSTANT ||
 	    byte_end->left != buffer->extent_expression ||
 	    byte_end->value != (int64_t)buffer->element_width) {
-		return accel_program_error(error, error_size, "invalid device buffer byte extent");
+		return accel_program_error(error, error_size, N_TR("invalid device buffer byte extent"));
 	}
 
 	/* Validate the unconditional exact producer carried by the first kernel. */
@@ -1563,7 +1563,7 @@ accel_program_validate_device_producer(
 
 	/* Reject a malformed program before reading its first kernel. */
 	if (program->kernel_count == 0 || program->kernel == NULL)
-		return accel_program_error(error, error_size, "device buffer has no producer kernel");
+		return accel_program_error(error, error_size, N_TR("device buffer has no producer kernel"));
 
 	buffer = &program->buffer[buffer_index];
 	kernel = &program->kernel[0];
@@ -1574,33 +1574,33 @@ accel_program_validate_device_producer(
 	/* Require the first loop to iterate over the complete allocation. */
 	start = &program->size_expression[kernel->start_expression];
 	if (start->opcode != ACCEL_SIZE_CONSTANT || start->value != 0)
-		return accel_program_error(error, error_size, "device producer does not start at zero");
+		return accel_program_error(error, error_size, N_TR("device producer does not start at zero"));
 	if (kernel->stop_expression != buffer->extent_expression)
-		return accel_program_error(error, error_size, "device producer does not cover its extent");
+		return accel_program_error(error, error_size, N_TR("device producer does not cover its extent"));
 	if (buffer->kernel_required_first_expression[0] !=
 	    kernel->start_expression ||
 	    buffer->kernel_required_end_expression[0] !=
 	    kernel->stop_expression) {
-		return accel_program_error(error, error_size, "device producer range is not exact");
+		return accel_program_error(error, error_size, N_TR("device producer range is not exact"));
 	}
 	if (buffer->effect[0].read ||
 	    buffer->effect[0].read_before_write ||
 	    !buffer->effect[0].write ||
 	    !buffer->effect[0].full_overwrite) {
-		return accel_program_error(error, error_size, "device producer is not a full definition");
+		return accel_program_error(error, error_size, N_TR("device producer is not a full definition"));
 	}
 
 	/* Require the canonical positive-extent trip calculation. */
 	trip = &program->size_expression[kernel->trip_expression];
 	if (trip->opcode != ACCEL_SIZE_MAX_ZERO ||
 	    trip->left >= kernel->trip_expression) {
-		return accel_program_error(error, error_size, "device producer has an invalid trip expression");
+		return accel_program_error(error, error_size, N_TR("device producer has an invalid trip expression"));
 	}
 	difference = &program->size_expression[trip->left];
 	if (difference->opcode != ACCEL_SIZE_SUB ||
 	    difference->left != kernel->stop_expression ||
 	    difference->right != kernel->start_expression) {
-		return accel_program_error(error, error_size, "device producer has an invalid trip difference");
+		return accel_program_error(error, error_size, N_TR("device producer has an invalid trip difference"));
 	}
 
 	/* Find the invocation index and exact store for this binding. */
@@ -1611,7 +1611,7 @@ accel_program_validate_device_producer(
 				return accel_program_error(
 					error,
 					error_size,
-					"device producer has multiple invocation indices");
+					N_TR("device producer has multiple invocation indices"));
 			}
 			global_index_value = instruction->result;
 			continue;
@@ -1619,19 +1619,19 @@ accel_program_validate_device_producer(
 		if (instruction->reference != buffer_index)
 			continue;
 		if (instruction->opcode == ACCEL_IR_BUFFER_LOAD) {
-			return accel_program_error(error, error_size, "device producer reads before definition");
+			return accel_program_error(error, error_size, N_TR("device producer reads before definition"));
 		}
 		if (instruction->opcode != ACCEL_IR_BUFFER_STORE)
 			continue;
 		store_count++;
 		if (instruction->operand[0] != global_index_value) {
-			return accel_program_error(error, error_size, "device producer index is not exact");
+			return accel_program_error(error, error_size, N_TR("device producer index is not exact"));
 		}
 	}
 
 	/* Require one unconditional direct store for every invocation. */
 	if (global_index_value == ACCEL_IR_VALUE_NONE || store_count != 1)
-		return accel_program_error(error, error_size, "device producer store is not unique");
+		return accel_program_error(error, error_size, N_TR("device producer store is not unique"));
 
 	/* Require an actual later kernel load from the private allocation. */
 	for (i = 1; i < program->kernel_count; i++) {
@@ -1646,7 +1646,7 @@ accel_program_validate_device_producer(
 		}
 	}
 	if (!later_read)
-		return accel_program_error(error, error_size, "device buffer has no later consumer");
+		return accel_program_error(error, error_size, N_TR("device buffer has no later consumer"));
 
 	/* Reports a complete first-kernel definition. */
 	return true;

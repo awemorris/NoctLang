@@ -1295,24 +1295,24 @@ accel_spirv_validate(
 	bool has_round_capability;
 
 	if (word == NULL || word_count < 5)
-		return accel_spirv_error(error, error_size, "short module");
+		return accel_spirv_error(error, error_size, N_TR("short module"));
 	if (word[0] != ACCEL_SPIRV_MAGIC)
-		return accel_spirv_error(error, error_size, "wrong magic");
+		return accel_spirv_error(error, error_size, N_TR("wrong magic"));
 	if (word[1] != ACCEL_SPIRV_VERSION_1_5)
-		return accel_spirv_error(error, error_size, "wrong SPIR-V version");
+		return accel_spirv_error(error, error_size, N_TR("wrong SPIR-V version"));
 
 	bound = word[3];
 	if (bound == 0 || bound > ACCEL_SPIRV_MAX_BOUND)
-		return accel_spirv_error(error, error_size, "invalid ID bound");
+		return accel_spirv_error(error, error_size, N_TR("invalid ID bound"));
 
 	no_contraction = noct_calloc(bound, sizeof(*no_contraction));
 	if (no_contraction == NULL)
-		return accel_spirv_error(error, error_size, "validator allocation failed");
+		return accel_spirv_error(error, error_size, N_TR("validator allocation failed"));
 
 	float_result = noct_calloc(bound, sizeof(*float_result));
 	if (float_result == NULL) {
 		noct_free(no_contraction);
-		return accel_spirv_error(error, error_size, "validator allocation failed");
+		return accel_spirv_error(error, error_size, N_TR("validator allocation failed"));
 	}
 
 	has_main = false;
@@ -1333,7 +1333,7 @@ accel_spirv_validate(
 		    instruction_word_count > word_count - offset) {
 			noct_free(float_result);
 			noct_free(no_contraction);
-			return accel_spirv_error(error, error_size, "invalid instruction length");
+			return accel_spirv_error(error, error_size, N_TR("invalid instruction length"));
 		}
 
 		if (opcode == ACCEL_SPIRV_OP_ENTRY_POINT &&
@@ -1387,7 +1387,7 @@ accel_spirv_validate(
 			if (value == ACCEL_SPIRV_DEC_RELAXED_PRECISION) {
 				noct_free(float_result);
 				noct_free(no_contraction);
-				return accel_spirv_error(error, error_size, "RelaxedPrecision present");
+				return accel_spirv_error(error, error_size, N_TR("RelaxedPrecision present"));
 			}
 			if (value == ACCEL_SPIRV_DEC_NO_CONTRACTION && target < bound)
 				no_contraction[target] = true;
@@ -1400,7 +1400,7 @@ accel_spirv_validate(
 			if (target >= bound) {
 				noct_free(float_result);
 				noct_free(no_contraction);
-				return accel_spirv_error(error, error_size, "float result exceeds bound");
+				return accel_spirv_error(error, error_size, N_TR("float result exceeds bound"));
 			}
 			float_result[target] = true;
 		}
@@ -1411,7 +1411,7 @@ accel_spirv_validate(
 	if (!has_main || !has_local_size) {
 		noct_free(float_result);
 		noct_free(no_contraction);
-		return accel_spirv_error(error, error_size, "missing compute entry contract");
+		return accel_spirv_error(error, error_size, N_TR("missing compute entry contract"));
 	}
 	if (strict_f32 &&
 	    (!has_denorm_mode ||
@@ -1422,7 +1422,7 @@ accel_spirv_validate(
 	     !has_round_capability)) {
 		noct_free(float_result);
 		noct_free(no_contraction);
-		return accel_spirv_error(error, error_size, "missing strict Float32 contract");
+		return accel_spirv_error(error, error_size, N_TR("missing strict Float32 contract"));
 	}
 
 	/* Require NoContraction on every floating arithmetic result. */
@@ -1430,7 +1430,7 @@ accel_spirv_validate(
 		if (float_result[i] && !no_contraction[i]) {
 			noct_free(float_result);
 			noct_free(no_contraction);
-			return accel_spirv_error(error, error_size, "float contraction is not prohibited");
+			return accel_spirv_error(error, error_size, N_TR("float contraction is not prohibited"));
 		}
 	}
 

@@ -121,7 +121,7 @@ jit_put_word(
 {
         if (ctx->code >= ctx->code_end) {
 		ctx->code_overflow = true;
-                rt_error(ctx->env, "Code too big.");
+                rt_error(ctx->env, N_TR("Code too big."));
                 return false;
         }
 
@@ -4368,7 +4368,7 @@ jit_visit_bytecode(
         while (ctx->lpc < ctx->func->bytecode_size) {
                 /* Save LPC and addr. */
                 if (ctx->pc_entry_count >= PC_ENTRY_MAX) {
-                        rt_error(ctx->env, "Too big code.");
+                        rt_error(ctx->env, N_TR("Too big code."));
                         return false;
                 }
                 ctx->pc_entry[ctx->pc_entry_count].lpc = (uint32_t)ctx->lpc;
@@ -4917,7 +4917,7 @@ jit_patch_branch(
                         
         }
         if (target_code == NULL) {
-                rt_error(ctx->env, "Branch target not found.");
+                rt_error(ctx->env, N_TR("Branch target not found."));
                 return false;
         }
 
@@ -4925,7 +4925,7 @@ jit_patch_branch(
         offset = (intptr_t)target_code - (intptr_t)ctx->branch_patch[patch_index].code;
         /* ARM B/cond uses signed imm24 words relative to PC+8. */
         if (offset < -33554424 || offset > 33554436) {
-                rt_error(ctx->env, "Branch target too far.");
+                rt_error(ctx->env, N_TR("Branch target too far."));
                 return false;
         }
 

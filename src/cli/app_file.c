@@ -102,7 +102,7 @@ bcback_write_app(
 	/* Prepare every canonical 1.1 record before opening the destination. */
 	for (i = 0; i < module_count; i++) {
 		if (!bcback_app_source_is_portable(module[i].logical_source)) {
-			printf("Error: Invalid application source name.\n");
+			printf(N_TR("Error: Invalid application source name.\n"));
 			goto cleanup;
 		}
 
@@ -116,7 +116,7 @@ bcback_write_app(
 				output_path,
 				&module_blob[i])) {
 				printf(
-					"Error: Cannot prepare application module %s.\n",
+					N_TR("Error: Cannot prepare application module %s.\n"),
 					module[i].logical_source);
 				goto cleanup;
 			}
@@ -130,7 +130,7 @@ bcback_write_app(
 				output_path,
 				&module_blob[i])) {
 				printf(
-					"Error: Cannot prepare application module %s.\n",
+					N_TR("Error: Cannot prepare application module %s.\n"),
 					module[i].logical_source);
 				goto cleanup;
 			}
@@ -147,7 +147,7 @@ bcback_write_app(
 		root,
 		&app_data,
 		&app_size)) {
-		printf("Error: Cannot assemble application records.\n");
+		printf(N_TR("Error: Cannot assemble application records.\n"));
 		goto cleanup;
 	}
 
@@ -157,7 +157,7 @@ bcback_write_app(
 		&inspected,
 		&error)) {
 		printf(
-			"Error: Invalid application at byte %lu: %s\n",
+			N_TR("Error: Invalid application at byte %lu: %s\n"),
 			(unsigned long)error.offset,
 			error.message);
 		goto cleanup;

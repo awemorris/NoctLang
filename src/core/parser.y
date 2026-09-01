@@ -25,7 +25,7 @@ extern int ast_error_line;
 extern int ast_error_column;
 
 int ast_yylex(void *);
-void ast_yyerror(void *, char *s);
+void ast_yyerror(void *, const char *s);
 void *ast_malloc(size_t size); 
 void ast_free(void *p);
 
@@ -122,7 +122,7 @@ struct ast_arg_list *ast_accept_arg_list(struct ast_arg_list *arg_list, struct a
 %}
 
 %{
-extern void ast_yyerror(void *scanner, char *s);
+extern void ast_yyerror(void *scanner, const char *s);
 %}
 
 %parse-param { void *scanner }
@@ -414,7 +414,7 @@ type_extent	: TOKEN_INT
 		}
 		| TOKEN_RESERVED_333
 		{
-			ast_yyerror(scanner, "Decimal integer literal is too large.");
+			ast_yyerror(scanner, N_TR("Decimal integer literal is too large."));
 			YYABORT;
 		}
 		;
@@ -1026,7 +1026,7 @@ term		: TOKEN_INT
 		}
 		| TOKEN_RESERVED_333
 		{
-			ast_yyerror(scanner, "Decimal integer literal is too large.");
+			ast_yyerror(scanner, N_TR("Decimal integer literal is too large."));
 			YYABORT;
 		}
 		| TOKEN_SYMBOL
@@ -1054,7 +1054,7 @@ static void print_debug(const char *s)
 }
 #endif
 
-void ast_yyerror(void *scanner, char *s)
+void ast_yyerror(void *scanner, const char *s)
 {
 	extern int ast_error_line;
 	extern int ast_error_column;

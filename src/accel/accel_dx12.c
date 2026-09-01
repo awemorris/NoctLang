@@ -193,7 +193,7 @@ accel_dx12_enumerate(
 
 	/* Reject an invalid destination before opening DXGI. */
 	if (list == NULL)
-		return accel_dx12_error(error, error_size, "invalid Direct3D 12 device list");
+		return accel_dx12_error(error, error_size, N_TR("invalid Direct3D 12 device list"));
 
 	initial_count = list->count;
 	factory = NULL;
@@ -203,7 +203,7 @@ accel_dx12_enumerate(
 		&IID_IDXGIFactory1,
 		(void **)&factory);
 	if (FAILED(result))
-		return accel_dx12_error(error, error_size, "failed to create the DXGI factory");
+		return accel_dx12_error(error, error_size, N_TR("failed to create the DXGI factory"));
 
 	/* Append every hardware adapter that can create a D3D12 device. */
 	for (index = 0; ; index++) {
@@ -214,7 +214,7 @@ accel_dx12_enumerate(
 		if (FAILED(result) || adapter == NULL) {
 			accel_dx12_rollback_devices(list, initial_count);
 			IDXGIFactory1_Release(factory);
-			return accel_dx12_error(error, error_size, "failed to enumerate DXGI adapters");
+			return accel_dx12_error(error, error_size, N_TR("failed to enumerate DXGI adapters"));
 		}
 
 		/* Ignore software and non-D3D12 adapters. */
@@ -229,7 +229,7 @@ accel_dx12_enumerate(
 			IDXGIAdapter1_Release(adapter);
 			accel_dx12_rollback_devices(list, initial_count);
 			IDXGIFactory1_Release(factory);
-			return accel_dx12_error(error, error_size, "failed to convert a DXGI adapter name");
+			return accel_dx12_error(error, error_size, N_TR("failed to convert a DXGI adapter name"));
 		}
 
 		appended = accel_device_list_append(
@@ -244,7 +244,7 @@ accel_dx12_enumerate(
 		if (!appended) {
 			accel_dx12_rollback_devices(list, initial_count);
 			IDXGIFactory1_Release(factory);
-			return accel_dx12_error(error, error_size, "out of memory while recording DXGI adapters");
+			return accel_dx12_error(error, error_size, N_TR("out of memory while recording DXGI adapters"));
 		}
 	}
 
@@ -1037,13 +1037,13 @@ accel_dx12_validate_dispatch_limit(
 
 	/* Require a published kernel payload. */
 	if (prepared == NULL || prepared->payload == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 program");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 program"));
 
 	payload = prepared->payload;
 
 	/* Reject a stale kernel index. */
 	if (kernel_index >= payload->kernel_count)
-		return accel_dx12_error(error, error_size, "invalid Direct3D 12 kernel index");
+		return accel_dx12_error(error, error_size, N_TR("invalid Direct3D 12 kernel index"));
 
 	/* Empty ranges require no hardware dispatch. */
 	if (trip == 0)
@@ -1052,7 +1052,7 @@ accel_dx12_validate_dispatch_limit(
 	/* Bound the exact 64-lane group count to D3D12's X dimension. */
 	group_count = (trip - 1) / ACCEL_DX12_WORKGROUP_SIZE + 1;
 	if (group_count > ACCEL_DX12_MAX_GROUPS)
-		return accel_dx12_error(error, error_size, "Direct3D 12 dispatch exceeds 65535 workgroups");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 dispatch exceeds 65535 workgroups"));
 
 	/* Report a representable one-dimensional dispatch. */
 	return true;
@@ -1081,7 +1081,7 @@ accel_dx12_create_execution(
 
 	/* Clear the ownership result before validating inputs. */
 	if (execution == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 execution output");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 execution output"));
 
 	*execution = NULL;
 	backend = backend_state;
@@ -1090,35 +1090,35 @@ accel_dx12_create_execution(
 	if (backend == NULL ||
 	    prepared == NULL ||
 	    prepared->payload == NULL) {
-		return accel_dx12_error(error, error_size, "invalid Direct3D 12 execution request");
+		return accel_dx12_error(error, error_size, N_TR("invalid Direct3D 12 execution request"));
 	}
 
 	payload = prepared->payload;
 	if (payload->program == NULL || payload->kernel == NULL)
-		return accel_dx12_error(error, error_size, "incomplete Direct3D 12 prepared program");
+		return accel_dx12_error(error, error_size, N_TR("incomplete Direct3D 12 prepared program"));
 
 	/* Match all common-runtime arrays to cloned program metadata. */
 	if (buffer_count != payload->program->buffer_count)
-		return accel_dx12_error(error, error_size, "Direct3D 12 buffer table mismatch");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer table mismatch"));
 	if (buffer_count != 0 && buffer == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 buffer table");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 buffer table"));
 	if (payload->program->kernel_count >
 	    ((uint32_t)-1 - payload->program->scalar_count) / 2U) {
-		return accel_dx12_error(error, error_size, "Direct3D 12 scalar table overflow");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 scalar table overflow"));
 	}
 
 	expected_scalar_count = payload->program->scalar_count +
 		payload->program->kernel_count * 2U;
 	if (scalar_word_count != expected_scalar_count)
-		return accel_dx12_error(error, error_size, "Direct3D 12 scalar table mismatch");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 scalar table mismatch"));
 	if (scalar_word_count != 0 && scalar_word == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 scalar words");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 scalar words"));
 	if (result_word_count != payload->program->scalar_result_count)
-		return accel_dx12_error(error, error_size, "Direct3D 12 result table mismatch");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 result table mismatch"));
 	if (result_word_count == 0 && result_word != NULL)
-		return accel_dx12_error(error, error_size, "unexpected Direct3D 12 result words");
+		return accel_dx12_error(error, error_size, N_TR("unexpected Direct3D 12 result words"));
 	if (result_word_count != 0 && result_word == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 result words");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 result words"));
 
 	/* Fold all validated dispatch ranges into one execution activity flag. */
 	has_active_dispatch = accel_dx12_has_active_dispatch(
@@ -1128,7 +1128,7 @@ accel_dx12_create_execution(
 	/* Allocate the execution owner before opening session resources. */
 	created = noct_calloc(1, sizeof(*created));
 	if (created == NULL)
-		return accel_dx12_error(error, error_size, "out of memory creating a Direct3D 12 execution");
+		return accel_dx12_error(error, error_size, N_TR("out of memory creating a Direct3D 12 execution"));
 
 	created->backend = backend;
 	created->kernel_count = payload->kernel_count;
@@ -1224,17 +1224,17 @@ accel_dx12_dispatch_execution(
 	if (current == NULL ||
 	    !current->has_active_dispatch ||
 	    !current->recording) {
-		return accel_dx12_error(error, error_size, "Direct3D 12 execution is not recording");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 execution is not recording"));
 	}
 	if (kernel_index >= current->kernel_count)
-		return accel_dx12_error(error, error_size, "invalid Direct3D 12 kernel index");
+		return accel_dx12_error(error, error_size, N_TR("invalid Direct3D 12 kernel index"));
 	if (trip == 0)
-		return accel_dx12_error(error, error_size, "empty Direct3D 12 dispatch reached the backend");
+		return accel_dx12_error(error, error_size, N_TR("empty Direct3D 12 dispatch reached the backend"));
 
 	/* Revalidate the group count at the backend callback boundary. */
 	group_count = (trip - 1) / ACCEL_DX12_WORKGROUP_SIZE + 1;
 	if (group_count > ACCEL_DX12_MAX_GROUPS)
-		return accel_dx12_error(error, error_size, "Direct3D 12 dispatch exceeds 65535 workgroups");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 dispatch exceeds 65535 workgroups"));
 
 	kernel = &current->kernel[kernel_index];
 
@@ -1292,17 +1292,17 @@ accel_dx12_finish_execution(
 
 	/* Validate the live execution and borrowed output table. */
 	if (current == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 execution");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 execution"));
 	if (buffer_count != current->buffer_count)
-		return accel_dx12_error(error, error_size, "Direct3D 12 output table mismatch");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 output table mismatch"));
 	if (buffer_count != 0 && buffer == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 output table");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 output table"));
 	if (result_word_count != current->result_word_count)
-		return accel_dx12_error(error, error_size, "Direct3D 12 result table changed");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 result table changed"));
 	if (result_word_count == 0 && result_word != NULL)
-		return accel_dx12_error(error, error_size, "unexpected Direct3D 12 result words");
+		return accel_dx12_error(error, error_size, N_TR("unexpected Direct3D 12 result words"));
 	if (result_word_count != 0 && result_word == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 result words");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 result words"));
 
 	/* Revalidate every immutable buffer field before changing execution state. */
 	if (!accel_dx12_validate_finish_metadata(
@@ -1318,7 +1318,7 @@ accel_dx12_finish_execution(
 	if (!current->has_active_dispatch) {
 		if (current->recording ||
 		    current->submission_state != ACCEL_DX12_SUBMISSION_NONE) {
-			return accel_dx12_error(error, error_size, "invalid empty Direct3D 12 execution state");
+			return accel_dx12_error(error, error_size, N_TR("invalid empty Direct3D 12 execution state"));
 		}
 
 		current->submission_state = ACCEL_DX12_SUBMISSION_DRAINED;
@@ -1331,7 +1331,7 @@ accel_dx12_finish_execution(
 
 	/* Require a command recording for an execution with active dispatches. */
 	if (!current->recording)
-		return accel_dx12_error(error, error_size, "Direct3D 12 execution is not recording");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 execution is not recording"));
 
 	/* Record every requested device-to-readback copy. */
 	if (!accel_dx12_record_downloads(
@@ -1414,7 +1414,7 @@ accel_dx12_retain_execution_objects(
 	    backend->fence == NULL ||
 	    prepared == NULL ||
 	    (prepared->kernel_count != 0 && prepared->kernel == NULL)) {
-		return accel_dx12_error(error, error_size, "incomplete Direct3D 12 execution objects");
+		return accel_dx12_error(error, error_size, N_TR("incomplete Direct3D 12 execution objects"));
 	}
 
 	/* Keep the device-wide objects alive across an unrecoverable submission. */
@@ -1432,7 +1432,7 @@ accel_dx12_retain_execution_objects(
 			execution->kernel_count,
 			sizeof(*execution->kernel));
 		if (execution->kernel == NULL) {
-			return accel_dx12_error(error, error_size, "out of memory retaining Direct3D 12 kernels");
+			return accel_dx12_error(error, error_size, N_TR("out of memory retaining Direct3D 12 kernels"));
 		}
 	}
 
@@ -1440,7 +1440,7 @@ accel_dx12_retain_execution_objects(
 	for (i = 0; i < execution->kernel_count; i++) {
 		if (prepared->kernel[i].root_signature == NULL ||
 		    prepared->kernel[i].pipeline == NULL) {
-			return accel_dx12_error(error, error_size, "incomplete Direct3D 12 kernel objects");
+			return accel_dx12_error(error, error_size, N_TR("incomplete Direct3D 12 kernel objects"));
 		}
 
 		execution->kernel[i].root_signature =
@@ -1705,7 +1705,7 @@ accel_dx12_create_command(
 		&IID_ID3D12CommandAllocator,
 		(void **)&execution->allocator);
 	if (FAILED(result))
-		return accel_dx12_error(error, error_size, "failed to create a Direct3D 12 command allocator");
+		return accel_dx12_error(error, error_size, N_TR("failed to create a Direct3D 12 command allocator"));
 
 	/* Open an independent command list without a default pipeline. */
 	result = ID3D12Device_CreateCommandList(
@@ -1717,7 +1717,7 @@ accel_dx12_create_command(
 		&IID_ID3D12GraphicsCommandList,
 		(void **)&execution->command_list);
 	if (FAILED(result))
-		return accel_dx12_error(error, error_size, "failed to create a Direct3D 12 command list");
+		return accel_dx12_error(error, error_size, N_TR("failed to create a Direct3D 12 command list"));
 
 	execution->recording = true;
 
@@ -1767,7 +1767,7 @@ accel_dx12_create_execution_metadata(
 			return accel_dx12_error(
 				error,
 				error_size,
-				"out of memory creating Direct3D 12 buffer metadata");
+				N_TR("out of memory creating Direct3D 12 buffer metadata"));
 		}
 	}
 
@@ -1780,7 +1780,7 @@ accel_dx12_create_execution_metadata(
 		    buffer[i].args_slot != binding->args_slot ||
 		    buffer[i].element_kind != binding->element_kind ||
 		    buffer[i].element_width != binding->element_width) {
-			return accel_dx12_error(error, error_size, "Direct3D 12 buffer metadata does not match the program");
+			return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer metadata does not match the program"));
 		}
 
 		if (!accel_dx12_read_data_buffer_metadata(
@@ -1816,53 +1816,53 @@ accel_dx12_read_data_buffer_metadata(
 	if (runtime_buffer->element_width == 0 ||
 	    runtime_buffer->element_count >
 	    (size_t)-1 / runtime_buffer->element_width) {
-		return accel_dx12_error(error, error_size, "Direct3D 12 buffer size overflow");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer size overflow"));
 	}
 	calculated_byte_count = runtime_buffer->element_count *
 		runtime_buffer->element_width;
 	if (calculated_byte_count != runtime_buffer->byte_count)
-		return accel_dx12_error(error, error_size, "Direct3D 12 buffer extent mismatch");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer extent mismatch"));
 	if (runtime_buffer->element_width != sizeof(uint32_t))
-		return accel_dx12_error(error, error_size, "Direct3D 12 supports only 32-bit buffers");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 supports only 32-bit buffers"));
 	if (runtime_buffer->byte_count % sizeof(uint32_t) != 0)
-		return accel_dx12_error(error, error_size, "Direct3D 12 buffer is not word aligned");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer is not word aligned"));
 
 	/* Reject unknown origins and invalid host/device argument namespaces. */
 	if (runtime_buffer->origin != ACCEL_BUFFER_PARAMETER &&
 	    runtime_buffer->origin != ACCEL_BUFFER_LOCAL_HOST &&
 	    runtime_buffer->origin != ACCEL_BUFFER_LOCAL_DEVICE) {
-		return accel_dx12_error(error, error_size, "invalid Direct3D 12 buffer origin");
+		return accel_dx12_error(error, error_size, N_TR("invalid Direct3D 12 buffer origin"));
 	}
 	if (runtime_buffer->origin == ACCEL_BUFFER_LOCAL_DEVICE) {
 		if (runtime_buffer->args_slot != ACCEL_ARGS_SLOT_NONE) {
-			return accel_dx12_error(error, error_size, "device-only Direct3D 12 buffer has a host argument");
+			return accel_dx12_error(error, error_size, N_TR("device-only Direct3D 12 buffer has a host argument"));
 		}
 	} else {
 		if (runtime_buffer->args_slot == ACCEL_ARGS_SLOT_NONE) {
-			return accel_dx12_error(error, error_size, "host Direct3D 12 buffer is missing its argument");
+			return accel_dx12_error(error, error_size, N_TR("host Direct3D 12 buffer is missing its argument"));
 		}
 	}
 
 	/* Reject an active binding when every kernel dispatch is empty. */
 	if (!has_active_dispatch && runtime_buffer->active) {
-		return accel_dx12_error(error, error_size, "empty Direct3D 12 execution has an active buffer");
+		return accel_dx12_error(error, error_size, N_TR("empty Direct3D 12 execution has an active buffer"));
 	}
 
 	/* Reject mutable transfer metadata for an inactive binding. */
 	if (!runtime_buffer->active &&
 	    (runtime_buffer->upload || runtime_buffer->download)) {
-		return accel_dx12_error(error, error_size, "inactive Direct3D 12 buffer requests a transfer");
+		return accel_dx12_error(error, error_size, N_TR("inactive Direct3D 12 buffer requests a transfer"));
 	}
 
 	/* Match plain snapshot ownership to the declared transfer contract. */
 	if (runtime_buffer->byte_count != 0 &&
 	    (runtime_buffer->upload || runtime_buffer->download) &&
 	    runtime_buffer->snapshot == NULL) {
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 buffer snapshot");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 buffer snapshot"));
 	}
 	if ((!runtime_buffer->upload && !runtime_buffer->download) &&
 	    runtime_buffer->snapshot != NULL) {
-		return accel_dx12_error(error, error_size, "unexpected Direct3D 12 buffer snapshot");
+		return accel_dx12_error(error, error_size, N_TR("unexpected Direct3D 12 buffer snapshot"));
 	}
 
 	/* Keep device-only storage outside every host-transfer path. */
@@ -1871,13 +1871,13 @@ accel_dx12_read_data_buffer_metadata(
 	     runtime_buffer->upload ||
 	     runtime_buffer->download ||
 	     runtime_buffer->snapshot != NULL)) {
-		return accel_dx12_error(error, error_size, "invalid Direct3D 12 device-only buffer");
+		return accel_dx12_error(error, error_size, N_TR("invalid Direct3D 12 device-only buffer"));
 	}
 
 	/* Bound every active structured UAV to its UINT descriptor field. */
 	word_count = runtime_buffer->byte_count / sizeof(uint32_t);
 	if (runtime_buffer->active && word_count > UINT_MAX)
-		return accel_dx12_error(error, error_size, "Direct3D 12 buffer is too large for one UAV");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer is too large for one UAV"));
 
 	/* Retain every immutable field needed by finish validation. */
 	result->args_slot = runtime_buffer->args_slot;
@@ -1928,7 +1928,7 @@ accel_dx12_validate_finish_metadata(
 		    owned->active != candidate.active ||
 		    owned->upload_required != candidate.upload_required ||
 		    owned->download != candidate.download) {
-			return accel_dx12_error(error, error_size, "Direct3D 12 buffer metadata changed");
+			return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer metadata changed"));
 		}
 	}
 
@@ -1953,9 +1953,9 @@ accel_dx12_create_execution_buffers(
 
 	/* Require metadata and a command recording before creating GPU objects. */
 	if (!execution->has_active_dispatch || !execution->recording)
-		return accel_dx12_error(error, error_size, "invalid active Direct3D 12 execution");
+		return accel_dx12_error(error, error_size, N_TR("invalid active Direct3D 12 execution"));
 	if (buffer_count != 0 && execution->buffer == NULL)
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 buffer metadata");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 buffer metadata"));
 
 	/* Create every buffer in deterministic binding order. */
 	for (i = 0; i < buffer_count; i++) {
@@ -2038,7 +2038,7 @@ accel_dx12_create_data_buffer(
 	/* Create and record an upload when the common runtime supplied a snapshot. */
 	if (has_upload) {
 		if (runtime_buffer->snapshot == NULL)
-			return accel_dx12_error(error, error_size, "missing Direct3D 12 upload snapshot");
+			return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 upload snapshot"));
 		if (!accel_dx12_create_buffer(
 			execution->backend,
 			buffer->byte_count,
@@ -2099,7 +2099,7 @@ accel_dx12_create_scalar_buffer(
 	/* Reject wrapped multiplication on narrow size_t targets. */
 	if (scalar_word_count != 0 &&
 	    byte_count / sizeof(*scalar_word) != scalar_word_count) {
-		return accel_dx12_error(error, error_size, "Direct3D 12 scalar byte count overflow");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 scalar byte count overflow"));
 	}
 
 	has_upload = byte_count != 0;
@@ -2162,7 +2162,7 @@ accel_dx12_create_result_buffer(
 	/* Converts the nonempty result count without wrapping size_t. */
 	byte_count = (size_t)result_word_count * sizeof(*result_word);
 	if (byte_count / sizeof(*result_word) != result_word_count)
-		return accel_dx12_error(error, error_size, "Direct3D 12 result byte count overflow");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 result byte count overflow"));
 
 	/* Creates the default-heap UAV in its upload destination state. */
 	if (!accel_dx12_create_buffer(
@@ -2244,7 +2244,7 @@ accel_dx12_create_descriptors(
 		&IID_ID3D12DescriptorHeap,
 		(void **)&execution->descriptor_heap);
 	if (FAILED(result))
-		return accel_dx12_error(error, error_size, "failed to create a Direct3D 12 descriptor heap");
+		return accel_dx12_error(error, error_size, N_TR("failed to create a Direct3D 12 descriptor heap"));
 
 	/* Write all program-buffer UAVs in binding order. */
 	for (i = 0; i < execution->buffer_count; i++) {
@@ -2302,7 +2302,7 @@ accel_dx12_write_descriptor(
 
 	/* Restrict structured-buffer elements to the descriptor's UINT field. */
 	if (element_count == 0 || element_count > UINT_MAX)
-		return accel_dx12_error(error, error_size, "Direct3D 12 buffer is too large for one UAV");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer is too large for one UAV"));
 
 	/* Compute the exact CPU descriptor slot. */
 	increment = ID3D12Device_GetDescriptorHandleIncrementSize(
@@ -2367,7 +2367,7 @@ accel_dx12_create_buffer(
 	if (remainder != 0) {
 		if (allocation_size >
 		    (size_t)-1 - (sizeof(uint32_t) - remainder)) {
-			return accel_dx12_error(error, error_size, "Direct3D 12 buffer size overflow");
+			return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer size overflow"));
 		}
 		allocation_size += sizeof(uint32_t) - remainder;
 	}
@@ -2407,7 +2407,7 @@ accel_dx12_create_buffer(
 		&IID_ID3D12Resource,
 		(void **)&result->resource);
 	if (FAILED(hresult))
-		return accel_dx12_error(error, error_size, "failed to create a Direct3D 12 buffer");
+		return accel_dx12_error(error, error_size, N_TR("failed to create a Direct3D 12 buffer"));
 
 	result->allocation_size = (UINT64)allocation_size;
 	result->state = state;
@@ -2455,7 +2455,7 @@ accel_dx12_upload_buffer(
 		&read_range,
 		&mapped);
 	if (FAILED(result) || mapped == NULL)
-		return accel_dx12_error(error, error_size, "failed to map a Direct3D 12 upload buffer");
+		return accel_dx12_error(error, error_size, N_TR("failed to map a Direct3D 12 upload buffer"));
 
 	/* Copy exact plain snapshot bytes and publish their written range. */
 	memcpy(mapped, data, byte_count);
@@ -2547,7 +2547,7 @@ accel_dx12_record_downloads(
 	if (result_word_count != 0 &&
 	    (execution->result_device.resource == NULL ||
 	     execution->result_readback.resource == NULL)) {
-		return accel_dx12_error(error, error_size, "missing Direct3D 12 result resources");
+		return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 result resources"));
 	}
 
 	/* Validate and record downloads in binding order. */
@@ -2560,16 +2560,16 @@ accel_dx12_record_downloads(
 		    owned->active != buffer[i].active ||
 		    owned->upload_required != buffer[i].upload ||
 		    owned->download != buffer[i].download) {
-			return accel_dx12_error(error, error_size, "Direct3D 12 buffer metadata changed");
+			return accel_dx12_error(error, error_size, N_TR("Direct3D 12 buffer metadata changed"));
 		}
 
 		/* Skip buffers without a nonempty host result. */
 		if (!owned->download || owned->byte_count == 0)
 			continue;
 		if (buffer[i].snapshot == NULL)
-			return accel_dx12_error(error, error_size, "missing Direct3D 12 download snapshot");
+			return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 download snapshot"));
 		if (owned->readback.resource == NULL)
-			return accel_dx12_error(error, error_size, "missing Direct3D 12 readback buffer");
+			return accel_dx12_error(error, error_size, N_TR("missing Direct3D 12 readback buffer"));
 
 		/* Order shader writes before copying exact logical bytes. */
 		accel_dx12_transition(
@@ -2622,14 +2622,14 @@ accel_dx12_submit_and_wait(
 	result = ID3D12GraphicsCommandList_Close(execution->command_list);
 	execution->recording = false;
 	if (FAILED(result))
-		return accel_dx12_error(error, error_size, "failed to close a Direct3D 12 command list");
+		return accel_dx12_error(error, error_size, N_TR("failed to close a Direct3D 12 command list"));
 
 	/* Serialize submission and the shared monotonically increasing fence. */
 	accel_mutex_lock(&backend->queue_mutex);
 	fence_value = backend->next_fence;
 	if (fence_value == 0 || fence_value == (UINT64)-1) {
 		accel_mutex_unlock(&backend->queue_mutex);
-		return accel_dx12_error(error, error_size, "Direct3D 12 fence counter overflowed");
+		return accel_dx12_error(error, error_size, N_TR("Direct3D 12 fence counter overflowed"));
 	}
 	backend->next_fence++;
 
@@ -2645,20 +2645,20 @@ accel_dx12_submit_and_wait(
 	/* Retry the queue marker before abandoning an untrackable submission. */
 	if (!accel_dx12_signal_submission(execution)) {
 		accel_mutex_unlock(&backend->queue_mutex);
-		return accel_dx12_error(error, error_size, "failed to signal the Direct3D 12 queue fence");
+		return accel_dx12_error(error, error_size, N_TR("failed to signal the Direct3D 12 queue fence"));
 	}
 	accel_mutex_unlock(&backend->queue_mutex);
 
 	/* Wait outside queue serialization after publishing the ordered marker. */
 	if (!accel_dx12_wait_submission(execution)) {
-		return accel_dx12_error(error, error_size, "failed to drain the Direct3D 12 queue submission");
+		return accel_dx12_error(error, error_size, N_TR("failed to drain the Direct3D 12 queue submission"));
 	}
 
 	/* Detect asynchronous device removal before exposing output bytes. */
 	result = ID3D12Device_GetDeviceRemovedReason(
 		execution->retained_device);
 	if (FAILED(result))
-		return accel_dx12_error(error, error_size, "the Direct3D 12 device was removed");
+		return accel_dx12_error(error, error_size, N_TR("the Direct3D 12 device was removed"));
 
 	/* Report a synchronously completed queue submission. */
 	return true;
@@ -2807,7 +2807,7 @@ accel_dx12_copy_downloads(
 			&read_range,
 			&mapped);
 		if (FAILED(result) || mapped == NULL)
-			return accel_dx12_error(error, error_size, "failed to map a Direct3D 12 readback buffer");
+			return accel_dx12_error(error, error_size, N_TR("failed to map a Direct3D 12 readback buffer"));
 
 		/* Fill only the runtime-owned plain snapshot. */
 		memcpy(buffer[i].snapshot, mapped, owned->byte_count);
@@ -2832,7 +2832,7 @@ accel_dx12_copy_downloads(
 			&read_range,
 			&mapped);
 		if (FAILED(result) || mapped == NULL)
-			return accel_dx12_error(error, error_size, "failed to map a Direct3D 12 result buffer");
+			return accel_dx12_error(error, error_size, N_TR("failed to map a Direct3D 12 result buffer"));
 
 		memcpy(result_word, mapped, result_byte_count);
 		write_range.Begin = 0;

@@ -61,7 +61,7 @@ accel_list_devices(
 		accel_save_enumeration_error(
 			error,
 			error_size,
-			"Invalid accelerator device-list request.");
+			N_TR("Invalid accelerator device-list request."));
 		return false;
 	}
 
@@ -78,7 +78,7 @@ accel_list_devices(
 			accel_save_enumeration_error(
 				error,
 				error_size,
-				"Accelerator device-list visitor failed.");
+				N_TR("Accelerator device-list visitor failed."));
 			accel_device_list_destroy(&list);
 			return false;
 		}
@@ -133,7 +133,7 @@ accel_initialize(
 
 	/* Enumerate once so selection policy remains backend-neutral. */
 	if (!accel_enumerate_all(&list, error, sizeof(error))) {
-		rt_error(env, "%s", error);
+		rt_error(env, N_TR("%s"), error);
 		accel_device_list_destroy(&list);
 		return false;
 	}
@@ -316,7 +316,7 @@ accel_enumerate_all(
 			accel_save_enumeration_error(
 				error,
 				error_size,
-				"No accelerator backend could enumerate devices.");
+				N_TR("No accelerator backend could enumerate devices."));
 		}
 		return false;
 	}

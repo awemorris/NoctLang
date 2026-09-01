@@ -6,9 +6,10 @@
 - Application integration such as sandboxed game scripting (ANSI C, no external dependencies)
 - Small systems such as embedded Linux in flash memory
 
-Its syntax is lightweight, but its runtime is built for high-end performance.
+Its syntax is lightweight, but the runtime is built for high-end performance.
 
-- Automatic SIMD vectorization
+- Automatic loop-vectorizing SIMD acceleration
+- Automatic loop-parallelizing GPU acceleration
 
 **Small enough to learn today, powerful enough to ship tomorrow!**
 
@@ -21,12 +22,14 @@ Its syntax is lightweight, but its runtime is built for high-end performance.
 Only about 200 KB — with a fast JIT compiler, a robust generational GC,
 and a clean C/JS-like syntax featuring a novel Dictionary-based OOP model.
 
-- 100KB with Interpreter
-- 200KB with Interpreter + JIT
-- 400KB with Interpreter + JIT + Optimization
-- 700KB with Interpreter + JIT + Optimization + SIMD
+- L0: 100KB with Interpreter
+- L1: 200KB with Interpreter + JIT 
+- L2: 400KB with Interpreter + JIT + Optimization
+- L3: 660KB with Interpreter + JIT + Optimization + SIMD
+- L4: 770KB with Interpreter + JIT + Optimization + SIMD + GPU
 
-JIT execution is typically 4-13x faster than interpreter execution.
+The baseline JIT execution (L1) is typically 4-13x faster than interpreter execution (L0).
+SIMD (L3) and GPU (L4) optimizations are 100-350x faster than L0 in the image processing area.
 
 ### Portable
 
@@ -55,11 +58,14 @@ they integrate Noct with game-specific APIs and refer to it as Ray scripting.
 Automatic SIMD vectorization backed by target-neutral loop, DOALL, and
 reduction analyses.
 
+Also, GPU parallelzation is available for Direct3D 12, OpenGL ES,
+Vulkan, and Metal.
+
 ---
 
 ## Status
 
-**Stable,** the current version is 1.0.x.
+**Stable,** the current version is 2.0.x.
 
 The core virtual machine is completed, and is already being used
 through integration with other projects.
@@ -69,6 +75,9 @@ through integration with other projects.
 
 - [Suika3](https://github.com/awemorris/suika3).
     - A visual novel engine for the mobile era.
+
+- [zedBSD](https://github.com/awemorris/zedBSD).
+    - A re-implemented modern BSD OS.
 
 The primary objective of this project, "embedded sandbox scripting",
 has been achieved. However, we are continuing to develop this software
@@ -124,6 +133,8 @@ func main() {
     }
 }
 ```
+
+L1 Speedup:
 
 | CPU                     | Arch     | JIT (s) | Interpreter (s) | Scaling (JIT vs Interpreter) |
 |-------------------------|----------|---------|-----------------|------------------------------|
@@ -505,30 +516,30 @@ The object-oriented model in Noct is a lightweight variation of prototype-based 
 This design treats dictionaries as first-class objects, and the author refers to it as Dictionary-based OOP (D-OOP).
 
 ```
+// Base class definition. (A class is just a dictionary.)
+let Animal = class {
+    name: "Animal",
+    cry: (this) => {
+    }
+};
+
+// Subclass definition. (This is just a dictionary merging.)
+let Cat = extend Animal {
+    name: "Cat",
+    voice: "meow",
+    cry: (this) => {
+        print(this.name + " cries like " + this.voice);
+    }
+};
+
 func main() {
-    // Base class definition. (A class is just a dictionary.)
-    Animal = class {
-        name: "Animal",
-        cry: (this) => {
-        }
-    };
-
-    // Subclass definition. (This is just a dictionary merging.)
-    Cat = extend Animal {
-        name: "Cat",
-        voice: "meow",
-        cry: (this) => {
-            print(this.name + " cries like " + this.voice);
-        }
-    };
-
     // Instance generation. (This is just a dictionary merging.)
     var myCat = new Cat {
         voice: "neee"
     };
 
-    // This-call uses the "-> ()" syntax. (Equal to myCat.cry(myCat))
-    myCat->cry();
+    // This-call uses the ". ()" syntax.
+    myCat.cry();
 }
 ```
 
