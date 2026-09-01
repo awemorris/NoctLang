@@ -81,21 +81,26 @@ struct bytecode_file_error {
 enum bytecode_file_kind bytecode_file_detect(
 	const uint8_t *data,
 	size_t size);
+
 bool bytecode_file_check_registration_size(
 	size_t size,
 	uint32_t *size_out);
+
 bool bytecode_file_inspect_module(
 	const uint8_t *data,
 	size_t size,
 	struct bytecode_file_module *module,
 	struct bytecode_file_error *error);
+
 bool bytecode_file_inspect_app(
 	const uint8_t *data,
 	size_t size,
 	struct bytecode_file_app *app,
 	struct bytecode_file_error *error);
+
 void bytecode_file_cleanup_module(
 	struct bytecode_file_module *module);
+
 void bytecode_file_cleanup_app(
 	struct bytecode_file_app *app);
 

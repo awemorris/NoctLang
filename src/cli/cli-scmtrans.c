@@ -6,6 +6,7 @@
  */
 
 #include "cli-main.h"
+#include "../backend/backend.h"
 
 /* Forward declaration. */
 static bool do_transpile_scheme(const char *out_file, int in_file_count, const char *in_file[]);

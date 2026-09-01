@@ -320,12 +320,6 @@ noct_beui_zedbsd_input_is_key_down(const struct noct_beui_zedbsd_input *input,
 static int noct_beui_zedbsd_input_poll_pointer(struct noct_beui_zedbsd_input *input,
 					struct noct_beui_pointer_event *event);
 
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- */
-
-
 #include <limits.h>
 #include <string.h>
 
@@ -1166,15 +1160,6 @@ noct_beui_zedbsd_input_poll_pointer(struct noct_beui_zedbsd_input *input,
 }
 
 #ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-/*
- * Noct Programming Language
- * Copyright (c) 2026, Awe Morris
- *
- * zedBSD BeUI backend.  Graphics and input are intentionally reached only
- * through the installed public UAPI; in particular, this file does not use
- * the legacy /dev/console event or key-state interfaces.
- */
 
 #include <zedbsd/graphics.h>
 #include <zedbsd/input.h>

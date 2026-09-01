@@ -10,6 +10,7 @@
  */
 
 #include "cli-main.h"
+#include "../backend/backend.h"
 
 /* Bytecode File Header */
 #define BYTECODE_HEADER		"Noct Bytecode"

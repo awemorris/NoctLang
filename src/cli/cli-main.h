@@ -24,22 +24,61 @@ enum cli_optimize_level_result {
 	CLI_OPTIMIZE_LEVEL_INVALID
 };
 
-void show_usage(void);
-enum cli_optimize_level_result parse_optimize_level_option(
+void
+show_usage(void);
+
+enum cli_optimize_level_result
+parse_optimize_level_option(
 	const char *arg,
 	int *level,
 	bool *lineinfo);
-bool load_file_content(const char *fname, char **data, size_t *size);
-int wide_printf(const char *format, ...);
-bool add_file(const char *fname, bool (*add_file_hook)(const char *));
 
-int command_compile(int argc, char *argv[]);
-int command_transpile_c(int argc, char *argv[]);
-int command_transpile_elisp(int argc, char *argv[]);
-int command_transpile_scheme(int argc, char *argv[]);
-int command_run(int argc, char *argv[]);
-int command_repl(void);
+bool
+load_file_content(
+	const char *fname,
+	char **data,
+	size_t *size);
 
-bool register_cli_cfunc(NoctEnv *env);
+int
+wide_printf(
+	const char *format,
+	...);
+
+bool
+add_file(
+	const char *fname,
+	bool (*add_file_hook)(const char *));
+
+int
+command_compile(
+	int argc,
+	char *argv[]);
+
+int
+command_transpile_c(
+	int argc,
+	char *argv[]);
+
+int
+command_transpile_elisp(
+	int argc,
+	char *argv[]);
+
+int
+command_transpile_scheme(
+	int argc,
+	char *argv[]);
+
+int
+command_run(
+	int argc,
+	char *argv[]);
+
+int
+command_repl(void);
+
+bool
+register_cli_cfunc(
+	NoctEnv *env);
 
 #endif

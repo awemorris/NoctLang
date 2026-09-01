@@ -10,15 +10,14 @@
  */
 
 #include <noct/noct.h>
-#if defined(NOCT_USE_BEUI)
-#include <noct/noct.h>
-#endif
 #include "bytecode.h"
 #include "bytecode_file.h"
 #include "cli-main.h"
+
 #if defined(NOCT_USE_ACCEL)
 #include "accel_cli.h"
 #endif
+
 #if defined(NOCT_TARGET_WINDOWS)
 #include "cli-win32.h"
 #endif

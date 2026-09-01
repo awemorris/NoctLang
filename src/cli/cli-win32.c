@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 
-#define CLI_GPU_OPTION_WIDE L"--gpu="
+#define CLI_GPU_OPTION_WIDE	L"--gpu="
 
 /*
  * Converts a Windows GPU option value to UTF-8.

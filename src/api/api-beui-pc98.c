@@ -3,47 +3,21 @@
 /*
  * Noct Programming Language
  * Copyright (c) 2025, 2026, Awe Morris
- *
- * Complete NEC PC-9800 BeUI implementation.
- *
- * This platform translation unit intentionally owns the BeUI core, BMP image
- * decoder, JIS X 0208 glyph table, GDC, Core-Graph/Cirrus, automatic display
- * selection, and DOS host glue.  The sole external interface is
- * noct_register_api_beui(); implementation duplication across platforms is
- * deliberate.
+ */
+
+/*
+ * NEC PC-9800 BeUI implementation.
  */
 
 #include <noct/noct.h>
+
+#include <conio.h>
+#include <i86.h>
 
 #include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-
-#if defined(NOCT_TARGET_PC98DOS)
-#include <conio.h>
-#include <i86.h>
-#endif
-
-/* Private BeUI contract. */
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * Private BeUI implementation contract.
- *
- * The API grew inside the Boots boot loader as its graphical layer and
- * keeps the same hardware abstraction: a backend owns mode save/restore
- * in enter()/leave(), and every drawing primitive goes through the HAL.
- * This header owns the HAL, rendering core, and image interfaces shared only
- * within this translation unit and its direct unit tests.  Installed callers
- * use <noct/noct.h>, which exposes only noct_register_api_beui().
- */
-
-
-
 
 struct noct_beui_rect {
 	unsigned x;
@@ -256,6 +230,7 @@ static int noct_beui_get_milliseconds(uint64_t *milliseconds);
 static int noct_beui_sleep(unsigned milliseconds);
 static int noct_beui_is_key_down(int key);
 static void noct_beui_drain_input(void);
+
 /* Last known absolute pointer state; 0 when no pointer is available. */
 static int noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
 
@@ -280,22 +255,6 @@ static int noct_beui_bmp_decode(const void *data, size_t size, void *pixel_stora
 static int noct_beui_image_load_bmp(const void *data, size_t size);
 static const struct noct_beui_image *noct_beui_image_get(int handle);
 static int noct_beui_image_destroy(int handle);
-
-
-
-/* Private PC-98 backend contracts. */
-/*
- * Boots BeUI NEC PC-9800 GDC safe-mode backend
- * Copyright (C) 2026 Awe Morris
- * Copyright (C) 1996-2024 Keiichi Tabata
- * SPDX-License-Identifier: Zlib
- *
- * Display sequencing is adapted from StratoHAL 98disp_gdc.c at commit
- * 76e909577bdf4629f11e473539b446a948fef830. This Boots version is altered
- * to preserve text VRAM and update only requested rectangles.
- */
-
-
 
 #define NOCT_BEUI_GDC_PLANE_BYTES (640U * 400U / 8U)
 
@@ -325,15 +284,6 @@ static int noct_beui_pc98_gdc_make_hal(struct noct_beui_hal *hal,
 static int noct_beui_pc98_gdc_clear_graphics(
 	struct noct_beui_pc98_gdc *backend);
 
-
-/*
- * Boots PC-98 CGROM glyph backend
- * Copyright (C) 2026 Awe Morris
- * SPDX-License-Identifier: Zlib
- */
-
-
-
 struct noct_beui_pc98_glyph {
 	void *io_context;
 	uint8_t (*port_in8)(void *context, uint16_t port);
@@ -356,23 +306,6 @@ static void noct_beui_pc98_glyph_default(
 static int noct_beui_pc98_glyph_make_hal(struct noct_beui_glyph_hal *hal,
 	struct noct_beui_pc98_glyph *backend);
 static uint16_t noct_beui_pc98_unicode_to_jis(uint32_t codepoint);
-
-
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 1996-2024, Keiichi Tabata
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI NEC PC-9821 Core-Graph / Cirrus GD5440 display backend, imported
- * from Boots.  The register sequence is adapted from StratoHAL
- * 98disp_cirrus.c at commit 76e909577bdf4629f11e473539b446a948fef830 and
- * is deliberately limited to the Core-Graph path at 640x480x8/24.
- * Port I/O and the linear framebuffer are injected by the embedder so
- * the driver stays compiler and host neutral.
- */
-
 
 
 #define NOCT_BEUI_CIRRUS_WIDTH 640U
@@ -409,20 +342,6 @@ static int noct_beui_pc98_cirrus_make_hal(
 	struct noct_beui_hal *hal,
 	struct noct_beui_pc98_cirrus *backend);
 
-
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI PC-98 display selection, imported from Boots.  Probing prefers
- * the Core-Graph / Cirrus board at 640x480x8 and falls back to the
- * always-present GDC at 640x400x4, so one HAL covers both machines.
- */
-
-
-
 struct noct_beui_pc98_auto {
 	struct noct_beui_pc98_cirrus cirrus;
 	struct noct_beui_pc98_gdc gdc;
@@ -440,24 +359,6 @@ static void noct_beui_pc98_auto_default(
 	void *io_context, volatile uint8_t *cirrus_framebuffer);
 static int noct_beui_pc98_auto_make_hal(struct noct_beui_hal *hal,
 	struct noct_beui_pc98_auto *backend);
-
-
-
-/* PC-98-owned JIS X 0208 table. */
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- */
-
-/*
- * JIS X 0208 (EUC-JP code set 1) to Unicode BMP mapping.
- *
- * Generated from the standard euc-jp codec: rows 0xA1-0xF4, cells
- * 0xA1-0xFE, row-major; zero means an unassigned cell.
- */
-
 
 static const uint16_t noct_jisx0208_to_ucs[7896] = {
 	0x3000, 0x3001, 0x3002, 0xFF0C, 0xFF0E, 0x30FB, 0xFF1A, 0xFF1B, 0xFF1F, 0xFF01, 0x309B, 0x309C,
@@ -1120,24 +1021,6 @@ static const uint16_t noct_jisx0208_to_ucs[7896] = {
 	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
 };
 
-
-/* PC-98-owned BMP image decoder and BeUI state/core. */
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI image decoders, imported from the Boots graphical layer
- * (beui/image.c) when BeUI was promoted to a Noct non-standard API.
- *
- * BMP is used instead of PNG so a pre-boot environment does not require
- * a DEFLATE implementation.  The decoder is freestanding and
- * allocation-free: callers measure first, then supply pixel storage.
- */
-
-
-
 struct bmp_layout {
 	const uint8_t *bytes;
 	size_t size;
@@ -1340,19 +1223,6 @@ noct_beui_bmp_decode(const void *data, size_t size, void *pixel_storage,
 	}
 	return 1;
 }
-
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI lifecycle and hardware abstraction, imported from the Boots
- * graphical layer (beui/beui.c) when BeUI was promoted to a Noct
- * non-standard API.
- */
-
-
 
 /*
  * A decoded image lives until the script destroys it or the VM shuts
@@ -1893,24 +1763,6 @@ noct_beui_image_destroy(int handle)
 	return 0;
 }
 
-
-/* PC-98 glyph, GDC, Cirrus, and display-selection implementations. */
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI PC-98 CGROM glyph backend, imported from Boots.
- * CGROM selection and read sequencing is adapted from StratoHAL 98glyph.c,
- * commit 76e909577bdf4629f11e473539b446a948fef830.  In particular, preserve
- * its VSYNC exclusion, 0x68 mode switch, CG-window byte layout, and symbol
- * bank handling; these details matter on physical PC-98 hardware.
- */
-
-
-
-
 static void
 wait_vsync(struct noct_beui_pc98_glyph *backend)
 {
@@ -2116,22 +1968,6 @@ noct_beui_pc98_glyph_make_hal(struct noct_beui_glyph_hal *hal,
 	hal->draw = glyph_draw;
 	return 1;
 }
-
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 1996-2024, Keiichi Tabata
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI NEC PC-9800 GDC safe-mode display backend, imported from Boots.
- * Display sequencing is adapted from StratoHAL 98disp_gdc.c at commit
- * 76e909577bdf4629f11e473539b446a948fef830, altered to preserve text
- * VRAM and update only requested rectangles.  Port I/O is injected by
- * the embedder so the driver stays compiler neutral.
- */
-
-
 
 #define GDC_WIDTH 640U
 #define GDC_HEIGHT 400U
@@ -2458,23 +2294,6 @@ noct_beui_pc98_gdc_make_hal(struct noct_beui_hal *hal,
 	hal->display.flush = gdc_flush;
 	return 1;
 }
-
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 1996-2024, Keiichi Tabata
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI NEC PC-9821 Core-Graph / Cirrus GD5440 display backend, imported
- * from Boots.  The register sequence is adapted from StratoHAL
- * 98disp_cirrus.c at commit 76e909577bdf4629f11e473539b446a948fef830 and
- * is deliberately limited to the Core-Graph path at 640x480x8/24.
- * Port I/O and the linear framebuffer are injected by the embedder so
- * the driver stays compiler and host neutral.
- */
-
-
 
 #define WAB_INDEX 0x0faaU
 #define WAB_DATA 0x0fabU
@@ -2998,19 +2817,6 @@ noct_beui_pc98_cirrus_make_hal(struct noct_beui_hal *hal,
 	return 1;
 }
 
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- *
- * BeUI PC-98 display selection, imported from Boots.  Probing prefers
- * the Core-Graph / Cirrus board at 640x480x8 by default (or 24bpp when
- * hinted) and falls back to the always-present GDC at 640x400x4, so one
- * HAL covers both machines.
- */
-
-
 
 static int
 auto_enter(void *context, struct noct_beui_display_info *info)
@@ -3149,45 +2955,6 @@ noct_beui_pc98_auto_make_hal(struct noct_beui_hal *hal,
 	backend->glyph.display = &hal->display;
 	return noct_beui_pc98_glyph_make_hal(&hal->glyph, &backend->glyph);
 }
-
-
-/* DOS/4GW platform glue and the sole public registration entry point. */
-#if defined(NOCT_TARGET_PC98DOS)
-/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
-
-/*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
- */
-
-/*
- * BeUI backend for MS-DOS on the NEC PC-9800 series (DOS/4GW).
- *
- * The GDC display and CGROM glyph drivers are the compiler-neutral cores
- * shared with Boots; this file supplies what the pre-boot environment got
- * from its Stage 1 BIOS gateway.  Under DOS the low megabyte is mapped
- * linear-to-physical and interrupts stay enabled, so the BIOS work areas
- * are read directly and the display mode calls go through INT 18h, which
- * DOS/4GW reflects to real mode.
- *
- * The millisecond clock must not touch i8253 channel 0: DOS timekeeping
- * owns it.  Channel 1 only feeds the beeper, whose speaker gate is
- * separate from the counter, so the clock programs channel 1 as a
- * free-running rate generator and accumulates latched deltas exactly
- * like the Boots Stage 2 timer.  A machine whose channel 1 gate is held
- * off falls back to latch-polling channel 0 with a measured reload; in
- * mode 3 the fraction then jitters by half a period, which the BeUI
- * clock contract tolerates.  DOS beeps while BeUI is open may glitch
- * the fallback-free path; DOS reprograms the channel on its next beep.
- */
-
-
-
-
-/*
- * Complete BeUI language binding for this platform.  It is intentionally
- * owned by this source rather than shared through a backend dispatcher.
- */
 
 static bool cfunc_BeUI_init(NoctEnv *env);
 static bool cfunc_BeUI_initWithHint(NoctEnv *env);
@@ -4184,6 +3951,3 @@ noct_register_api_beui(NoctEnv *env)
 	pc98dos_hal.input.drain = input_drain;
 	return register_beui_api(env, &pc98dos_hal);
 }
-
-
-#endif /* NOCT_TARGET_PC98DOS */

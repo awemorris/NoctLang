@@ -2106,6 +2106,5 @@ noct_register_api_httpserver(
  */
 
 #include <noct/aot.h>
-#include <noct/backend.h>
 
 #endif

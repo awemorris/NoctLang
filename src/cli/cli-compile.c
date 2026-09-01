@@ -10,11 +10,11 @@
  */
 
 #include "cli-main.h"
-
 #include "app_file.h"
 #include "bcback_private.h"
 #include "bytecode_file.h"
 #include "module.h"
+#include "../backend/backend.h"
 
 #include <stdio.h>
 #include <stdlib.h>
