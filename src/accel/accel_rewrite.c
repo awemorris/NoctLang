@@ -10,7 +10,7 @@
  */
 
 #include "accel_rewrite.h"
-#include "hir_private.h"
+#include "hir.h"
 
 #include <assert.h>
 #include <limits.h>

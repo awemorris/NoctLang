@@ -40,43 +40,45 @@
 #define PATCH_JNE               2
 
 /* Forward declaration */
-static bool jit_visit_bytecode(struct jit_context *ctx);
-static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
+static bool jit_visit_bytecode(struct rt_jit_context *ctx);
+static bool jit_patch_branch(struct rt_jit_context *ctx, int patch_index);
 static uint32_t jit_detect_simd_caps(void);
-static void jit_x86_64_dump_code(struct jit_context *ctx,
+static void jit_x86_64_dump_code(struct rt_jit_context *ctx,
 	void *generated_end);
+#if defined(NOCT_USE_OPTIMIZER)
 static uint16_t jit_x86_64_read_u16(const uint8_t *p);
 static uint32_t jit_x86_64_read_u32(const uint8_t *p);
-static bool jit_x86_64_scan_vector_loop(struct jit_context *ctx,
+static bool jit_x86_64_scan_vector_loop(struct rt_jit_context *ctx,
 	int index_tmp, int remaining_tmp, int lanes);
-static bool jit_x86_64_is_packed_index_alias(struct jit_context *ctx,
+static bool jit_x86_64_is_packed_index_alias(struct rt_jit_context *ctx,
 	int tmp);
-static void jit_x86_64_remove_packed_index_alias(struct jit_context *ctx,
+static void jit_x86_64_remove_packed_index_alias(struct rt_jit_context *ctx,
 	int tmp);
-static bool jit_x86_64_add_packed_index_alias(struct jit_context *ctx,
+static bool jit_x86_64_add_packed_index_alias(struct rt_jit_context *ctx,
 	int tmp);
-static int jit_x86_64_resolve_packed_base(struct jit_context *ctx, int tmp);
-static void jit_x86_64_remove_packed_base_alias(struct jit_context *ctx,
+static int jit_x86_64_resolve_packed_base(struct rt_jit_context *ctx, int tmp);
+static void jit_x86_64_remove_packed_base_alias(struct rt_jit_context *ctx,
 	int tmp);
-static bool jit_x86_64_set_packed_base_alias(struct jit_context *ctx,
+static bool jit_x86_64_set_packed_base_alias(struct rt_jit_context *ctx,
 	int dst, int src);
-static void jit_x86_64_gpr_reset(struct jit_context *ctx);
+static void jit_x86_64_gpr_reset(struct rt_jit_context *ctx);
 static int jit_x86_64_gpr_limit(void);
-static bool jit_x86_64_gpr_spill(struct jit_context *ctx, int slot);
-static bool jit_x86_64_gpr_alloc(struct jit_context *ctx, int tmp,
+static bool jit_x86_64_gpr_spill(struct rt_jit_context *ctx, int slot);
+static bool jit_x86_64_gpr_alloc(struct rt_jit_context *ctx, int tmp,
 	unsigned pin_mask, bool load, int *reg);
-static bool jit_x86_64_gpr_get(struct jit_context *ctx, int tmp,
+static bool jit_x86_64_gpr_get(struct rt_jit_context *ctx, int tmp,
 	unsigned pin_mask, int *reg);
-static bool jit_x86_64_gpr_dest(struct jit_context *ctx, int tmp,
+static bool jit_x86_64_gpr_dest(struct rt_jit_context *ctx, int tmp,
 	unsigned pin_mask, int *reg);
-static bool jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src);
-static bool jit_x86_64_gpr_rebind(struct jit_context *ctx, int dst,
+static bool jit_x86_64_gpr_mov(struct rt_jit_context *ctx, int dst, int src);
+static bool jit_x86_64_gpr_rebind(struct rt_jit_context *ctx, int dst,
 	int src, int *reg);
-static bool jit_x86_64_gpr_flush(struct jit_context *ctx);
-static bool jit_x86_64_gpr_flush_required(struct jit_context *ctx);
-static bool jit_x86_64_gpr_publish_remat(struct jit_context *ctx);
-static bool jit_x86_64_packed_cursor(struct jit_context *ctx, int base,
+static bool jit_x86_64_gpr_flush(struct rt_jit_context *ctx);
+static bool jit_x86_64_gpr_flush_required(struct rt_jit_context *ctx);
+static bool jit_x86_64_gpr_publish_remat(struct rt_jit_context *ctx);
+static bool jit_x86_64_packed_cursor(struct rt_jit_context *ctx, int base,
 	int ofs, int scale, uint8_t *sib, int *cursor, int32_t *byte_disp);
+#endif
 
 /*
  * Generate a JIT-compiled code for a function.
@@ -86,8 +88,8 @@ jit_build(
           struct rt_env *env,
           struct rt_func *func)
 {
-        struct jit_context ctx;
-	struct jit_slab *slab;
+        struct rt_jit_context ctx;
+	struct rt_jit_slab *slab;
 	void *code_top;
 	void *code_end;
 	void *generated_end;
@@ -95,43 +97,43 @@ jit_build(
         int i;
 
 	for (attempt = 0; attempt < 2; attempt++) {
-		if (!jit_slab_acquire(env, &slab, &code_top, &code_end))
+		if (!rt_jit_slab_acquire(env, &slab, &code_top, &code_end))
 			return false;
 
 		/* A failed attempt never advances slab->current, so the whole
 		 * function can be regenerated without invalid branch patches. */
-		memset(&ctx, 0, sizeof(struct jit_context));
+		memset(&ctx, 0, sizeof(struct rt_jit_context));
 		ctx.code_top = code_top;
 		ctx.code_end = code_end;
 		ctx.code = ctx.code_top;
 		ctx.env = env;
 		ctx.func = func;
-		if (!jit_context_init_tables(&ctx))
+		if (!rt_jit_context_init_tables(&ctx))
 			return false;
-		jit_configure_simd(&ctx, jit_detect_simd_caps(), "x86_64");
+		rt_jit_configure_simd(&ctx, jit_detect_simd_caps(), "x86_64");
 
 		if (!jit_visit_bytecode(&ctx)) {
 			if (ctx.code_overflow && attempt == 0 &&
 			    ((uint8_t *)code_top != slab->base ||
-			     slab->size < jit_get_code_size(env))) {
-				jit_slab_abandon(env, slab);
-				jit_slab_clear_overflow(env);
-				jit_context_dispose_tables(&ctx);
+			     slab->size < rt_jit_get_code_size(env))) {
+				rt_jit_slab_abandon(env, slab);
+				rt_jit_slab_clear_overflow(env);
+				rt_jit_context_dispose_tables(&ctx);
 				continue;
 			}
-			jit_context_dispose_tables(&ctx);
+			rt_jit_context_dispose_tables(&ctx);
 			return false;
 		}
 
 		generated_end = ctx.code;
 		for (i = 0; i < ctx.branch_patch_count; i++) {
 			if (!jit_patch_branch(&ctx, i)) {
-				jit_context_dispose_tables(&ctx);
+				rt_jit_context_dispose_tables(&ctx);
 				return false;
 			}
 		}
 		jit_x86_64_dump_code(&ctx, generated_end);
-		jit_slab_finish(env, slab, generated_end);
+		rt_jit_slab_finish(env, slab, generated_end);
 		if (getenv("NOCT_JIT_CODEGEN_DEBUG") != NULL) {
 			fprintf(stderr,
 				"noct-jit-codegen: x86_64: func=%s bytes=%lu pc_entries=%u branches=%d\n",
@@ -142,7 +144,7 @@ jit_build(
 		}
 
 		func->jit_code = (bool (*)(struct rt_env *))ctx.code_top;
-		jit_context_dispose_tables(&ctx);
+		rt_jit_context_dispose_tables(&ctx);
 		return true;
 	}
 	return false;
@@ -155,7 +157,7 @@ bool
 jit_free(
          struct rt_env *env)
 {
-	return jit_slab_free_all(env);
+	return rt_jit_slab_free_all(env);
 }
 
 /*
@@ -165,11 +167,11 @@ bool
 jit_commit(
         struct rt_env *env)
 {
-	return jit_slab_commit_all(env);
+	return rt_jit_slab_commit_all(env);
 }
 
 static void
-jit_x86_64_dump_code(struct jit_context *ctx, void *generated_end)
+jit_x86_64_dump_code(struct rt_jit_context *ctx, void *generated_end)
 {
 	const char *dir;
 	char name[96];
@@ -213,7 +215,7 @@ jit_x86_64_dump_code(struct jit_context *ctx, void *generated_end)
 #define IB(b)                        if (!jit_put_byte(ctx, b)) return false
 static INLINE bool
 jit_put_byte(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         uint8_t b)
 {
         if ((uint8_t *)ctx->code + 1 > (uint8_t *)ctx->code_end) {
@@ -232,7 +234,7 @@ jit_put_byte(
 #define ID(d)                        if (!jit_put_dword(ctx, d)) return false
 static INLINE bool
 jit_put_dword(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         uint32_t dw)
 {
         if ((uint8_t *)ctx->code + 4 > (uint8_t *)ctx->code_end) {
@@ -257,7 +259,7 @@ jit_put_dword(
 #define IQ(q)                        if (!jit_put_qword(ctx, q)) return false
 static INLINE bool
 jit_put_qword(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         uint64_t qw)
 {
         if ((uint8_t *)ctx->code + 8 > (uint8_t *)ctx->code_end) {
@@ -379,8 +381,9 @@ jit_put_qword(
  * Bytecode visitors
  */
 
+#if defined(NOCT_USE_OPTIMIZER)
 static INLINE void
-jit_x86_64_invalidate_packed_load(struct jit_context *ctx, int tmp)
+jit_x86_64_invalidate_packed_load(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -391,7 +394,7 @@ jit_x86_64_invalidate_packed_load(struct jit_context *ctx, int tmp)
 }
 
 static INLINE void
-jit_x86_64_invalidate_all_packed_loads(struct jit_context *ctx)
+jit_x86_64_invalidate_all_packed_loads(struct rt_jit_context *ctx)
 {
 	int i;
 
@@ -400,7 +403,7 @@ jit_x86_64_invalidate_all_packed_loads(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_x86_64_gpr_is_cached(struct jit_context *ctx, int tmp)
+jit_x86_64_gpr_is_cached(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -408,11 +411,12 @@ jit_x86_64_gpr_is_cached(struct jit_context *ctx, int tmp)
 		if (ctx->gpr_load_tmp[i] == tmp) return true;
 	return false;
 }
+#endif
 
 /* Visit a OP_LINEINFO instruction. */
 static INLINE bool
 jit_visit_lineinfo_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         uint32_t line;
 
@@ -434,14 +438,15 @@ jit_visit_lineinfo_op(
 /* Visit a OP_ASSIGN instruction. */
 static INLINE bool
 jit_visit_assign_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
 
-        CONSUME_TMPVAR(dst);
-        CONSUME_TMPVAR(src);
-	if (jit_ploop_current_elided(ctx, 5))
+	CONSUME_TMPVAR(dst);
+	CONSUME_TMPVAR(src);
+#if defined(NOCT_USE_OPTIMIZER)
+	if (rt_jit_ploop_current_elided(ctx, 5))
 		return true;
 	if (ctx->packed_loop_hint_active) {
 		int dst_ofs;
@@ -507,7 +512,7 @@ jit_visit_assign_op(
 	}
 	if (ctx->tmp_fixed_type != NULL &&
 	    ctx->tmp_fixed_type[dst] >= 0 &&
-	    jit_tmp_has_fixed_primitive_type(ctx, src,
+	    rt_jit_tmp_has_fixed_primitive_type(ctx, src,
 					 ctx->tmp_fixed_type[dst])) {
 		int dst_ofs;
 		int src_ofs;
@@ -530,9 +535,10 @@ jit_visit_assign_op(
 			IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)src_ofs);
 			ID((uint32_t)ctx->tmp_fixed_type[src]);
 		}
-	}
+		}
+#endif
 
-        dst *= (int)sizeof(struct rt_value);
+	dst *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
 
         /* env->frame->tmpvar[dst] = env->frame->tmpvar[src]; */
@@ -557,15 +563,16 @@ jit_visit_assign_op(
 /* Visit a OP_ICONST instruction. */
 static INLINE bool
 jit_visit_iconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint32_t val;
 	bool write_tag;
 
-        CONSUME_TMPVAR(dst);
-        CONSUME_IMM32(val);
-	if (jit_ploop_current_elided(ctx, 7))
+	CONSUME_TMPVAR(dst);
+	CONSUME_IMM32(val);
+#if defined(NOCT_USE_OPTIMIZER)
+	if (rt_jit_ploop_current_elided(ctx, 7))
 		return true;
 	if (ctx->packed_loop_hint_active)
 		jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -602,8 +609,9 @@ jit_visit_iconst_op(
 		jit_x86_64_invalidate_packed_load(ctx, dst);
 		return true;
 	}
+#endif
 
-	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+	write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_INT);
         dst *= (int)sizeof(struct rt_value);
 
@@ -632,7 +640,7 @@ jit_visit_iconst_op(
 /* Visit a OP_LICONST instruction. */
 static INLINE bool
 jit_visit_liconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint64_t val;
@@ -641,7 +649,7 @@ jit_visit_liconst_op(
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
-	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+	write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_LONG);
         dst *= (int)sizeof(struct rt_value);
 
@@ -671,7 +679,7 @@ jit_visit_liconst_op(
 /* Visit a OP_FCONST instruction. */
 static INLINE bool
 jit_visit_fconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint32_t val;
@@ -680,7 +688,7 @@ jit_visit_fconst_op(
         CONSUME_TMPVAR(dst);
         CONSUME_IMM32(val);
 
-	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+	write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_FLOAT);
         dst *= (int)sizeof(struct rt_value);
 
@@ -704,7 +712,7 @@ jit_visit_fconst_op(
 /* Visit a OP_LFCONST instruction. */
 static INLINE bool
 jit_visit_lfconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint64_t val;
@@ -713,7 +721,7 @@ jit_visit_lfconst_op(
         CONSUME_TMPVAR(dst);
         CONSUME_IMM64(val);
 
-	write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst,
+	write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst,
 						     NOCT_VALUE_DOUBLE);
         dst *= (int)sizeof(struct rt_value);
 
@@ -743,7 +751,7 @@ jit_visit_lfconst_op(
 /* Visit a OP_SCONST instruction. */
 static INLINE bool
 jit_visit_sconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         const char *val;
@@ -806,7 +814,7 @@ jit_visit_sconst_op(
 /* Visit a OP_ACONST instruction. */
 static INLINE bool
 jit_visit_aconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
 
@@ -860,7 +868,7 @@ jit_visit_aconst_op(
 /* Visit a OP_DCONST instruction. */
 static INLINE bool
 jit_visit_dconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
 
@@ -914,13 +922,14 @@ jit_visit_dconst_op(
 /* Visit a OP_INC instruction. */
 static INLINE bool
 jit_visit_inc_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int step;
 
-        CONSUME_TMPVAR(dst);
-        CONSUME_IMM8(step);
+	CONSUME_TMPVAR(dst);
+	CONSUME_IMM8(step);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (ctx->vector_hint_active &&
 	    dst == ctx->vector_hint_index_tmp &&
 	    step == ctx->vector_hint_lanes)
@@ -929,8 +938,9 @@ jit_visit_inc_op(
 	    dst == ctx->packed_loop_index_tmp &&
 	    step == ((ctx->packed_loop_flags & PLOOP_UNROLL4) != 0 ? 4 : 1))
 		return true;
+#endif
 
-        dst *= (int)sizeof(struct rt_value);
+	dst *= (int)sizeof(struct rt_value);
 
         /* &env->frame->tmpvar[dst].val.i++ */
         ASM {
@@ -946,6 +956,7 @@ jit_visit_inc_op(
 	return true;
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 /* x86-64 vector-register encoders.  Keep the logical SIMD operations
  * three-address; legacy SSE lowering uses the same helpers and inserts a
  * copy only when the ISA requires destructive two-address execution.
@@ -962,7 +973,7 @@ jit_x86_64_valid_xmm(int reg)
 }
 
 static INLINE bool
-jit_x86_64_put_rex_rr(struct jit_context *ctx, int reg, int rm)
+jit_x86_64_put_rex_rr(struct rt_jit_context *ctx, int reg, int rm)
 {
 	uint8_t rex;
 
@@ -976,7 +987,7 @@ jit_x86_64_put_rex_rr(struct jit_context *ctx, int reg, int rm)
 /* Legacy SSE register/register instruction.  map is 1 for 0f, 2 for
  * 0f38, and 3 for 0f3a. */
 static INLINE bool
-jit_x86_64_put_sse_rr(struct jit_context *ctx, uint8_t prefix, int map,
+jit_x86_64_put_sse_rr(struct rt_jit_context *ctx, uint8_t prefix, int map,
 			 uint8_t opcode, int dst, int src)
 {
 	if (!jit_x86_64_valid_xmm(dst) || !jit_x86_64_valid_xmm(src))
@@ -996,7 +1007,7 @@ jit_x86_64_put_sse_rr(struct jit_context *ctx, uint8_t prefix, int map,
 }
 
 static INLINE bool
-jit_x86_64_put_vex3(struct jit_context *ctx, int map, int pp, int dst,
+jit_x86_64_put_vex3(struct rt_jit_context *ctx, int map, int pp, int dst,
 			int rm, int src1, bool has_src1)
 {
 	uint8_t b2, b3;
@@ -1014,7 +1025,7 @@ jit_x86_64_put_vex3(struct jit_context *ctx, int map, int pp, int dst,
 
 /* VEX.NDS.128 register binary operation: dst = src1 op src2. */
 static INLINE bool
-jit_x86_64_put_vex_rrr(struct jit_context *ctx, int map, int pp,
+jit_x86_64_put_vex_rrr(struct rt_jit_context *ctx, int map, int pp,
 			  uint8_t opcode, int dst, int src1, int src2)
 {
 	if (!jit_x86_64_put_vex3(ctx, map, pp, dst, src2, src1, true))
@@ -1026,7 +1037,7 @@ jit_x86_64_put_vex_rrr(struct jit_context *ctx, int map, int pp,
 
 /* VEX.128 two-operand operation whose vvvv field is reserved. */
 static INLINE bool
-jit_x86_64_put_vex_rr(struct jit_context *ctx, int map, int pp,
+jit_x86_64_put_vex_rr(struct rt_jit_context *ctx, int map, int pp,
 			 uint8_t opcode, int dst, int src)
 {
 	if (!jit_x86_64_put_vex3(ctx, map, pp, dst, src, 0, false))
@@ -1039,7 +1050,7 @@ jit_x86_64_put_vex_rr(struct jit_context *ctx, int map, int pp,
 /* VEX immediate packed shift: vvvv encodes dst, ModRM.rm encodes src,
  * and ModRM.reg remains the opcode extension. */
 static INLINE bool
-jit_x86_64_put_vex_shift(struct jit_context *ctx, int ext, int dst,
+jit_x86_64_put_vex_shift(struct rt_jit_context *ctx, int ext, int dst,
 			    int src, uint8_t imm)
 {
 	if (!jit_x86_64_put_vex3(ctx, 1, 1, 0, src, dst, true))
@@ -1050,6 +1061,7 @@ jit_x86_64_put_vex_shift(struct jit_context *ctx, int ext, int dst,
 		jit_put_byte(ctx, imm);
 }
 
+#endif
 static INLINE void
 jit_x86_64_patch_local_rel32(uint8_t *disp, uint8_t *target)
 {
@@ -1059,6 +1071,7 @@ jit_x86_64_patch_local_rel32(uint8_t *disp, uint8_t *target)
 	memcpy(disp, &rel, sizeof(rel));
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 static uint16_t
 jit_x86_64_read_u16(const uint8_t *p)
 {
@@ -1074,7 +1087,7 @@ jit_x86_64_read_u32(const uint8_t *p)
 
 /* Strictly prove the call-free vector region before assigning rbx/rsi/rdi. */
 static bool
-jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
+jit_x86_64_scan_vector_loop(struct rt_jit_context *ctx, int index_tmp,
 			    int remaining_tmp, int lanes)
 {
 	uint32_t p, body_lpc, size;
@@ -1195,7 +1208,7 @@ jit_x86_64_scan_vector_loop(struct jit_context *ctx, int index_tmp,
 }
 
 static bool
-jit_x86_64_is_packed_index_alias(struct jit_context *ctx, int tmp)
+jit_x86_64_is_packed_index_alias(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -1207,7 +1220,7 @@ jit_x86_64_is_packed_index_alias(struct jit_context *ctx, int tmp)
 }
 
 static void
-jit_x86_64_remove_packed_index_alias(struct jit_context *ctx, int tmp)
+jit_x86_64_remove_packed_index_alias(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -1221,7 +1234,7 @@ jit_x86_64_remove_packed_index_alias(struct jit_context *ctx, int tmp)
 }
 
 static bool
-jit_x86_64_add_packed_index_alias(struct jit_context *ctx, int tmp)
+jit_x86_64_add_packed_index_alias(struct rt_jit_context *ctx, int tmp)
 {
 	if (jit_x86_64_is_packed_index_alias(ctx, tmp))
 		return true;
@@ -1235,7 +1248,7 @@ jit_x86_64_add_packed_index_alias(struct jit_context *ctx, int tmp)
 }
 
 static int
-jit_x86_64_resolve_packed_base(struct jit_context *ctx, int tmp)
+jit_x86_64_resolve_packed_base(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -1247,7 +1260,7 @@ jit_x86_64_resolve_packed_base(struct jit_context *ctx, int tmp)
 }
 
 static void
-jit_x86_64_remove_packed_base_alias(struct jit_context *ctx, int tmp)
+jit_x86_64_remove_packed_base_alias(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -1265,7 +1278,7 @@ jit_x86_64_remove_packed_base_alias(struct jit_context *ctx, int tmp)
 }
 
 static bool
-jit_x86_64_set_packed_base_alias(struct jit_context *ctx, int dst, int src)
+jit_x86_64_set_packed_base_alias(struct rt_jit_context *ctx, int dst, int src)
 {
 	int root;
 
@@ -1284,7 +1297,7 @@ jit_x86_64_set_packed_base_alias(struct jit_context *ctx, int dst, int src)
 }
 
 static void
-jit_x86_64_gpr_reset(struct jit_context *ctx)
+jit_x86_64_gpr_reset(struct rt_jit_context *ctx)
 {
 	uint32_t i;
 
@@ -1323,7 +1336,7 @@ jit_x86_64_gpr_limit(void)
 }
 
 static bool
-jit_x86_64_gpr_spill(struct jit_context *ctx, int slot)
+jit_x86_64_gpr_spill(struct rt_jit_context *ctx, int slot)
 {
 	int tmp;
 	int ofs;
@@ -1343,7 +1356,7 @@ jit_x86_64_gpr_spill(struct jit_context *ctx, int slot)
 	}
 	if (!cached && !ctx->has_vector_ops && ctx->packed_loop_hint_active &&
 	    ctx->tmp_compiler_temp != NULL && ctx->tmp_compiler_temp[tmp] &&
-	    jit_ploop_next_use_lpc(ctx, tmp, ctx->lpc) == UINT32_MAX) {
+	    rt_jit_ploop_next_use_lpc(ctx, tmp, ctx->lpc) == UINT32_MAX) {
 		ctx->gpr_dead_drops++;
 		ctx->gpr_tmp_dirty[tmp] = 0;
 	}
@@ -1376,7 +1389,7 @@ jit_x86_64_gpr_spill(struct jit_context *ctx, int slot)
 }
 
 static bool
-jit_x86_64_gpr_alloc(struct jit_context *ctx, int tmp,
+jit_x86_64_gpr_alloc(struct rt_jit_context *ctx, int tmp,
 			     unsigned pin_mask, bool load, int *reg)
 {
 	int slot;
@@ -1415,7 +1428,7 @@ jit_x86_64_gpr_alloc(struct jit_context *ctx, int tmp,
 			for (j = 0; j < 3; j++)
 				if (ctx->gpr_load_tmp[j] == held) cached = true;
 			next = cached ? ctx->lpc :
-				jit_ploop_next_use_lpc(ctx, held, ctx->lpc);
+				rt_jit_ploop_next_use_lpc(ctx, held, ctx->lpc);
 			if (slot < 0 || next == UINT32_MAX || next >= farthest) {
 				slot = candidate;
 				farthest = next;
@@ -1449,14 +1462,14 @@ jit_x86_64_gpr_alloc(struct jit_context *ctx, int tmp,
 }
 
 static bool
-jit_x86_64_gpr_get(struct jit_context *ctx, int tmp,
+jit_x86_64_gpr_get(struct rt_jit_context *ctx, int tmp,
 			  unsigned pin_mask, int *reg)
 {
 	return jit_x86_64_gpr_alloc(ctx, tmp, pin_mask, true, reg);
 }
 
 static bool
-jit_x86_64_gpr_dest(struct jit_context *ctx, int tmp,
+jit_x86_64_gpr_dest(struct rt_jit_context *ctx, int tmp,
 			   unsigned pin_mask, int *reg)
 {
 	ctx->gpr_remat_valid[tmp] = 0;
@@ -1464,7 +1477,7 @@ jit_x86_64_gpr_dest(struct jit_context *ctx, int tmp,
 }
 
 static bool
-jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src)
+jit_x86_64_gpr_mov(struct rt_jit_context *ctx, int dst, int src)
 {
 	UNUSED_PARAMETER(ctx);
 
@@ -1479,7 +1492,7 @@ jit_x86_64_gpr_mov(struct jit_context *ctx, int dst, int src)
 
 /* Transfer a dead source's physical register to a defining destination. */
 static bool
-jit_x86_64_gpr_rebind(struct jit_context *ctx, int dst, int src, int *reg)
+jit_x86_64_gpr_rebind(struct rt_jit_context *ctx, int dst, int src, int *reg)
 {
 	int slot;
 	int old;
@@ -1503,7 +1516,7 @@ jit_x86_64_gpr_rebind(struct jit_context *ctx, int dst, int src, int *reg)
 }
 
 static bool
-jit_x86_64_gpr_flush(struct jit_context *ctx)
+jit_x86_64_gpr_flush(struct rt_jit_context *ctx)
 {
 	int slot;
 
@@ -1519,7 +1532,7 @@ jit_x86_64_gpr_flush(struct jit_context *ctx)
 /* A generic instruction is about to consume the current values from the VM
  * frame, so even values with no later bytecode use must be published. */
 static bool
-jit_x86_64_gpr_flush_required(struct jit_context *ctx)
+jit_x86_64_gpr_flush_required(struct rt_jit_context *ctx)
 {
 	bool active;
 	bool ok;
@@ -1535,7 +1548,7 @@ jit_x86_64_gpr_flush_required(struct jit_context *ctx)
  * were intentionally kept only as rematerialization facts before leaving
  * the register-cache fast path. */
 static bool
-jit_x86_64_gpr_publish_remat(struct jit_context *ctx)
+jit_x86_64_gpr_publish_remat(struct rt_jit_context *ctx)
 {
 	uint32_t tmp;
 	int ofs;
@@ -1560,7 +1573,7 @@ jit_x86_64_gpr_publish_remat(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_visit_x86_64_ploop_hint_op(struct jit_context *ctx)
+jit_visit_x86_64_ploop_hint_op(struct rt_jit_context *ctx)
 {
 	int stop_ofs;
 	int remaining_ofs;
@@ -1568,16 +1581,16 @@ jit_visit_x86_64_ploop_hint_op(struct jit_context *ctx)
 	int scale_bits;
 	int i;
 
-	if (!jit_visit_ploop_hint_op(ctx))
+	if (!rt_jit_visit_ploop_hint_op(ctx))
 		return false;
-	if (!jit_context_init_regcache(ctx))
+	if (!rt_jit_context_init_regcache(ctx))
 		return false;
 	ctx->packed_loop_hint_active =
 		getenv("NOCT_JIT_REGCACHE_DISABLE") == NULL &&
 		(ctx->packed_loop_flags & (PLOOP_TYPED_INT |
 		 PLOOP_ALLOW_REGCACHE | PLOOP_HAS_CONTROL)) ==
 		(PLOOP_TYPED_INT | PLOOP_ALLOW_REGCACHE) &&
-		jit_scan_packed_loop(ctx, true);
+		rt_jit_scan_packed_loop(ctx, true);
 	if (ctx->packed_loop_hint_active) {
 		/* Rebuild aliases in bytecode order while visitors emit the region. */
 		ctx->packed_loop_index_alias_count = 1;
@@ -1651,7 +1664,7 @@ jit_visit_x86_64_ploop_hint_op(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_visit_vindex_hint_op(struct jit_context *ctx)
+jit_visit_vindex_hint_op(struct rt_jit_context *ctx)
 {
 	int a, b, c, required_vregs, lanes, flags;
 	int ofs, base_ofs;
@@ -1756,7 +1769,7 @@ jit_visit_vindex_hint_op(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_visit_subjnz_op(struct jit_context *ctx)
+jit_visit_subjnz_op(struct rt_jit_context *ctx)
 {
 	int value, decrement;
 	uint32_t target_lpc;
@@ -1862,7 +1875,7 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_visit_vori32x4i_op(struct jit_context *ctx)
+jit_visit_vori32x4i_op(struct rt_jit_context *ctx)
 {
 	int dst, src, imm, shift;
 	uint32_t value;
@@ -1915,7 +1928,7 @@ jit_visit_vori32x4i_op(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_visit_vfmaf32x4_op(struct jit_context *ctx)
+jit_visit_vfmaf32x4_op(struct rt_jit_context *ctx)
 {
 	int dst, src1, src2, addend;
 	uint8_t opcode;
@@ -1973,7 +1986,7 @@ jit_visit_vfmaf32x4_op(struct jit_context *ctx)
 /* Visit an OP_VCMPI32X4 instruction. */
 static INLINE bool
 jit_visit_vcmpi32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
 	int dst;
 	int src1;
@@ -2058,7 +2071,7 @@ broken_vcmpi32x4:
 /* Visit an OP_VCMPF32X4 instruction. */
 static INLINE bool
 jit_visit_vcmpf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
 	int dst;
 	int src1;
@@ -2132,7 +2145,7 @@ broken_vcmpf32x4:
 }
 
 static INLINE bool
-jit_visit_vselect128_op(struct jit_context *ctx)
+jit_visit_vselect128_op(struct rt_jit_context *ctx)
 {
 	int dst, mask, src1, src2;
 
@@ -2184,7 +2197,7 @@ broken_vselect:
 }
 
 static INLINE bool
-jit_visit_vmaskstorei32x4_op(struct jit_context *ctx)
+jit_visit_vmaskstorei32x4_op(struct rt_jit_context *ctx)
 {
 	int dst, src1, src2;
 	int mask, base, ofs, cursor;
@@ -2233,7 +2246,7 @@ jit_visit_vmaskstorei32x4_op(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_visit_vinductf32x4_op(struct jit_context *ctx)
+jit_visit_vinductf32x4_op(struct rt_jit_context *ctx)
 {
 	int dst, src1, src2;
 	int state_ofs, step_ofs, lane;
@@ -2280,7 +2293,7 @@ jit_visit_vinductf32x4_op(struct jit_context *ctx)
 }
 
 static INLINE bool
-jit_visit_vgatheri32x4_checked_op(struct jit_context *ctx)
+jit_visit_vgatheri32x4_checked_op(struct rt_jit_context *ctx)
 {
 	int dst, src1, plen, vi, src2;
 	int base_ofs, plen_ofs, lane;
@@ -2365,11 +2378,12 @@ jit_visit_vgatheri32x4_checked_op(struct jit_context *ctx)
 	jit_x86_64_patch_local_rel32(done_patch, done_target);
 	return true;
 }
+#endif
 
 /* Visit a OP_ADD instruction. */
 static INLINE bool
 jit_visit_add_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2388,7 +2402,7 @@ jit_visit_add_op(
 /* Visit a OP_SUB instruction. */
 static INLINE bool
 jit_visit_sub_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2407,7 +2421,7 @@ jit_visit_sub_op(
 /* Visit a OP_MUL instruction. */
 static INLINE bool
 jit_visit_mul_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2426,7 +2440,7 @@ jit_visit_mul_op(
 /* Visit a OP_DIV instruction. */
 static INLINE bool
 jit_visit_div_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2445,7 +2459,7 @@ jit_visit_div_op(
 /* Visit a OP_MOD instruction. */
 static INLINE bool
 jit_visit_mod_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2464,7 +2478,7 @@ jit_visit_mod_op(
 /* Visit a OP_AND instruction. */
 static INLINE bool
 jit_visit_and_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2483,7 +2497,7 @@ jit_visit_and_op(
 /* Visit a OP_OR instruction. */
 static INLINE bool
 jit_visit_or_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2502,7 +2516,7 @@ jit_visit_or_op(
 /* Visit a OP_XOR instruction. */
 static INLINE bool
 jit_visit_xor_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2521,7 +2535,7 @@ jit_visit_xor_op(
 /* Visit a OP_SHL instruction. */
 static INLINE bool
 jit_visit_shl_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2540,7 +2554,7 @@ jit_visit_shl_op(
 /* Visit a OP_SHR instruction. */
 static INLINE bool
 jit_visit_shr_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2559,7 +2573,7 @@ jit_visit_shr_op(
 /* Visit a OP_NEG instruction. */
 static INLINE bool
 jit_visit_neg_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -2576,7 +2590,7 @@ jit_visit_neg_op(
 /* Visit a OP_NOT instruction. */
 static INLINE bool
 jit_visit_not_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -2593,7 +2607,7 @@ jit_visit_not_op(
 /* Visit a OP_LT instruction. */
 static INLINE bool
 jit_visit_lt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2612,7 +2626,7 @@ jit_visit_lt_op(
 /* Visit a OP_LTE instruction. */
 static INLINE bool
 jit_visit_lte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2631,7 +2645,7 @@ jit_visit_lte_op(
 /* Visit a OP_EQ instruction. */
 static INLINE bool
 jit_visit_eq_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2650,7 +2664,7 @@ jit_visit_eq_op(
 /* Visit a OP_NEQ instruction. */
 static INLINE bool
 jit_visit_neq_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2669,7 +2683,7 @@ jit_visit_neq_op(
 /* Visit a OP_GTE instruction. */
 static INLINE bool
 jit_visit_gte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2688,7 +2702,7 @@ jit_visit_gte_op(
 /* Visit a OP_EQI instruction. */
 static INLINE bool
 jit_visit_eqi_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2728,7 +2742,7 @@ jit_visit_eqi_op(
 /* Visit a OP_GT instruction. */
 static INLINE bool
 jit_visit_gt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2747,7 +2761,7 @@ jit_visit_gt_op(
 /* Visit a OP_LOADARRAY instruction. */
 static INLINE bool
 jit_visit_loadarray_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2766,7 +2780,7 @@ jit_visit_loadarray_op(
 /* Visit a OP_STOREARRAY instruction. */
 static INLINE bool
 jit_visit_storearray_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2785,7 +2799,7 @@ jit_visit_storearray_op(
 /* Visit a OP_LEN instruction. */
 static INLINE bool
 jit_visit_len_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -2802,7 +2816,7 @@ jit_visit_len_op(
 /* Visit a OP_GETDICTKEYBYINDEX instruction. */
 static INLINE bool
 jit_visit_getdictkeybyindex_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2821,7 +2835,7 @@ jit_visit_getdictkeybyindex_op(
 /* Visit a OP_GETDICTVALBYINDEX instruction. */
 static INLINE bool
 jit_visit_getdictvalbyindex_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2840,7 +2854,7 @@ jit_visit_getdictvalbyindex_op(
 /* Visit a OP_LOADSYMBOL instruction. */
 static INLINE bool
 jit_visit_loadsymbol_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         const char *src_s;
@@ -2901,7 +2915,7 @@ jit_visit_loadsymbol_op(
 /* Visit a OP_STORESYMBOL instruction. */
 static INLINE bool
 jit_visit_storesymbol_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         const char *dst_s;
         uint32_t dst_len, dst_hash;
@@ -2962,7 +2976,7 @@ jit_visit_storesymbol_op(
 /* Visit a OP_LOADDOT instruction. */
 static INLINE bool
 jit_visit_loaddot_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int dict;
@@ -3028,7 +3042,7 @@ jit_visit_loaddot_op(
 /* Visit a OP_STOREDOT instruction. */
 static INLINE bool
 jit_visit_storedot_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dict;
         const char *field_s;
@@ -3094,7 +3108,7 @@ jit_visit_storedot_op(
 /* Visit a OP_CALL instruction. */
 static inline bool
 jit_visit_call_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int func;
@@ -3179,7 +3193,7 @@ jit_visit_call_op(
 /* Visit a OP_THISCALL instruction. */
 static inline bool
 jit_visit_thiscall_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int obj;
@@ -3276,7 +3290,7 @@ jit_visit_thiscall_op(
 /* Visit a OP_JMP instruction. */
 static inline bool
 jit_visit_jmp_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         uint32_t target_lpc;
 
@@ -3303,7 +3317,7 @@ jit_visit_jmp_op(
 /* Visit a OP_JMPIFTRUE instruction. */
 static inline bool
 jit_visit_jmpiftrue_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int src;
         uint32_t target_lpc;
@@ -3348,7 +3362,7 @@ jit_visit_jmpiftrue_op(
 /* Visit a OP_JMPIFFALSE instruction. */
 static inline bool
 jit_visit_jmpiffalse_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int src;
         uint32_t target_lpc;
@@ -3389,7 +3403,7 @@ jit_visit_jmpiffalse_op(
 /* Visit a OP_JMPIFEQ instruction. */
 static inline bool
 jit_visit_jmpifeq_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int src;
         uint32_t target_lpc;
@@ -3418,7 +3432,7 @@ jit_visit_jmpifeq_op(
 /* Visit a OP_SAFEPOINT instruction. */
 static INLINE bool
 jit_visit_safepoint_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         if (IS_MSABI) {
                 /* if (!rt_safepoint_helper(env)) return false; */
@@ -3462,7 +3476,7 @@ jit_visit_safepoint_op(
 /* Fixed primitive slots expose their tag only at explicit materialization
  * boundaries.  Dynamic slots retain the canonical producer store. */
 #define STORE_TAG_IF_DYNAMIC(dstofs, tag)                                      \
-	if (!jit_tmp_has_fixed_primitive_type(                                   \
+	if (!rt_jit_tmp_has_fixed_primitive_type(                                   \
 		ctx, (int)((dstofs) / (int)sizeof(struct rt_value)), (tag))) {      \
 		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)(dstofs));              \
 		ID((uint32_t)(tag));                                               \
@@ -3475,7 +3489,7 @@ jit_visit_safepoint_op(
  */
 static INLINE bool
 jit_visit_pbase_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -3510,7 +3524,7 @@ jit_visit_pbase_op(
 /* Visit a OP_PLEN instruction. (ABCE; helper-call implementation.) */
 static INLINE bool
 jit_visit_plen_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -3527,7 +3541,7 @@ jit_visit_plen_op(
 /* Visit a OP_PCHECK instruction. (ABCE; helper-call implementation.) */
 static INLINE bool
 jit_visit_pcheck_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3546,7 +3560,7 @@ jit_visit_pcheck_op(
 /* Visit a OP_TYPEIS instruction. (ABCE; helper-call implementation.) */
 static INLINE bool
 jit_visit_typeis_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3562,8 +3576,9 @@ jit_visit_typeis_op(
 	return true;
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 static bool
-jit_x86_64_packed_cursor(struct jit_context *ctx, int base, int ofs,
+jit_x86_64_packed_cursor(struct rt_jit_context *ctx, int base, int ofs,
 			 int scale, uint8_t *sib, int *cursor,
 			 int32_t *byte_disp)
 {
@@ -3575,7 +3590,7 @@ jit_x86_64_packed_cursor(struct jit_context *ctx, int base, int ofs,
 	UNUSED_PARAMETER(ofs);
 
 	if (!ctx->packed_loop_hint_active ||
-	    !jit_ploop_current_access_disp(ctx, &element_disp))
+	    !rt_jit_ploop_current_access_disp(ctx, &element_disp))
 		return false;
 	if (element_disp < INT32_MIN / scale ||
 	    element_disp > INT32_MAX / scale)
@@ -3594,15 +3609,17 @@ jit_x86_64_packed_cursor(struct jit_context *ctx, int base, int ofs,
 	}
 	return false;
 }
+#endif
 
 /* Visit a OP_PLOAD8U instruction. (ABCE; inline machine code.) */
 static INLINE bool
 jit_visit_pload8u_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
-        int dst;
-        int base;
-        int ofs;
+	int dst;
+	int base;
+	int ofs;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int dst_ofs;
 	int cursor;
@@ -3612,10 +3629,12 @@ jit_visit_pload8u_op(
 	int opcode_key;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
-        CONSUME_TMPVAR(dst);
-        CONSUME_TMPVAR(base);
-        CONSUME_TMPVAR(ofs);
+	CONSUME_TMPVAR(dst);
+	CONSUME_TMPVAR(base);
+	CONSUME_TMPVAR(ofs);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 1, &sib,
 				     &cursor, &byte_disp)) {
 		jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -3632,7 +3651,7 @@ jit_visit_pload8u_op(
 				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
 							&cached_reg))
 					return false;
-				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+				if (rt_jit_ploop_next_use_lpc(ctx, cached_tmp,
 							ctx->lpc) == UINT32_MAX) {
 					if (!jit_x86_64_gpr_rebind(ctx, dst,
 								 cached_tmp, &reg))
@@ -3682,8 +3701,9 @@ jit_visit_pload8u_op(
 		}
 		return true;
 	}
+#endif
 
-        dst *= (int)sizeof(struct rt_value);
+	dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
 
@@ -3706,21 +3726,24 @@ jit_visit_pload8u_op(
  * Operand order: base, ofs, src.) */
 static INLINE bool
 jit_visit_pstore8_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
-        int base;
-        int ofs;
-        int src;
+	int base;
+	int ofs;
+	int src;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int src_ofs;
 	int cursor;
 	int reg;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
-        CONSUME_TMPVAR(base);
-        CONSUME_TMPVAR(ofs);
-        CONSUME_TMPVAR(src);
+	CONSUME_TMPVAR(base);
+	CONSUME_TMPVAR(ofs);
+	CONSUME_TMPVAR(src);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 1, &sib,
 				     &cursor, &byte_disp)) {
 		if (ctx->gpr_cache_active) {
@@ -3758,8 +3781,9 @@ jit_visit_pstore8_op(
 		}
 		return true;
 	}
+#endif
 
-        base *= (int)sizeof(struct rt_value);
+	base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
         src *= (int)sizeof(struct rt_value);
 
@@ -3779,7 +3803,7 @@ jit_visit_pstore8_op(
 /* Visit a OP_CHECKTYPE instruction. (Typed entry check.) */
 static INLINE bool
 jit_visit_checktype_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -3792,16 +3816,20 @@ jit_visit_checktype_op(
 	ASM_UNARY_OP(ex_checktype_helper);
 	flags = src & (TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
 	src &= ~(TYPECHECK_RETURN_FLAG | TYPECHECK_LOCAL_FLAG);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (ctx->tmp_fixed_type != NULL &&
 	    flags == 0 && ctx->tmp_fixed_type[dst] == src)
-	ctx->tmp_frame_tag_known[dst] = 1;
+		ctx->tmp_frame_tag_known[dst] = 1;
+#else
+	UNUSED_PARAMETER(flags);
+#endif
 
 	return true;
 }
 
 /* Publish a fixed primitive tag at a dynamic observation boundary. */
 static INLINE bool
-jit_visit_x86_64_materialize_type_op(struct jit_context *ctx)
+jit_visit_x86_64_materialize_type_op(struct rt_jit_context *ctx)
 {
 	int tmp;
 	int type;
@@ -3814,9 +3842,11 @@ jit_visit_x86_64_materialize_type_op(struct jit_context *ctx)
 		rt_error(ctx->env, BROKEN_BYTECODE);
 		return false;
 	}
+#if defined(NOCT_USE_OPTIMIZER)
 	if (ctx->tmp_frame_tag_known != NULL &&
 	    ctx->tmp_frame_tag_known[tmp])
 		return true;
+#endif
 	ofs = tmp * (int)sizeof(struct rt_value);
 	ASM {
 		IB(0x41); IB(0xc7); IB(0x87); ID((uint32_t)ofs);
@@ -3828,11 +3858,12 @@ jit_visit_x86_64_materialize_type_op(struct jit_context *ctx)
 /* Visit a OP_PLOAD8S instruction. (ABCE; inline machine code.) */
 static INLINE bool
 jit_visit_pload8s_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
         int ofs;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int dst_ofs;
 	int cursor;
@@ -3842,10 +3873,12 @@ jit_visit_pload8s_op(
 	int opcode_key;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 1, &sib,
 				     &cursor, &byte_disp)) {
 		jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -3862,7 +3895,7 @@ jit_visit_pload8s_op(
 				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
 							&cached_reg))
 					return false;
-				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+				if (rt_jit_ploop_next_use_lpc(ctx, cached_tmp,
 							ctx->lpc) == UINT32_MAX) {
 					if (!jit_x86_64_gpr_rebind(ctx, dst,
 								 cached_tmp, &reg))
@@ -3912,6 +3945,7 @@ jit_visit_pload8s_op(
 		}
 		return true;
 	}
+#endif
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -3934,11 +3968,12 @@ jit_visit_pload8s_op(
 /* Visit a OP_PLOAD16U instruction. (ABCE; inline machine code.) */
 static INLINE bool
 jit_visit_pload16u_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
         int ofs;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int dst_ofs;
 	int cursor;
@@ -3948,10 +3983,12 @@ jit_visit_pload16u_op(
 	int opcode_key;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 2, &sib,
 				     &cursor, &byte_disp)) {
 		jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -3968,7 +4005,7 @@ jit_visit_pload16u_op(
 				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
 							&cached_reg))
 					return false;
-				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+				if (rt_jit_ploop_next_use_lpc(ctx, cached_tmp,
 							ctx->lpc) == UINT32_MAX) {
 					if (!jit_x86_64_gpr_rebind(ctx, dst,
 								 cached_tmp, &reg))
@@ -4018,6 +4055,7 @@ jit_visit_pload16u_op(
 		}
 		return true;
 	}
+#endif
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -4040,11 +4078,12 @@ jit_visit_pload16u_op(
 /* Visit a OP_PLOAD16S instruction. (ABCE; inline machine code.) */
 static INLINE bool
 jit_visit_pload16s_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
         int ofs;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int dst_ofs;
 	int cursor;
@@ -4054,10 +4093,12 @@ jit_visit_pload16s_op(
 	int opcode_key;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 2, &sib,
 				     &cursor, &byte_disp)) {
 		jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -4074,7 +4115,7 @@ jit_visit_pload16s_op(
 				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
 							&cached_reg))
 					return false;
-				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+				if (rt_jit_ploop_next_use_lpc(ctx, cached_tmp,
 							ctx->lpc) == UINT32_MAX) {
 					if (!jit_x86_64_gpr_rebind(ctx, dst,
 								 cached_tmp, &reg))
@@ -4124,6 +4165,7 @@ jit_visit_pload16s_op(
 		}
 		return true;
 	}
+#endif
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -4146,11 +4188,12 @@ jit_visit_pload16s_op(
 /* Visit a OP_PLOAD32 instruction. (ABCE; inline machine code.) */
 static INLINE bool
 jit_visit_pload32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
         int ofs;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int dst_ofs;
 	int cursor;
@@ -4160,10 +4203,12 @@ jit_visit_pload32_op(
 	int opcode_key;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
         CONSUME_TMPVAR(dst);
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 4, &sib,
 				     &cursor, &byte_disp)) {
 		jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -4180,7 +4225,7 @@ jit_visit_pload32_op(
 				if (!jit_x86_64_gpr_get(ctx, cached_tmp, 0,
 							&cached_reg))
 					return false;
-				if (jit_ploop_next_use_lpc(ctx, cached_tmp,
+				if (rt_jit_ploop_next_use_lpc(ctx, cached_tmp,
 							ctx->lpc) == UINT32_MAX) {
 					if (!jit_x86_64_gpr_rebind(ctx, dst,
 								 cached_tmp, &reg))
@@ -4229,6 +4274,7 @@ jit_visit_pload32_op(
 		}
 		return true;
 	}
+#endif
 
         dst *= (int)sizeof(struct rt_value);
         base *= (int)sizeof(struct rt_value);
@@ -4251,7 +4297,7 @@ jit_visit_pload32_op(
 /* Visit a OP_PLOAD64 instruction. (ABCE; inline machine code.) */
 static INLINE bool
 jit_visit_pload64_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
@@ -4282,21 +4328,24 @@ jit_visit_pload64_op(
 /* Visit a OP_PSTORE16 instruction. (ABCE; inline. Int source per ABCE rules.) */
 static INLINE bool
 jit_visit_pstore16_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base;
         int ofs;
         int src;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int src_ofs;
 	int cursor;
 	int reg;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 2, &sib,
 				     &cursor, &byte_disp)) {
 		if (ctx->gpr_cache_active) {
@@ -4336,6 +4385,7 @@ jit_visit_pstore16_op(
 		}
 		return true;
 	}
+#endif
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -4356,21 +4406,24 @@ jit_visit_pstore16_op(
 /* Visit a OP_PSTORE32 instruction. (ABCE; inline. Int source per ABCE rules.) */
 static INLINE bool
 jit_visit_pstore32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base;
         int ofs;
         int src;
+#if defined(NOCT_USE_OPTIMIZER)
 	uint8_t sib;
 	int src_ofs;
 	int cursor;
 	int reg;
 	int32_t byte_disp;
 	uint8_t mod;
+#endif
 
         CONSUME_TMPVAR(base);
         CONSUME_TMPVAR(ofs);
         CONSUME_TMPVAR(src);
+#if defined(NOCT_USE_OPTIMIZER)
 	if (jit_x86_64_packed_cursor(ctx, base, ofs, 4, &sib,
 				     &cursor, &byte_disp)) {
 		if (ctx->gpr_cache_active) {
@@ -4408,6 +4461,7 @@ jit_visit_pstore32_op(
 		}
 		return true;
 	}
+#endif
 
         base *= (int)sizeof(struct rt_value);
         ofs *= (int)sizeof(struct rt_value);
@@ -4428,7 +4482,7 @@ jit_visit_pstore32_op(
 /* Visit a OP_PSTORE64 instruction. (ABCE width op; helper-call.) */
 static INLINE bool
 jit_visit_pstore64_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -4447,7 +4501,7 @@ jit_visit_pstore64_op(
 /* Visit a OP_PLOADF32 instruction. (ABCE float32 width op; helper-call.) */
 static INLINE bool
 jit_visit_ploadf32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -4464,7 +4518,7 @@ jit_visit_ploadf32_op(
 /* Visit a OP_PSTOREF32 instruction. (ABCE float32 width op; helper-call.) */
 static INLINE bool
 jit_visit_pstoref32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -4509,7 +4563,7 @@ jit_visit_pstoref32_op(
 /* Visit an OP_IADD instruction. */
 static INLINE bool
 jit_visit_iadd_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -4522,7 +4576,8 @@ jit_visit_iadd_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -4560,7 +4615,7 @@ jit_visit_iadd_op(
                         if (dst == src1) {
                                 rd = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
@@ -4587,14 +4642,14 @@ jit_visit_iadd_op(
                                 rd = r2;
                                 r2 = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
                                                          &rd))
                                         return false;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
-                                   jit_ploop_next_use_lpc(ctx, src2,
+                                   rt_jit_ploop_next_use_lpc(ctx, src2,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
@@ -4633,9 +4688,10 @@ jit_visit_iadd_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -4656,7 +4712,7 @@ jit_visit_iadd_op(
 /* Visit an OP_ISUB instruction. */
 static INLINE bool
 jit_visit_isub_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -4669,7 +4725,8 @@ jit_visit_isub_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -4707,7 +4764,7 @@ jit_visit_isub_op(
                         if (dst == src1) {
                                 rd = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
@@ -4733,7 +4790,7 @@ jit_visit_isub_op(
                         } else if (dst == src2) {
                                 goto fallback_isub;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
@@ -4773,9 +4830,10 @@ fallback_isub:
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -4796,7 +4854,7 @@ fallback_isub:
 /* Visit an OP_IMUL instruction. */
 static INLINE bool
 jit_visit_imul_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -4809,7 +4867,8 @@ jit_visit_imul_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -4833,7 +4892,7 @@ jit_visit_imul_op(
                         if (dst == src1) {
                                 rd = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
@@ -4861,14 +4920,14 @@ jit_visit_imul_op(
                                 rd = r2;
                                 r2 = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
                                                          &rd))
                                         return false;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
-                                   jit_ploop_next_use_lpc(ctx, src2,
+                                   rt_jit_ploop_next_use_lpc(ctx, src2,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
@@ -4898,9 +4957,10 @@ jit_visit_imul_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -4921,7 +4981,7 @@ jit_visit_imul_op(
 /* Visit an OP_IDIV instruction. */
 static INLINE bool
 jit_visit_idiv_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -4934,7 +4994,8 @@ jit_visit_idiv_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -4977,9 +5038,10 @@ jit_visit_idiv_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5005,7 +5067,7 @@ jit_visit_idiv_op(
 /* Visit an OP_IMOD instruction. */
 static INLINE bool
 jit_visit_imod_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5018,7 +5080,8 @@ jit_visit_imod_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5062,9 +5125,10 @@ jit_visit_imod_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5091,7 +5155,7 @@ jit_visit_imod_op(
 /* Visit an OP_IAND instruction. */
 static INLINE bool
 jit_visit_iand_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5104,7 +5168,8 @@ jit_visit_iand_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5140,7 +5205,7 @@ jit_visit_iand_op(
                         if (dst == src1) {
                                 rd = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
@@ -5167,14 +5232,14 @@ jit_visit_iand_op(
                                 rd = r2;
                                 r2 = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
                                                          &rd))
                                         return false;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
-                                   jit_ploop_next_use_lpc(ctx, src2,
+                                   rt_jit_ploop_next_use_lpc(ctx, src2,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
@@ -5213,9 +5278,10 @@ jit_visit_iand_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5236,7 +5302,7 @@ jit_visit_iand_op(
 /* Visit an OP_IOR instruction. */
 static INLINE bool
 jit_visit_ior_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5249,7 +5315,8 @@ jit_visit_ior_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5273,7 +5340,7 @@ jit_visit_ior_op(
                         if (dst == src1) {
                                 rd = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
@@ -5300,14 +5367,14 @@ jit_visit_ior_op(
                                 rd = r2;
                                 r2 = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
                                                          &rd))
                                         return false;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
-                                   jit_ploop_next_use_lpc(ctx, src2,
+                                   rt_jit_ploop_next_use_lpc(ctx, src2,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
@@ -5337,9 +5404,10 @@ jit_visit_ior_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5360,7 +5428,7 @@ jit_visit_ior_op(
 /* Visit an OP_IXOR instruction. */
 static INLINE bool
 jit_visit_ixor_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5373,7 +5441,8 @@ jit_visit_ixor_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5397,7 +5466,7 @@ jit_visit_ixor_op(
                         if (dst == src1) {
                                 rd = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
@@ -5424,14 +5493,14 @@ jit_visit_ixor_op(
                                 rd = r2;
                                 r2 = r1;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                                   jit_ploop_next_use_lpc(ctx, src1,
+                                   rt_jit_ploop_next_use_lpc(ctx, src1,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src1,
                                                          &rd))
                                         return false;
                         } else if (!jit_x86_64_gpr_is_cached(ctx, src2) &&
-                                   jit_ploop_next_use_lpc(ctx, src2,
+                                   rt_jit_ploop_next_use_lpc(ctx, src2,
                                                          ctx->lpc) ==
                                    UINT32_MAX) {
                                 if (!jit_x86_64_gpr_rebind(ctx, dst, src2,
@@ -5461,9 +5530,10 @@ jit_visit_ixor_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5484,7 +5554,7 @@ jit_visit_ixor_op(
 /* Visit an OP_ISHL instruction. */
 static INLINE bool
 jit_visit_ishl_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5497,7 +5567,8 @@ jit_visit_ishl_op(
         CONSUME_TMPVAR(src1);
         CONSUME_IMM8(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5514,7 +5585,7 @@ jit_visit_ishl_op(
                 if (dst == src1) {
                         rd = r1;
                 } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                           jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                           rt_jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
                            UINT32_MAX) {
                         if (!jit_x86_64_gpr_rebind(ctx, dst, src1, &rd))
                                 return false;
@@ -5541,9 +5612,10 @@ jit_visit_ishl_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5567,7 +5639,7 @@ jit_visit_ishl_op(
 /* Visit an OP_ISHR instruction. */
 static INLINE bool
 jit_visit_ishr_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5580,7 +5652,8 @@ jit_visit_ishr_op(
         CONSUME_TMPVAR(src1);
         CONSUME_IMM8(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5597,7 +5670,7 @@ jit_visit_ishr_op(
                 if (dst == src1) {
                         rd = r1;
                 } else if (!jit_x86_64_gpr_is_cached(ctx, src1) &&
-                           jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
+                           rt_jit_ploop_next_use_lpc(ctx, src1, ctx->lpc) ==
                            UINT32_MAX) {
                         if (!jit_x86_64_gpr_rebind(ctx, dst, src1, &rd))
                                 return false;
@@ -5624,9 +5697,10 @@ jit_visit_ishr_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5650,7 +5724,7 @@ jit_visit_ishr_op(
 /* Visit an OP_ILT instruction. */
 static INLINE bool
 jit_visit_ilt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5663,7 +5737,8 @@ jit_visit_ilt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5675,9 +5750,10 @@ jit_visit_ilt_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5699,7 +5775,7 @@ jit_visit_ilt_op(
 /* Visit an OP_ILTE instruction. */
 static INLINE bool
 jit_visit_ilte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5712,7 +5788,8 @@ jit_visit_ilte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5724,9 +5801,10 @@ jit_visit_ilte_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5748,7 +5826,7 @@ jit_visit_ilte_op(
 /* Visit an OP_IGT instruction. */
 static INLINE bool
 jit_visit_igt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5761,7 +5839,8 @@ jit_visit_igt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5773,9 +5852,10 @@ jit_visit_igt_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5797,7 +5877,7 @@ jit_visit_igt_op(
 /* Visit an OP_IGTE instruction. */
 static INLINE bool
 jit_visit_igte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5810,7 +5890,8 @@ jit_visit_igte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5822,9 +5903,10 @@ jit_visit_igte_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5846,7 +5928,7 @@ jit_visit_igte_op(
 /* Visit an OP_FADD instruction. */
 static INLINE bool
 jit_visit_fadd_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5859,7 +5941,8 @@ jit_visit_fadd_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5871,9 +5954,10 @@ jit_visit_fadd_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_FLOAT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5897,7 +5981,7 @@ jit_visit_fadd_op(
 /* Visit an OP_FSUB instruction. */
 static INLINE bool
 jit_visit_fsub_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5910,7 +5994,8 @@ jit_visit_fsub_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5922,9 +6007,10 @@ jit_visit_fsub_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_FLOAT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5948,7 +6034,7 @@ jit_visit_fsub_op(
 /* Visit an OP_FMUL instruction. */
 static INLINE bool
 jit_visit_fmul_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -5961,7 +6047,8 @@ jit_visit_fmul_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -5973,9 +6060,10 @@ jit_visit_fmul_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_FLOAT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -5999,7 +6087,7 @@ jit_visit_fmul_op(
 /* Visit an OP_FDIV instruction. */
 static INLINE bool
 jit_visit_fdiv_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -6012,7 +6100,8 @@ jit_visit_fdiv_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -6024,9 +6113,10 @@ jit_visit_fdiv_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_FLOAT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -6050,7 +6140,7 @@ jit_visit_fdiv_op(
 /* Visit an OP_FLT instruction. */
 static INLINE bool
 jit_visit_flt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -6063,7 +6153,8 @@ jit_visit_flt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -6075,9 +6166,10 @@ jit_visit_flt_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -6100,7 +6192,7 @@ jit_visit_flt_op(
 /* Visit an OP_FLTE instruction. */
 static INLINE bool
 jit_visit_flte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -6113,7 +6205,8 @@ jit_visit_flte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -6125,9 +6218,10 @@ jit_visit_flte_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -6150,7 +6244,7 @@ jit_visit_flte_op(
 /* Visit an OP_FGT instruction. */
 static INLINE bool
 jit_visit_fgt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -6163,7 +6257,8 @@ jit_visit_fgt_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -6175,9 +6270,10 @@ jit_visit_fgt_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -6199,7 +6295,7 @@ jit_visit_fgt_op(
 /* Visit an OP_FGTE instruction. */
 static INLINE bool
 jit_visit_fgte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -6212,7 +6308,8 @@ jit_visit_fgte_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -6224,9 +6321,10 @@ jit_visit_fgte_op(
                         return false;
         }
 
+#endif
         dst_tmp = dst;
         result_type = NOCT_VALUE_INT;
-        write_tag = !jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
+        write_tag = !rt_jit_tmp_has_fixed_primitive_type(ctx, dst_tmp,
                                                      result_type);
 
         dst *= (int)sizeof(struct rt_value);
@@ -6248,7 +6346,7 @@ jit_visit_fgte_op(
 /* Visit an OP_IDIV_CHECKED instruction. */
 static INLINE bool
 jit_visit_idiv_checked_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -6269,7 +6367,8 @@ jit_visit_idiv_checked_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -6322,6 +6421,7 @@ jit_visit_idiv_checked_op(
                     !jit_x86_64_gpr_flush_required(ctx))
                         return false;
         }
+#endif
         dst_ofs = dst * (int)sizeof(struct rt_value);
         src1_ofs = src1 * (int)sizeof(struct rt_value);
         src2_ofs = src2 * (int)sizeof(struct rt_value);
@@ -6386,7 +6486,7 @@ jit_visit_idiv_checked_op(
 /* Visit an OP_IMOD_CHECKED instruction. */
 static INLINE bool
 jit_visit_imod_checked_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -6407,7 +6507,8 @@ jit_visit_imod_checked_op(
         CONSUME_TMPVAR(src1);
         CONSUME_TMPVAR(src2);
 
-        if (jit_ploop_current_elided(ctx, 7))
+#if defined(NOCT_USE_OPTIMIZER)
+        if (rt_jit_ploop_current_elided(ctx, 7))
                 return true;
         if (ctx->packed_loop_hint_active)
                 jit_x86_64_remove_packed_index_alias(ctx, dst);
@@ -6461,6 +6562,7 @@ jit_visit_imod_checked_op(
                     !jit_x86_64_gpr_flush_required(ctx))
                         return false;
         }
+#endif
         dst_ofs = dst * (int)sizeof(struct rt_value);
         src1_ofs = src1 * (int)sizeof(struct rt_value);
         src2_ofs = src2 * (int)sizeof(struct rt_value);
@@ -6595,11 +6697,12 @@ jit_detect_simd_caps(void)
 #endif
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 /* Visit vector instructions with SSE/AVX or direct scalar lowering. */
 /* Visit an OP_VLOADI32X4 instruction. */
 static INLINE bool
 jit_visit_vloadi32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int base_tmp;
@@ -6681,7 +6784,7 @@ jit_visit_vloadi32x4_op(
 /* Visit an OP_VSTOREI32X4 instruction. */
 static INLINE bool
 jit_visit_vstorei32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base_tmp;
         int ofs_tmp;
@@ -6762,7 +6865,7 @@ jit_visit_vstorei32x4_op(
 /* Visit an OP_VSPLATI32 instruction. */
 static INLINE bool
 jit_visit_vsplati32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int src_tmp;
@@ -6816,7 +6919,7 @@ jit_visit_vsplati32_op(
 /* Visit an OP_VGETLANEI32 instruction. */
 static INLINE bool
 jit_visit_vgetlanei32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst_tmp;
         int vs;
@@ -6895,7 +6998,7 @@ jit_visit_vgetlanei32_op(
 /* Visit an OP_VMOV128 instruction. */
 static INLINE bool
 jit_visit_vmov128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -6952,7 +7055,7 @@ jit_visit_vmov128_op(
 /* Visit an OP_VADDI32X4 instruction. */
 static INLINE bool
 jit_visit_vaddi32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -7028,7 +7131,7 @@ jit_visit_vaddi32x4_op(
 /* Visit an OP_VSUBI32X4 instruction. */
 static INLINE bool
 jit_visit_vsubi32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -7104,7 +7207,7 @@ jit_visit_vsubi32x4_op(
 /* Visit an OP_VMULI32X4 instruction. */
 static INLINE bool
 jit_visit_vmuli32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -7209,7 +7312,7 @@ jit_visit_vmuli32x4_op(
 /* Visit an OP_VAND128 instruction. */
 static INLINE bool
 jit_visit_vand128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -7285,7 +7388,7 @@ jit_visit_vand128_op(
 /* Visit an OP_VOR128 instruction. */
 static INLINE bool
 jit_visit_vor128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -7361,7 +7464,7 @@ jit_visit_vor128_op(
 /* Visit an OP_VXOR128 instruction. */
 static INLINE bool
 jit_visit_vxor128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -7437,7 +7540,7 @@ jit_visit_vxor128_op(
 /* Visit an OP_VSHLI32X4 instruction. */
 static INLINE bool
 jit_visit_vshli32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -7506,7 +7609,7 @@ jit_visit_vshli32x4_op(
 /* Visit an OP_VSHRI32X4 instruction. */
 static INLINE bool
 jit_visit_vshri32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -7575,7 +7678,7 @@ jit_visit_vshri32x4_op(
 /* Visit an OP_VLOADF32X4 instruction. */
 static INLINE bool
 jit_visit_vloadf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int base_tmp;
@@ -7657,7 +7760,7 @@ jit_visit_vloadf32x4_op(
 /* Visit an OP_VSTOREF32X4 instruction. */
 static INLINE bool
 jit_visit_vstoref32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base_tmp;
         int ofs_tmp;
@@ -7738,7 +7841,7 @@ jit_visit_vstoref32x4_op(
 /* Visit an OP_VSPLATF32 instruction. */
 static INLINE bool
 jit_visit_vsplatf32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int src_tmp;
@@ -7792,7 +7895,7 @@ jit_visit_vsplatf32_op(
 /* Visit an OP_VGETLANEF32 instruction. */
 static INLINE bool
 jit_visit_vgetlanef32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst_tmp;
         int vs;
@@ -7871,7 +7974,7 @@ jit_visit_vgetlanef32_op(
 /* Visit an OP_VADDF32X4 instruction. */
 static INLINE bool
 jit_visit_vaddf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -7941,7 +8044,7 @@ jit_visit_vaddf32x4_op(
 /* Visit an OP_VSUBF32X4 instruction. */
 static INLINE bool
 jit_visit_vsubf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -8011,7 +8114,7 @@ jit_visit_vsubf32x4_op(
 /* Visit an OP_VMULF32X4 instruction. */
 static INLINE bool
 jit_visit_vmulf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -8081,7 +8184,7 @@ jit_visit_vmulf32x4_op(
 /* Visit an OP_VDIVF32X4 instruction. */
 static INLINE bool
 jit_visit_vdivf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -8151,7 +8254,7 @@ jit_visit_vdivf32x4_op(
 /* Visit an OP_VCVTI32F32X4 instruction. */
 static INLINE bool
 jit_visit_vcvti32f32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -8210,7 +8313,7 @@ jit_visit_vcvti32f32x4_op(
 /* Visit an OP_VCVTF32I32X4 instruction. */
 static INLINE bool
 jit_visit_vcvtf32i32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -8270,7 +8373,7 @@ jit_visit_vcvtf32i32x4_op(
 /* Visit an OP_VMINS32X4 instruction. */
 static INLINE bool
 jit_visit_vmins32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -8374,7 +8477,7 @@ jit_visit_vmins32x4_op(
 /* Visit an OP_VMAXS32X4 instruction. */
 static INLINE bool
 jit_visit_vmaxs32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -8474,12 +8577,13 @@ jit_visit_vmaxs32x4_op(
         rt_error(ctx->env, BROKEN_BYTECODE);
         return false;
 }
+#endif
 
 
 /* Visit a bytecode of a function. */
 static bool
 jit_visit_bytecode(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         uint8_t opcode;
 
@@ -8853,18 +8957,21 @@ jit_visit_bytecode(
                         if (!jit_visit_pstoref32_op(ctx))
                                 return false;
                         break;
+#if defined(NOCT_USE_OPTIMIZER)
 		case OP_VINDEX_HINT:
 			if (!jit_visit_vindex_hint_op(ctx)) return false;
 			break;
 		case OP_PLOOP_HINT:
 			if (!jit_visit_x86_64_ploop_hint_op(ctx)) return false;
 			break;
+#endif
 		case OP_TMPVAR_TYPE:
-			if (!jit_visit_tmpvar_type_op(ctx)) return false;
+			if (!rt_jit_visit_tmpvar_type_op(ctx)) return false;
 			break;
 		case OP_MATERIALIZE_TYPE:
 			if (!jit_visit_x86_64_materialize_type_op(ctx)) return false;
 			break;
+#if defined(NOCT_USE_OPTIMIZER)
 		case OP_SUBJNZ:
 			if (!jit_visit_subjnz_op(ctx)) return false;
 			break;
@@ -8892,6 +8999,7 @@ jit_visit_bytecode(
 		case OP_VGATHERI32X4_CHECKED:
 			if (!jit_visit_vgatheri32x4_checked_op(ctx)) return false;
 			break;
+#endif
                 case OP_IADD:
                         if (!jit_visit_iadd_op(ctx))
                                 return false;
@@ -8988,7 +9096,8 @@ jit_visit_bytecode(
                         if (!jit_visit_imod_checked_op(ctx))
                                 return false;
                         break;
-                case OP_VLOADI32X4:
+#if defined(NOCT_USE_OPTIMIZER)
+		case OP_VLOADI32X4:
                         if (!jit_visit_vloadi32x4_op(ctx))
                                 return false;
                         break;
@@ -9084,10 +9193,11 @@ jit_visit_bytecode(
                         if (!jit_visit_vmins32x4_op(ctx))
                                 return false;
                         break;
-                case OP_VMAXS32X4:
-                        if (!jit_visit_vmaxs32x4_op(ctx))
-                                return false;
-                        break;
+		case OP_VMAXS32X4:
+			if (!jit_visit_vmaxs32x4_op(ctx))
+				return false;
+			break;
+#endif
 		default:
 			return false; /* interpreter fallback for newer bytecode */
                 }
@@ -9141,7 +9251,7 @@ jit_visit_bytecode(
 
 static bool
 jit_patch_branch(
-    struct jit_context *ctx,
+    struct rt_jit_context *ctx,
     int patch_index)
 {
         uint8_t *target_code;

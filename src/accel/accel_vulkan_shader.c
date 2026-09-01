@@ -11,7 +11,6 @@
 
 #include "accel_vulkan_shader.h"
 #include "hir.h"
-#include "hir_private.h"
 
 #include <stdarg.h>
 #include <stdio.h>

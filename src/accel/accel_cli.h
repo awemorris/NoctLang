@@ -26,4 +26,9 @@ accel_initialize(
 	NoctEnv *env,
 	const char *gpu_name);
 
+/* Detaches and releases the accelerator attached by accel_initialize(). */
+void
+accel_finalize(
+	NoctVM *vm);
+
 #endif

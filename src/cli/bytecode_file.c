@@ -6,11 +6,14 @@
  */
 
 /*
- * Strict inspection of Noct bytecode files.
+ * CLI-private inspection of Noct bytecode files.
  */
 
 #include "bytecode_file.h"
 
+#if defined(NOCT_USE_OPTIMIZER)
+#include "fast.h"
+#endif
 #include "lir.h"
 
 #include <assert.h>
@@ -25,6 +28,11 @@
 #define BYTECODE_FILE_APP_PREFIX	"Noct App "
 #define BYTECODE_FILE_APP_1_0_MAGIC	"Noct App 1.0\n"
 #define BYTECODE_FILE_MAX_RECORD_COUNT	4096U
+#define BYTECODE_FILE_FAST_SIGNATURE_VERSION	1U
+#define BYTECODE_FILE_FAST_RANK_MAX	8U
+#define BYTECODE_FILE_FAST_EXTENT_CONST	1
+#define BYTECODE_FILE_FAST_EXTENT_PARAM	2
+#define BYTECODE_FILE_FAST_RETURN_VOID	(-2)
 
 enum bytecode_file_optional_section {
 	BYTECODE_FILE_PARAM_TYPES = 1U << 0,
@@ -134,10 +142,10 @@ bytecode_file_check_registration_size(
 
 	if (size == 0)
 		return false;
-	if (size > (size_t)UINT32_MAX)
-		return false;
 
 	*size_out = (uint32_t)size;
+	if ((size_t)*size_out != size)
+		return false;
 
 	return true;
 }
@@ -654,7 +662,9 @@ bytecode_file_cleanup_function(
 	noct_free(function->param_type);
 	noct_free(function->param_packed_type);
 	noct_free(function->param_restricted);
-	fast_signature_free(&function->fast_signature);
+#if defined(NOCT_USE_OPTIMIZER)
+	fast_info_free(function->fast_info);
+#endif
 
 	memset(function, 0, sizeof(*function));
 }
@@ -665,6 +675,7 @@ bytecode_file_parse_fast_signature(
 	struct bytecode_file_parser *parser,
 	struct bytecode_file_function *function)
 {
+#if defined(NOCT_USE_OPTIMIZER)
 	struct fast_signature *signature;
 	struct fast_param_contract *contract;
 	struct fast_extent *extent;
@@ -674,18 +685,25 @@ bytecode_file_parse_fast_signature(
 	uint32_t i;
 	uint32_t axis;
 
-	signature = &function->fast_signature;
-	if (signature->valid ||
-	    signature->param_count != 0 ||
-	    signature->param != NULL) {
+	signature = NULL;
+
+	if (function->fast_info != NULL)
 		return bytecode_file_fail(parser, "Duplicate fast signature data.");
+
+	signature = noct_malloc(sizeof(*signature));
+	if (signature == NULL) {
+		return bytecode_file_fail(
+			parser,
+			"Out of memory inspecting fast signature.");
 	}
+	fast_signature_init(signature);
+	function->fast_info = signature;
 
 	if (!bytecode_file_read_line(parser))
 		return false;
 	if (!bytecode_file_parse_u32(parser->line, &unsigned_value))
 		return bytecode_file_fail(parser, "Invalid fast signature version.");
-	if (unsigned_value != NOCT_FAST_SIGNATURE_VERSION)
+	if (unsigned_value != BYTECODE_FILE_FAST_SIGNATURE_VERSION)
 		return bytecode_file_fail(parser, "Unsupported fast signature version.");
 	signature->version = unsigned_value;
 
@@ -756,7 +774,7 @@ bytecode_file_parse_fast_signature(
 			return false;
 		if (!bytecode_file_parse_u32(parser->line, &contract->rank))
 			return bytecode_file_fail(parser, "Invalid fast signature rank.");
-		if (contract->rank > NOCT_FAST_RANK_MAX)
+		if (contract->rank > BYTECODE_FILE_FAST_RANK_MAX)
 			return bytecode_file_fail(parser, "Fast signature rank is too large.");
 
 		contract->extent = bytecode_file_allocate_array(
@@ -784,7 +802,7 @@ bytecode_file_parse_fast_signature(
 			if (!bytecode_file_read_line(parser))
 				return false;
 
-			if (extent->kind == FAST_EXTENT_CONST) {
+			if (extent->kind == BYTECODE_FILE_FAST_EXTENT_CONST) {
 				if (!bytecode_file_parse_i64(
 					parser->line,
 					&signed_long)) {
@@ -793,7 +811,7 @@ bytecode_file_parse_fast_signature(
 						"Invalid constant fast extent.");
 				}
 				extent->value.constant = signed_long;
-			} else if (extent->kind == FAST_EXTENT_PARAM) {
+			} else if (extent->kind == BYTECODE_FILE_FAST_EXTENT_PARAM) {
 				if (!bytecode_file_parse_u32(
 					parser->line,
 					&unsigned_value)) {
@@ -815,6 +833,133 @@ bytecode_file_parse_fast_signature(
 		return bytecode_file_fail(parser, "Invalid fast signature layout.");
 
 	return true;
+#else
+	uint32_t param_count;
+	uint32_t rank;
+	uint32_t unsigned_value;
+	int signed_value;
+	int64_t signed_long;
+	uint32_t i;
+	uint32_t axis;
+
+	if (!bytecode_file_read_line(parser))
+		return false;
+	if (!bytecode_file_parse_u32(parser->line, &unsigned_value))
+		return bytecode_file_fail(parser, "Invalid fast signature version.");
+	if (unsigned_value != BYTECODE_FILE_FAST_SIGNATURE_VERSION)
+		return bytecode_file_fail(parser, "Unsupported fast signature version.");
+
+	if (!bytecode_file_read_line(parser))
+		return false;
+	if (!bytecode_file_parse_u32(parser->line, &unsigned_value)) {
+		return bytecode_file_fail(
+			parser,
+			"Invalid fast signature validity flag.");
+	}
+	if (unsigned_value != 1U) {
+		return bytecode_file_fail(
+			parser,
+			"Invalid fast signature validity flag.");
+	}
+
+	if (!bytecode_file_read_line(parser))
+		return false;
+	if (!bytecode_file_parse_u32(parser->line, &param_count)) {
+		return bytecode_file_fail(
+			parser,
+			"Invalid fast signature parameter count.");
+	}
+	if (param_count != function->param_count || param_count > NOCT_ARG_MAX) {
+		return bytecode_file_fail(
+			parser,
+			"Fast signature parameter count mismatch.");
+	}
+
+	if (!bytecode_file_read_line(parser))
+		return false;
+	if (!bytecode_file_parse_int(parser->line, &signed_value))
+		return bytecode_file_fail(parser, "Invalid fast signature return type.");
+
+	/* Consume and validate the optimizer-owned contract representation. */
+	for (i = 0; i < param_count; i++) {
+		if (!bytecode_file_read_line(parser))
+			return false;
+		if (!bytecode_file_parse_int(parser->line, &signed_value)) {
+			return bytecode_file_fail(
+				parser,
+				"Invalid fast signature parameter type.");
+		}
+
+		if (!bytecode_file_read_line(parser))
+			return false;
+		if (!bytecode_file_parse_int(parser->line, &signed_value)) {
+			return bytecode_file_fail(
+				parser,
+				"Invalid fast signature Packed type.");
+		}
+
+		if (!bytecode_file_read_line(parser))
+			return false;
+		if (!bytecode_file_parse_u32(parser->line, &unsigned_value)) {
+			return bytecode_file_fail(
+				parser,
+				"Invalid fast signature restricted flag.");
+		}
+		if (unsigned_value > 1U) {
+			return bytecode_file_fail(
+				parser,
+				"Invalid fast signature restricted flag.");
+		}
+
+		if (!bytecode_file_read_line(parser))
+			return false;
+		if (!bytecode_file_parse_u32(parser->line, &rank)) {
+			return bytecode_file_fail(parser, "Invalid fast signature rank.");
+		}
+		if (rank > BYTECODE_FILE_FAST_RANK_MAX)
+			return bytecode_file_fail(parser, "Fast signature rank is too large.");
+
+		/* Consume every exact-shape extent in this parameter. */
+		for (axis = 0; axis < rank; axis++) {
+			if (!bytecode_file_read_line(parser))
+				return false;
+			if (!bytecode_file_parse_int(parser->line, &signed_value)) {
+				return bytecode_file_fail(
+					parser,
+					"Invalid fast signature extent kind.");
+			}
+			if (!bytecode_file_read_line(parser))
+				return false;
+
+			if (signed_value == BYTECODE_FILE_FAST_EXTENT_CONST) {
+				if (!bytecode_file_parse_i64(parser->line, &signed_long)) {
+					return bytecode_file_fail(
+						parser,
+						"Invalid constant fast extent.");
+				}
+			} else if (signed_value == BYTECODE_FILE_FAST_EXTENT_PARAM) {
+				if (!bytecode_file_parse_u32(
+					parser->line,
+					&unsigned_value)) {
+					return bytecode_file_fail(
+						parser,
+						"Invalid parameter fast extent.");
+				}
+				if (unsigned_value >= param_count) {
+					return bytecode_file_fail(
+						parser,
+						"Invalid parameter fast extent.");
+				}
+			} else {
+				return bytecode_file_fail(
+					parser,
+					"Unsupported fast signature extent kind.");
+			}
+		}
+	}
+
+	return true;
+#endif
 }
 
 /* Cross-check a fast signature against ordinary function metadata. */
@@ -823,11 +968,12 @@ bytecode_file_validate_fast_metadata(
 	const struct bytecode_file_function *function,
 	unsigned int sections)
 {
+#if defined(NOCT_USE_OPTIMIZER)
 	const struct fast_signature *signature;
 	const struct fast_param_contract *contract;
 	uint32_t i;
 
-	signature = &function->fast_signature;
+	signature = fast_info_signature(function->fast_info);
 	if (!function->is_fast)
 		return false;
 	if ((sections & BYTECODE_FILE_FAST_SIGNATURE) == 0)
@@ -848,7 +994,7 @@ bytecode_file_validate_fast_metadata(
 		return false;
 	if (function->return_packed_type != -1)
 		return false;
-	if (function->return_type == NOCT_FAST_RETURN_VOID &&
+	if (function->return_type == BYTECODE_FILE_FAST_RETURN_VOID &&
 	    function->return_type_checked) {
 		return false;
 	}
@@ -866,6 +1012,26 @@ bytecode_file_validate_fast_metadata(
 	}
 
 	return true;
+#else
+	if (!function->is_fast)
+		return false;
+	if ((sections & BYTECODE_FILE_FAST_SIGNATURE) == 0)
+		return false;
+	if (function->param_count > 0 &&
+	    (sections & BYTECODE_FILE_PARAM_TYPES) == 0) {
+		return false;
+	}
+	if ((sections & BYTECODE_FILE_RETURN_TYPE) == 0)
+		return false;
+	if (function->return_packed_type != -1)
+		return false;
+	if (function->return_type == BYTECODE_FILE_FAST_RETURN_VOID &&
+	    function->return_type_checked) {
+		return false;
+	}
+
+	return true;
+#endif
 }
 
 /* Map one optional section label to its duplicate-check bit. */
@@ -1019,7 +1185,6 @@ bytecode_file_parse_function(
 	uint32_t value;
 	uint32_t i;
 
-	fast_signature_init(&function->fast_signature);
 	function->return_type = -1;
 	function->return_packed_type = -1;
 
@@ -1156,6 +1321,11 @@ bytecode_file_parse_function(
 				parser,
 				"Fast signature does not match function metadata.");
 		}
+#if !defined(NOCT_USE_OPTIMIZER)
+		return bytecode_file_fail(
+			parser,
+			"Optimized __fast bytecode requires optimizer support.");
+#endif
 	} else if ((sections & BYTECODE_FILE_FAST_SIGNATURE) != 0) {
 		return bytecode_file_fail(
 			parser,

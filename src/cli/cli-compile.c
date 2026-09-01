@@ -11,7 +11,7 @@
 
 #include "cli-main.h"
 
-#include "bcback_app.h"
+#include "app_file.h"
 #include "bcback_private.h"
 #include "bytecode_file.h"
 #include "module.h"
@@ -124,7 +124,8 @@ command_compile(
 		if (!cli_module_build_graph(
 			CLI_MODULE_GRAPH_APP,
 			root_count,
-			(const char *const *)root)) {
+			(const char *const *)root,
+			cli_module_resolve)) {
 			printf("%s\n", cli_module_get_error());
 			goto cleanup;
 		}
@@ -146,7 +147,8 @@ command_compile(
 	if (!cli_module_build_graph(
 		CLI_MODULE_GRAPH_COMPILE,
 		root_count,
-		(const char *const *)root)) {
+		(const char *const *)root,
+		cli_module_resolve)) {
 		printf("%s\n", cli_module_get_error());
 		goto cleanup;
 	}

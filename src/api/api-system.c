@@ -10,7 +10,6 @@
  */
 
 #include <noct/noct.h>
-#include "bytecode.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,7 +126,6 @@ cfunc_System_error(NoctEnv *env)
 	return false;
 }
 
-/* Implementation of import() */
 /*
  * System.getEnv(name)
  *
@@ -156,34 +154,39 @@ cleanup:
 	return ok;
 }
 
+/* Import one source file into the current VM. */
 static bool
-cfunc_System_import(NoctEnv *env)
+cfunc_System_import(
+	NoctEnv *env)
 {
 	NoctValue tmp;
 	const char *file;
 	char *data;
 	size_t len;
+	bool succeeded;
+
+	data = NULL;
+	succeeded = false;
 
 	if (!noct_get_arg_check_string(env, 0, &tmp, &file))
 		return false;
 
 	/* Load a source file content. */
 	if (!system_load_file(env, file, &data, &len))
-		return false;
-
-	/* Check for the bytecode header. */
-	if (strncmp(data, NOCT_BYTECODE_HEADER, strlen(NOCT_BYTECODE_HEADER)) !=
-	    0) {
-		/* It's a source file. */
-		if (!noct_register_source(env, file, data))
-			return false;
-	} else {
-		/* It's a bytecode file. */
-		if (!noct_register_bytecode(env, (void *)data, (uint32_t)len))
-			return false;
+		goto cleanup;
+	if (memchr(data, '\0', len) != NULL) {
+		noct_error(env, N_TR("System.import() accepts source files only."));
+		goto cleanup;
 	}
+	if (!noct_register_source(env, file, data))
+		goto cleanup;
 
-	return true;
+	succeeded = true;
+
+cleanup:
+	noct_free(data);
+
+	return succeeded;
 }
 
 /*
@@ -427,41 +430,74 @@ cfunc_System_checkFileExists(NoctEnv *env)
 
 /* Load a file. */
 static bool
-system_load_file(NoctEnv *env, const char *fname, char **data, size_t *size)
+system_load_file(
+	NoctEnv *env,
+	const char *fname,
+	char **data,
+	size_t *size)
 {
-	FILE *fp;
+	FILE *stream;
+	long file_size;
+	size_t read_size;
+	bool succeeded;
+
+	*data = NULL;
+	*size = 0;
+	stream = NULL;
+	succeeded = false;
 
 	/* Open the file. */
-	fp = fopen(fname, "rb");
-	if (fp == NULL) {
+	stream = fopen(fname, "rb");
+	if (stream == NULL) {
 		noct_error(env, N_TR("Cannot open file %s.\n"), fname);
-		return false;
+		goto cleanup;
 	}
 
 	/* Get the file size. */
-	fseek(fp, 0, SEEK_END);
-	*size = (size_t)ftell(fp);
-	fseek(fp, 0, SEEK_SET);
+	if (fseek(stream, 0, SEEK_END) != 0)
+		goto read_error;
+	file_size = ftell(stream);
+	if (file_size < 0)
+		goto read_error;
+	if (fseek(stream, 0, SEEK_SET) != 0)
+		goto read_error;
+
+	read_size = (size_t)file_size;
+	if ((long)read_size != file_size || read_size == SIZE_MAX)
+		goto read_error;
 
 	/* Allocate a buffer. */
-	*data = noct_malloc(*size + 1);
+	*data = noct_malloc(read_size + 1);
 	if (*data == NULL) {
 		noct_out_of_memory(env);
-		return false;
+		goto cleanup;
 	}
 
 	/* Read the data. */
-	if (fread(*data, 1, *size, fp) != *size) {
-		noct_error(env, N_TR("Cannot read file %s.\n"), fname);
-		return false;
-	}
+	if (fread(*data, 1, read_size, stream) != read_size)
+		goto read_error;
 
 	/* Terminate the string. */
-	(*data)[*size] = '\0';
+	(*data)[read_size] = '\0';
+	*size = read_size;
+	succeeded = true;
+	goto cleanup;
 
-	fclose(fp);
+read_error:
+	noct_error(env, N_TR("Cannot read file %s.\n"), fname);
 
-	return true;
+cleanup:
+	if (stream != NULL) {
+		if (fclose(stream) != 0)
+			succeeded = false;
+	}
+	if (!succeeded) {
+		noct_free(*data);
+		*data = NULL;
+		*size = 0;
+	}
+
+	return succeeded;
 }
 
 /*

@@ -10,19 +10,26 @@
  */
 
 #include <noct/noct.h>
-#include "ast.h"
-#include "bytecode.h"
-#include "bytecode_file.h"
-#include "hir.h"
-#include "hir_fast_checked.h"
-#include "lir.h"
 #include "runtime.h"
+#include "ast.h"
+#include "hir.h"
+#include "lir.h"
 #include "intrinsics.h"
 #include "interpreter.h"
-#include "jit.h"
 #include "gc.h"
 #include "objectmodel.h"
+
+#if defined(NOCT_USE_JIT)
+#include "jit.h"
+#endif
+
+#if defined(NOCT_USE_MULTITHREAD)
 #include "atomic.h"
+#endif
+
+#if defined(NOCT_USE_OPTIMIZER)
+#include "fast.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,183 +42,24 @@
 #define NOT_IMPLEMENTED		0
 #define NEVER_COME_HERE		0
 #define PINNED_VAR_NOT_FOUND	0
-#define RT_MODULE_INITIAL	16
-
-/* Required source state. */
-enum rt_required_source_state {
-	RT_REQUIRED_SOURCE_LOADING,
-	RT_REQUIRED_SOURCE_LOADED,
-	RT_REQUIRED_SOURCE_FAILED
-};
-
-/* Detached module state used while preparing one registration closure. */
-enum rt_module_artifact_state {
-	RT_MODULE_UNPREPARED,
-	RT_MODULE_PREPARING,
-	RT_MODULE_PREPARED,
-	RT_MODULE_LOADING,
-	RT_MODULE_LOADED,
-	RT_MODULE_FAILED
-};
-
-/* Detached artifact kind. */
-enum rt_module_artifact_kind {
-	RT_MODULE_SOURCE,
-	RT_MODULE_BYTECODE
-};
-
-/* Finalizer. */
-struct rt_vm_finalizer {
-	void (*finalizer)(void *userdata);
-	void *userdata;
-	struct rt_vm_finalizer *next;
-};
-
-/* A source returned by the host's require resolver. */
-struct rt_required_source {
-	char *module_name;
-	char *path;
-	char *error_file;
-	char *error_message;
-	int error_line;
-	enum rt_required_source_state state;
-	struct rt_required_source *next;
-};
-
-/* One source or bytecode artifact in a transient registration closure. */
-struct rt_module_artifact {
-	char *path;
-	char *file_name;
-	uint8_t *storage;
-	const uint8_t *data;
-	size_t data_size;
-	char **require_name;
-	uint32_t require_count;
-	struct bytecode_file_module bytecode;
-	struct lir_func **lir_function;
-	uint32_t function_count;
-	const char *initializer_name;
-	enum rt_module_artifact_kind kind;
-	enum rt_module_artifact_state state;
-	bool owns_storage;
-	bool is_required;
-};
-
-/* One module-name resolution retained for the complete closure lifetime. */
-struct rt_module_binding {
-	char *name;
-	uint32_t artifact_index;
-	struct rt_required_source *required_source;
-};
-
-/* Transient, side-effect-free module registration graph. */
-struct rt_module_graph {
-	struct rt_env *env;
-	struct rt_module_artifact *artifact;
-	uint32_t artifact_count;
-	uint32_t artifact_capacity;
-	struct rt_module_binding *binding;
-	uint32_t binding_count;
-	uint32_t binding_capacity;
-	uint32_t *postorder;
-	uint32_t postorder_count;
-	uint32_t postorder_capacity;
-};
 
 /* Forward declarations. */
 static void rt_free_func(struct rt_env *rt, struct rt_func *func);
-static bool rt_register_source_graph(struct rt_env *env, const char *file_name, const char *source_text);
-static bool rt_register_bytecode_graph(struct rt_env *env, const uint8_t *data, size_t size);
-static bool rt_register_app(struct rt_env *env, const struct bytecode_file_app *app);
-static void rt_module_graph_cleanup(struct rt_module_graph *graph);
-static bool rt_module_graph_seed_prototypes(struct rt_module_graph *graph, const char *file_name);
-static bool rt_module_graph_grow_artifacts(struct rt_module_graph *graph);
-static bool rt_module_graph_grow_bindings(struct rt_module_graph *graph);
-static bool rt_module_graph_grow_postorder(struct rt_module_graph *graph);
-static int rt_module_graph_find_path(const struct rt_module_graph *graph, const char *path);
-static int rt_module_graph_find_binding(const struct rt_module_graph *graph, const char *name);
-static bool rt_module_graph_add_binding(struct rt_module_graph *graph, const char *name, uint32_t artifact_index, struct rt_required_source *required_source);
-static bool rt_module_graph_add_source_root(struct rt_module_graph *graph, const char *file_name, const char *source_text, uint32_t *index);
-static bool rt_module_graph_add_bytecode_root(struct rt_module_graph *graph, const uint8_t *data, size_t size, uint32_t *index);
-static bool rt_module_graph_add_required(struct rt_module_graph *graph, const char *parent_file, const char *module_name, uint32_t *index);
-static bool rt_module_graph_read_required(struct rt_module_graph *graph, const char *parent_file, const char *module_name, char *path, uint32_t *index);
-static bool rt_module_graph_prepare(struct rt_module_graph *graph, uint32_t artifact_index);
-static bool rt_module_graph_prepare_source(struct rt_module_graph *graph, struct rt_module_artifact *artifact);
-static bool rt_module_graph_prepare_bytecode(struct rt_module_graph *graph, struct rt_module_artifact *artifact);
-static bool rt_module_graph_add_bytecode_prototypes(struct rt_module_graph *graph, const struct bytecode_file_module *module, const char *file_name);
-static bool rt_module_graph_compile_sources(struct rt_module_graph *graph);
-static bool rt_module_graph_compile_source(struct rt_module_graph *graph, struct rt_module_artifact *artifact);
-static bool rt_module_graph_validate_symbols(struct rt_module_graph *graph);
-static bool rt_module_graph_publish_states(struct rt_module_graph *graph);
-static void rt_module_graph_finish_states(struct rt_module_graph *graph, bool succeeded);
-static const char *rt_module_artifact_function_name(const struct rt_module_artifact *artifact, uint32_t function_index);
-static bool rt_module_graph_register(struct rt_module_graph *graph);
-static bool rt_register_bytecode_descriptor(struct rt_env *env, const struct bytecode_file_function *function);
-static bool rt_register_bytecode_modules(struct rt_env *env, uint32_t module_count, const struct bytecode_file_module module[], uint32_t order_count, const uint32_t order[]);
-static bool rt_build_app_order(struct rt_env *env, const struct bytecode_file_app *app, uint32_t **order, uint32_t *order_count);
-static bool rt_visit_app_module(struct rt_env *env, const struct bytecode_file_app *app, uint32_t module_index, unsigned char state[], uint32_t order[], uint32_t *order_count);
-static int rt_find_app_binding(const struct bytecode_file_app *app, const char *module_name);
-static struct rt_required_source *rt_find_required_module(struct rt_vm *vm, const char *module_name);
-static struct rt_required_source *rt_find_required_source(struct rt_vm *vm, const char *path);
-static struct rt_required_source *rt_add_required_module_state(struct rt_env *env, const char *module_name, const char *path, enum rt_required_source_state state);
-static void rt_fail_required_module_state(struct rt_env *env, struct rt_required_source *required_source);
-static struct rt_required_source *rt_add_required_alias(struct rt_env *env, const char *module_name, const struct rt_required_source *source);
-static void rt_cleanup_required_sources(struct rt_vm *vm);
-static char *rt_make_required_source_name(struct rt_env *env, const char *module_name, const char *path);
+static bool rt_validate_lir(const struct lir_func *function);
 static void rt_set_error_file(struct rt_env *env, const char *file_name);
-static bool rt_register_lir(struct rt_env *rt, struct lir_func *lir);
-static bool rt_check_fast_call(struct rt_env *env, struct rt_func *func, uint32_t arg_count);
+static bool rt_register_lir(struct rt_env *env, const struct lir_func *lir);
+static void rt_cleanup_lir_array(uint32_t function_count, struct lir_func *function[]);
 static bool rt_enter_frame(struct rt_env *env, struct rt_func *func);
-static void rt_report_jit_result(struct rt_func *func, bool success, const char *reason);
-static void rt_report_jit_lifecycle(const char *operation, bool success);
-static void rt_invalidate_jit_entries(struct rt_vm *vm);
-static bool rt_commit_jit(struct rt_env *env);
 static void rt_leave_frame(struct rt_env *env);
 static bool rt_init_global(struct rt_env *env);
 static void rt_cleanup_global(struct rt_env *env);
 static bool rt_expand_global(struct rt_env *env);
-
-static void
-rt_report_jit_result(
-	struct rt_func *func,
-	bool success,
-	const char *reason)
-{
-	if (getenv("NOCT_JIT_DEBUG") != NULL) {
-		fprintf(stderr,
-			"noct-jit: %s: %s",
-			func->name,
-			success ? "compiled" : "fallback");
-		if (!success && reason != NULL && reason[0] != '\0')
-			fprintf(stderr, " reason=%s", reason);
-		fputc('\n', stderr);
-	}
-}
-
-static void
-rt_report_jit_lifecycle(
-	const char *operation,
-	bool success)
-{
-	if (getenv("NOCT_JIT_DEBUG") != NULL) {
-		fprintf(stderr,
-			"noct-jit-lifecycle: %s status=%s\n",
-			operation,
-			success ? "ok" : "failed");
-	}
-}
-
-static void
-rt_invalidate_jit_entries(
-	struct rt_vm *vm)
-{
-	struct rt_func *func;
-
-	for (func = vm->func_list; func != NULL; func = func->next) {
-		func->jit_code = NULL;
-		func->call_count = -1;
-	}
-}
+#if defined(NOCT_USE_JIT)
+static void rt_report_jit_result(struct rt_func *func, bool success, const char *reason);
+static void rt_report_jit_lifecycle(const char *operation, bool success);
+static void rt_invalidate_jit_entries(struct rt_vm *vm);
+static bool rt_commit_jit(struct rt_env *env);
+#endif
 
 /*
  * Initialization
@@ -296,25 +144,19 @@ bool
 rt_destroy_vm(
 	struct rt_vm *vm)
 {
-	struct rt_env *env, *next_env;
-	struct rt_func *func, *next_func;
-	struct rt_vm_finalizer *finalizer;
-	struct rt_vm_finalizer *next_finalizer;
-	bool jit_cleanup_succeeded = true;
+	struct rt_env *env;
+	struct rt_env *next_env;
+	struct rt_func *func;
+	struct rt_func *next_func;
+	bool jit_cleanup_succeeded;
+
+	jit_cleanup_succeeded = true;
 
 	/* Free the JIT region. */
+#if defined(NOCT_USE_JIT)
 	if (vm->config.jit_enable && !jit_free(vm->env_list))
 		jit_cleanup_succeeded = false;
-
-	/* Run VM-owned native finalizers while the VM is still usable. */
-	finalizer = vm->vm_finalizer_list;
-	while (finalizer != NULL) {
-		next_finalizer = finalizer->next;
-		finalizer->finalizer(finalizer->userdata);
-		noct_free(finalizer);
-		finalizer = next_finalizer;
-	}
-	vm->vm_finalizer_list = NULL;
+#endif
 
 	/* Free global variables. */
 	rt_cleanup_global(vm->env_list);
@@ -330,9 +172,6 @@ rt_destroy_vm(
 		func = next_func;
 	}
 
-	/* Free required source load state. */
-	rt_cleanup_required_sources(vm);
-
 	/* Free thread environments. */
 	env = vm->env_list;
 	while (env != NULL) {
@@ -341,8 +180,10 @@ rt_destroy_vm(
 		env = next_env;
 	}
 
+#if defined(NOCT_USE_JIT)
 	if (vm->config.jit_enable)
 		rt_report_jit_lifecycle("destroy", jit_cleanup_succeeded);
+#endif
 
 	noct_free(vm);
 
@@ -371,10 +212,14 @@ rt_free_func(
 	}
 	noct_free(func->file_name);
 	noct_free(func->bytecode);
-	fast_signature_free(&func->fast_signature);
+#if defined(NOCT_USE_OPTIMIZER)
+	fast_info_free(func->fast_info);
+#endif
 
+#if defined(NOCT_USE_JIT)
 	if (func->jit_code != NULL)
 		func->jit_code = NULL;
+#endif
 
 	noct_free(func);
 }
@@ -491,7 +336,11 @@ rt_detach_thread_env(
  */
 
 /*
- * Register functions from a source text.
+ * Register functions from one source text.
+ *
+ * This function deliberately does not resolve require declarations.  A host
+ * that owns a module system registers dependencies before registering this
+ * compilation unit.
  */
 bool
 rt_register_source(
@@ -499,16 +348,194 @@ rt_register_source(
 	const char *file_name,
 	const char *source_text)
 {
-	if (env == NULL || file_name == NULL || source_text == NULL)
+	struct hir_block *hir_function;
+	struct lir_func *lir_function;
+	struct lir_func **function;
+	struct rt_value initializer_result;
+	const char *error_file;
+	const char *error_message;
+	uint32_t function_count;
+	uint32_t i;
+	int error_line;
+
+	/* Rejects an invalid source registration request. */
+	if (env == NULL ||
+	    file_name == NULL ||
+	    source_text == NULL)
 		return false;
 
-	return rt_register_source_graph(env, file_name, source_text);
+	/* Builds the source AST. */
+	if (!ast_build(file_name, source_text)) {
+		/* Captures the AST diagnostic before releasing its storage. */
+		error_file = ast_get_file_name();
+		error_message = ast_get_error_message();
+		error_line = ast_get_error_line();
+
+		/* Publishes the AST diagnostic to the runtime environment. */
+		rt_set_error_file(env, error_file);
+		env->line = error_line;
+		rt_error(env, "%s", error_message);
+
+		/* Releases the failed AST construction. */
+		ast_cleanup();
+		return false;
+	}
+
+	/* Builds the source HIR. */
+	if (!hir_build()) {
+		/* Captures the HIR diagnostic before releasing its storage. */
+		error_file = hir_get_file_name();
+		error_message = hir_get_error_message();
+		error_line = hir_get_error_line();
+
+		/* Publishes the HIR diagnostic to the runtime environment. */
+		rt_set_error_file(env, error_file);
+		env->line = error_line;
+		rt_error(env, "%s", error_message);
+
+		/* Releases the failed HIR and its source AST. */
+		hir_cleanup();
+		ast_cleanup();
+		return false;
+	}
+
+	/* Releases the AST after HIR construction. */
+	ast_cleanup();
+
+	/* Allocates the detached LIR function array. */
+	function_count = hir_get_function_count();
+	function = NULL;
+	if (function_count != 0) {
+		function = noct_calloc(
+			(size_t)function_count,
+			sizeof(*function));
+		if (function == NULL) {
+			rt_out_of_memory(env);
+			hir_cleanup();
+			return false;
+		}
+	}
+
+	/* Configures LIR construction for this VM. */
+	lir_set_optimize_level(env->vm->config.optimize_level);
+	lir_set_lineinfo(env->vm->config.line_info);
+
+	/* Compiles the complete unit before publishing any function. */
+	for (i = 0; i < function_count; i++) {
+		hir_function = hir_get_function(i);
+
+		/* Optimizes the current HIR function. */
+		if (!hir_optimize_func(
+			hir_function,
+			env->vm->config.optimize_level,
+			env->vm->config.simd_info,
+#if defined(NOCT_USE_ACCEL)
+			(bool (*)(struct hir_block *, void *))
+				env->vm->accel_optimize_func,
+			env->vm->accel_optimize_userdata)) {
+#else
+			NULL,
+			NULL)) {
+#endif
+			/* Captures the optimizer diagnostic. */
+			error_file = hir_get_file_name();
+			error_message = hir_get_error_message();
+			error_line = hir_get_error_line();
+
+			/* Publishes the optimizer diagnostic. */
+			rt_set_error_file(env, error_file);
+			env->line = error_line;
+			rt_error(env, "%s", error_message);
+
+			/* Releases the incomplete compilation unit. */
+			rt_cleanup_lir_array(function_count, function);
+			hir_cleanup();
+			return false;
+		}
+
+		/* Builds and detaches the current LIR function. */
+		lir_function = NULL;
+		if (!lir_build(hir_function, &lir_function)) {
+			/* Captures the LIR diagnostic. */
+			error_file = lir_get_file_name();
+			error_message = lir_get_error_message();
+			error_line = lir_get_error_line();
+
+			/* Publishes the LIR diagnostic. */
+			rt_set_error_file(env, error_file);
+			env->line = error_line;
+			rt_error(env, "%s", error_message);
+
+			/* Releases the incomplete compilation unit. */
+			rt_cleanup_lir_array(function_count, function);
+			hir_cleanup();
+			return false;
+		}
+		function[i] = lir_function;
+	}
+
+	/* Releases HIR after every LIR function has been detached. */
+	hir_cleanup();
+
+	/* Validates every function before mutating the VM. */
+	for (i = 0; i < function_count; i++) {
+		if (!rt_validate_lir(function[i])) {
+			rt_error(env, N_TR("Invalid bytecode function descriptor."));
+			rt_cleanup_lir_array(function_count, function);
+			return false;
+		}
+	}
+
+	/* Publishes every validated function in declaration order. */
+	for (i = 0; i < function_count; i++) {
+		if (!rt_register_lir(env, function[i])) {
+			rt_cleanup_lir_array(function_count, function);
+			return false;
+		}
+	}
+
+#if defined(NOCT_USE_JIT)
+	/* Commits all JIT code generated for this unit. */
+	if (!rt_commit_jit(env)) {
+		rt_cleanup_lir_array(function_count, function);
+		return false;
+	}
+#endif
+
+	/* Runs initializers after every function is visible. */
+	for (i = 0; i < function_count; i++) {
+		/* Skips ordinary functions. */
+		if (strncmp(function[i]->func_name, "$init.", 6) != 0)
+			continue;
+
+		/* Clears the initializer result slot. */
+		memset(&initializer_result, 0, sizeof(initializer_result));
+
+		/* Calls the current initializer. */
+		if (!rt_call_with_name(
+			env,
+			function[i]->func_name,
+			0,
+			NULL,
+			&initializer_result)) {
+			rt_cleanup_lir_array(function_count, function);
+			return false;
+		}
+	}
+
+	/* Releases all detached LIR functions. */
+	rt_cleanup_lir_array(function_count, function);
+
+	/* Reports a successful source registration. */
+	return true;
 }
 
 /*
- * Registers functions from bytecode data.
+ * Register an inspected, file-independent array of LIR descriptors.
  *
- * data must start from a raw module or application magic line.
+ * Serialized containers are parsed by the owning host.  The data pointer
+ * here refers to a contiguous array of struct lir_func whose pointed-to
+ * storage remains valid for the duration of this call.
  */
 bool
 rt_register_bytecode(
@@ -516,2083 +543,78 @@ rt_register_bytecode(
 	size_t size,
 	uint8_t *data)
 {
-	struct bytecode_file_app app;
-	struct bytecode_file_error error;
-	enum bytecode_file_kind kind;
-	bool succeeded;
-
-	memset(&app, 0, sizeof(app));
-
-	if (env == NULL || data == NULL || size == 0)
-		return false;
-
-	kind = bytecode_file_detect(data, size);
-	if (kind == BYTECODE_FILE_MODULE_1_0 ||
-	    kind == BYTECODE_FILE_MODULE_1_1) {
-		return rt_register_bytecode_graph(env, data, size);
-	}
-	if (kind != BYTECODE_FILE_APP_1_0) {
-		noct_error(env, N_TR("Failed to load bytecode data."));
-		return false;
-	}
-
-	if (!bytecode_file_inspect_app(data, size, &app, &error)) {
-		noct_error(env, N_TR("Failed to load application data."));
-		return false;
-	}
-
-	succeeded = rt_register_app(env, &app);
-	bytecode_file_cleanup_app(&app);
-
-	return succeeded;
-}
-
-/* Prepare and load one source-rooted module closure. */
-static bool
-rt_register_source_graph(
-	struct rt_env *env,
-	const char *file_name,
-	const char *source_text)
-{
-	struct rt_module_graph graph;
-	uint32_t root_index;
-	bool states_published;
-	bool succeeded;
-
-	memset(&graph, 0, sizeof(graph));
-	graph.env = env;
-	states_published = false;
-	succeeded = false;
-	hir_fast_checked_reset_prototypes();
-
-	if (!rt_module_graph_seed_prototypes(&graph, file_name))
-		goto cleanup;
-	if (!rt_module_graph_add_source_root(
-		&graph,
-		file_name,
-		source_text,
-		&root_index)) {
-		goto cleanup;
-	}
-	if (!rt_module_graph_prepare(&graph, root_index))
-		goto cleanup;
-	if (!rt_module_graph_compile_sources(&graph))
-		goto cleanup;
-	if (!rt_module_graph_validate_symbols(&graph))
-		goto cleanup;
-	if (!rt_module_graph_publish_states(&graph)) {
-		states_published = true;
-		goto cleanup;
-	}
-	states_published = true;
-	if (!rt_module_graph_register(&graph))
-		goto cleanup;
-
-	succeeded = true;
-
-cleanup:
-	if (!states_published && graph.binding_count > 0) {
-		(void)rt_module_graph_publish_states(&graph);
-		states_published = true;
-	}
-	if (states_published)
-		rt_module_graph_finish_states(&graph, succeeded);
-	rt_module_graph_cleanup(&graph);
-	hir_fast_checked_reset_prototypes();
-
-	return succeeded;
-}
-
-/* Prepare and load one standalone bytecode-rooted module closure. */
-static bool
-rt_register_bytecode_graph(
-	struct rt_env *env,
-	const uint8_t *data,
-	size_t size)
-{
-	struct rt_module_graph graph;
-	uint32_t root_index;
-	bool states_published;
-	bool succeeded;
-
-	memset(&graph, 0, sizeof(graph));
-	graph.env = env;
-	states_published = false;
-	succeeded = false;
-	hir_fast_checked_reset_prototypes();
-
-	if (!rt_module_graph_seed_prototypes(&graph, "<bytecode>"))
-		goto cleanup;
-	if (!rt_module_graph_add_bytecode_root(
-		&graph,
-		data,
-		size,
-		&root_index)) {
-		goto cleanup;
-	}
-	if (!rt_module_graph_prepare(&graph, root_index))
-		goto cleanup;
-	if (!rt_module_graph_compile_sources(&graph))
-		goto cleanup;
-	if (!rt_module_graph_validate_symbols(&graph))
-		goto cleanup;
-	if (!rt_module_graph_publish_states(&graph)) {
-		states_published = true;
-		goto cleanup;
-	}
-	states_published = true;
-	if (!rt_module_graph_register(&graph))
-		goto cleanup;
-
-	succeeded = true;
-
-cleanup:
-	if (!states_published && graph.binding_count > 0) {
-		(void)rt_module_graph_publish_states(&graph);
-		states_published = true;
-	}
-	if (states_published)
-		rt_module_graph_finish_states(&graph, succeeded);
-	rt_module_graph_cleanup(&graph);
-	hir_fast_checked_reset_prototypes();
-
-	return succeeded;
-}
-
-/* Release every transient artifact, binding, and traversal index. */
-static void
-rt_module_graph_cleanup(
-	struct rt_module_graph *graph)
-{
-	struct rt_module_artifact *artifact;
-	uint32_t i;
-	uint32_t j;
-
-	/* Release every detached module and its compiled functions. */
-	for (i = 0; i < graph->artifact_count; i++) {
-		artifact = &graph->artifact[i];
-
-		/* Release every LIR function built from a source artifact. */
-		for (j = 0; j < artifact->function_count; j++) {
-			if (artifact->lir_function != NULL &&
-			    artifact->lir_function[j] != NULL) {
-				lir_cleanup(artifact->lir_function[j]);
-			}
-		}
-		noct_free(artifact->lir_function);
-
-		/* Release source require names copied beyond the AST lifetime. */
-		if (artifact->kind == RT_MODULE_SOURCE) {
-			for (j = 0; j < artifact->require_count; j++) {
-				if (artifact->require_name != NULL)
-					noct_free(artifact->require_name[j]);
-			}
-			noct_free(artifact->require_name);
-		}
-		bytecode_file_cleanup_module(&artifact->bytecode);
-		noct_free(artifact->file_name);
-		if (artifact->owns_storage)
-			noct_free(artifact->storage);
-		free(artifact->path);
-	}
-	noct_free(graph->artifact);
-
-	/* Release every resolver name retained by the graph. */
-	for (i = 0; i < graph->binding_count; i++)
-		noct_free(graph->binding[i].name);
-	noct_free(graph->binding);
-	noct_free(graph->postorder);
-	memset(graph, 0, sizeof(*graph));
-}
-
-/* Seed closure prototype validation with functions already in the VM. */
-static bool
-rt_module_graph_seed_prototypes(
-	struct rt_module_graph *graph,
-	const char *file_name)
-{
-	struct rt_func *function;
-	struct rt_value global;
-	const struct fast_signature *signature;
-
-	function = graph->env->vm->func_list;
-
-	/* Retain every still-published function contract. */
-	while (function != NULL) {
-		if (!rt_check_global(graph->env, function->name)) {
-			function = function->next;
-			continue;
-		}
-		if (!rt_get_global(graph->env, function->name, &global))
-			return false;
-		if (global.type != NOCT_VALUE_FUNC ||
-		    global.val.func != function) {
-			function = function->next;
-			continue;
-		}
-
-		signature = function->is_fast ?
-			&function->fast_signature : NULL;
-		if (!hir_fast_checked_add_prototype(
-			function->name,
-			function->is_fast,
-			signature)) {
-			rt_set_error_file(graph->env, file_name);
-			graph->env->line = hir_get_error_line();
-			rt_error(graph->env, "%s", hir_get_error_message());
-			return false;
-		}
-
-		function = function->next;
-	}
-
-	return true;
-}
-
-/* Grow the transient artifact table for one new module. */
-static bool
-rt_module_graph_grow_artifacts(
-	struct rt_module_graph *graph)
-{
-	struct rt_module_artifact *artifact;
-	uint32_t capacity;
-
-	if (graph->artifact_count < graph->artifact_capacity)
-		return true;
-
-	capacity = graph->artifact_capacity == 0 ?
-		RT_MODULE_INITIAL : graph->artifact_capacity * 2;
-	if (capacity < graph->artifact_capacity)
-		goto oom;
-	if (sizeof(*artifact) > SIZE_MAX / (size_t)capacity)
-		goto oom;
-
-	artifact = noct_realloc(
-		graph->artifact,
-		(size_t)capacity * sizeof(*artifact));
-	if (artifact == NULL)
-		goto oom;
-
-	graph->artifact = artifact;
-	graph->artifact_capacity = capacity;
-
-	return true;
-
-oom:
-	rt_out_of_memory(graph->env);
-
-	return false;
-}
-
-/* Grow the transient module-name binding table. */
-static bool
-rt_module_graph_grow_bindings(
-	struct rt_module_graph *graph)
-{
-	struct rt_module_binding *binding;
-	uint32_t capacity;
-
-	if (graph->binding_count < graph->binding_capacity)
-		return true;
-
-	capacity = graph->binding_capacity == 0 ?
-		RT_MODULE_INITIAL : graph->binding_capacity * 2;
-	if (capacity < graph->binding_capacity)
-		goto oom;
-	if (sizeof(*binding) > SIZE_MAX / (size_t)capacity)
-		goto oom;
-
-	binding = noct_realloc(
-		graph->binding,
-		(size_t)capacity * sizeof(*binding));
-	if (binding == NULL)
-		goto oom;
-
-	graph->binding = binding;
-	graph->binding_capacity = capacity;
-
-	return true;
-
-oom:
-	rt_out_of_memory(graph->env);
-
-	return false;
-}
-
-/* Grow the dependency-first traversal table. */
-static bool
-rt_module_graph_grow_postorder(
-	struct rt_module_graph *graph)
-{
-	uint32_t *postorder;
-	uint32_t capacity;
-
-	if (graph->postorder_count < graph->postorder_capacity)
-		return true;
-
-	capacity = graph->postorder_capacity == 0 ?
-		RT_MODULE_INITIAL : graph->postorder_capacity * 2;
-	if (capacity < graph->postorder_capacity)
-		goto oom;
-	if (sizeof(*postorder) > SIZE_MAX / (size_t)capacity)
-		goto oom;
-
-	postorder = noct_realloc(
-		graph->postorder,
-		(size_t)capacity * sizeof(*postorder));
-	if (postorder == NULL)
-		goto oom;
-
-	graph->postorder = postorder;
-	graph->postorder_capacity = capacity;
-
-	return true;
-
-oom:
-	rt_out_of_memory(graph->env);
-
-	return false;
-}
-
-/* Find one resolver artifact by its exact path byte string. */
-static int
-rt_module_graph_find_path(
-	const struct rt_module_graph *graph,
-	const char *path)
-{
-	uint32_t i;
-
-	/* Compare only required artifacts that own resolver paths. */
-	for (i = 0; i < graph->artifact_count; i++) {
-		if (graph->artifact[i].path == NULL)
-			continue;
-		if (strcmp(graph->artifact[i].path, path) == 0)
-			return (int)i;
-	}
-
-	return -1;
-}
-
-/* Find one module name already resolved in this registration closure. */
-static int
-rt_module_graph_find_binding(
-	const struct rt_module_graph *graph,
-	const char *name)
-{
-	uint32_t i;
-
-	/* Compare each exact source-level module identifier. */
-	for (i = 0; i < graph->binding_count; i++) {
-		if (strcmp(graph->binding[i].name, name) == 0)
-			return (int)i;
-	}
-
-	return -1;
-}
-
-/* Retain one exact module-name mapping in the transient graph. */
-static bool
-rt_module_graph_add_binding(
-	struct rt_module_graph *graph,
-	const char *name,
-	uint32_t artifact_index,
-	struct rt_required_source *required_source)
-{
-	struct rt_module_binding *binding;
-	char *name_copy;
-
-	if (!rt_module_graph_grow_bindings(graph))
-		return false;
-	name_copy = noct_strdup(name);
-	if (name_copy == NULL) {
-		rt_out_of_memory(graph->env);
-		return false;
-	}
-
-	binding = &graph->binding[graph->binding_count];
-	binding->name = name_copy;
-	binding->artifact_index = artifact_index;
-	binding->required_source = required_source;
-	graph->binding_count++;
-
-	return true;
-}
-
-/* Add the caller-owned source root to a transient graph. */
-static bool
-rt_module_graph_add_source_root(
-	struct rt_module_graph *graph,
-	const char *file_name,
-	const char *source_text,
-	uint32_t *index)
-{
-	struct rt_module_artifact *artifact;
-
-	if (!rt_module_graph_grow_artifacts(graph))
-		return false;
-
-	artifact = &graph->artifact[graph->artifact_count];
-	memset(artifact, 0, sizeof(*artifact));
-	artifact->file_name = noct_strdup(file_name);
-	if (artifact->file_name == NULL) {
-		rt_out_of_memory(graph->env);
-		return false;
-	}
-	artifact->data = (const uint8_t *)source_text;
-	artifact->data_size = strlen(source_text);
-	artifact->kind = RT_MODULE_SOURCE;
-	*index = graph->artifact_count;
-	graph->artifact_count++;
-
-	return true;
-}
-
-/* Add the caller-owned bytecode root to a transient graph. */
-static bool
-rt_module_graph_add_bytecode_root(
-	struct rt_module_graph *graph,
-	const uint8_t *data,
-	size_t size,
-	uint32_t *index)
-{
-	struct rt_module_artifact *artifact;
-
-	if (data == NULL || size == 0)
-		return false;
-	if (!rt_module_graph_grow_artifacts(graph))
-		return false;
-
-	artifact = &graph->artifact[graph->artifact_count];
-	memset(artifact, 0, sizeof(*artifact));
-	artifact->file_name = noct_strdup("<bytecode>");
-	if (artifact->file_name == NULL) {
-		rt_out_of_memory(graph->env);
-		return false;
-	}
-	artifact->data = data;
-	artifact->data_size = size;
-	artifact->kind = RT_MODULE_BYTECODE;
-	*index = graph->artifact_count;
-	graph->artifact_count++;
-
-	return true;
-}
-
-/* Resolve one unique module name and retain its exact artifact mapping. */
-static bool
-rt_module_graph_add_required(
-	struct rt_module_graph *graph,
-	const char *parent_file,
-	const char *module_name,
-	uint32_t *index)
-{
-	struct rt_required_source *path_source;
-	struct rt_required_source *required_source;
-	char *path;
-	int artifact_index;
-	int binding_index;
-
-	binding_index = rt_module_graph_find_binding(graph, module_name);
-	if (binding_index >= 0) {
-		*index = graph->binding[(uint32_t)binding_index].artifact_index;
-		return true;
-	}
-
-	required_source = rt_find_required_module(
-		graph->env->vm,
-		module_name);
-	if (required_source != NULL) {
-		if (required_source->state == RT_REQUIRED_SOURCE_LOADED) {
-			*index = UINT32_MAX;
-			return rt_module_graph_add_binding(
-				graph,
-				module_name,
-				*index,
-				required_source);
-		}
-
-		rt_set_error_file(graph->env, parent_file);
-		graph->env->line = 0;
-		if (required_source->state == RT_REQUIRED_SOURCE_LOADING) {
-			rt_error(
-				graph->env,
-				N_TR("Circular require involving '%s'."),
-				module_name);
-		} else {
-			if (required_source->error_file != NULL)
-				rt_set_error_file(
-					graph->env,
-					required_source->error_file);
-			graph->env->line = required_source->error_line;
-			if (required_source->error_message != NULL) {
-				rt_error(
-					graph->env,
-					"%s",
-					required_source->error_message);
-			} else {
-				rt_error(
-					graph->env,
-					N_TR("Required module '%s' previously failed to load."),
-					module_name);
-			}
-		}
-		return false;
-	}
-
-	if (graph->env->vm->config.require_resolver == NULL) {
-		rt_set_error_file(graph->env, parent_file);
-		graph->env->line = 0;
-		rt_error(
-			graph->env,
-			N_TR("require is not available in this environment."));
-		return false;
-	}
-
-	path = graph->env->vm->config.require_resolver(module_name);
-	if (path == NULL || path[0] == '\0') {
-		free(path);
-		rt_set_error_file(graph->env, parent_file);
-		graph->env->line = 0;
-		rt_error(
-			graph->env,
-			N_TR("Cannot resolve required module '%s'."),
-			module_name);
-		required_source = rt_add_required_module_state(
-			graph->env,
-			module_name,
-			NULL,
-			RT_REQUIRED_SOURCE_FAILED);
-		if (required_source != NULL)
-			rt_fail_required_module_state(graph->env, required_source);
-		return false;
-	}
-
-	artifact_index = rt_module_graph_find_path(graph, path);
-	if (artifact_index >= 0) {
-		free(path);
-		*index = (uint32_t)artifact_index;
-		return rt_module_graph_add_binding(
-			graph,
-			module_name,
-			*index,
-			NULL);
-	}
-
-	path_source = rt_find_required_source(graph->env->vm, path);
-	if (path_source != NULL) {
-		required_source = rt_add_required_alias(
-			graph->env,
-			module_name,
-			path_source);
-		free(path);
-		if (required_source == NULL)
-			return false;
-		if (required_source->state == RT_REQUIRED_SOURCE_LOADED) {
-			*index = UINT32_MAX;
-			return rt_module_graph_add_binding(
-				graph,
-				module_name,
-				*index,
-				required_source);
-		}
-
-		rt_set_error_file(graph->env, parent_file);
-		graph->env->line = 0;
-		if (required_source->state == RT_REQUIRED_SOURCE_LOADING) {
-			rt_error(
-				graph->env,
-				N_TR("Circular require involving '%s'."),
-				module_name);
-			rt_fail_required_module_state(
-				graph->env,
-				required_source);
-		} else {
-			if (required_source->error_file != NULL) {
-				rt_set_error_file(
-					graph->env,
-					required_source->error_file);
-			}
-			graph->env->line = required_source->error_line;
-			if (required_source->error_message != NULL) {
-				rt_error(
-					graph->env,
-					"%s",
-					required_source->error_message);
-			} else {
-				rt_error(
-					graph->env,
-					N_TR("Required module '%s' previously failed to load."),
-					module_name);
-			}
-		}
-
-		return false;
-	}
-
-	required_source = rt_add_required_module_state(
-		graph->env,
-		module_name,
-		path,
-		RT_REQUIRED_SOURCE_LOADING);
-	if (required_source == NULL) {
-		free(path);
-		return false;
-	}
-
-	if (!rt_module_graph_read_required(
-		graph,
-		parent_file,
-		module_name,
-		path,
-		index)) {
-		rt_fail_required_module_state(graph->env, required_source);
-		return false;
-	}
-
-	if (!rt_module_graph_add_binding(
-		graph,
-		module_name,
-		*index,
-		required_source)) {
-		rt_fail_required_module_state(graph->env, required_source);
-		return false;
-	}
-
-	return true;
-}
-
-/* Read and classify one resolver-selected artifact exactly once. */
-static bool
-rt_module_graph_read_required(
-	struct rt_module_graph *graph,
-	const char *parent_file,
-	const char *module_name,
-	char *path,
-	uint32_t *index)
-{
-	struct rt_module_artifact *artifact;
-	const uint8_t *payload;
-	uint8_t *storage;
-	FILE *stream;
-	char *file_name;
-	long file_size;
-	size_t read_size;
-	size_t payload_size;
-	size_t shebang_size;
-	uint32_t registration_size;
-	int existing_index;
-	enum bytecode_file_kind kind;
-	bool has_shebang;
-	bool succeeded;
-
-	storage = NULL;
-	stream = NULL;
-	file_name = NULL;
-	succeeded = false;
-
-	existing_index = rt_module_graph_find_path(graph, path);
-	if (existing_index >= 0) {
-		free(path);
-		*index = (uint32_t)existing_index;
-		return true;
-	}
-
-	stream = fopen(path, "rb");
-	if (stream == NULL)
-		goto read_error;
-	if (fseek(stream, 0, SEEK_END) != 0)
-		goto read_error;
-	file_size = ftell(stream);
-	if (file_size < 0)
-		goto read_error;
-	if (fseek(stream, 0, SEEK_SET) != 0)
-		goto read_error;
-
-	read_size = (size_t)file_size;
-	if ((long)read_size != file_size || read_size == SIZE_MAX)
-		goto read_error;
-	storage = noct_malloc(read_size + 1);
-	if (storage == NULL) {
-		rt_out_of_memory(graph->env);
-		goto cleanup;
-	}
-	if (fread(storage, 1, read_size, stream) != read_size)
-		goto read_error;
-	storage[read_size] = '\0';
-	if (fclose(stream) != 0) {
-		stream = NULL;
-		goto read_error;
-	}
-	stream = NULL;
-
-	payload = storage;
-	payload_size = read_size;
-	shebang_size = strlen(NOCT_APP_SHEBANG);
-	has_shebang = false;
-	if (payload_size >= shebang_size &&
-	    memcmp(payload, NOCT_APP_SHEBANG, shebang_size) == 0) {
-		payload += shebang_size;
-		payload_size -= shebang_size;
-		has_shebang = true;
-	}
-
-	kind = bytecode_file_detect(payload, payload_size);
-	if (kind == BYTECODE_FILE_MODULE_UNKNOWN) {
-		rt_error(
-			graph->env,
-			N_TR("Unsupported or malformed required bytecode '%s'."),
-			path);
-		goto cleanup;
-	}
-	if (kind == BYTECODE_FILE_APP_UNKNOWN ||
-	    kind == BYTECODE_FILE_APP_1_0 ||
-	    (has_shebang &&
-	     (kind == BYTECODE_FILE_MODULE_1_0 ||
-	      kind == BYTECODE_FILE_MODULE_1_1))) {
-		rt_error(
-			graph->env,
-			N_TR("Application container cannot be required as a module."));
-		goto cleanup;
-	}
-
-	file_name = rt_make_required_source_name(
-		graph->env,
-		module_name,
-		path);
-	if (file_name == NULL)
-		goto cleanup;
-
-	if (kind == BYTECODE_FILE_UNKNOWN) {
-		if (memchr(payload, '\0', payload_size) != NULL) {
-			rt_error(
-				graph->env,
-				N_TR("NUL in required source module '%s'."),
-				path);
-			goto cleanup;
-		}
-	} else if (!bytecode_file_check_registration_size(
-		payload_size,
-		&registration_size)) {
-		rt_error(
-			graph->env,
-			N_TR("Required bytecode module is too large."));
-		goto cleanup;
-	}
-
-	if (!rt_module_graph_grow_artifacts(graph))
-		goto cleanup;
-	artifact = &graph->artifact[graph->artifact_count];
-	memset(artifact, 0, sizeof(*artifact));
-	artifact->path = path;
-	artifact->file_name = file_name;
-	artifact->storage = storage;
-	artifact->data = payload;
-	artifact->data_size = payload_size;
-	artifact->kind = kind == BYTECODE_FILE_UNKNOWN ?
-		RT_MODULE_SOURCE : RT_MODULE_BYTECODE;
-	artifact->owns_storage = true;
-	artifact->is_required = true;
-	*index = graph->artifact_count;
-	graph->artifact_count++;
-	succeeded = true;
-
-cleanup:
-	if (stream != NULL)
-		fclose(stream);
-	if (!succeeded) {
-		noct_free(file_name);
-		noct_free(storage);
-		free(path);
-	}
-
-	return succeeded;
-
-read_error:
-	rt_set_error_file(graph->env, parent_file);
-	graph->env->line = 0;
-	rt_error(
-		graph->env,
-		N_TR("Cannot read required module '%s'."),
-		path);
-	goto cleanup;
-}
-
-/* Prepare one artifact and append it after all of its dependencies. */
-static bool
-rt_module_graph_prepare(
-	struct rt_module_graph *graph,
-	uint32_t artifact_index)
-{
-	struct rt_module_artifact *artifact;
-	const char *module_name;
-	uint32_t dependency_index;
-	uint32_t require_count;
-	uint32_t i;
-
-	artifact = &graph->artifact[artifact_index];
-	if (artifact->state == RT_MODULE_PREPARED)
-		return true;
-	if (artifact->state == RT_MODULE_PREPARING) {
-		rt_set_error_file(graph->env, artifact->file_name);
-		graph->env->line = 0;
-		rt_error(
-			graph->env,
-			N_TR("Circular require involving '%s'."),
-			artifact->file_name);
-		return false;
-	}
-
-	artifact->state = RT_MODULE_PREPARING;
-	if (artifact->kind == RT_MODULE_SOURCE) {
-		if (!rt_module_graph_prepare_source(graph, artifact))
-			return false;
-	} else {
-		if (!rt_module_graph_prepare_bytecode(graph, artifact))
-			return false;
-	}
-
-	require_count = graph->artifact[artifact_index].require_count;
-
-	/* Prepare every require edge in declaration order. */
-	for (i = 0; i < require_count; i++) {
-		module_name = graph->artifact[artifact_index].require_name[i];
-		if (!rt_module_graph_add_required(
-			graph,
-			graph->artifact[artifact_index].file_name,
-			module_name,
-			&dependency_index)) {
-			return false;
-		}
-		if (dependency_index == UINT32_MAX)
-			continue;
-		if (!rt_module_graph_prepare(graph, dependency_index))
-			return false;
-	}
-
-	if (!rt_module_graph_grow_postorder(graph))
-		return false;
-	graph->postorder[graph->postorder_count] = artifact_index;
-	graph->postorder_count++;
-	graph->artifact[artifact_index].state = RT_MODULE_PREPARED;
-
-	return true;
-}
-
-/* Collect source metadata without registering functions or initializers. */
-static bool
-rt_module_graph_prepare_source(
-	struct rt_module_graph *graph,
-	struct rt_module_artifact *artifact)
-{
-	uint32_t require_count;
-	uint32_t i;
-	bool ast_started;
-	bool succeeded;
-
-	require_count = 0;
-	ast_started = false;
-	succeeded = false;
-
-	ast_started = true;
-	if (!ast_build(
-		artifact->file_name,
-		(const char *)artifact->data)) {
-		rt_set_error_file(graph->env, artifact->file_name);
-		graph->env->line = ast_get_error_line();
-		rt_error(graph->env, "%s", ast_get_error_message());
-		goto cleanup;
-	}
-
-	if (!hir_collect_fast_prototypes()) {
-		rt_set_error_file(graph->env, artifact->file_name);
-		graph->env->line = hir_get_error_line();
-		rt_error(graph->env, "%s", hir_get_error_message());
-		goto cleanup;
-	}
-
-	require_count = ast_get_require_count();
-	if (require_count > 0) {
-		if (sizeof(*artifact->require_name) >
-		    SIZE_MAX / (size_t)require_count) {
-			rt_out_of_memory(graph->env);
-			goto cleanup;
-		}
-		artifact->require_name = noct_calloc(
-			(size_t)require_count,
-			sizeof(*artifact->require_name));
-		if (artifact->require_name == NULL) {
-			rt_out_of_memory(graph->env);
-			goto cleanup;
-		}
-	}
-	artifact->require_count = require_count;
-
-	/* Preserve require names before releasing the AST arena. */
-	for (i = 0; i < require_count; i++) {
-		artifact->require_name[i] = noct_strdup(ast_get_require_name(i));
-		if (artifact->require_name[i] == NULL) {
-			rt_out_of_memory(graph->env);
-			goto cleanup;
-		}
-	}
-
-	succeeded = true;
-
-cleanup:
-	if (ast_started)
-		ast_cleanup();
-
-	return succeeded;
-}
-
-/* Collect strict bytecode metadata and externally callable prototypes. */
-static bool
-rt_module_graph_prepare_bytecode(
-	struct rt_module_graph *graph,
-	struct rt_module_artifact *artifact)
-{
-	struct bytecode_file_error error;
-
-	if (!bytecode_file_inspect_module(
-		artifact->data,
-		artifact->data_size,
-		&artifact->bytecode,
-		&error)) {
-		rt_set_error_file(graph->env, artifact->file_name);
-		graph->env->line = 0;
-		rt_error(graph->env, N_TR("Failed to load bytecode data."));
-		return false;
-	}
-
-	if (!rt_module_graph_add_bytecode_prototypes(
-		graph,
-		&artifact->bytecode,
-		artifact->file_name)) {
-		return false;
-	}
-
-	artifact->require_count = artifact->bytecode.require_count;
-	artifact->require_name = artifact->bytecode.require_name;
-	artifact->function_count = artifact->bytecode.function_count;
-
-	return true;
-}
-
-/* Add every public bytecode function contract to the closure registry. */
-static bool
-rt_module_graph_add_bytecode_prototypes(
-	struct rt_module_graph *graph,
-	const struct bytecode_file_module *module,
-	const char *file_name)
-{
-	const struct bytecode_file_function *function;
-	const struct fast_signature *signature;
-	uint32_t i;
-
-	/* Add non-static, non-initializer functions in record order. */
-	for (i = 0; i < module->function_count; i++) {
-		function = &module->function[i];
-		if (strncmp(function->name, "$static.", 8) == 0)
-			continue;
-		if (strncmp(function->name, "$init.", 6) == 0)
-			continue;
-
-		signature = function->is_fast ?
-			&function->fast_signature : NULL;
-		if (!hir_fast_checked_add_prototype(
-			function->name,
-			function->is_fast,
-			signature)) {
-			rt_set_error_file(graph->env, file_name);
-			graph->env->line = hir_get_error_line();
-			rt_error(graph->env, "%s", hir_get_error_message());
-			return false;
-		}
-	}
-
-	return true;
-}
-
-/* Compile every source artifact after the full prototype closure exists. */
-static bool
-rt_module_graph_compile_sources(
-	struct rt_module_graph *graph)
-{
-	struct rt_module_artifact *artifact;
-	uint32_t i;
-
-	/* Compile in dependency-first order without publishing functions. */
-	for (i = 0; i < graph->postorder_count; i++) {
-		artifact = &graph->artifact[graph->postorder[i]];
-		if (artifact->kind != RT_MODULE_SOURCE)
-			continue;
-		if (!rt_module_graph_compile_source(graph, artifact))
-			return false;
-	}
-
-	return true;
-}
-
-/* Build detached LIR functions for one source artifact. */
-static bool
-rt_module_graph_compile_source(
-	struct rt_module_graph *graph,
-	struct rt_module_artifact *artifact)
-{
-	struct hir_block *hir_function;
-	struct lir_func *lir_function;
+	const struct lir_func *function;
+	struct rt_value initializer_result;
+	size_t descriptor_count;
 	uint32_t function_count;
 	uint32_t i;
-	bool ast_started;
-	bool hir_started;
-	bool succeeded;
 
-	function_count = 0;
-	ast_started = false;
-	hir_started = false;
-	succeeded = false;
+	/* Rejects missing bytecode registration data. */
+	if (env == NULL ||
+	    data == NULL ||
+	    size == 0)
+		return false;
 
-	ast_started = true;
-	if (!ast_build(
-		artifact->file_name,
-		(const char *)artifact->data)) {
-		rt_set_error_file(graph->env, artifact->file_name);
-		graph->env->line = ast_get_error_line();
-		rt_error(graph->env, "%s", ast_get_error_message());
-		goto cleanup;
-	}
+	/* Rejects a partial LIR descriptor. */
+	if (size % sizeof(struct lir_func) != 0)
+		return false;
 
-	hir_started = true;
-	if (!hir_build()) {
-		rt_set_error_file(graph->env, artifact->file_name);
-		graph->env->line = hir_get_error_line();
-		rt_error(graph->env, "%s", hir_get_error_message());
-		goto cleanup;
-	}
-	ast_cleanup();
-	ast_started = false;
+	/* Converts the descriptor count without truncation. */
+	descriptor_count = size / sizeof(struct lir_func);
+	function_count = (uint32_t)descriptor_count;
+	if ((size_t)function_count != descriptor_count)
+		return false;
 
-	function_count = hir_get_function_count();
-	if (function_count > 0) {
-		if (sizeof(*artifact->lir_function) >
-		    SIZE_MAX / (size_t)function_count) {
-			rt_out_of_memory(graph->env);
-			goto cleanup;
-		}
-		artifact->lir_function = noct_calloc(
-			(size_t)function_count,
-			sizeof(*artifact->lir_function));
-		if (artifact->lir_function == NULL) {
-			rt_out_of_memory(graph->env);
-			goto cleanup;
-		}
-	}
-	artifact->function_count = function_count;
+	/* Binds the borrowed descriptor array. */
+	function = (const struct lir_func *)(const void *)data;
 
-	lir_set_optimize_level(graph->env->vm->config.optimize_level);
-	lir_set_lineinfo(graph->env->vm->config.line_info);
-
-	/* Optimize and lower each source function without VM publication. */
+	/* Validates the complete unit before mutating the VM. */
 	for (i = 0; i < function_count; i++) {
-		hir_function = hir_get_function(i);
-		if (!hir_optimize_func(
-			hir_function,
-			graph->env->vm->config.optimize_level,
-			graph->env->vm->config.simd_info,
-			graph->env->vm->accel_optimize_func,
-			graph->env->vm->accel_optimize_userdata)) {
-			rt_set_error_file(graph->env, hir_get_file_name());
-			graph->env->line = hir_get_error_line();
-			rt_error(graph->env, "%s", hir_get_error_message());
-			goto cleanup;
-		}
-
-		lir_function = NULL;
-		if (!lir_build(hir_function, &lir_function)) {
-			rt_set_error_file(graph->env, lir_get_file_name());
-			graph->env->line = lir_get_error_line();
-			rt_error(graph->env, "%s", lir_get_error_message());
-			goto cleanup;
-		}
-		artifact->lir_function[i] = lir_function;
-	}
-
-	succeeded = true;
-
-cleanup:
-	if (hir_started)
-		hir_cleanup();
-	if (ast_started)
-		ast_cleanup();
-
-	return succeeded;
-}
-
-/* Validate closure-wide link names and per-module initializer counts. */
-static bool
-rt_module_graph_validate_symbols(
-	struct rt_module_graph *graph)
-{
-	struct rt_module_artifact *artifact;
-	const char *name;
-	const char *previous_name;
-	uint32_t artifact_index;
-	uint32_t previous_artifact;
-	uint32_t function_index;
-	uint32_t previous_function;
-	uint32_t initializer_count;
-
-	/* Validate each function against every function that precedes it. */
-	for (artifact_index = 0;
-	     artifact_index < graph->artifact_count;
-	     artifact_index++) {
-		artifact = &graph->artifact[artifact_index];
-		initializer_count = 0;
-
-		/* Validate names and locate the optional module initializer. */
-		for (function_index = 0;
-		     function_index < artifact->function_count;
-		     function_index++) {
-			name = rt_module_artifact_function_name(
-				artifact,
-				function_index);
-			if (name == NULL || name[0] == '\0')
-				goto malformed;
-			if (strncmp(name, "$init.", 6) == 0) {
-				initializer_count++;
-				artifact->initializer_name = name;
-			}
-
-			/* Compare against every function in prior artifacts. */
-			for (previous_artifact = 0;
-			     previous_artifact <= artifact_index;
-			     previous_artifact++) {
-				uint32_t limit;
-
-				limit = graph->artifact[
-					previous_artifact].function_count;
-				if (previous_artifact == artifact_index)
-					limit = function_index;
-
-				/* Reject every exact duplicate link name. */
-				for (previous_function = 0;
-				     previous_function < limit;
-				     previous_function++) {
-					previous_name = rt_module_artifact_function_name(
-						&graph->artifact[previous_artifact],
-						previous_function);
-					if (strcmp(name, previous_name) == 0) {
-						rt_error(
-							graph->env,
-							N_TR("Duplicate function '%s' in require closure."),
-							name);
-						return false;
-					}
-				}
-			}
-		}
-
-		if (initializer_count > 1)
-			goto malformed;
-	}
-
-	return true;
-
-malformed:
-	rt_error(graph->env, N_TR("Malformed module function directory."));
-
-	return false;
-}
-
-/* Publish persistent module-name/path states before VM mutation. */
-static bool
-rt_module_graph_publish_states(
-	struct rt_module_graph *graph)
-{
-	struct rt_module_binding *binding;
-	struct rt_module_artifact *artifact;
-	struct rt_required_source *required_source;
-	uint32_t i;
-
-	/* Allocate one persistent state for each newly resolved module name. */
-	for (i = 0; i < graph->binding_count; i++) {
-		binding = &graph->binding[i];
-		if (binding->required_source != NULL)
-			continue;
-		if (binding->artifact_index >= graph->artifact_count)
-			return false;
-		artifact = &graph->artifact[binding->artifact_index];
-		if (artifact->path == NULL)
-			return false;
-
-		required_source = noct_calloc(1, sizeof(*required_source));
-		if (required_source == NULL) {
-			rt_out_of_memory(graph->env);
+		if (!rt_validate_lir(&function[i])) {
+			rt_error(env, N_TR("Invalid bytecode function descriptor."));
 			return false;
 		}
-		required_source->module_name = noct_strdup(binding->name);
-		if (required_source->module_name == NULL) {
-			noct_free(required_source);
-			rt_out_of_memory(graph->env);
+	}
+
+	/* Publishes every validated function in declaration order. */
+	for (i = 0; i < function_count; i++) {
+		if (!rt_register_lir(env, &function[i]))
 			return false;
-		}
-		required_source->path = noct_strdup(artifact->path);
-		if (required_source->path == NULL) {
-			noct_free(required_source->module_name);
-			noct_free(required_source);
-			rt_out_of_memory(graph->env);
-			return false;
-		}
-
-		required_source->state = RT_REQUIRED_SOURCE_LOADING;
-		required_source->next = graph->env->vm->required_source_list;
-		graph->env->vm->required_source_list = required_source;
-		binding->required_source = required_source;
 	}
 
-	return true;
-}
-
-/* Complete every newly published persistent module state. */
-static void
-rt_module_graph_finish_states(
-	struct rt_module_graph *graph,
-	bool succeeded)
-{
-	struct rt_required_source *required_source;
-	uint32_t i;
-
-	/* Mark only states created or reused by this graph. */
-	for (i = 0; i < graph->binding_count; i++) {
-		required_source = graph->binding[i].required_source;
-		if (required_source == NULL)
-			continue;
-		if (required_source->state != RT_REQUIRED_SOURCE_LOADING)
-			continue;
-
-		required_source->state = succeeded ?
-			RT_REQUIRED_SOURCE_LOADED : RT_REQUIRED_SOURCE_FAILED;
-		if (!succeeded) {
-			required_source->error_file = noct_strdup(
-				graph->env->file_name);
-			required_source->error_message = noct_strdup(
-				graph->env->error_message);
-			required_source->error_line = graph->env->line;
-		}
-	}
-}
-
-/* Return one borrowed link name from a detached source or bytecode module. */
-static const char *
-rt_module_artifact_function_name(
-	const struct rt_module_artifact *artifact,
-	uint32_t function_index)
-{
-	if (function_index >= artifact->function_count)
-		return NULL;
-	if (artifact->kind == RT_MODULE_SOURCE) {
-		if (artifact->lir_function == NULL ||
-		    artifact->lir_function[function_index] == NULL) {
-			return NULL;
-		}
-
-		return artifact->lir_function[function_index]->func_name;
-	}
-
-	return artifact->bytecode.function[function_index].name;
-}
-
-/* Publish all closure functions, then execute initializers postorder. */
-static bool
-rt_module_graph_register(
-	struct rt_module_graph *graph)
-{
-	struct rt_module_artifact *artifact;
-	struct rt_value initializer_result;
-	uint32_t i;
-	uint32_t j;
-
-	/* Register every function in dependency-first module order. */
-	for (i = 0; i < graph->postorder_count; i++) {
-		artifact = &graph->artifact[graph->postorder[i]];
-		artifact->state = RT_MODULE_LOADING;
-
-		/* Publish each function in its original declaration order. */
-		for (j = 0; j < artifact->function_count; j++) {
-			if (artifact->kind == RT_MODULE_SOURCE) {
-				if (!rt_register_lir(
-					graph->env,
-					artifact->lir_function[j])) {
-					artifact->state = RT_MODULE_FAILED;
-					return false;
-				}
-			} else if (!rt_register_bytecode_descriptor(
-				graph->env,
-				&artifact->bytecode.function[j])) {
-				artifact->state = RT_MODULE_FAILED;
-				return false;
-			}
-		}
-	}
-
-	if (!rt_commit_jit(graph->env))
-		return false;
-
-	/* Execute each optional initializer after all dependency functions exist. */
-	for (i = 0; i < graph->postorder_count; i++) {
-		artifact = &graph->artifact[graph->postorder[i]];
-		if (artifact->initializer_name != NULL) {
-			memset(&initializer_result, 0, sizeof(initializer_result));
-			if (!rt_call_with_name(
-				graph->env,
-				artifact->initializer_name,
-				0,
-				NULL,
-				&initializer_result)) {
-				artifact->state = RT_MODULE_FAILED;
-				return false;
-			}
-		}
-		artifact->state = RT_MODULE_LOADED;
-	}
-
-	return true;
-}
-
-/* Convert one inspected bytecode function into the runtime LIR view. */
-static bool
-rt_register_bytecode_descriptor(
-	struct rt_env *env,
-	const struct bytecode_file_function *function)
-{
-	struct lir_func lir_function;
-	uint32_t i;
-
-	if (function->param_count > LIR_PARAM_SIZE ||
-	    function->param_count > NOCT_ARG_MAX) {
-		return false;
-	}
-
-	memset(&lir_function, 0, sizeof(lir_function));
-	lir_function.tmpvar_size = function->tmpvar_size;
-	lir_function.bytecode_size = function->bytecode.size;
-	lir_function.bytecode = (uint8_t *)function->bytecode.data;
-	lir_function.file_name = function->source;
-	lir_function.func_name = function->name;
-	lir_function.param_count = function->param_count;
-
-	/* Copy the inspected parameter view into the fixed LIR arrays. */
-	for (i = 0; i < function->param_count; i++) {
-		lir_function.param_name[i] = function->param_name[i];
-		lir_function.param_type[i] = function->param_type[i];
-		lir_function.param_packed_type[i] = function->param_packed_type[i];
-		lir_function.param_restricted[i] = function->param_restricted[i];
-	}
-	lir_function.return_type = function->return_type;
-	lir_function.return_packed_type = function->return_packed_type;
-	lir_function.return_type_checked = function->return_type_checked;
-	lir_function.has_vector_ops = function->has_vector_ops;
-	lir_function.is_fast = function->is_fast;
-	lir_function.fast_signature = function->fast_signature;
-	lir_function.has_fma_ops = function->has_fma_ops;
-
-	return rt_register_lir(env, &lir_function);
-}
-
-/* Register one fully inspected application without filesystem resolution. */
-static bool
-rt_register_app(
-	struct rt_env *env,
-	const struct bytecode_file_app *app)
-{
-	struct rt_module_graph prototype_graph;
-	uint32_t *order;
-	uint32_t order_count;
-	uint32_t i;
-	bool succeeded;
-
-	memset(&prototype_graph, 0, sizeof(prototype_graph));
-	prototype_graph.env = env;
-	order = NULL;
-	order_count = 0;
-	succeeded = false;
-	hir_fast_checked_reset_prototypes();
-
-	if (!rt_module_graph_seed_prototypes(&prototype_graph, "<application>"))
-		goto cleanup;
-
-	/* Collect all public bytecode contracts before any VM mutation. */
-	for (i = 0; i < app->module_count; i++) {
-		if (!rt_module_graph_add_bytecode_prototypes(
-			&prototype_graph,
-			&app->module[i],
-			app->module[i].source)) {
-			goto cleanup;
-		}
-	}
-
-	if (!rt_build_app_order(env, app, &order, &order_count))
-		goto cleanup;
-	if (!rt_register_bytecode_modules(
-		env,
-		app->module_count,
-		app->module,
-		order_count,
-		order)) {
-		goto cleanup;
-	}
-
-	succeeded = true;
-
-cleanup:
-	noct_free(order);
-	hir_fast_checked_reset_prototypes();
-
-	return succeeded;
-}
-
-/* Register and initialize inspected bytecode modules in dependency order. */
-static bool
-rt_register_bytecode_modules(
-	struct rt_env *env,
-	uint32_t module_count,
-	const struct bytecode_file_module module[],
-	uint32_t order_count,
-	const uint32_t order[])
-{
-	const struct bytecode_file_module *current_module;
-	const char **initializer_name;
-	struct rt_value initializer_result;
-	uint32_t module_index;
-	uint32_t i;
-	uint32_t j;
-	bool succeeded;
-
-	initializer_name = NULL;
-	succeeded = false;
-	if (module_count == 0 || order_count != module_count)
-		return false;
-	if (sizeof(*initializer_name) > SIZE_MAX / (size_t)module_count)
-		return false;
-
-	initializer_name = noct_calloc(
-		(size_t)module_count,
-		sizeof(*initializer_name));
-	if (initializer_name == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-
-	/* Register every function from dependency to importer. */
-	for (i = 0; i < order_count; i++) {
-		module_index = order[i];
-		if (module_index >= module_count)
-			goto cleanup;
-		current_module = &module[module_index];
-
-		/* Publish each function and remember its optional initializer. */
-		for (j = 0; j < current_module->function_count; j++) {
-			if (strncmp(
-				current_module->function[j].name,
-				"$init.",
-				6) == 0) {
-				if (initializer_name[module_index] != NULL)
-					goto cleanup;
-				initializer_name[module_index] =
-					current_module->function[j].name;
-			}
-			if (!rt_register_bytecode_descriptor(
-				env,
-				&current_module->function[j])) {
-				goto cleanup;
-			}
-		}
-	}
-
+#if defined(NOCT_USE_JIT)
+	/* Commits all JIT code generated for this unit. */
 	if (!rt_commit_jit(env))
-		goto cleanup;
+		return false;
+#endif
 
-	/* Execute each module initializer in the same dependency-first order. */
-	for (i = 0; i < order_count; i++) {
-		module_index = order[i];
-		if (initializer_name[module_index] == NULL)
+	/* Runs initializers after every function is visible. */
+	for (i = 0; i < function_count; i++) {
+		/* Skips ordinary functions. */
+		if (strncmp(function[i].func_name, "$init.", 6) != 0)
 			continue;
 
+		/* Clears the initializer result slot. */
 		memset(&initializer_result, 0, sizeof(initializer_result));
+
+		/* Calls the current initializer. */
 		if (!rt_call_with_name(
 			env,
-			initializer_name[module_index],
+			function[i].func_name,
 			0,
 			NULL,
 			&initializer_result)) {
-			goto cleanup;
-		}
-	}
-
-	succeeded = true;
-
-cleanup:
-	noct_free(initializer_name);
-
-	return succeeded;
-}
-
-/* Derive dependency-first application module order from its binding table. */
-static bool
-rt_build_app_order(
-	struct rt_env *env,
-	const struct bytecode_file_app *app,
-	uint32_t **order,
-	uint32_t *order_count)
-{
-	unsigned char *state;
-	uint32_t i;
-	bool succeeded;
-
-	*order = NULL;
-	*order_count = 0;
-	state = NULL;
-	succeeded = false;
-
-	if (app->module_count == 0)
-		return false;
-	if (sizeof(**order) > SIZE_MAX / (size_t)app->module_count)
-		return false;
-
-	state = noct_calloc((size_t)app->module_count, sizeof(*state));
-	if (state == NULL) {
-		rt_out_of_memory(env);
-		goto cleanup;
-	}
-	*order = noct_malloc((size_t)app->module_count * sizeof(**order));
-	if (*order == NULL) {
-		rt_out_of_memory(env);
-		goto cleanup;
-	}
-
-	/* Traverse every explicit root in manifest order. */
-	for (i = 0; i < app->root_count; i++) {
-		if (!rt_visit_app_module(
-			env,
-			app,
-			app->root_index[i],
-			state,
-			*order,
-			order_count)) {
-			goto cleanup;
-		}
-	}
-	if (*order_count != app->module_count) {
-		rt_error(env, N_TR("Application contains an unreachable module."));
-		goto cleanup;
-	}
-
-	succeeded = true;
-
-cleanup:
-	noct_free(state);
-	if (!succeeded) {
-		noct_free(*order);
-		*order = NULL;
-		*order_count = 0;
-	}
-
-	return succeeded;
-}
-
-/* Visit one application module and all dependencies exactly once. */
-static bool
-rt_visit_app_module(
-	struct rt_env *env,
-	const struct bytecode_file_app *app,
-	uint32_t module_index,
-	unsigned char state[],
-	uint32_t order[],
-	uint32_t *order_count)
-{
-	const struct bytecode_file_module *module;
-	uint32_t dependency_index;
-	uint32_t i;
-	int binding_index;
-
-	if (module_index >= app->module_count)
-		return false;
-	if (state[module_index] == 2)
-		return true;
-	if (state[module_index] == 1) {
-		rt_error(env, N_TR("Circular require in application container."));
-		return false;
-	}
-
-	state[module_index] = 1;
-	module = &app->module[module_index];
-
-	/* Visit every manifest-bound require in declaration order. */
-	for (i = 0; i < module->require_count; i++) {
-		binding_index = rt_find_app_binding(app, module->require_name[i]);
-		if (binding_index < 0) {
-			rt_error(env, N_TR("Missing application module binding."));
-			return false;
-		}
-		dependency_index = app->binding[
-			(uint32_t)binding_index].module_index;
-		if (!rt_visit_app_module(
-			env,
-			app,
-			dependency_index,
-			state,
-			order,
-			order_count)) {
 			return false;
 		}
 	}
 
-	state[module_index] = 2;
-	order[*order_count] = module_index;
-	(*order_count)++;
-
+	/* Reports a successful bytecode registration. */
 	return true;
 }
 
-/* Find one exact module-name binding inside an application manifest. */
-static int
-rt_find_app_binding(
-	const struct bytecode_file_app *app,
-	const char *module_name)
-{
-	uint32_t i;
-
-	/* Search every already validated unique binding. */
-	for (i = 0; i < app->binding_count; i++) {
-		if (strcmp(app->binding[i].module_name, module_name) == 0)
-			return (int)i;
-	}
-
-	return -1;
-}
-
-/* Find persistent required-module state by exact source-level name. */
-static struct rt_required_source *
-rt_find_required_module(
-	struct rt_vm *vm,
-	const char *module_name)
-{
-	struct rt_required_source *required_source;
-
-	/* Search every module name already resolved by this VM. */
-	for (required_source = vm->required_source_list;
-	     required_source != NULL;
-	     required_source = required_source->next) {
-		if (required_source->module_name == NULL)
-			continue;
-		if (strcmp(required_source->module_name, module_name) == 0)
-			return required_source;
-	}
-
-	return NULL;
-}
-
-/* Find required source state by resolved path. */
-static struct rt_required_source *
-rt_find_required_source(
-	struct rt_vm *vm,
-	const char *path)
-{
-	struct rt_required_source *required_source;
-
-	/* Search every required source already seen by this VM. */
-	for (required_source = vm->required_source_list;
-	     required_source != NULL;
-	     required_source = required_source->next) {
-		if (required_source->path == NULL)
-			continue;
-		if (strcmp(required_source->path, path) == 0)
-			return required_source;
-	}
-
-	return NULL;
-}
-
-/* Publish one persistent state for an exact module-name resolution. */
-static struct rt_required_source *
-rt_add_required_module_state(
-	struct rt_env *env,
-	const char *module_name,
-	const char *path,
-	enum rt_required_source_state state)
-{
-	struct rt_required_source *required_source;
-
-	required_source = noct_calloc(1, sizeof(*required_source));
-	if (required_source == NULL)
-		goto out_of_memory;
-	required_source->module_name = noct_strdup(module_name);
-	if (required_source->module_name == NULL)
-		goto out_of_memory;
-	if (path != NULL) {
-		required_source->path = noct_strdup(path);
-		if (required_source->path == NULL)
-			goto out_of_memory;
-	}
-	required_source->state = state;
-	required_source->next = env->vm->required_source_list;
-	env->vm->required_source_list = required_source;
-
-	return required_source;
-
-out_of_memory:
-	if (required_source != NULL) {
-		noct_free(required_source->path);
-		noct_free(required_source->module_name);
-		noct_free(required_source);
-	}
-	rt_out_of_memory(env);
-
-	return NULL;
-}
-
-/* Save the current runtime diagnostic in one persistent failed state. */
-static void
-rt_fail_required_module_state(
-	struct rt_env *env,
-	struct rt_required_source *required_source)
-{
-	noct_free(required_source->error_file);
-	noct_free(required_source->error_message);
-	required_source->error_file = noct_strdup(env->file_name);
-	required_source->error_message = noct_strdup(env->error_message);
-	required_source->error_line = env->line;
-	required_source->state = RT_REQUIRED_SOURCE_FAILED;
-}
-
-/* Retain another module name for an exact persistent artifact path. */
-static struct rt_required_source *
-rt_add_required_alias(
-	struct rt_env *env,
-	const char *module_name,
-	const struct rt_required_source *source)
-{
-	struct rt_required_source *required_source;
-
-	required_source = rt_add_required_module_state(
-		env,
-		module_name,
-		source->path,
-		source->state);
-	if (required_source == NULL)
-		return NULL;
-	if (source->error_file != NULL) {
-		required_source->error_file = noct_strdup(source->error_file);
-		if (required_source->error_file == NULL)
-			goto out_of_memory;
-	}
-	if (source->error_message != NULL) {
-		required_source->error_message = noct_strdup(
-			source->error_message);
-		if (required_source->error_message == NULL)
-			goto out_of_memory;
-	}
-	required_source->error_line = source->error_line;
-
-	return required_source;
-
-out_of_memory:
-	noct_free(required_source->error_message);
-	noct_free(required_source->error_file);
-	required_source->error_message = NULL;
-	required_source->error_file = NULL;
-	required_source->state = RT_REQUIRED_SOURCE_FAILED;
-	rt_out_of_memory(env);
-
-	return NULL;
-}
-
-/* Free every required source state in a VM. */
-static void
-rt_cleanup_required_sources(
-	struct rt_vm *vm)
-{
-	struct rt_required_source *required_source;
-	struct rt_required_source *next;
-
-	required_source = vm->required_source_list;
-
-	/* Free every required source entry. */
-	while (required_source != NULL) {
-		next = required_source->next;
-		noct_free(required_source->module_name);
-		noct_free(required_source->error_file);
-		noct_free(required_source->error_message);
-		noct_free(required_source->path);
-		noct_free(required_source);
-		required_source = next;
-	}
-
-	vm->required_source_list = NULL;
-}
-
-/* Make a stable logical name for one required source. */
-static char *
-rt_make_required_source_name(
-	struct rt_env *env,
-	const char *module_name,
-	const char *path)
-{
-	const char *suffix;
-	char *file_name;
-	size_t path_length;
-	size_t prefix_length;
-	size_t module_length;
-	size_t suffix_length;
-	size_t file_name_size;
-
-	suffix = ".noct";
-	path_length = strlen(path);
-	if (path_length >= 4 && strcmp(path + path_length - 4, ".nct") == 0)
-		suffix = ".nct";
-	else if (path_length >= 4 &&
-		 strcmp(path + path_length - 4, ".nbc") == 0) {
-		suffix = ".nbc";
-	}
-
-	prefix_length = strlen("@require/");
-	module_length = strlen(module_name);
-	suffix_length = strlen(suffix);
-	if (prefix_length > SIZE_MAX - module_length)
-		goto oom;
-	file_name_size = prefix_length + module_length;
-	if (file_name_size > SIZE_MAX - suffix_length)
-		goto oom;
-	file_name_size += suffix_length;
-	if (file_name_size == SIZE_MAX)
-		goto oom;
-	file_name_size++;
-	file_name = noct_malloc(file_name_size);
-	if (file_name == NULL)
-		goto oom;
-
-	snprintf(
-		file_name,
-		file_name_size,
-		"@require/%s%s",
-		module_name,
-		suffix);
-
-	return file_name;
-
-oom:
-	rt_out_of_memory(env);
-
-	return NULL;
-}
-
-/* Set the current error file without truncation ambiguity. */
-static void
-rt_set_error_file(
-	struct rt_env *env,
-	const char *file_name)
-{
-	strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
-	env->file_name[sizeof(env->file_name) - 1] = '\0';
-}
-
-/* Register a function from LIR. */
-static bool
-rt_register_lir(
-	struct rt_env *env,
-	struct lir_func *lir)
-{
-	struct rt_func *func;
-	struct rt_value global;
-	uint32_t i;
-
-	func = noct_calloc(1, sizeof(struct rt_func));
-	if (func == NULL) {
-		rt_out_of_memory(env);
-		return false;
-	}
-
-	fast_signature_init(&func->fast_signature);
-	func->is_fast = lir->is_fast;
-	if (!fast_signature_clone(
-		&func->fast_signature,
-		&lir->fast_signature)) {
-		rt_out_of_memory(env);
-		rt_free_func(env, func);
-		return false;
-	}
-
-	func->name = noct_strdup(lir->func_name);
-	if (func->name == NULL) {
-		rt_out_of_memory(env);
-		rt_free_func(env, func);
-		return false;
-	}
-
-	func->param_count = lir->param_count;
-
-	/* Initialize every parameter contract slot. */
-	for (i = 0; i < NOCT_ARG_MAX; i++) {
-		func->param_type[i] = -1;
-		func->param_packed_type[i] = -1;
-		func->param_restricted[i] = false;
-	}
-
-	/* Copy the declared parameter contracts. */
-	for (i = 0; i < lir->param_count; i++) {
-		func->param_type[i] = lir->param_type[i];
-		func->param_packed_type[i] = lir->param_packed_type[i];
-		func->param_restricted[i] = lir->param_restricted[i];
-	}
-
-	func->return_type = lir->return_type;
-	func->return_packed_type = lir->return_packed_type;
-	func->return_type_checked = lir->return_type_checked;
-
-	/* Copy every parameter name. */
-	for (i = 0; i < lir->param_count; i++) {
-		func->param_name[i] = noct_strdup(lir->param_name[i]);
-		if (func->param_name[i] == NULL) {
-			rt_out_of_memory(env);
-			rt_free_func(env, func);
-			return false;
-		}
-	}
-
-	func->bytecode_size = lir->bytecode_size;
-	if (func->bytecode_size != 0) {
-		func->bytecode = noct_malloc((size_t)lir->bytecode_size);
-		if (func->bytecode == NULL) {
-			rt_out_of_memory(env);
-			rt_free_func(env, func);
-			return false;
-		}
-		memcpy(func->bytecode, lir->bytecode, (size_t)lir->bytecode_size);
-	}
-
-	func->tmpvar_size = lir->tmpvar_size;
-	func->has_vector_ops = lir->has_vector_ops;
-	func->has_fma_ops = lir->has_fma_ops;
-
-	func->file_name = noct_strdup(lir->file_name);
-	if (func->file_name == NULL) {
-		rt_out_of_memory(env);
-		rt_free_func(env, func);
-		return false;
-	}
-
-	/* Insert a global variable. */
-	global.type = NOCT_VALUE_FUNC;
-	global.val.func = func;
-	if (!rt_set_global(env, func->name, &global)) {
-		rt_free_func(env, func);
-		return false;
-	}
-
-	if (env->vm->config.jit_enable) {
-		if (!jit_build(env, func)) {
-			rt_report_jit_result(func, false, env->error_message);
-			func->jit_code = NULL;
-			func->call_count = -1;
-			env->error_message[0] = '\0';
-			env->line = 0;
-		} else {
-			rt_report_jit_result(func, true, NULL);
-			env->vm->is_jit_dirty = true;
-		}
-	}
-
-	/* Link. */
-	func->next = env->vm->func_list;
-	env->vm->func_list = func;
-
-	return true;
-}
-
-static struct rt_func *
-rt_create_cfunc(
-	struct rt_env *env,
-	const char *name,
-	size_t param_count,
-	const char *param_name[],
-	bool (*cfunc)(struct rt_env *env),
-	bool (*cfunc_with_data)(struct rt_env *env, void *userdata),
-	void *userdata)
-{
-	struct rt_func *func;
-	uint32_t i;
-
-	if (name == NULL || name[0] == '\0' || param_count > NOCT_ARG_MAX ||
-	    (param_count != 0 && param_name == NULL) ||
-	    (cfunc == NULL) == (cfunc_with_data == NULL)) {
-		rt_error(env, N_TR("Invalid native function registration."));
-		return NULL;
-	}
-
-	func = noct_calloc(1, sizeof(*func));
-	if (func == NULL) {
-		rt_out_of_memory(env);
-		return NULL;
-	}
-
-	fast_signature_init(&func->fast_signature);
-
-	func->name = noct_strdup(name);
-	if (func->name == NULL)
-		goto oom;
-
-	func->param_count = param_count;
-	func->return_type = -1;
-	func->return_packed_type = -1;
-	for (i = 0; i < NOCT_ARG_MAX; i++) {
-		func->param_type[i] = -1;
-		func->param_packed_type[i] = -1;
-	}
-	for (i = 0; i < param_count; i++) {
-		if (param_name[i] == NULL) {
-			rt_error(env, N_TR("Invalid native function parameter name."));
-			rt_free_func(env, func);
-			return NULL;
-		}
-		func->param_name[i] = noct_strdup(param_name[i]);
-		if (func->param_name[i] == NULL)
-			goto oom;
-	}
-
-	func->cfunc = cfunc;
-	func->cfunc_with_data = cfunc_with_data;
-	func->cfunc_userdata = userdata;
-	func->tmpvar_size = (uint32_t)param_count + 1;
-	return func;
-
-oom:
-	rt_out_of_memory(env);
-	rt_free_func(env, func);
-	return NULL;
-}
-
-static bool
-rt_publish_cfunc(
-	struct rt_env *env,
-	struct rt_func *func,
-	struct rt_func **ret_func)
-{
-	struct rt_value global;
-
-	global.type = NOCT_VALUE_FUNC;
-	global.val.func = func;
-	if (!rt_set_global(env, func->name, &global)) {
-		rt_free_func(env, func);
-		return false;
-	}
-
-	func->next = env->vm->func_list;
-	env->vm->func_list = func;
-	if (ret_func != NULL)
-		*ret_func = func;
-	return true;
-}
-
+/*
+ * Registers one native function.
+ */
 bool
 rt_register_cfunc(
 	struct rt_env *env,
@@ -2603,69 +625,86 @@ rt_register_cfunc(
 	struct rt_func **ret_func)
 {
 	struct rt_func *func;
+	struct rt_value global;
+	uint32_t i;
 
-	func = rt_create_cfunc(env, name, param_count, param_name,
-			       cfunc, NULL, NULL);
-	return func != NULL && rt_publish_cfunc(env, func, ret_func);
-}
-
-bool
-rt_register_cfunc_with_data(
-	struct rt_env *env,
-	const char *name,
-	size_t param_count,
-	const char *param_name[],
-	bool (*cfunc)(struct rt_env *env, void *userdata),
-	void *userdata,
-	struct rt_func **ret_func)
-{
-	struct rt_func *func;
-
-	func = rt_create_cfunc(env, name, param_count, param_name,
-			       NULL, cfunc, userdata);
-	return func != NULL && rt_publish_cfunc(env, func, ret_func);
-}
-
-bool
-rt_register_vm_finalizer(
-	struct rt_env *env,
-	void (*finalizer)(void *userdata),
-	void *userdata)
-{
-	struct rt_vm_finalizer *entry;
-
-	if (finalizer == NULL) {
-		rt_error(env, N_TR("Invalid VM finalizer."));
+	/* Rejects an invalid native function registration. */
+	if (name == NULL ||
+	    name[0] == '\0' ||
+	    param_count > NOCT_ARG_MAX ||
+	    (param_count != 0 && param_name == NULL) ||
+	    cfunc == NULL) {
+		rt_error(env, N_TR("Invalid native function registration."));
 		return false;
 	}
 
-	entry = noct_malloc(sizeof(*entry));
-	if (entry == NULL) {
+	/* Allocates the native function. */
+	func = noct_calloc(1, sizeof(*func));
+	if (func == NULL) {
 		rt_out_of_memory(env);
 		return false;
 	}
-	entry->finalizer = finalizer;
-	entry->userdata = userdata;
-	entry->next = env->vm->vm_finalizer_list;
-	env->vm->vm_finalizer_list = entry;
-	return true;
-}
 
-static bool
-rt_commit_jit(struct rt_env *env)
-{
-	if (env->vm->config.jit_enable && env->vm->is_jit_dirty) {
-		if (!jit_commit(env)) {
-			rt_invalidate_jit_entries(env->vm);
-			(void)jit_free(env);
-			env->vm->is_jit_dirty = false;
-			rt_error(env, N_TR("JIT memory protection failed."));
-			rt_report_jit_lifecycle("publish", false);
+	/* Copies the native function name. */
+	func->name = noct_strdup(name);
+	if (func->name == NULL) {
+		rt_out_of_memory(env);
+		rt_free_func(env, func);
+		return false;
+	}
+
+	/* Initializes the native function metadata. */
+	func->param_count = param_count;
+#if defined(NOCT_USE_OPTIMIZER)
+	func->return_type = -1;
+	func->return_packed_type = -1;
+
+	/* Initializes every optimizer contract slot as unannotated. */
+	for (i = 0; i < NOCT_ARG_MAX; i++) {
+		func->param_type[i] = -1;
+		func->param_packed_type[i] = -1;
+	}
+#endif
+
+	/* Copies and validates every native parameter name. */
+	for (i = 0; i < param_count; i++) {
+		/* Rejects a missing parameter name. */
+		if (param_name[i] == NULL) {
+			rt_error(env, N_TR("Invalid native function parameter name."));
+			rt_free_func(env, func);
 			return false;
 		}
-		env->vm->is_jit_dirty = false;
-		rt_report_jit_lifecycle("publish", true);
+
+		/* Copies the current parameter name. */
+		func->param_name[i] = noct_strdup(param_name[i]);
+		if (func->param_name[i] == NULL) {
+			rt_out_of_memory(env);
+			rt_free_func(env, func);
+			return false;
+		}
 	}
+
+	/* Attaches the native callback. */
+	func->cfunc = cfunc;
+	func->tmpvar_size = (uint32_t)param_count + 1;
+
+	/* Publishes the native function as a global value. */
+	global.type = NOCT_VALUE_FUNC;
+	global.val.func = func;
+	if (!rt_set_global(env, func->name, &global)) {
+		rt_free_func(env, func);
+		return false;
+	}
+
+	/* Links the native function into the VM. */
+	func->next = env->vm->func_list;
+	env->vm->func_list = func;
+
+	/* Returns the registered function when requested. */
+	if (ret_func != NULL)
+		*ret_func = func;
+
+	/* Reports a successful native function registration. */
 	return true;
 }
 
@@ -2759,12 +798,14 @@ rt_call(
 #endif
 
 	/* Validate a fast entry only after its arguments are rooted. */
+#if defined(NOCT_USE_OPTIMIZER)
 	if (func->is_fast) {
-		if (!rt_check_fast_call(env, func, arg_count)) {
+		if (!fast_check_runtime_call(env, func, arg_count)) {
 			rt_leave_frame(env);
 			return false;
 		}
 	}
+#endif
 
 	/* Run. */
 	if (func->cfunc != NULL) {
@@ -2772,12 +813,6 @@ rt_call(
 		 * Call an intrinsic or an FFI function implemented in C.
 		 */
 		if (!func->cfunc(env)) {
-			rt_leave_frame(env);
-			return false;
-		}
-	} else if (func->cfunc_with_data != NULL) {
-		/* Call a native function with its host-owned opaque context. */
-		if (!func->cfunc_with_data(env, func->cfunc_userdata)) {
 			rt_leave_frame(env);
 			return false;
 		}
@@ -2792,6 +827,7 @@ rt_call(
 		/* Copy the new file name to the env. */
 		strncpy(env->file_name, env->frame->func->file_name, sizeof(env->file_name) - 1);
 
+#if defined(NOCT_USE_JIT)
 		if (func->jit_code != NULL) {
 			/*
 			 * The function has a JIT-generated code. Call it.
@@ -2808,7 +844,9 @@ rt_call(
 				rt_leave_frame(env);
 				return false;
 			}
-		} else {
+		} else
+#endif
+		{
 			/*
 			 * No JIT-generated code. Call the bytecode interpreter.
 			 */
@@ -2880,178 +918,6 @@ rt_leave_frame(
 	}
 
 	env->frame = &env->frame_alloc[env->cur_frame_index];
-}
-
-/* Validate an exact fast entry contract against rooted arguments. */
-static bool
-rt_check_fast_call(
-	struct rt_env *env,
-	struct rt_func *func,
-	uint32_t arg_count)
-{
-	const struct fast_signature *signature;
-	const struct fast_param_contract *contract;
-	const struct fast_extent *extent;
-	struct rt_value *arguments;
-	struct rt_value *argument;
-	struct rt_value *extent_argument;
-	struct rt_packed *packed;
-	uint64_t extent_value;
-	size_t element_count;
-	uint32_t i;
-	uint32_t axis;
-
-	assert(env != NULL);
-	assert(env->frame != NULL);
-	assert(func != NULL);
-
-	signature = &func->fast_signature;
-	arguments = env->frame->tmpvar;
-	if (!signature->valid ||
-	    signature->version != NOCT_FAST_SIGNATURE_VERSION ||
-	    signature->param_count != arg_count ||
-	    (arg_count > 0 && signature->param == NULL)) {
-		rt_error(
-			env,
-			N_TR("Invalid __fast function signature for '%s'."),
-			func->name);
-		return false;
-	}
-
-	/* Validate every exact value tag and Packed element kind first. */
-	for (i = 0; i < arg_count; i++) {
-		contract = &signature->param[i];
-		argument = &arguments[i];
-
-		if (argument->type != contract->value_type) {
-			rt_error(
-				env,
-				N_TR("__fast call '%s': argument %u has the wrong primitive type."),
-				func->name,
-				(unsigned int)i + 1);
-			return false;
-		}
-
-		if (contract->value_type != NOCT_VALUE_PACKED)
-			continue;
-
-		packed = argument->val.packed;
-		if (packed == NULL || packed->type != contract->packed_type) {
-			rt_error(
-				env,
-				N_TR("__fast call '%s': argument %u has the wrong packed element type."),
-				func->name,
-				(unsigned int)i + 1);
-			return false;
-		}
-	}
-
-	/* Validate every Packed shape after all scalar tags are known valid. */
-	for (i = 0; i < arg_count; i++) {
-		contract = &signature->param[i];
-		if (contract->value_type != NOCT_VALUE_PACKED)
-			continue;
-
-		if (contract->rank == 0 ||
-		    contract->rank > NOCT_FAST_RANK_MAX ||
-		    contract->extent == NULL) {
-			rt_error(
-				env,
-				N_TR("Invalid __fast function signature for '%s'."),
-				func->name);
-			return false;
-		}
-
-		element_count = 1;
-
-		/* Multiply every positive extent into the exact element count. */
-		for (axis = 0; axis < contract->rank; axis++) {
-			extent = &contract->extent[axis];
-			if (extent->kind == FAST_EXTENT_CONST) {
-				if (extent->value.constant <= 0) {
-					rt_error(
-						env,
-						N_TR("__fast call '%s': shape extents must be positive."),
-						func->name);
-					return false;
-				}
-
-				extent_value = (uint64_t)extent->value.constant;
-			} else if (extent->kind == FAST_EXTENT_PARAM) {
-				if (extent->value.param_index >= arg_count) {
-					rt_error(
-						env,
-						N_TR("Invalid __fast function signature for '%s'."),
-						func->name);
-					return false;
-				}
-
-				extent_argument =
-					&arguments[extent->value.param_index];
-				if (extent_argument->type == NOCT_VALUE_INT) {
-					if (extent_argument->val.i <= 0) {
-						rt_error(
-							env,
-							N_TR("__fast call '%s': shape extents must be positive."),
-							func->name);
-						return false;
-					}
-
-					extent_value =
-						(uint64_t)(uint32_t)
-							extent_argument->val.i;
-				} else if (extent_argument->type ==
-					   NOCT_VALUE_LONG) {
-					if (extent_argument->val.l <= 0) {
-						rt_error(
-							env,
-							N_TR("__fast call '%s': shape extents must be positive."),
-							func->name);
-						return false;
-					}
-
-					extent_value =
-						(uint64_t)extent_argument->val.l;
-				} else {
-					rt_error(
-						env,
-						N_TR("Invalid __fast function signature for '%s'."),
-						func->name);
-					return false;
-				}
-			} else {
-				rt_error(
-					env,
-					N_TR("Invalid __fast function signature for '%s'."),
-					func->name);
-				return false;
-			}
-
-			if (extent_value > (uint64_t)SIZE_MAX ||
-			    element_count >
-				SIZE_MAX / (size_t)extent_value) {
-				rt_error(
-					env,
-					N_TR("__fast call '%s': shape element count overflow."),
-					func->name);
-				return false;
-			}
-
-			element_count *= (size_t)extent_value;
-		}
-
-		packed = arguments[i].val.packed;
-		if (packed->elem_size != element_count) {
-			rt_error(
-				env,
-				N_TR("__fast call '%s': argument %u does not match the exact shape."),
-				func->name,
-				(unsigned int)i + 1);
-			return false;
-		}
-	}
-
-	return true;
 }
 
 /*
@@ -4503,151 +2369,6 @@ rt_expand_global(
 }
 
 /*
- * __fast func
- */
-
-/*
- * Restores a generated __fast function's caller-side contract.
- */
-bool
-rt_mark_fast_func(
-	struct rt_func *func,
-	uint32_t tmpvar_size,
-	int return_type,
-	uint32_t param_count,
-	const int *value_type,
-	const int *packed_type,
-	const int *restricted,
-	const uint32_t *rank,
-	const int *extent_kind,
-	const int64_t *extent_value)
-{
-	struct fast_signature candidate;
-	struct fast_param_contract *contract;
-	struct fast_extent *extent;
-	uint32_t extent_count;
-	uint32_t param_index;
-	uint32_t i;
-	uint32_t axis;
-
-	if (func == NULL)
-		return false;
-	if (param_count != func->param_count || param_count > NOCT_ARG_MAX)
-		return false;
-	if (tmpvar_size < param_count + 1 || tmpvar_size > RT_TMPVAR_MAX)
-		return false;
-	if (param_count > 0 &&
-	    (value_type == NULL ||
-	     packed_type == NULL ||
-	     restricted == NULL ||
-	     rank == NULL)) {
-		return false;
-	}
-
-	extent_count = 0;
-
-	/* Validate and total every exact-rank extent table. */
-	for (i = 0; i < param_count; i++) {
-		if (restricted[i] != 0 && restricted[i] != 1)
-			return false;
-		if (rank[i] > NOCT_FAST_RANK_MAX)
-			return false;
-
-		extent_count += rank[i];
-	}
-
-	if (extent_count > 0 &&
-	    (extent_kind == NULL || extent_value == NULL)) {
-		return false;
-	}
-
-	fast_signature_init(&candidate);
-	candidate.valid = true;
-	candidate.param_count = param_count;
-	candidate.return_type = return_type;
-
-	if (param_count > 0) {
-		candidate.param = noct_calloc(
-			(size_t)param_count,
-			sizeof(*candidate.param));
-		if (candidate.param == NULL)
-			return false;
-	}
-
-	extent_count = 0;
-
-	/* Restore every parameter and its sparse exact-rank extent table. */
-	for (i = 0; i < param_count; i++) {
-		contract = &candidate.param[i];
-		contract->value_type = value_type[i];
-		contract->packed_type = packed_type[i];
-		contract->restricted = restricted[i] != 0;
-		contract->rank = rank[i];
-
-		if (rank[i] == 0)
-			continue;
-
-		contract->extent = noct_calloc(
-			(size_t)rank[i],
-			sizeof(*contract->extent));
-		if (contract->extent == NULL) {
-			fast_signature_free(&candidate);
-			return false;
-		}
-
-		/* Decode this parameter's consecutive extent entries. */
-		for (axis = 0; axis < rank[i]; axis++) {
-			extent = &contract->extent[axis];
-			extent->kind = extent_kind[extent_count];
-
-			if (extent->kind == FAST_EXTENT_CONST) {
-				extent->value.constant =
-					extent_value[extent_count];
-			} else if (extent->kind == FAST_EXTENT_PARAM) {
-				if (extent_value[extent_count] < 0) {
-					fast_signature_free(&candidate);
-					return false;
-				}
-
-				param_index = (uint32_t)extent_value[extent_count];
-				if ((int64_t)param_index !=
-				    extent_value[extent_count]) {
-					fast_signature_free(&candidate);
-					return false;
-				}
-				extent->value.param_index = param_index;
-			} else {
-				fast_signature_free(&candidate);
-				return false;
-			}
-
-			extent_count++;
-		}
-	}
-
-	if (!fast_signature_valid(&candidate)) {
-		fast_signature_free(&candidate);
-		return false;
-	}
-
-	fast_signature_free(&func->fast_signature);
-	func->fast_signature = candidate;
-	func->is_fast = true;
-	func->tmpvar_size = tmpvar_size;
-	func->return_type = return_type;
-	func->return_packed_type = -1;
-
-	/* Mirror the contract in the ordinary runtime metadata. */
-	for (i = 0; i < param_count; i++) {
-		func->param_type[i] = value_type[i];
-		func->param_packed_type[i] = packed_type[i];
-		func->param_restricted[i] = restricted[i] != 0;
-	}
-
-	return true;
-}
-
-/*
  * Pinning Native APIs
  */
 
@@ -4790,3 +2511,318 @@ rt_out_of_memory(
 {
 	noct_error(env, N_TR("Out of memory."));
 }
+
+/* Validate the runtime metadata required to register one LIR descriptor. */
+static bool
+rt_validate_lir(
+	const struct lir_func *function)
+{
+	uint32_t i;
+
+	/* Rejects a missing function name. */
+	if (function->func_name == NULL || function->func_name[0] == '\0')
+		return false;
+
+	/* Rejects a missing source file name. */
+	if (function->file_name == NULL)
+		return false;
+
+	/* Rejects a parameter count outside the runtime limits. */
+	if (function->param_count > LIR_PARAM_SIZE ||
+	    function->param_count > NOCT_ARG_MAX) {
+		return false;
+	}
+
+	/* Rejects a temporary count outside the runtime limits. */
+	if (function->tmpvar_size < function->param_count + 1 ||
+	    function->tmpvar_size > RT_TMPVAR_MAX) {
+		return false;
+	}
+
+	/* Rejects inconsistent bytecode storage metadata. */
+	if ((function->bytecode_size == 0) != (function->bytecode == NULL))
+		return false;
+
+	/* Requires every declared parameter to retain its source name. */
+	for (i = 0; i < function->param_count; i++) {
+		/* Rejects a missing parameter name. */
+		if (function->param_name[i] == NULL)
+			return false;
+	}
+
+	/* Rejects an initializer that expects arguments. */
+	if (strncmp(function->func_name, "$init.", 6) == 0 &&
+	    function->param_count != 0) {
+		return false;
+	}
+
+	/* Reports valid runtime metadata. */
+	return true;
+}
+
+/* Set the current error file without truncation ambiguity. */
+static void
+rt_set_error_file(
+	struct rt_env *env,
+	const char *file_name)
+{
+	/* Copies and terminates the current error file name. */
+	strncpy(env->file_name, file_name, sizeof(env->file_name) - 1);
+	env->file_name[sizeof(env->file_name) - 1] = '\0';
+}
+
+/* Register a function from LIR. */
+static bool
+rt_register_lir(
+	struct rt_env *env,
+	const struct lir_func *lir)
+{
+	struct rt_func *func;
+	struct rt_value global;
+	uint32_t i;
+
+	/* Allocates the runtime function. */
+	func = noct_calloc(1, sizeof(*func));
+	if (func == NULL) {
+		rt_out_of_memory(env);
+		return false;
+	}
+
+#if defined(NOCT_USE_OPTIMIZER)
+	/* Copies the optimizer-owned fast function metadata. */
+	func->is_fast = lir->is_fast;
+	func->fast_info = fast_info_clone(lir->fast_info);
+	if (lir->fast_info != NULL && func->fast_info == NULL) {
+		rt_out_of_memory(env);
+		rt_free_func(env, func);
+		return false;
+	}
+#endif
+
+	/* Copies the function name. */
+	func->name = noct_strdup(lir->func_name);
+	if (func->name == NULL) {
+		rt_out_of_memory(env);
+		rt_free_func(env, func);
+		return false;
+	}
+
+	/* Copies the parameter count. */
+	func->param_count = lir->param_count;
+
+#if defined(NOCT_USE_OPTIMIZER)
+	/* Initializes every parameter contract slot. */
+	for (i = 0; i < NOCT_ARG_MAX; i++) {
+		func->param_type[i] = -1;
+		func->param_packed_type[i] = -1;
+		func->param_restricted[i] = false;
+	}
+
+	/* Copies the declared parameter contracts. */
+	for (i = 0; i < lir->param_count; i++) {
+		func->param_type[i] = lir->param_type[i];
+		func->param_packed_type[i] = lir->param_packed_type[i];
+		func->param_restricted[i] = lir->param_restricted[i];
+	}
+
+	/* Copies the declared return contract. */
+	func->return_type = lir->return_type;
+	func->return_packed_type = lir->return_packed_type;
+	func->return_type_checked = lir->return_type_checked;
+#endif
+
+	/* Copies every parameter name. */
+	for (i = 0; i < lir->param_count; i++) {
+		func->param_name[i] = noct_strdup(lir->param_name[i]);
+		if (func->param_name[i] == NULL) {
+			rt_out_of_memory(env);
+			rt_free_func(env, func);
+			return false;
+		}
+	}
+
+	/* Allocates bytecode storage when the function has a body. */
+	func->bytecode_size = lir->bytecode_size;
+	if (func->bytecode_size != 0) {
+		func->bytecode = noct_malloc((size_t)lir->bytecode_size);
+		if (func->bytecode == NULL) {
+			rt_out_of_memory(env);
+			rt_free_func(env, func);
+			return false;
+		}
+
+		/* Copies the bytecode body. */
+		memcpy(func->bytecode, lir->bytecode, (size_t)lir->bytecode_size);
+	}
+
+	/* Copies the execution metadata. */
+	func->tmpvar_size = lir->tmpvar_size;
+#if defined(NOCT_USE_OPTIMIZER)
+	func->has_vector_ops = lir->has_vector_ops;
+	func->has_fma_ops = lir->has_fma_ops;
+#endif
+
+	/* Copies the source file name. */
+	func->file_name = noct_strdup(lir->file_name);
+	if (func->file_name == NULL) {
+		rt_out_of_memory(env);
+		rt_free_func(env, func);
+		return false;
+	}
+
+	/* Publishes the function as a global value. */
+	global.type = NOCT_VALUE_FUNC;
+	global.val.func = func;
+	if (!rt_set_global(env, func->name, &global)) {
+		rt_free_func(env, func);
+		return false;
+	}
+
+#if defined(NOCT_USE_JIT)
+	/* Generates optional native code for the function. */
+	if (env->vm->config.jit_enable) {
+		if (!jit_build(env, func)) {
+			/* Restores interpreter fallback after failed JIT generation. */
+			rt_report_jit_result(func, false, env->error_message);
+			func->jit_code = NULL;
+			func->call_count = -1;
+			env->error_message[0] = '\0';
+			env->line = 0;
+		} else {
+			/* Marks the generated code for unit-level publication. */
+			rt_report_jit_result(func, true, NULL);
+			env->vm->is_jit_dirty = true;
+		}
+	}
+#endif
+
+	/* Links the function into the VM. */
+	func->next = env->vm->func_list;
+	env->vm->func_list = func;
+
+	/* Reports a successful LIR registration. */
+	return true;
+}
+
+/* Releases every detached LIR function and its pointer array. */
+static void
+rt_cleanup_lir_array(
+	uint32_t function_count,
+	struct lir_func *function[])
+{
+	uint32_t i;
+
+	/* Releases every constructed LIR function. */
+	for (i = 0; i < function_count; i++) {
+		/* Skips an unconstructed array entry. */
+		if (function[i] == NULL)
+			continue;
+
+		lir_cleanup(function[i]);
+	}
+
+	/* Releases the pointer array. */
+	noct_free(function);
+}
+
+#if defined(NOCT_USE_JIT)
+/* Reports one JIT compilation result when diagnostics are enabled. */
+static void
+rt_report_jit_result(
+	struct rt_func *func,
+	bool success,
+	const char *reason)
+{
+	const char *debug;
+
+	/* Checks whether JIT diagnostics are enabled. */
+	debug = getenv("NOCT_JIT_DEBUG");
+	if (debug == NULL)
+		return;
+
+	/* Reports the compilation result. */
+	fprintf(
+		stderr,
+		"noct-jit: %s: %s",
+		func->name,
+		success ? "compiled" : "fallback");
+
+	/* Appends an available fallback reason. */
+	if (!success &&
+	    reason != NULL &&
+	    reason[0] != '\0') {
+		fprintf(stderr, " reason=%s", reason);
+	}
+
+	/* Terminates the diagnostic line. */
+	fputc('\n', stderr);
+}
+
+/* Reports one JIT lifecycle result when diagnostics are enabled. */
+static void
+rt_report_jit_lifecycle(
+	const char *operation,
+	bool success)
+{
+	const char *debug;
+
+	/* Checks whether JIT diagnostics are enabled. */
+	debug = getenv("NOCT_JIT_DEBUG");
+	if (debug == NULL)
+		return;
+
+	/* Reports the lifecycle result. */
+	fprintf(
+		stderr,
+		"noct-jit-lifecycle: %s status=%s\n",
+		operation,
+		success ? "ok" : "failed");
+}
+
+/* Invalidates every published JIT entry. */
+static void
+rt_invalidate_jit_entries(
+	struct rt_vm *vm)
+{
+	struct rt_func *func;
+
+	/* Invalidates every function in the VM. */
+	for (func = vm->func_list; func != NULL; func = func->next) {
+		func->jit_code = NULL;
+		func->call_count = -1;
+	}
+}
+
+/* Commits all pending JIT code. */
+static bool
+rt_commit_jit(
+	struct rt_env *env)
+{
+	bool commit_succeeded;
+
+	/* Skips a VM without pending JIT code. */
+	if (!env->vm->config.jit_enable || !env->vm->is_jit_dirty)
+		return true;
+
+	/* Commits the pending JIT code. */
+	commit_succeeded = jit_commit(env);
+	if (!commit_succeeded) {
+		/* Discards unusable JIT state after a failed commit. */
+		rt_invalidate_jit_entries(env->vm);
+		(void)jit_free(env);
+		env->vm->is_jit_dirty = false;
+
+		/* Reports the failed JIT publication. */
+		rt_error(env, N_TR("JIT memory protection failed."));
+		rt_report_jit_lifecycle("publish", false);
+		return false;
+	}
+
+	/* Clears and reports the committed JIT state. */
+	env->vm->is_jit_dirty = false;
+	rt_report_jit_lifecycle("publish", true);
+
+	/* Reports a successful JIT commit. */
+	return true;
+}
+#endif

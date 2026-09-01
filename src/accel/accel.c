@@ -16,8 +16,6 @@
 
 #include <stdlib.h>
 
-static void accel_vm_finalizer(void *userdata);
-
 /*
  * Initializes the selected accelerator for one VM.
  *
@@ -69,24 +67,25 @@ accel_initialize(
 		accel_context_destroy(context);
 		return false;
 	}
-	if (!rt_register_vm_finalizer(env, accel_vm_finalizer, context)) {
-		accel_context_destroy(context);
-		return false;
-	}
 
 	accel_context_attach(context);
 
 	return true;
 }
 
-/* Detach and destroy one VM-owned accelerator context. */
-static void
-accel_vm_finalizer(
-	void *userdata)
+/*
+ * Detaches and destroys the CLI-owned accelerator before VM destruction.
+ */
+void
+accel_finalize(
+	NoctVM *vm)
 {
 	struct accel_context *context;
 
-	context = userdata;
+	if (vm == NULL)
+		return;
+
+	context = vm->accel_optimize_userdata;
 	if (context == NULL)
 		return;
 

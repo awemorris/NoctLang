@@ -14,12 +14,15 @@
 
 #include <noct/c89compat.h>
 
+struct rt_env;
+
 enum cli_module_artifact_kind {
 	CLI_MODULE_SOURCE,
 	CLI_MODULE_BYTECODE
 };
 
 enum cli_module_graph_mode {
+	CLI_MODULE_GRAPH_RUN,
 	CLI_MODULE_GRAPH_COMPILE,
 	CLI_MODULE_GRAPH_APP
 };
@@ -44,7 +47,14 @@ char *cli_module_resolve(const char *module_name);
 bool cli_module_build_graph(
 	enum cli_module_graph_mode mode,
 	uint32_t root_count,
-	const char *const root_path[]);
+	const char *const root_path[],
+	char *(*require_resolver)(const char *module_name));
+bool cli_module_build_input_graph(
+	const char *root_path,
+	const uint8_t *data,
+	size_t size,
+	char *(*require_resolver)(const char *module_name));
+bool cli_module_register_graph(struct rt_env *env);
 uint32_t cli_module_get_artifact_count(void);
 const struct cli_module_artifact *cli_module_get_artifact(
 	uint32_t index);

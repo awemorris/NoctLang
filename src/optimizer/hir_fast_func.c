@@ -11,6 +11,7 @@
 
 #include "hir_fast_func.h"
 
+#include "fast.h"
 #include "hir_opt.h"
 #include "hir_opt_analysis.h"
 
@@ -487,7 +488,7 @@ fast_check_rank_one_subscript(
 	if (symbol == NULL)
 		return true;
 
-	signature = ctx->func->val.func.fast_signature;
+	signature = fast_info_signature(ctx->func->val.func.fast_info);
 	if (signature == NULL)
 		return true;
 	if (!signature->valid)

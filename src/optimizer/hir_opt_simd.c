@@ -91,7 +91,7 @@ struct simd_off {
 	bool u_is_const;
 	int u_const;
 	const char *u_name;
-	char sb_name[32];	/* adjusted-base local ("" = use base) */
+	char sb_name[64];	/* adjusted-base local ("" = use base) */
 };
 
 struct simd_base {
@@ -354,7 +354,7 @@ hir_opt_simd_func(
 			fprintf(
 				stderr,
 				"SIMD: %s:%d: vectorized (%s)\n",
-				hir_file_name,
+				hir_get_file_name(),
 				loops[i]->line,
 				ctx->is_float ? "f32x4" : "i32x4");
 		}

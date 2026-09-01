@@ -12,10 +12,7 @@
 #ifndef NOCT_BCBACK_PRIVATE_H
 #define NOCT_BCBACK_PRIVATE_H
 
-#include "bytecode_file.h"
 #include "lir.h"
-
-#include <stdio.h>
 
 struct bcback_module {
 	char *source;
@@ -33,12 +30,6 @@ void bcback_cleanup_module(
 	struct bcback_module *module);
 bool bcback_serialize_module(
 	const struct bcback_module *module,
-	const char *temporary_base,
-	uint8_t **data,
-	uint32_t *size);
-bool bcback_serialize_inspected_module(
-	const struct bytecode_file_module *module,
-	const char *logical_source,
 	const char *temporary_base,
 	uint8_t **data,
 	uint32_t *size);

@@ -239,7 +239,8 @@ noct_register_source(
 	const char *source_text);
 
 /*
- * Registers functions from compiled bytecode data.
+ * Registers host-inspected runtime bytecode descriptors.
+ * Serialized bytecode files are a host-side contract.
  */
 NOCT_DLL
 bool
@@ -260,26 +261,6 @@ noct_register_cfunc(
 	const char *param_name[],
 	bool (*cfunc)(NoctEnv *env),
 	NoctFunc **ret_func);
-
-/* Registers a native function carrying VM-local user data. */
-NOCT_DLL
-bool
-noct_register_cfunc_with_data(
-	NoctEnv *env,
-	const char *name,
-	size_t param_count,
-	const char *param_name[],
-	bool (*cfunc)(NoctEnv *env, void *userdata),
-	void *userdata,
-	NoctFunc **ret_func);
-
-/* Registers a native-only cleanup callback for normal VM destruction. */
-NOCT_DLL
-bool
-noct_register_vm_finalizer(
-	NoctEnv *env,
-	void (*finalizer)(void *userdata),
-	void *userdata);
 
 /*
  * Enters the VM in the current thread and invokes a function by name.

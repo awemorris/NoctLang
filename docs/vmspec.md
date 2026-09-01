@@ -788,8 +788,8 @@ instructions.  Bytecode and application writers do not run this pass, so
 | `LOADARRAY`         | 0x19   | Load value from array or dictionary       |
 | `STOREARRAY`        | 0x1A   | Store value to array or dictionary        |
 | `LEN`               | 0x1B   | Get length of string/array/dictionary     |
-| `GETDICTKEYBYINDEX` | 0x1C | Get dictionary key at index          |
-| `GETDICTVALBYINDEX` | 0x1D | Get dictionary value at index        |
+| `GETDICTKEYBYINDEX` | 0x1C   | Get dictionary key at index               |
+| `GETDICTVALBYINDEX` | 0x1D   | Get dictionary value at index             |
 | `STOREDOT`          | 0x1E   | Store dictionary value by field name      |
 | `LOADDOT`           | 0x1F   | Load dictionary value by field name       |
 | `STORESYMBOL`       | 0x20   | Store value in global symbol              |

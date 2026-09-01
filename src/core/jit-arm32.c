@@ -35,8 +35,8 @@
 #define PATCH_BNE               2
 
 /* Forward declaration */
-static bool jit_visit_bytecode(struct jit_context *ctx);
-static bool jit_patch_branch(struct jit_context *ctx, int patch_index);
+static bool jit_visit_bytecode(struct rt_jit_context *ctx);
+static bool jit_patch_branch(struct rt_jit_context *ctx, int patch_index);
 static uint32_t jit_detect_simd_caps(void);
 
 /*
@@ -47,7 +47,7 @@ jit_build(
           struct rt_env *env,
           struct rt_func *func)
 {
-	return jit_build_standard(env,
+	return rt_jit_build_standard(env,
                                   func,
                                   jit_detect_simd_caps(),
                                   "arm32",
@@ -62,7 +62,7 @@ bool
 jit_free(
          struct rt_env *env)
 {
-	return jit_slab_free_all(env);
+	return rt_jit_slab_free_all(env);
 }
 
 /*
@@ -72,7 +72,7 @@ bool
 jit_commit(
         struct rt_env *env)
 {
-	return jit_slab_commit_all(env);
+	return rt_jit_slab_commit_all(env);
 }
 
 /*
@@ -116,7 +116,7 @@ jit_commit(
 /* Put a instruction word. */
 static INLINE bool
 jit_put_word(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         uint32_t word)
 {
         if (ctx->code >= ctx->code_end) {
@@ -135,7 +135,7 @@ jit_put_word(
 #define MOV(rd, rs)             if (!jit_put_mov(ctx, rd, rs)) return false
 static INLINE bool
 jit_put_mov(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         int rs)
 {
@@ -151,7 +151,7 @@ jit_put_mov(
 #define MOVW(rd, imm)           if (!jit_put_movw(ctx, rd, imm)) return false
 static INLINE bool
 jit_put_movw(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         uint32_t imm)
 {
@@ -168,7 +168,7 @@ jit_put_movw(
 #define MOVT(rd, imm)           if (!jit_put_movt(ctx, rd, imm)) return false
 static INLINE bool
 jit_put_movt(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         uint32_t imm)
 {
@@ -185,7 +185,7 @@ jit_put_movt(
 #define ADD(rd, ra, rb)         if (!jit_put_add(ctx, rd, ra, rb)) return false
 static INLINE bool
 jit_put_add(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         int ra,
         int rb)
@@ -203,7 +203,7 @@ jit_put_add(
 #define ADD_IMM(rd, rs, imm)            if (!jit_put_add_imm(ctx, rd, rs, imm)) return false
 static INLINE bool
 jit_put_add_imm(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         int rs,
         uint32_t imm)
@@ -221,7 +221,7 @@ jit_put_add_imm(
 #define SUB_IMM(rd, rs, imm)            if (!jit_put_sub_imm(ctx, rd, rs, imm)) return false
 static INLINE bool
 jit_put_sub_imm(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         int rs,
         uint32_t imm)
@@ -239,7 +239,7 @@ jit_put_sub_imm(
 #define LSL_3(rd, rs)           if (!jit_put_lsl_3(ctx, rd, rs)) return false
 static INLINE bool
 jit_put_lsl_3(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         int rs)
 {
@@ -255,7 +255,7 @@ jit_put_lsl_3(
 #define LDR(rd, rs, imm)        if (!jit_put_ldr(ctx, rd, rs, imm)) return false
 static INLINE bool
 jit_put_ldr(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         int rs,
         uint32_t imm)
@@ -273,7 +273,7 @@ jit_put_ldr(
 #define STR(rs, rd, imm)        if (!jit_put_str(ctx, rs, rd, imm)) return false
 static INLINE bool
 jit_put_str(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rs,
         int rd,
         uint32_t imm)
@@ -291,7 +291,7 @@ jit_put_str(
 #define CMP_IMM(rs, imm)        if (!jit_put_cmp_imm(ctx, rs, imm)) return false
 static INLINE bool
 jit_put_cmp_imm(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rs,
         uint32_t imm)
 {
@@ -307,7 +307,7 @@ jit_put_cmp_imm(
 #define CMP_R0_R1()             if (!jit_put_cmp_r0_r1(ctx)) return false
 static INLINE bool
 jit_put_cmp_r0_r1(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         if (!jit_put_word(ctx, 0xe1500001))
                 return false;
@@ -318,7 +318,7 @@ jit_put_cmp_r0_r1(
 #define BAL(imm)        if (!jit_put_bal(ctx, imm)) return false
 static INLINE bool
 jit_put_bal(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         uint32_t imm)
 {
         if (!jit_put_word(ctx,
@@ -332,7 +332,7 @@ jit_put_bal(
 #define BEQ(imm)        if (!jit_put_beq(ctx, imm)) return false
 static INLINE bool
 jit_put_beq(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         uint32_t imm)
 {
         if (!jit_put_word(ctx,
@@ -346,7 +346,7 @@ jit_put_beq(
 #define BNE(imm)        if (!jit_put_bne(ctx, imm)) return false
 static INLINE bool
 jit_put_bne(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         uint32_t imm)
 {
         if (!jit_put_word(ctx,
@@ -360,7 +360,7 @@ jit_put_bne(
 #define BLX(reg)                if (!jit_put_blx(ctx, reg)) return false
 static INLINE bool
 jit_put_blx(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int reg)
 {
         if (!jit_put_word(ctx,
@@ -374,7 +374,7 @@ jit_put_blx(
 #define RET()                   if (!jit_put_ret(ctx)) return false
 static INLINE bool
 jit_put_ret(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         if (!jit_put_word(ctx,
                           0xe12fff1e))          /* bx lr */
@@ -386,7 +386,7 @@ jit_put_ret(
 #define PUSH(r)                 if (!jit_put_push(ctx, r)) return false
 static INLINE bool
 jit_put_push(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int r)
 {
         if (!jit_put_word(ctx,
@@ -400,7 +400,7 @@ jit_put_push(
 #define POP(r)                  if (!jit_put_pop2(ctx, r)) return false
 static INLINE bool
 jit_put_pop2(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int r)
 {
         if (!jit_put_word(ctx,
@@ -414,7 +414,7 @@ jit_put_pop2(
 #define LDRB_R(rt, rn)          if (!jit_put_ldrb_r(ctx, rt, rn)) return false
 static INLINE bool
 jit_put_ldrb_r(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rt,
         int rn)
 {
@@ -430,7 +430,7 @@ jit_put_ldrb_r(
 #define LDRB0(rt, rn)           if (!jit_put_ldrb0(ctx, rt, rn)) return false
 static INLINE bool
 jit_put_ldrb0(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rt,
         int rn)
 {
@@ -446,7 +446,7 @@ jit_put_ldrb0(
 #define LDRSB0(rt, rn)          if (!jit_put_ldrsb0(ctx, rt, rn)) return false
 static INLINE bool
 jit_put_ldrsb0(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rt,
         int rn)
 {
@@ -462,7 +462,7 @@ jit_put_ldrsb0(
 #define LDRH0(rt, rn)           if (!jit_put_ldrh0(ctx, rt, rn)) return false
 static INLINE bool
 jit_put_ldrh0(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rt,
         int rn)
 {
@@ -478,7 +478,7 @@ jit_put_ldrh0(
 #define LDRSH0(rt, rn)          if (!jit_put_ldrsh0(ctx, rt, rn)) return false
 static INLINE bool
 jit_put_ldrsh0(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rt,
         int rn)
 {
@@ -494,7 +494,7 @@ jit_put_ldrsh0(
 #define STRB0(rt, rn)           if (!jit_put_strb0(ctx, rt, rn)) return false
 static INLINE bool
 jit_put_strb0(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rt,
         int rn)
 {
@@ -510,7 +510,7 @@ jit_put_strb0(
 #define STRH0(rt, rn)           if (!jit_put_strh0(ctx, rt, rn)) return false
 static INLINE bool
 jit_put_strh0(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rt,
         int rn)
 {
@@ -526,7 +526,7 @@ jit_put_strh0(
 #define LSL_IMM(rd, rs, sh)     if (!jit_put_lsl_imm(ctx, rd, rs, sh)) return false
 static INLINE bool
 jit_put_lsl_imm(
-        struct jit_context *ctx,
+        struct rt_jit_context *ctx,
         int rd,
         int rs,
         int sh)
@@ -649,7 +649,7 @@ neon_q2_imm(uint32_t base, int qd, int qm, uint32_t imm)
 /* Visit a OP_LINEINFO instruction. */
 static INLINE bool
 jit_visit_lineinfo_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         uint32_t line;
 
@@ -671,7 +671,7 @@ jit_visit_lineinfo_op(
 /* Visit a OP_ASSIGN instruction. */
 static INLINE bool
 jit_visit_assign_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -712,7 +712,7 @@ jit_visit_assign_op(
 /* Visit a OP_ICONST instruction. */
 static INLINE bool
 jit_visit_iconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint32_t val;
@@ -747,7 +747,7 @@ jit_visit_iconst_op(
 /* Visit a OP_LICONST instruction. */
 static INLINE bool
 jit_visit_liconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint64_t val;
@@ -785,7 +785,7 @@ jit_visit_liconst_op(
 /* Visit a OP_FCONST instruction. */
 static INLINE bool
 jit_visit_fconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint32_t val;
@@ -820,7 +820,7 @@ jit_visit_fconst_op(
 /* Visit a OP_LFCONST instruction. */
 static INLINE bool
 jit_visit_lfconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         uint64_t val;
@@ -858,7 +858,7 @@ jit_visit_lfconst_op(
 /* Visit a OP_SCONST instruction. */
 static INLINE bool
 jit_visit_sconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         const char *val;
@@ -921,7 +921,7 @@ jit_visit_sconst_op(
 /* Visit a OP_ACONST instruction. */
 static INLINE bool
 jit_visit_aconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
 
@@ -966,7 +966,7 @@ jit_visit_aconst_op(
 /* Visit a OP_DCONST instruction. */
 static INLINE bool
 jit_visit_dconst_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
 
@@ -1011,7 +1011,7 @@ jit_visit_dconst_op(
 /* Visit a OP_INC instruction. */
 static INLINE bool
 jit_visit_inc_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int step;
@@ -1039,8 +1039,9 @@ jit_visit_inc_op(
         return true;
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 static INLINE bool
-jit_visit_vindex_hint_op(struct jit_context *ctx)
+jit_visit_vindex_hint_op(struct rt_jit_context *ctx)
 {
 	int a, b, c, required_vregs, lanes, flags;
 
@@ -1063,7 +1064,7 @@ jit_visit_vindex_hint_op(struct jit_context *ctx)
 	return true;
 }
 
-static INLINE bool jit_visit_vori32x4i_op(struct jit_context *ctx)
+static INLINE bool jit_visit_vori32x4i_op(struct rt_jit_context *ctx)
 {
 	int a,b,c,d;
 
@@ -1081,7 +1082,7 @@ static INLINE bool jit_visit_vori32x4i_op(struct jit_context *ctx)
 	return false;
 }
 
-static INLINE bool jit_visit_vfmaf32x4_op(struct jit_context *ctx)
+static INLINE bool jit_visit_vfmaf32x4_op(struct rt_jit_context *ctx)
 {
 	int a,b,c,d;
 
@@ -1095,12 +1096,13 @@ static INLINE bool jit_visit_vfmaf32x4_op(struct jit_context *ctx)
 	CONSUME_IMM8(c);
         CONSUME_IMM8(d);
 
-        /* no native Armv7 FMA contract; use the interpreter */
+	/* no native Armv7 FMA contract; use the interpreter */
 	return false;
 }
+#endif
 
 static INLINE bool
-jit_visit_subjnz_op(struct jit_context *ctx)
+jit_visit_subjnz_op(struct rt_jit_context *ctx)
 {
 	int value, decrement;
 	uint32_t target_lpc;
@@ -1140,7 +1142,7 @@ jit_visit_subjnz_op(struct jit_context *ctx)
 /* Visit a OP_ADD instruction. */
 static INLINE bool
 jit_visit_add_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1159,7 +1161,7 @@ jit_visit_add_op(
 /* Visit a OP_SUB instruction. */
 static INLINE bool
 jit_visit_sub_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1178,7 +1180,7 @@ jit_visit_sub_op(
 /* Visit a OP_MUL instruction. */
 static INLINE bool
 jit_visit_mul_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1197,7 +1199,7 @@ jit_visit_mul_op(
 /* Visit a OP_DIV instruction. */
 static INLINE bool
 jit_visit_div_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1216,7 +1218,7 @@ jit_visit_div_op(
 /* Visit a OP_MOD instruction. */
 static INLINE bool
 jit_visit_mod_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1235,7 +1237,7 @@ jit_visit_mod_op(
 /* Visit a OP_AND instruction. */
 static INLINE bool
 jit_visit_and_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1254,7 +1256,7 @@ jit_visit_and_op(
 /* Visit a OP_OR instruction. */
 static INLINE bool
 jit_visit_or_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1273,7 +1275,7 @@ jit_visit_or_op(
 /* Visit a OP_XOR instruction. */
 static INLINE bool
 jit_visit_xor_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1292,7 +1294,7 @@ jit_visit_xor_op(
 /* Visit a OP_SHL instruction. */
 static INLINE bool
 jit_visit_shl_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1311,7 +1313,7 @@ jit_visit_shl_op(
 /* Visit a OP_SHR instruction. */
 static INLINE bool
 jit_visit_shr_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1330,7 +1332,7 @@ jit_visit_shr_op(
 /* Visit a OP_NEG instruction. */
 static INLINE bool
 jit_visit_neg_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -1347,7 +1349,7 @@ jit_visit_neg_op(
 /* Visit a OP_NOT instruction. */
 static INLINE bool
 jit_visit_not_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -1364,7 +1366,7 @@ jit_visit_not_op(
 /* Visit a OP_LT instruction. */
 static INLINE bool
 jit_visit_lt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1383,7 +1385,7 @@ jit_visit_lt_op(
 /* Visit a OP_LTE instruction. */
 static INLINE bool
 jit_visit_lte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1402,7 +1404,7 @@ jit_visit_lte_op(
 /* Visit a OP_EQ instruction. */
 static INLINE bool
 jit_visit_eq_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1421,7 +1423,7 @@ jit_visit_eq_op(
 /* Visit a OP_NEQ instruction. */
 static INLINE bool
 jit_visit_neq_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1440,7 +1442,7 @@ jit_visit_neq_op(
 /* Visit a OP_GTE instruction. */
 static INLINE bool
 jit_visit_gte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1459,7 +1461,7 @@ jit_visit_gte_op(
 /* Visit a OP_GT instruction. */
 static INLINE bool
 jit_visit_gt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1478,7 +1480,7 @@ jit_visit_gt_op(
 /* Visit a OP_EQI instruction. */
 static INLINE bool
 jit_visit_eqi_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1516,7 +1518,7 @@ jit_visit_eqi_op(
 /* Visit a OP_LOADARRAY instruction. */
 static INLINE bool
 jit_visit_loadarray_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1535,7 +1537,7 @@ jit_visit_loadarray_op(
 /* Visit a OP_STOREARRAY instruction. */
 static INLINE bool
 jit_visit_storearray_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1554,7 +1556,7 @@ jit_visit_storearray_op(
 /* Visit a OP_LEN instruction. */
 static INLINE bool
 jit_visit_len_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -1571,7 +1573,7 @@ jit_visit_len_op(
 /* Visit a OP_GETDICTKEYBYINDEX instruction. */
 static INLINE bool
 jit_visit_getdictkeybyindex_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1590,7 +1592,7 @@ jit_visit_getdictkeybyindex_op(
 /* Visit a OP_GETDICTVALBYINDEX instruction. */
 static INLINE bool
 jit_visit_getdictvalbyindex_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -1609,7 +1611,7 @@ jit_visit_getdictvalbyindex_op(
 /* Visit a OP_LOADSYMBOL instruction. */
 static INLINE bool
 jit_visit_loadsymbol_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         const char *src_s;
@@ -1670,7 +1672,7 @@ jit_visit_loadsymbol_op(
 /* Visit a OP_STORESYMBOL instruction. */
 static INLINE bool
 jit_visit_storesymbol_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         const char *dst_s;
         uint32_t len, hash, dst;
@@ -1731,7 +1733,7 @@ jit_visit_storesymbol_op(
 /* Visit a OP_LOADDOT instruction. */
 static INLINE bool
 jit_visit_loaddot_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int dict;
@@ -1798,7 +1800,7 @@ jit_visit_loaddot_op(
 /* Visit a OP_STOREDOT instruction. */
 static INLINE bool
 jit_visit_storedot_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dict;
         const char *field_s;
@@ -1865,7 +1867,7 @@ jit_visit_storedot_op(
 /* Visit a OP_CALL instruction. */
 static inline bool
 jit_visit_call_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int func;
@@ -1946,7 +1948,7 @@ jit_visit_call_op(
 /* Visit a OP_THISCALL instruction. */
 static inline bool
 jit_visit_thiscall_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int obj;
@@ -2044,7 +2046,7 @@ jit_visit_thiscall_op(
 /* Visit a OP_JMP instruction. */
 static inline bool
 jit_visit_jmp_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         uint32_t target_lpc;
 
@@ -2071,7 +2073,7 @@ jit_visit_jmp_op(
 /* Visit a OP_JMPIFTRUE instruction. */
 static inline bool
 jit_visit_jmpiftrue_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int src;
         uint32_t target_lpc;
@@ -2115,7 +2117,7 @@ jit_visit_jmpiftrue_op(
 /* Visit a OP_JMPIFFALSE instruction. */
 static inline bool
 jit_visit_jmpiffalse_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int src;
         uint32_t target_lpc;
@@ -2159,7 +2161,7 @@ jit_visit_jmpiffalse_op(
 /* Visit a OP_JMPIFEQ instruction. */
 static inline bool
 jit_visit_jmpifeq_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int src;
         uint32_t target_lpc;
@@ -2188,7 +2190,7 @@ jit_visit_jmpifeq_op(
 /* Visit a OP_SAFEPOINT instruction. */
 static INLINE bool
 jit_visit_safepoint_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         /* if (!ex_safepoint_helper(env)) return false; */
         ASM {
@@ -2224,7 +2226,7 @@ jit_visit_safepoint_op(
 /* Visit a OP_PBASE instruction. */
 static INLINE bool
 jit_visit_pbase_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -2265,7 +2267,7 @@ jit_visit_pbase_op(
 /* Visit a OP_PLEN instruction. */
 static INLINE bool
 jit_visit_plen_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -2282,7 +2284,7 @@ jit_visit_plen_op(
 /* Visit a OP_PCHECK instruction. */
 static INLINE bool
 jit_visit_pcheck_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2301,7 +2303,7 @@ jit_visit_pcheck_op(
 /* Visit a OP_TYPEIS instruction. */
 static INLINE bool
 jit_visit_typeis_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2320,7 +2322,7 @@ jit_visit_typeis_op(
 /* Visit a OP_PLOAD8U instruction. */
 static INLINE bool
 jit_visit_pload8u_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
@@ -2365,7 +2367,7 @@ jit_visit_pload8u_op(
 /* Visit a OP_PSTORE8 instruction. */
 static INLINE bool
 jit_visit_pstore8_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base;
         int ofs;
@@ -2401,7 +2403,7 @@ jit_visit_pstore8_op(
 /* Visit a OP_CHECKTYPE instruction. */
 static INLINE bool
 jit_visit_checktype_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src;
@@ -2418,7 +2420,7 @@ jit_visit_checktype_op(
 /* Visit a OP_PLOAD8S instruction. */
 static INLINE bool
 jit_visit_pload8s_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
@@ -2463,7 +2465,7 @@ jit_visit_pload8s_op(
 /* Visit a OP_PLOAD16U instruction. */
 static INLINE bool
 jit_visit_pload16u_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
@@ -2509,7 +2511,7 @@ jit_visit_pload16u_op(
 /* Visit a OP_PLOAD16S instruction. */
 static INLINE bool
 jit_visit_pload16s_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
@@ -2555,7 +2557,7 @@ jit_visit_pload16s_op(
 /* Visit a OP_PLOAD32 instruction. */
 static INLINE bool
 jit_visit_pload32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int base;
@@ -2601,7 +2603,7 @@ jit_visit_pload32_op(
 /* Visit a OP_PLOAD64 instruction. */
 static INLINE bool
 jit_visit_pload64_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2620,7 +2622,7 @@ jit_visit_pload64_op(
 /* Visit a OP_PSTORE16 instruction. */
 static INLINE bool
 jit_visit_pstore16_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base;
         int ofs;
@@ -2657,7 +2659,7 @@ jit_visit_pstore16_op(
 /* Visit a OP_PSTORE32 instruction. */
 static INLINE bool
 jit_visit_pstore32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base;
         int ofs;
@@ -2694,7 +2696,7 @@ jit_visit_pstore32_op(
 /* Visit a OP_PSTORE64 instruction. */
 static INLINE bool
 jit_visit_pstore64_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2713,7 +2715,7 @@ jit_visit_pstore64_op(
 /* Visit a OP_PLOADF32 instruction. */
 static INLINE bool
 jit_visit_ploadf32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2731,7 +2733,7 @@ jit_visit_ploadf32_op(
 /* Visit a OP_PSTOREF32 instruction. */
 static INLINE bool
 jit_visit_pstoref32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2749,7 +2751,7 @@ jit_visit_pstoref32_op(
 /* Visit an OP_IADD instruction. */
 static INLINE bool
 jit_visit_iadd_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2767,7 +2769,7 @@ jit_visit_iadd_op(
 /* Visit an OP_ISUB instruction. */
 static INLINE bool
 jit_visit_isub_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2785,7 +2787,7 @@ jit_visit_isub_op(
 /* Visit an OP_IMUL instruction. */
 static INLINE bool
 jit_visit_imul_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2803,7 +2805,7 @@ jit_visit_imul_op(
 /* Visit an OP_IDIV instruction. */
 static INLINE bool
 jit_visit_idiv_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2821,7 +2823,7 @@ jit_visit_idiv_op(
 /* Visit an OP_IMOD instruction. */
 static INLINE bool
 jit_visit_imod_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2839,7 +2841,7 @@ jit_visit_imod_op(
 /* Visit an OP_IAND instruction. */
 static INLINE bool
 jit_visit_iand_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2857,7 +2859,7 @@ jit_visit_iand_op(
 /* Visit an OP_IOR instruction. */
 static INLINE bool
 jit_visit_ior_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2875,7 +2877,7 @@ jit_visit_ior_op(
 /* Visit an OP_IXOR instruction. */
 static INLINE bool
 jit_visit_ixor_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2893,7 +2895,7 @@ jit_visit_ixor_op(
 /* Visit an OP_ISHL instruction. */
 static INLINE bool
 jit_visit_ishl_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2911,7 +2913,7 @@ jit_visit_ishl_op(
 /* Visit an OP_ISHR instruction. */
 static INLINE bool
 jit_visit_ishr_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2929,7 +2931,7 @@ jit_visit_ishr_op(
 /* Visit an OP_ILT instruction. */
 static INLINE bool
 jit_visit_ilt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2947,7 +2949,7 @@ jit_visit_ilt_op(
 /* Visit an OP_ILTE instruction. */
 static INLINE bool
 jit_visit_ilte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2965,7 +2967,7 @@ jit_visit_ilte_op(
 /* Visit an OP_IGT instruction. */
 static INLINE bool
 jit_visit_igt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -2983,7 +2985,7 @@ jit_visit_igt_op(
 /* Visit an OP_IGTE instruction. */
 static INLINE bool
 jit_visit_igte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3001,7 +3003,7 @@ jit_visit_igte_op(
 /* Visit an OP_FADD instruction. */
 static INLINE bool
 jit_visit_fadd_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3019,7 +3021,7 @@ jit_visit_fadd_op(
 /* Visit an OP_FSUB instruction. */
 static INLINE bool
 jit_visit_fsub_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3037,7 +3039,7 @@ jit_visit_fsub_op(
 /* Visit an OP_FMUL instruction. */
 static INLINE bool
 jit_visit_fmul_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3055,7 +3057,7 @@ jit_visit_fmul_op(
 /* Visit an OP_FDIV instruction. */
 static INLINE bool
 jit_visit_fdiv_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3073,7 +3075,7 @@ jit_visit_fdiv_op(
 /* Visit an OP_FLT instruction. */
 static INLINE bool
 jit_visit_flt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3091,7 +3093,7 @@ jit_visit_flt_op(
 /* Visit an OP_FLTE instruction. */
 static INLINE bool
 jit_visit_flte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3109,7 +3111,7 @@ jit_visit_flte_op(
 /* Visit an OP_FGT instruction. */
 static INLINE bool
 jit_visit_fgt_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3127,7 +3129,7 @@ jit_visit_fgt_op(
 /* Visit an OP_FGTE instruction. */
 static INLINE bool
 jit_visit_fgte_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3145,7 +3147,7 @@ jit_visit_fgte_op(
 /* Visit an OP_IDIV_CHECKED instruction. */
 static INLINE bool
 jit_visit_idiv_checked_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3163,7 +3165,7 @@ jit_visit_idiv_checked_op(
 /* Visit an OP_IMOD_CHECKED instruction. */
 static INLINE bool
 jit_visit_imod_checked_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst;
         int src1;
@@ -3177,11 +3179,12 @@ jit_visit_imod_checked_op(
         return true;
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 /* Visit vector instructions with NEON or direct ARM/VFP lowering. */
 /* Visit an OP_VLOADI32X4 instruction. */
 static INLINE bool
 jit_visit_vloadi32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int base_tmp;
@@ -3239,7 +3242,7 @@ jit_visit_vloadi32x4_op(
 /* Visit an OP_VSTOREI32X4 instruction. */
 static INLINE bool
 jit_visit_vstorei32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base_tmp;
         int ofs_tmp;
@@ -3296,7 +3299,7 @@ jit_visit_vstorei32x4_op(
 /* Visit an OP_VSPLATI32 instruction. */
 static INLINE bool
 jit_visit_vsplati32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int src_tmp;
@@ -3334,7 +3337,7 @@ jit_visit_vsplati32_op(
 /* Visit an OP_VGETLANEI32 instruction. */
 static INLINE bool
 jit_visit_vgetlanei32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst_tmp;
         int vs;
@@ -3381,7 +3384,7 @@ jit_visit_vgetlanei32_op(
 /* Visit an OP_VMOV128 instruction. */
 static INLINE bool
 jit_visit_vmov128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -3414,7 +3417,7 @@ jit_visit_vmov128_op(
 /* Visit an OP_VADDI32X4 instruction. */
 static INLINE bool
 jit_visit_vaddi32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3449,7 +3452,7 @@ jit_visit_vaddi32x4_op(
 /* Visit an OP_VSUBI32X4 instruction. */
 static INLINE bool
 jit_visit_vsubi32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3485,7 +3488,7 @@ jit_visit_vsubi32x4_op(
 /* Visit an OP_VMULI32X4 instruction. */
 static INLINE bool
 jit_visit_vmuli32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3521,7 +3524,7 @@ jit_visit_vmuli32x4_op(
 /* Visit an OP_VAND128 instruction. */
 static INLINE bool
 jit_visit_vand128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3557,7 +3560,7 @@ jit_visit_vand128_op(
 /* Visit an OP_VOR128 instruction. */
 static INLINE bool
 jit_visit_vor128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3593,7 +3596,7 @@ jit_visit_vor128_op(
 /* Visit an OP_VXOR128 instruction. */
 static INLINE bool
 jit_visit_vxor128_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3629,7 +3632,7 @@ jit_visit_vxor128_op(
 /* Visit an OP_VSHLI32X4 instruction. */
 static INLINE bool
 jit_visit_vshli32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -3668,7 +3671,7 @@ jit_visit_vshli32x4_op(
 /* Visit an OP_VSHRI32X4 instruction. */
 static INLINE bool
 jit_visit_vshri32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -3707,7 +3710,7 @@ jit_visit_vshri32x4_op(
 /* Visit an OP_VLOADF32X4 instruction. */
 static INLINE bool
 jit_visit_vloadf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int base_tmp;
@@ -3762,7 +3765,7 @@ jit_visit_vloadf32x4_op(
 /* Visit an OP_VSTOREF32X4 instruction. */
 static INLINE bool
 jit_visit_vstoref32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int base_tmp;
         int ofs_tmp;
@@ -3817,7 +3820,7 @@ jit_visit_vstoref32x4_op(
 /* Visit an OP_VSPLATF32 instruction. */
 static INLINE bool
 jit_visit_vsplatf32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int src_tmp;
@@ -3855,7 +3858,7 @@ jit_visit_vsplatf32_op(
 /* Visit an OP_VGETLANEF32 instruction. */
 static INLINE bool
 jit_visit_vgetlanef32_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int dst_tmp;
         int vs;
@@ -3902,7 +3905,7 @@ jit_visit_vgetlanef32_op(
 /* Visit an OP_VADDF32X4 instruction. */
 static INLINE bool
 jit_visit_vaddf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3948,7 +3951,7 @@ jit_visit_vaddf32x4_op(
 /* Visit an OP_VSUBF32X4 instruction. */
 static INLINE bool
 jit_visit_vsubf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -3994,7 +3997,7 @@ jit_visit_vsubf32x4_op(
 /* Visit an OP_VMULF32X4 instruction. */
 static INLINE bool
 jit_visit_vmulf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -4040,7 +4043,7 @@ jit_visit_vmulf32x4_op(
 /* Visit an OP_VDIVF32X4 instruction. */
 static INLINE bool
 jit_visit_vdivf32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -4151,7 +4154,7 @@ jit_visit_vdivf32x4_op(
 /* Visit an OP_VCVTI32F32X4 instruction. */
 static INLINE bool
 jit_visit_vcvti32f32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -4185,7 +4188,7 @@ jit_visit_vcvti32f32x4_op(
 /* Visit an OP_VCVTF32I32X4 instruction. */
 static INLINE bool
 jit_visit_vcvtf32i32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int vs;
@@ -4219,7 +4222,7 @@ jit_visit_vcvtf32i32x4_op(
 /* Visit an OP_VMINS32X4 instruction. */
 static INLINE bool
 jit_visit_vmins32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -4257,7 +4260,7 @@ jit_visit_vmins32x4_op(
 /* Visit an OP_VMAXS32X4 instruction. */
 static INLINE bool
 jit_visit_vmaxs32x4_op(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         int vd;
         int lhs;
@@ -4291,12 +4294,13 @@ jit_visit_vmaxs32x4_op(
         }
         return true;
 }
+#endif
 
 
 /* Visit a bytecode of a function. */
 static bool
 jit_visit_bytecode(
-        struct jit_context *ctx)
+        struct rt_jit_context *ctx)
 {
         uint8_t opcode;
 
@@ -4624,26 +4628,29 @@ jit_visit_bytecode(
                         if (!jit_visit_pstoref32_op(ctx))
                                 return false;
                         break;
+#if defined(NOCT_USE_OPTIMIZER)
                 case OP_VINDEX_HINT:
                         if (!jit_visit_vindex_hint_op(ctx))
                                 return false;
                         break;
+#endif
                 case OP_PLOOP_HINT:
-                        if (!jit_visit_ploop_hint_op(ctx))
+                        if (!rt_jit_visit_ploop_hint_op(ctx))
                                 return false;
                         break;
                 case OP_TMPVAR_TYPE:
-                        if (!jit_visit_tmpvar_type_op(ctx))
+                        if (!rt_jit_visit_tmpvar_type_op(ctx))
                                 return false;
                         break;
                 case OP_MATERIALIZE_TYPE:
-                        if (!jit_visit_materialize_type_metadata_op(ctx))
+                        if (!rt_jit_visit_materialize_type_metadata_op(ctx))
                                 return false;
                         break;
                 case OP_SUBJNZ:
                         if (!jit_visit_subjnz_op(ctx))
                                 return false;
                         break;
+#if defined(NOCT_USE_OPTIMIZER)
                 case OP_VORI32X4I:
                         if (!jit_visit_vori32x4i_op(ctx))
                                 return false;
@@ -4652,6 +4659,7 @@ jit_visit_bytecode(
                         if (!jit_visit_vfmaf32x4_op(ctx))
                                 return false;
                         break;
+#endif
 
                 case OP_IADD:
                         if (!jit_visit_iadd_op(ctx))
@@ -4749,6 +4757,7 @@ jit_visit_bytecode(
                         if (!jit_visit_imod_checked_op(ctx))
                                 return false;
                         break;
+#if defined(NOCT_USE_OPTIMIZER)
                 case OP_VLOADI32X4:
                         if (!jit_visit_vloadi32x4_op(ctx))
                                 return false;
@@ -4849,6 +4858,7 @@ jit_visit_bytecode(
                         if (!jit_visit_vmaxs32x4_op(ctx))
                                 return false;
                         break;
+#endif
 		default:
 			return false; /* interpreter fallback for newer bytecode */
                 }
@@ -4887,7 +4897,7 @@ jit_visit_bytecode(
 
 static bool
 jit_patch_branch(
-    struct jit_context *ctx,
+    struct rt_jit_context *ctx,
     int patch_index)
 {
         uint32_t *target_code;

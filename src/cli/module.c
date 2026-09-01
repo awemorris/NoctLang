@@ -15,7 +15,12 @@
 #include "bytecode.h"
 #include "bytecode_file.h"
 #include "hir.h"
+#if defined(NOCT_USE_OPTIMIZER)
+#include "fast.h"
 #include "hir_fast_checked.h"
+#endif
+#include "lir.h"
+#include "noct.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -41,6 +46,7 @@ struct cli_module_record {
 	char **function_name;
 	struct bytecode_file_module bytecode;
 	enum cli_module_state state;
+	bool owns_storage;
 };
 
 struct cli_module_owned_binding {
@@ -62,11 +68,18 @@ static uint32_t cli_module_postorder_capacity;
 static uint32_t *cli_module_root;
 static uint32_t cli_module_root_count;
 static uint32_t cli_module_root_capacity;
+static struct bytecode_file_app cli_module_app;
+static uint32_t *cli_module_app_order;
+static uint32_t cli_module_app_order_count;
+static char *(*cli_module_require_resolver)(const char *module_name);
 static enum cli_module_graph_mode cli_module_mode;
+static bool cli_module_has_app;
 static char cli_module_error[CLI_MODULE_ERROR_SIZE];
 
 static void cli_module_clear_graph(void);
 static void cli_module_set_error(const char *message, const char *detail);
+static void cli_module_set_frontend_error(const char *file, int line, const char *message);
+static void cli_module_set_bytecode_error(const char *path, const struct bytecode_file_error *error);
 static bool cli_module_name_is_valid(const char *module_name);
 static bool cli_module_try_path_list(const char *path_list, const char *module_name, char **resolved_path);
 static bool cli_module_try_directory(const char *directory, size_t directory_length, const char *module_name, char **resolved_path);
@@ -85,6 +98,7 @@ static bool cli_module_grow_records(void);
 static bool cli_module_grow_bindings(void);
 static bool cli_module_grow_indices(uint32_t **table, uint32_t *capacity, uint32_t count);
 static bool cli_module_add_artifact(const char *path, bool explicit_root, uint32_t root_index, const char *module_name, uint32_t *index);
+static bool cli_module_add_input_artifact(const char *path, const uint8_t *data, size_t size, uint32_t *index);
 static bool cli_module_add_binding(const char *name, uint32_t artifact_index);
 static bool cli_module_copy_requires(struct cli_module_record *record, uint32_t count, const char *const name[]);
 static bool cli_module_copy_source_functions(struct cli_module_record *record);
@@ -97,6 +111,11 @@ static bool cli_module_prepare_bytecode(uint32_t artifact_index, enum bytecode_f
 static bool cli_module_classify(uint32_t artifact_index);
 static bool cli_module_add_bytecode_prototypes(const struct bytecode_file_module *module);
 static bool cli_module_prepare(uint32_t artifact_index);
+static int cli_module_find_app_binding(const char *name);
+static bool cli_module_visit_app(uint32_t module_index, unsigned char state[]);
+static bool cli_module_build_app(const uint8_t *data, size_t size);
+static bool cli_module_register_bytecode(struct rt_env *env, const struct bytecode_file_module *module);
+static bool cli_module_make_lir(const struct bytecode_file_function *function, struct lir_func *lir);
 
 /*
  * Resets the complete CLI module resolver and owned graph state.
@@ -108,7 +127,9 @@ cli_module_reset(
 	cli_module_clear_graph();
 	cli_module_path_count = 0;
 	cli_module_error[0] = '\0';
+#if defined(NOCT_USE_OPTIMIZER)
 	hir_fast_checked_reset_prototypes();
+#endif
 }
 
 /*
@@ -165,7 +186,8 @@ bool
 cli_module_build_graph(
 	enum cli_module_graph_mode mode,
 	uint32_t root_count,
-	const char *const root_path[])
+	const char *const root_path[],
+	char *(*require_resolver)(const char *module_name))
 {
 	uint32_t artifact_index;
 	uint32_t i;
@@ -173,8 +195,11 @@ cli_module_build_graph(
 
 	cli_module_clear_graph();
 	cli_module_error[0] = '\0';
+#if defined(NOCT_USE_OPTIMIZER)
 	hir_fast_checked_reset_prototypes();
+#endif
 	cli_module_mode = mode;
+	cli_module_require_resolver = require_resolver;
 	succeeded = false;
 
 	if (root_count == 0 || root_path == NULL) {
@@ -189,7 +214,15 @@ cli_module_build_graph(
 			goto cleanup;
 		}
 		if (cli_module_find_artifact(root_path[i]) >= 0) {
-			cli_module_set_error("Duplicate input module path: %s", root_path[i]);
+			if (mode == CLI_MODULE_GRAPH_APP) {
+				cli_module_set_error(
+					"Duplicate Noct App input: %s",
+					root_path[i]);
+			} else {
+				cli_module_set_error(
+					"Duplicate input module path: %s",
+					root_path[i]);
+			}
 			goto cleanup;
 		}
 		if (!cli_module_add_artifact(
@@ -228,11 +261,149 @@ cleanup:
 
 		memcpy(saved_error, cli_module_error, sizeof(saved_error));
 		cli_module_clear_graph();
+#if defined(NOCT_USE_OPTIMIZER)
 		hir_fast_checked_reset_prototypes();
+#endif
 		memcpy(cli_module_error, saved_error, sizeof(cli_module_error));
 	}
 
 	return succeeded;
+}
+
+/*
+ * Builds the run graph around an input that the command has already read.
+ */
+bool
+cli_module_build_input_graph(
+	const char *root_path,
+	const uint8_t *data,
+	size_t size,
+	char *(*require_resolver)(const char *module_name))
+{
+	enum bytecode_file_kind kind;
+	uint32_t artifact_index;
+	bool succeeded;
+
+	cli_module_clear_graph();
+	cli_module_error[0] = '\0';
+#if defined(NOCT_USE_OPTIMIZER)
+	hir_fast_checked_reset_prototypes();
+#endif
+	cli_module_mode = CLI_MODULE_GRAPH_RUN;
+	cli_module_require_resolver = require_resolver;
+	succeeded = false;
+
+	if (root_path == NULL ||
+	    root_path[0] == '\0' ||
+	    data == NULL) {
+		cli_module_set_error("Invalid input module.", NULL);
+		goto cleanup;
+	}
+
+	kind = bytecode_file_detect(data, size);
+	if (kind == BYTECODE_FILE_APP_1_0) {
+		if (!cli_module_build_app(data, size))
+			goto cleanup;
+		succeeded = true;
+		goto cleanup;
+	}
+	if (kind == BYTECODE_FILE_APP_UNKNOWN) {
+		cli_module_set_error(
+			"Unsupported or malformed application version: %s",
+			root_path);
+		goto cleanup;
+	}
+
+	if (!cli_module_add_input_artifact(
+		root_path,
+		data,
+		size,
+		&artifact_index)) {
+		goto cleanup;
+	}
+	if (!cli_module_grow_indices(
+		&cli_module_root,
+		&cli_module_root_capacity,
+		1)) {
+		cli_module_set_error("Out of memory building module graph.", NULL);
+		goto cleanup;
+	}
+	cli_module_root[0] = artifact_index;
+	cli_module_root_count = 1;
+
+	if (!cli_module_prepare(artifact_index))
+		goto cleanup;
+	if (!cli_module_validate_symbols())
+		goto cleanup;
+
+	succeeded = true;
+
+cleanup:
+	if (!succeeded) {
+		char saved_error[CLI_MODULE_ERROR_SIZE];
+
+		memcpy(saved_error, cli_module_error, sizeof(saved_error));
+		cli_module_clear_graph();
+#if defined(NOCT_USE_OPTIMIZER)
+		hir_fast_checked_reset_prototypes();
+#endif
+		memcpy(cli_module_error, saved_error, sizeof(cli_module_error));
+	}
+
+	return succeeded;
+}
+
+/*
+ * Registers a fully inspected graph in dependency-first order.
+ */
+bool
+cli_module_register_graph(
+	struct rt_env *env)
+{
+	const struct cli_module_artifact *artifact;
+	struct cli_module_record *record;
+	uint32_t artifact_index;
+	uint32_t i;
+
+	if (env == NULL)
+		return false;
+
+	if (cli_module_has_app) {
+		/* Register every embedded module in dependency order. */
+		for (i = 0; i < cli_module_app_order_count; i++) {
+			if (!cli_module_register_bytecode(
+				env,
+				&cli_module_app.module[
+					cli_module_app_order[i]])) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/* Register every filesystem artifact in dependency order. */
+	for (i = 0; i < cli_module_postorder_count; i++) {
+		artifact_index = cli_module_postorder[i];
+		record = &cli_module_record_table[artifact_index];
+		artifact = &record->artifact;
+
+		if (artifact->kind == CLI_MODULE_SOURCE) {
+			if (!noct_register_source(
+				env,
+				artifact->logical_source,
+				(const char *)artifact->data)) {
+				return false;
+			}
+		} else if (artifact->kind == CLI_MODULE_BYTECODE) {
+			if (!cli_module_register_bytecode(env, &record->bytecode))
+				return false;
+		} else {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 /*
@@ -363,7 +534,8 @@ cli_module_clear_graph(
 		free(record->function_name);
 		free((char *)record->artifact.logical_source);
 		free((char *)record->artifact.physical_path);
-		free(record->storage);
+		if (record->owns_storage)
+			free(record->storage);
 	}
 	free(cli_module_record_table);
 	cli_module_record_table = NULL;
@@ -387,6 +559,14 @@ cli_module_clear_graph(
 	cli_module_root = NULL;
 	cli_module_root_count = 0;
 	cli_module_root_capacity = 0;
+
+	bytecode_file_cleanup_app(&cli_module_app);
+	memset(&cli_module_app, 0, sizeof(cli_module_app));
+	free(cli_module_app_order);
+	cli_module_app_order = NULL;
+	cli_module_app_order_count = 0;
+	cli_module_require_resolver = NULL;
+	cli_module_has_app = false;
 }
 
 /* Store one fixed diagnostic with an optional string detail. */
@@ -411,6 +591,43 @@ cli_module_set_error(
 			message,
 			detail);
 	}
+}
+
+/* Preserve one exact frontend diagnostic across parser cleanup. */
+static void
+cli_module_set_frontend_error(
+	const char *file,
+	int line,
+	const char *message)
+{
+	if (cli_module_error[0] != '\0')
+		return;
+
+	snprintf(
+		cli_module_error,
+		sizeof(cli_module_error),
+		"%s:%d: %s",
+		file != NULL ? file : "",
+		line,
+		message != NULL ? message : "Frontend compilation failed.");
+}
+
+/* Preserve one exact CLI bytecode inspector diagnostic. */
+static void
+cli_module_set_bytecode_error(
+	const char *path,
+	const struct bytecode_file_error *error)
+{
+	if (cli_module_error[0] != '\0')
+		return;
+
+	snprintf(
+		cli_module_error,
+		sizeof(cli_module_error),
+		"Malformed bytecode module %s at byte %lu: %s",
+		path,
+		(unsigned long)error->offset,
+		error->message);
 }
 
 /* Check whether a module name is safe to append to a directory. */
@@ -778,7 +995,9 @@ cli_module_make_app_root_source(
 
 	/* Normalize separators and remove empty and current-directory parts. */
 	for (;;) {
-		if (*cursor == '/' || *cursor == '\\' || *cursor == '\0') {
+		if (*cursor == '/' ||
+		    *cursor == '\\' ||
+		    *cursor == '\0') {
 			component_length = (size_t)(cursor - component);
 			if (component_length == 2 &&
 			    component[0] == '.' &&
@@ -865,8 +1084,6 @@ cli_module_make_logical_source(
 	uint32_t root_index,
 	const char *module_name)
 {
-	if (cli_module_mode != CLI_MODULE_GRAPH_APP)
-		return cli_module_copy_string(path);
 	if (explicit_root)
 		return cli_module_make_app_root_source(path, root_index);
 
@@ -1092,6 +1309,7 @@ cli_module_add_artifact(
 	record->artifact.is_explicit_root = explicit_root;
 	record->storage = storage;
 	record->storage_size = size;
+	record->owns_storage = true;
 
 	*index = cli_module_record_count;
 	cli_module_record_count++;
@@ -1102,6 +1320,59 @@ oom:
 	free(logical_source);
 	free(physical_path);
 	free(storage);
+	cli_module_set_error("Out of memory building module graph.", NULL);
+
+	return false;
+}
+
+/* Retain an already-read root without taking ownership of its byte buffer. */
+static bool
+cli_module_add_input_artifact(
+	const char *path,
+	const uint8_t *data,
+	size_t size,
+	uint32_t *index)
+{
+	struct cli_module_record *record;
+	char *physical_path;
+	char *logical_source;
+
+	physical_path = NULL;
+	logical_source = NULL;
+
+	if (!cli_module_grow_records())
+		goto oom;
+
+	physical_path = cli_module_copy_string(path);
+	if (physical_path == NULL)
+		goto oom;
+	logical_source = cli_module_make_logical_source(
+		path,
+		true,
+		0,
+		NULL);
+	if (logical_source == NULL)
+		goto oom;
+
+	record = &cli_module_record_table[cli_module_record_count];
+	memset(record, 0, sizeof(*record));
+	record->artifact.physical_path = physical_path;
+	record->artifact.logical_source = logical_source;
+	record->artifact.data = data;
+	record->artifact.data_size = size;
+	record->artifact.is_explicit_root = true;
+	record->storage = (uint8_t *)(void *)data;
+	record->storage_size = size;
+	record->owns_storage = false;
+
+	*index = cli_module_record_count;
+	cli_module_record_count++;
+
+	return true;
+
+oom:
+	free(logical_source);
+	free(physical_path);
 	cli_module_set_error("Out of memory building module graph.", NULL);
 
 	return false;
@@ -1378,9 +1649,9 @@ cli_module_validate_reachable_symbols(
 							previous_artifact].function_name[
 							previous_function],
 						name) == 0) {
-						cli_module_set_error(
-							"Duplicate function in module closure: %s",
-							name);
+							cli_module_set_error(
+								"Duplicate public symbol \"%s\" (Duplicate function in module closure).",
+								name);
 						return false;
 					}
 				}
@@ -1397,6 +1668,7 @@ cli_module_validate_reachable_symbols(
 
 	return true;
 }
+
 /* Parse one source artifact and collect its external prototypes. */
 static bool
 cli_module_prepare_source(
@@ -1416,15 +1688,23 @@ cli_module_prepare_source(
 	if (!ast_build(
 		record->artifact.logical_source,
 		(const char *)record->artifact.data)) {
-		cli_module_set_error("Cannot parse module %s.", record->artifact.physical_path);
+		cli_module_set_frontend_error(
+			ast_get_file_name(),
+			ast_get_error_line(),
+			ast_get_error_message());
 		ast_cleanup();
 		return false;
 	}
 
-	if (!hir_collect_fast_prototypes()) {
-		cli_module_set_error("Cannot collect prototypes from %s.", record->artifact.physical_path);
+#if defined(NOCT_USE_OPTIMIZER)
+	if (!hir_fast_checked_collect_prototypes()) {
+		cli_module_set_frontend_error(
+			hir_get_file_name(),
+			hir_get_error_line(),
+			hir_get_error_message());
 		goto cleanup;
 	}
+#endif
 	if (!cli_module_copy_source_functions(record))
 		goto cleanup;
 
@@ -1484,9 +1764,9 @@ cli_module_prepare_bytecode(
 		record->artifact.data_size,
 		&record->bytecode,
 		&error)) {
-		cli_module_set_error(
-			"Malformed bytecode module: %s",
-			record->artifact.physical_path);
+		cli_module_set_bytecode_error(
+			record->artifact.physical_path,
+			&error);
 		return false;
 	}
 	if (!cli_module_copy_bytecode_functions(record, &record->bytecode)) {
@@ -1586,7 +1866,7 @@ cli_module_classify(
 			record->artifact.physical_path);
 		return false;
 	}
-	if (has_shebang) {
+	if (has_shebang && !record->artifact.is_explicit_root) {
 		cli_module_set_error(
 			"Executable bytecode wrapper cannot be required: %s",
 			record->artifact.physical_path);
@@ -1609,6 +1889,7 @@ static bool
 cli_module_add_bytecode_prototypes(
 	const struct bytecode_file_module *module)
 {
+#if defined(NOCT_USE_OPTIMIZER)
 	const struct bytecode_file_function *function;
 	const struct fast_signature *signature;
 	uint32_t i;
@@ -1621,7 +1902,8 @@ cli_module_add_bytecode_prototypes(
 		if (strncmp(function->name, "$init.", 6) == 0)
 			continue;
 
-		signature = function->is_fast ? &function->fast_signature : NULL;
+		signature = function->is_fast ?
+			fast_info_signature(function->fast_info) : NULL;
 		if (!hir_fast_checked_add_prototype(
 			function->name,
 			function->is_fast,
@@ -1629,6 +1911,9 @@ cli_module_add_bytecode_prototypes(
 			return false;
 		}
 	}
+#else
+	UNUSED_PARAMETER(module);
+#endif
 
 	return true;
 }
@@ -1671,7 +1956,13 @@ cli_module_prepare(
 			dependency_index = cli_module_binding_table[
 				(uint32_t)binding_index].binding.artifact_index;
 		} else {
-			resolved_path = cli_module_resolve(require_name);
+			if (cli_module_require_resolver == NULL) {
+				cli_module_set_error(
+					"No resolver is available for required module '%s'.",
+					require_name);
+				return false;
+			}
+			resolved_path = cli_module_require_resolver(require_name);
 			if (resolved_path == NULL) {
 				cli_module_set_error(
 					"Cannot resolve required module '%s'.",
@@ -1720,4 +2011,214 @@ cli_module_prepare(
 	cli_module_record_table[artifact_index].state = CLI_MODULE_VISITED;
 
 	return true;
+}
+
+/* Find one embedded application binding without filesystem lookup. */
+static int
+cli_module_find_app_binding(
+	const char *name)
+{
+	uint32_t i;
+
+	/* Search every validated name-to-module binding. */
+	for (i = 0; i < cli_module_app.binding_count; i++) {
+		if (strcmp(cli_module_app.binding[i].module_name, name) == 0)
+			return (int)cli_module_app.binding[i].module_index;
+	}
+
+	return -1;
+}
+
+/* Append one embedded module after recursively visiting its dependencies. */
+static bool
+cli_module_visit_app(
+	uint32_t module_index,
+	unsigned char state[])
+{
+	const struct bytecode_file_module *module;
+	int dependency_index;
+	uint32_t i;
+
+	if (module_index >= cli_module_app.module_count)
+		return false;
+	if (state[module_index] == CLI_MODULE_VISITED)
+		return true;
+	if (state[module_index] == CLI_MODULE_VISITING)
+		return false;
+
+	state[module_index] = CLI_MODULE_VISITING;
+	module = &cli_module_app.module[module_index];
+
+	/* Visit each embedded dependency before appending this module. */
+	for (i = 0; i < module->require_count; i++) {
+		dependency_index = cli_module_find_app_binding(
+			module->require_name[i]);
+		if (dependency_index < 0)
+			return false;
+		if (!cli_module_visit_app((uint32_t)dependency_index, state))
+			return false;
+	}
+
+	if (cli_module_app_order_count >= cli_module_app.module_count)
+		return false;
+	cli_module_app_order[cli_module_app_order_count] = module_index;
+	cli_module_app_order_count++;
+	state[module_index] = CLI_MODULE_VISITED;
+
+	return true;
+}
+
+/* Inspect and order one self-contained application container. */
+static bool
+cli_module_build_app(
+	const uint8_t *data,
+	size_t size)
+{
+	struct bytecode_file_error error;
+	unsigned char *state;
+	uint32_t i;
+	bool succeeded;
+
+	state = NULL;
+	succeeded = false;
+
+	if (!bytecode_file_inspect_app(
+		data,
+		size,
+		&cli_module_app,
+		&error)) {
+		cli_module_set_error("Malformed application container.", NULL);
+		goto cleanup;
+	}
+
+	cli_module_app_order = malloc(
+		(size_t)cli_module_app.module_count *
+		sizeof(*cli_module_app_order));
+	if (cli_module_app_order == NULL) {
+		cli_module_set_error("Out of memory inspecting application.", NULL);
+		goto cleanup;
+	}
+
+	state = calloc(
+		(size_t)cli_module_app.module_count,
+		sizeof(*state));
+	if (state == NULL) {
+		cli_module_set_error("Out of memory inspecting application.", NULL);
+		goto cleanup;
+	}
+
+	/* Traverse every application root through embedded bindings. */
+	for (i = 0; i < cli_module_app.root_count; i++) {
+		if (!cli_module_visit_app(cli_module_app.root_index[i], state)) {
+			cli_module_set_error(
+				"Invalid application dependency graph.",
+				NULL);
+			goto cleanup;
+		}
+	}
+	if (cli_module_app_order_count != cli_module_app.module_count) {
+		cli_module_set_error(
+			"Application contains an unreachable module.",
+			NULL);
+		goto cleanup;
+	}
+
+	cli_module_has_app = true;
+	succeeded = true;
+
+cleanup:
+	free(state);
+
+	return succeeded;
+}
+
+/* Convert one inspected bytecode function to the runtime's LIR view. */
+static bool
+cli_module_make_lir(
+	const struct bytecode_file_function *function,
+	struct lir_func *lir)
+{
+	uint32_t i;
+
+	if (function->param_count > LIR_PARAM_SIZE ||
+	    function->param_count > NOCT_ARG_MAX) {
+		return false;
+	}
+
+	memset(lir, 0, sizeof(*lir));
+	lir->tmpvar_size = function->tmpvar_size;
+	lir->bytecode_size = function->bytecode.size;
+	lir->bytecode = (uint8_t *)(void *)function->bytecode.data;
+	lir->file_name = function->source;
+	lir->func_name = function->name;
+	lir->param_count = function->param_count;
+
+	/* Copy every inspected parameter contract into the descriptor. */
+	for (i = 0; i < function->param_count; i++) {
+		lir->param_name[i] = function->param_name[i];
+		lir->param_type[i] = function->param_type[i];
+		lir->param_packed_type[i] = function->param_packed_type[i];
+		lir->param_restricted[i] = function->param_restricted[i];
+	}
+	lir->return_type = function->return_type;
+	lir->return_packed_type = function->return_packed_type;
+	lir->return_type_checked = function->return_type_checked;
+	lir->has_vector_ops = function->has_vector_ops;
+	lir->is_fast = function->is_fast;
+#if defined(NOCT_USE_OPTIMIZER)
+	lir->fast_info = function->is_fast ? function->fast_info : NULL;
+#else
+	lir->is_fast = false;
+	lir->fast_info = NULL;
+#endif
+	lir->has_fma_ops = function->has_fma_ops;
+
+	return true;
+}
+
+/* Register one inspected module without exposing its file record to core. */
+static bool
+cli_module_register_bytecode(
+	struct rt_env *env,
+	const struct bytecode_file_module *module)
+{
+	struct lir_func *function;
+	size_t data_size;
+	uint32_t registration_size;
+	uint32_t i;
+	bool succeeded;
+
+	function = NULL;
+	succeeded = false;
+
+	if (module->function_count == 0)
+		return true;
+	if (sizeof(*function) > SIZE_MAX / (size_t)module->function_count)
+		return false;
+	data_size = (size_t)module->function_count * sizeof(*function);
+	if (!bytecode_file_check_registration_size(
+		data_size,
+		&registration_size)) {
+		return false;
+	}
+
+	function = calloc((size_t)module->function_count, sizeof(*function));
+	if (function == NULL)
+		return false;
+
+	/* Build one file-independent descriptor for every function. */
+	for (i = 0; i < module->function_count; i++) {
+		if (!cli_module_make_lir(&module->function[i], &function[i]))
+			goto cleanup;
+	}
+
+	succeeded = noct_register_bytecode(
+		env,
+		(uint8_t *)(void *)function,
+		registration_size);
+
+cleanup:
+	free(function);
+
+	return succeeded;
 }

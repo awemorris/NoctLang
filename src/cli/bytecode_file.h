@@ -6,15 +6,16 @@
  */
 
 /*
- * Strict inspection of Noct bytecode files.
+ * CLI-private inspection of Noct bytecode files.
  */
 
 #ifndef NOCT_BYTECODE_FILE_H
 #define NOCT_BYTECODE_FILE_H
 
-#include "fast.h"
+#include <noct/noct.h>
 
 #define BYTECODE_FILE_ERROR_SIZE	256
+#define NOCT_APP_SHEBANG		"#!/usr/bin/noct\n"
 
 enum bytecode_file_kind {
 	BYTECODE_FILE_UNKNOWN,
@@ -44,7 +45,7 @@ struct bytecode_file_function {
 	bool has_vector_ops;
 	bool has_fma_ops;
 	bool is_fast;
-	struct fast_signature fast_signature;
+	void *fast_info;
 	uint32_t tmpvar_size;
 	struct bytecode_file_span bytecode;
 };

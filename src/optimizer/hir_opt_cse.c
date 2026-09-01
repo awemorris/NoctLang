@@ -220,7 +220,7 @@ hir_opt_cse_func(
 		fprintf(
 			stderr,
 			"[cse] %s:%s: %d captures, %d substitutions\n",
-			hir_file_name != NULL ? hir_file_name : "?",
+			hir_get_file_name(),
 			func_block->val.func.name,
 			ctx.stat_captures,
 			ctx.stat_substs);

@@ -14,7 +14,9 @@
 #include "ast.h"
 #include "bcback_file.h"
 #include "bcback_private.h"
+#if defined(NOCT_USE_OPTIMIZER)
 #include "fast.h"
+#endif
 #include "hir.h"
 #include "lir.h"
 
@@ -44,15 +46,12 @@ static struct bcback_output bcback_current_output;
 static bool bcback_metadata_valid(const char *text, bool allow_empty);
 static bool bcback_array_size_valid(uint32_t count, size_t item_size);
 static bool bcback_write_header(FILE *stream, const char *source, uint32_t require_count, char *const require_name[], uint32_t function_count);
+#if defined(NOCT_USE_OPTIMIZER)
 static bool bcback_write_fast_signature(FILE *stream, const struct fast_signature *signature);
+#endif
 static bool bcback_write_lir_function(FILE *stream, const struct lir_func *function);
-static bool bcback_write_inspected_function(FILE *stream, const struct bytecode_file_function *function, const char *source, const char *module_source, bool rewrite_source);
 static bool bcback_write_module_stream(FILE *stream, const struct bcback_module *module);
-static bool bcback_write_inspected_module_stream(FILE *stream, const struct bytecode_file_module *module, const char *logical_source);
 static bool bcback_stream_to_blob(FILE *stream, uint8_t **data, uint32_t *size);
-static bool bcback_contains_bytes(const uint8_t *data, uint32_t size, const char *needle);
-static bool bcback_inspected_needs_rewrite(const struct bytecode_file_module *module, const char *logical_source);
-static bool bcback_inspected_safe_to_rewrite(const struct bytecode_file_module *module);
 
 /*
  * Sets the optimization level used by subsequent bytecode translations.
@@ -385,53 +384,6 @@ bcback_serialize_module(
 }
 
 /*
- * Canonically serializes one inspected module with a portable source identity.
- */
-bool
-bcback_serialize_inspected_module(
-	const struct bytecode_file_module *module,
-	const char *logical_source,
-	const char *temporary_base,
-	uint8_t **data,
-	uint32_t *size)
-{
-	struct bcback_output output;
-	FILE *stream;
-	bool succeeded;
-
-	memset(&output, 0, sizeof(output));
-
-	assert(module != NULL);
-	assert(logical_source != NULL);
-	assert(temporary_base != NULL);
-	assert(data != NULL);
-	assert(size != NULL);
-
-	*data = NULL;
-	*size = 0;
-
-	if (!bcback_output_open(&output, temporary_base))
-		return false;
-	stream = bcback_output_get_stream(&output);
-
-	succeeded = bcback_write_inspected_module_stream(
-		stream,
-		module,
-		logical_source);
-	if (succeeded)
-		succeeded = bcback_stream_to_blob(stream, data, size);
-	bcback_output_abort(&output);
-
-	if (!succeeded) {
-		noct_free(*data);
-		*data = NULL;
-		*size = 0;
-	}
-
-	return succeeded;
-}
-
-/*
  * Aborts the current standalone output transaction.
  */
 void
@@ -524,6 +476,7 @@ bcback_write_header(
 }
 
 /* Write one exact sparse fast-function signature. */
+#if defined(NOCT_USE_OPTIMIZER)
 static bool
 bcback_write_fast_signature(
 	FILE *stream,
@@ -601,6 +554,7 @@ bcback_write_fast_signature(
 
 	return true;
 }
+#endif
 
 /* Write one canonical function from an owned LIR descriptor. */
 static bool
@@ -712,6 +666,12 @@ bcback_write_lir_function(
 			return false;
 	}
 	if (function->is_fast) {
+#if defined(NOCT_USE_OPTIMIZER)
+		const struct fast_signature *signature;
+
+		signature = fast_info_signature(function->fast_info);
+		if (signature == NULL)
+			return false;
 		if (fprintf(
 			stream,
 			"Function Kind\n%d\n",
@@ -720,9 +680,12 @@ bcback_write_lir_function(
 		}
 		if (!bcback_write_fast_signature(
 			stream,
-			&function->fast_signature)) {
+			signature)) {
 			return false;
 		}
+#else
+		return false;
+#endif
 	}
 	if (function->has_fma_ops) {
 		if (fprintf(stream, "FMA Ops\n1\n") < 0)
@@ -751,73 +714,6 @@ bcback_write_lir_function(
 	return true;
 }
 
-/* Write one canonical function from a strict inspector descriptor. */
-static bool
-bcback_write_inspected_function(
-	FILE *stream,
-	const struct bytecode_file_function *function,
-	const char *source,
-	const char *module_source,
-	bool rewrite_source)
-{
-	struct lir_func candidate;
-	char *rewritten_name;
-	size_t source_size;
-	uint32_t i;
-	bool succeeded;
-
-	memset(&candidate, 0, sizeof(candidate));
-	rewritten_name = NULL;
-
-	if (function->param_count > LIR_PARAM_SIZE)
-		return false;
-
-	if (rewrite_source && strncmp(function->name, "$init.", 6) == 0) {
-		if (strcmp(function->name + 6, module_source) != 0)
-			return false;
-
-		source_size = strlen(source);
-		if (source_size > SIZE_MAX - 7)
-			return false;
-
-		rewritten_name = noct_malloc(source_size + 7);
-		if (rewritten_name == NULL)
-			return false;
-		memcpy(rewritten_name, "$init.", 6);
-		memcpy(rewritten_name + 6, source, source_size + 1);
-		candidate.func_name = rewritten_name;
-	} else {
-		candidate.func_name = function->name;
-	}
-
-	candidate.file_name = (char *)source;
-	candidate.param_count = function->param_count;
-
-	/* Copy every inspected parameter entry into the fixed LIR descriptor. */
-	for (i = 0; i < function->param_count; i++) {
-		candidate.param_name[i] = function->param_name[i];
-		candidate.param_type[i] = function->param_type[i];
-		candidate.param_packed_type[i] = function->param_packed_type[i];
-		candidate.param_restricted[i] = function->param_restricted[i];
-	}
-
-	candidate.return_type = function->return_type;
-	candidate.return_packed_type = function->return_packed_type;
-	candidate.return_type_checked = function->return_type_checked;
-	candidate.has_vector_ops = function->has_vector_ops;
-	candidate.has_fma_ops = function->has_fma_ops;
-	candidate.is_fast = function->is_fast;
-	candidate.fast_signature = function->fast_signature;
-	candidate.tmpvar_size = function->tmpvar_size;
-	candidate.bytecode = (uint8_t *)function->bytecode.data;
-	candidate.bytecode_size = function->bytecode.size;
-
-	succeeded = bcback_write_lir_function(stream, &candidate);
-	noct_free(rewritten_name);
-
-	return succeeded;
-}
-
 /* Write one detached source module in canonical 1.1 form. */
 static bool
 bcback_write_module_stream(
@@ -844,51 +740,6 @@ bcback_write_module_stream(
 	return ferror(stream) == 0;
 }
 
-/* Write one inspected module in canonical portable 1.1 form. */
-static bool
-bcback_write_inspected_module_stream(
-	FILE *stream,
-	const struct bytecode_file_module *module,
-	const char *logical_source)
-{
-	bool rewrite_source;
-	uint32_t i;
-
-	if (module->kind != BYTECODE_FILE_MODULE_1_1)
-		return false;
-	if (!bcback_metadata_valid(logical_source, false))
-		return false;
-
-	rewrite_source = bcback_inspected_needs_rewrite(
-		module,
-		logical_source);
-	if (rewrite_source && !bcback_inspected_safe_to_rewrite(module))
-		return false;
-
-	if (!bcback_write_header(
-		stream,
-		logical_source,
-		module->require_count,
-		module->require_name,
-		module->function_count)) {
-		return false;
-	}
-
-	/* Canonically rewrite every inspected function descriptor. */
-	for (i = 0; i < module->function_count; i++) {
-		if (!bcback_write_inspected_function(
-			stream,
-			&module->function[i],
-			logical_source,
-			module->source,
-			rewrite_source)) {
-			return false;
-		}
-	}
-
-	return ferror(stream) == 0;
-}
-
 /* Copy one complete temporary stream into a checked owned byte blob. */
 static bool
 bcback_stream_to_blob(
@@ -898,6 +749,7 @@ bcback_stream_to_blob(
 {
 	long stream_size;
 	size_t read_size;
+	uint32_t blob_size;
 
 	if (fflush(stream) != 0)
 		return false;
@@ -907,12 +759,16 @@ bcback_stream_to_blob(
 	stream_size = ftell(stream);
 	if (stream_size <= 0)
 		return false;
-	if ((unsigned long)stream_size > (unsigned long)UINT32_MAX)
-		return false;
 	if (fseek(stream, 0, SEEK_SET) != 0)
 		return false;
 
 	read_size = (size_t)stream_size;
+	if ((long)read_size != stream_size)
+		return false;
+	blob_size = (uint32_t)read_size;
+	if ((size_t)blob_size != read_size)
+		return false;
+
 	*data = noct_malloc(read_size);
 	if (*data == NULL)
 		return false;
@@ -920,80 +776,7 @@ bcback_stream_to_blob(
 	if (fread(*data, 1, read_size, stream) != read_size)
 		return false;
 
-	*size = (uint32_t)read_size;
-
-	return true;
-}
-
-/* Search one raw byte span for a fixed non-empty ASCII token. */
-static bool
-bcback_contains_bytes(
-	const uint8_t *data,
-	uint32_t size,
-	const char *needle)
-{
-	size_t needle_size;
-	uint32_t i;
-
-	needle_size = strlen(needle);
-	if (needle_size == 0)
-		return true;
-	if ((size_t)size < needle_size)
-		return false;
-
-	/* Compare the token at every possible byte offset. */
-	for (i = 0; (size_t)i <= (size_t)size - needle_size; i++) {
-		if (memcmp(data + i, needle, needle_size) == 0)
-			return true;
-	}
-
-	return false;
-}
-
-/* Test whether any serialized source identity must be canonicalized. */
-static bool
-bcback_inspected_needs_rewrite(
-	const struct bytecode_file_module *module,
-	const char *logical_source)
-{
-	uint32_t i;
-
-	if (strcmp(module->source, logical_source) != 0)
-		return true;
-
-	/* Compare every function source identity with the portable identity. */
-	for (i = 0; i < module->function_count; i++) {
-		if (strcmp(module->function[i].source, logical_source) != 0)
-			return true;
-	}
-
-	return false;
-}
-
-/* Reject source rewrites that would require a bytecode symbol relinker. */
-static bool
-bcback_inspected_safe_to_rewrite(
-	const struct bytecode_file_module *module)
-{
-	const struct bytecode_file_function *function;
-	uint32_t i;
-
-	/* Inspect every link name and raw opcode span conservatively. */
-	for (i = 0; i < module->function_count; i++) {
-		function = &module->function[i];
-		if (strstr(function->name, "$static.") != NULL)
-			return false;
-		if (bcback_contains_bytes(
-			function->bytecode.data,
-			function->bytecode.size,
-			"$static.")) {
-			return false;
-		}
-		if (strncmp(function->name, "$init.", 6) == 0 &&
-		    strcmp(function->name + 6, module->source) != 0) {
-			return false;
-		}
-	}
+	*size = blob_size;
 
 	return true;
 }

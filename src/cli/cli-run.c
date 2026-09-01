@@ -103,6 +103,14 @@ command_run(
 
 	if (!prepare_program_input(argc, argv))
 		goto cleanup;
+	if (!cli_module_build_input_graph(
+		program_input.file_name,
+		program_input.payload,
+		program_input.payload_size,
+		config.require_resolver)) {
+		wide_printf(N_TR("%s\n"), cli_module_get_error());
+		goto cleanup;
+	}
 	if (gpu_requested && program_input.kind != CLI_PROGRAM_SOURCE) {
 		wide_printf(N_TR("GPU acceleration is available only when running Noct source.\n"));
 		goto cleanup;
@@ -202,6 +210,9 @@ runtime_error:
 
 cleanup:
 	if (vm != NULL) {
+#if defined(NOCT_USE_ACCEL)
+		accel_finalize(vm);
+#endif
 		if (!noct_destroy_vm(vm))
 			result = 1;
 		vm = NULL;
@@ -570,25 +581,7 @@ static bool
 load_program(
 	void)
 {
-	uint32_t registration_size;
-
-	if (program_input.kind == CLI_PROGRAM_SOURCE) {
-		return noct_register_source(
-			env,
-			program_input.file_name,
-			(const char *)program_input.payload);
-	}
-
-	if (!bytecode_file_check_registration_size(
-		program_input.payload_size,
-		&registration_size)) {
-		return false;
-	}
-
-	return noct_register_bytecode(
-		env,
-		(uint8_t *)program_input.payload,
-		registration_size);
+	return cli_module_register_graph(env);
 }
 
 static bool

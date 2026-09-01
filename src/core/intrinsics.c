@@ -33,8 +33,17 @@ static bool rt_intrin_Fast_index5(NoctEnv *env);
 static bool rt_intrin_Fast_index6(NoctEnv *env);
 static bool rt_intrin_Fast_index7(NoctEnv *env);
 static bool rt_intrin_Fast_index8(NoctEnv *env);
+static bool rt_intrin_Fast_shape1(NoctEnv *env);
+static bool rt_intrin_Fast_shape2(NoctEnv *env);
+static bool rt_intrin_Fast_shape3(NoctEnv *env);
+static bool rt_intrin_Fast_shape4(NoctEnv *env);
+static bool rt_intrin_Fast_shape5(NoctEnv *env);
+static bool rt_intrin_Fast_shape6(NoctEnv *env);
+static bool rt_intrin_Fast_shape7(NoctEnv *env);
+static bool rt_intrin_Fast_shape8(NoctEnv *env);
 static bool rt_intrin_Fast_math(NoctEnv *env);
 static bool rt_intrin_Fast_index(NoctEnv *env, int rank);
+static bool rt_intrin_Fast_shape(NoctEnv *env, int rank);
 static bool rt_fast_get_integer_arg(NoctEnv *env, uint32_t arg_index, bool extent, int64_t *number);
 static bool rt_fast_numeric_double(NoctEnv *env, const NoctValue *value, double *number);
 static bool rt_fast_convert_int(NoctEnv *env, const NoctValue *value, NoctValue *ret);
@@ -119,6 +128,14 @@ struct intrin_item {
 	{"$Fast", "index6", "$Fast.index6", rt_intrin_Fast_index6, 12, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3", "i4", "d4", "i5", "d5"}},
 	{"$Fast", "index7", "$Fast.index7", rt_intrin_Fast_index7, 14, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3", "i4", "d4", "i5", "d5", "i6", "d6"}},
 	{"$Fast", "index8", "$Fast.index8", rt_intrin_Fast_index8, 16, {"i0", "d0", "i1", "d1", "i2", "d2", "i3", "d3", "i4", "d4", "i5", "d5", "i6", "d6", "i7", "d7"}},
+	{"$Fast", "shape1", "$Fast.shape1", rt_intrin_Fast_shape1, 2, {"packed", "d0"}},
+	{"$Fast", "shape2", "$Fast.shape2", rt_intrin_Fast_shape2, 3, {"packed", "d0", "d1"}},
+	{"$Fast", "shape3", "$Fast.shape3", rt_intrin_Fast_shape3, 4, {"packed", "d0", "d1", "d2"}},
+	{"$Fast", "shape4", "$Fast.shape4", rt_intrin_Fast_shape4, 5, {"packed", "d0", "d1", "d2", "d3"}},
+	{"$Fast", "shape5", "$Fast.shape5", rt_intrin_Fast_shape5, 6, {"packed", "d0", "d1", "d2", "d3", "d4"}},
+	{"$Fast", "shape6", "$Fast.shape6", rt_intrin_Fast_shape6, 7, {"packed", "d0", "d1", "d2", "d3", "d4", "d5"}},
+	{"$Fast", "shape7", "$Fast.shape7", rt_intrin_Fast_shape7, 8, {"packed", "d0", "d1", "d2", "d3", "d4", "d5", "d6"}},
+	{"$Fast", "shape8", "$Fast.shape8", rt_intrin_Fast_shape8, 9, {"packed", "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"}},
 	{"$FastMath", "min", "$FastMath.min", rt_intrin_Fast_math, 2, {"a", "b"}},
 	{"$FastMath", "max", "$FastMath.max", rt_intrin_Fast_math, 2, {"a", "b"}},
 	{"$FastMath", "abs", "$FastMath.abs", rt_intrin_Fast_math, 1, {"x"}},
@@ -379,6 +396,126 @@ rt_intrin_Fast_index(
 	memset(&ret, 0, sizeof(ret));
 	ret.type = NOCT_VALUE_LONG;
 	ret.val.l = (int64_t)offset;
+
+	return noct_set_return(env, &ret);
+}
+
+/* Check the exact element count for a one-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape1(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 1);
+}
+
+/* Check the exact element count for a two-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape2(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 2);
+}
+
+/* Check the exact element count for a three-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape3(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 3);
+}
+
+/* Check the exact element count for a four-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape4(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 4);
+}
+
+/* Check the exact element count for a five-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape5(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 5);
+}
+
+/* Check the exact element count for a six-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape6(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 6);
+}
+
+/* Check the exact element count for a seven-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape7(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 7);
+}
+
+/* Check the exact element count for an eight-dimensional Packed value. */
+static bool
+rt_intrin_Fast_shape8(
+	NoctEnv *env)
+{
+	return rt_intrin_Fast_shape(env, 8);
+}
+
+/* Check one Packed value against an exact runtime shape. */
+static bool
+rt_intrin_Fast_shape(
+	NoctEnv *env,
+	int rank)
+{
+	NoctValue packed_value;
+	NoctValue ret;
+	size_t element_count;
+	int axis;
+
+	if (!noct_get_arg(env, 0, &packed_value))
+		return false;
+	if (packed_value.type != NOCT_VALUE_PACKED ||
+	    packed_value.val.packed == NULL) {
+		noct_error(env, N_TR("__fast call: argument has the wrong packed element type."));
+		return false;
+	}
+
+	element_count = 1;
+
+	/* Multiply every positive extent into the exact element count. */
+	for (axis = 0; axis < rank; axis++) {
+		int64_t extent;
+
+		if (!rt_fast_get_integer_arg(
+			env,
+			(uint32_t)axis + 1,
+			true,
+			&extent)) {
+			return false;
+		}
+		if (extent <= 0) {
+			noct_error(env, N_TR("__fast call: shape extents must be positive."));
+			return false;
+		}
+		if ((uint64_t)extent > (uint64_t)SIZE_MAX ||
+		    element_count > SIZE_MAX / (size_t)extent) {
+			noct_error(env, N_TR("__fast call: shape element count overflow."));
+			return false;
+		}
+
+		element_count *= (size_t)extent;
+	}
+
+	if (packed_value.val.packed->elem_size != element_count) {
+		noct_error(env, N_TR("__fast call: argument does not match the exact shape."));
+		return false;
+	}
+
+	memset(&ret, 0, sizeof(ret));
+	ret.type = NOCT_VALUE_INT;
 
 	return noct_set_return(env, &ret);
 }

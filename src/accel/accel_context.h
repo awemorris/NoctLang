@@ -17,7 +17,6 @@
 
 struct accel_registry_entry;
 struct accel_registry_reservation;
-struct hir_block;
 struct rt_vm;
 
 struct accel_live_session {
@@ -199,7 +198,7 @@ accel_context_destroy(
  */
 bool
 accel_optimize_callback(
-	struct hir_block *func_block,
+	void *func_data,
 	void *userdata);
 
 #endif

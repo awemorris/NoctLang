@@ -166,6 +166,24 @@ endif()
 if(NOCT_ENABLE_CLI AND NOT NOCT_LIB_TYPE STREQUAL "STATIC")
   message(FATAL_ERROR "NOCT_ENABLE_CLI requires a static Noct library")
 endif()
+if(NOCT_ENABLE_CLI)
+  if(NOT NOCT_ENABLE_API)
+    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API")
+  endif()
+  if(NOT NOCT_ENABLE_API_SYSTEM)
+    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API_SYSTEM")
+  endif()
+  if(NOT NOCT_ENABLE_API_CONSOLE)
+    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API_CONSOLE")
+  endif()
+  if(NOT NOCT_ENABLE_API_FILE)
+    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API_FILE")
+  endif()
+  if(NOCT_ENABLE_MULTITHREAD AND NOT NOCT_ENABLE_API_THREAD)
+    message(FATAL_ERROR
+      "Multithreaded NOCT_ENABLE_CLI requires NOCT_ENABLE_API_THREAD")
+  endif()
+endif()
 
 if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
   if(NOT NOCT_LIB_TYPE STREQUAL "STATIC")
@@ -203,17 +221,13 @@ set(
   src/core/lexer.yy.c           # Lexer
   src/core/parser.tab.c         # Parser
   src/core/ast.c                # AST construction (called from parser)
-  src/core/fast.c               # __fast function contracts
   src/core/hir.c                # HIR (AST->HIR construction)
-  src/core/hir_fast_checked.c   # Mandatory checked __fast lowering
-  src/core/hir_scope.c          # HIR lexical scope handling
   src/core/lir.c                # LIR (HIR->LIR construction)
   src/core/execution.c          # Runtime execution helper part
   src/core/interpreter.c        # Runtime interpreter part
   src/core/jit.c                # Runtime JIT part
   src/core/gc.c                 # Runtime GC part
   src/core/runtime.c            # Runtime main part
-  src/core/bytecode_file.c      # Bytecode/application file inspection
   src/core/noct.c               # Public functions
   src/core/intrinsics.c         # Intrinsics
 )
@@ -237,6 +251,8 @@ endif()
 if(NOCT_ENABLE_OPTIMIZER)
   set(
     NOCT_OPTIMIZER_SOURCE
+    src/optimizer/fast.c                # __fast function contracts
+    src/optimizer/hir_fast_checked.c    # Checked __fast lowering
     src/optimizer/hir_opt_analysis.c # Common optimizer analysis
     src/optimizer/hir_fast_func.c    # __fast checked-index optimization
     src/optimizer/hir_opt_abce.c     # ABCE pass
@@ -265,7 +281,6 @@ if(NOCT_ENABLE_BCBACKEND)
     NOCT_BCBE_SOURCE
     src/backend/bcback.c
     src/backend/bcback_file.c
-    src/backend/bcback_app.c
   )
 endif()
 
@@ -442,16 +457,17 @@ target_include_directories(noct PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
   ${CMAKE_CURRENT_SOURCE_DIR}/src/core
 )
-if(NOCT_ENABLE_OPTIMIZER)
-  target_include_directories(noct PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-  )
-endif()
+target_include_directories(noct PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+)
 if(NOCT_ENABLE_API)
   target_include_directories(noctapi PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+  )
+  target_include_directories(noctapi PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
   )
 endif()
 
@@ -468,6 +484,16 @@ endif()
 # Optimizer.
 if(NOCT_ENABLE_OPTIMIZER)
   list(APPEND NOCT_PRIVATE_CPPFLAGS NOCT_USE_OPTIMIZER)
+endif()
+
+# Keep accelerator attachment fields private to accelerator-aware targets.
+if(NOCT_ENABLE_ACCEL)
+  list(APPEND NOCT_PRIVATE_CPPFLAGS NOCT_USE_ACCEL)
+elseif(NOCT_ENABLE_ACCEL_COMMON_TESTS)
+  target_compile_definitions(noct PRIVATE NOCT_USE_ACCEL)
+  if(NOCT_ENABLE_API)
+    target_compile_definitions(noctapi PRIVATE NOCT_USE_ACCEL)
+  endif()
 endif()
 
 # JIT.
@@ -616,11 +642,14 @@ endif()
 # LDFLAGS
 #
 
-if(NOT WIN32)
-   if(NOCT_ENABLE_API AND NOCT_ENABLE_MULTITHREAD)
-     set(THREADS_PREFER_PTHREAD_FLAG TRUE)
-     find_package(Threads REQUIRED)
-   endif()
+if(    NOT WIN32
+   AND ((NOCT_ENABLE_API
+         AND NOCT_ENABLE_API_THREAD
+         AND NOCT_ENABLE_MULTITHREAD)
+        OR NOCT_ENABLE_ACCEL
+        OR NOCT_ENABLE_ACCEL_COMMON_TESTS))
+  set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+  find_package(Threads REQUIRED)
 endif()
 
 if(    NOCT_ENABLE_API
@@ -667,42 +696,37 @@ endif()
 
 set(NOCT_INCLUDE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(NOCT_INCLUDE_DIRS ${NOCT_INCLUDE_DIR})
-set(NOCT_LIBRARY      $<TARGET_FILE:noct> $<TARGET_FILE:noctapi>)
+set(NOCT_LIBRARY      $<TARGET_FILE:noct>)
+if(NOCT_ENABLE_API)
+  list(APPEND NOCT_LIBRARY $<TARGET_FILE:noctapi>)
+endif()
 set(NOCT_LIBRARIES    ${NOCT_LIBRARY})
 
 # ---
 
 #
-# Host bytecode resolver test
+# Core require resolver ownership test
 #
 
 if(NOCT_LIB_TYPE STREQUAL "STATIC" AND NOT CMAKE_CROSSCOMPILING)
   add_executable(
-    noct-test-bytecode-require-host
+    noct-test-require-core
     EXCLUDE_FROM_ALL
-    tests/testcases/bytecode-require-host-test.c
+    tests/testcases/require-core-test.c
   )
   target_compile_definitions(
-    noct-test-bytecode-require-host
+    noct-test-require-core
     PRIVATE
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
   )
   target_include_directories(
-    noct-test-bytecode-require-host
+    noct-test-require-core
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
   )
-  target_link_libraries(noct-test-bytecode-require-host PRIVATE noct)
-  if(NOT WIN32 AND NOCT_ENABLE_MULTITHREAD)
-    target_link_libraries(
-      noct-test-bytecode-require-host
-      PRIVATE
-      Threads::Threads
-    )
-  endif()
+  target_link_libraries(noct-test-require-core PRIVATE noct)
 endif()
 
 # ---
@@ -838,6 +862,7 @@ if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
     PRIVATE
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
+    NOCT_USE_ACCEL
   )
   target_include_directories(
     noct-accel-test-common
@@ -863,6 +888,7 @@ if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
     PRIVATE
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
+    NOCT_USE_ACCEL
   )
   target_include_directories(
     noct-test-accel-plan
@@ -891,6 +917,7 @@ if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
     PRIVATE
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
+    NOCT_USE_ACCEL
   )
   target_include_directories(
     noct-accel-test-backend
@@ -919,6 +946,7 @@ if(NOCT_ENABLE_ACCEL_COMMON_TESTS)
     PRIVATE
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
+    NOCT_USE_ACCEL
   )
   target_include_directories(
     noct-test-accel-rewrite
@@ -950,7 +978,11 @@ endif()
 
 if(NOCT_ENABLE_CLI)
   if(NOCT_ENABLE_BCBACKEND)
-    set(CLI_BCBACK_SOURCES src/cli/cli-compile.c)
+    set(
+      CLI_BCBACK_SOURCES
+      src/cli/cli-compile.c
+      src/cli/app_file.c
+    )
   endif()
   
   if(NOCT_ENABLE_CBACKEND)
@@ -975,6 +1007,7 @@ if(NOCT_ENABLE_CLI)
     src/cli/cli-run.c
     src/cli/cli-cfunc.c
     src/cli/module.c
+    src/cli/bytecode_file.c
     ${CLI_BCBACK_SOURCES}
     ${CLI_CBACK_SOURCES}
     ${CLI_ELBACK_SOURCES}
@@ -990,7 +1023,12 @@ if(NOCT_ENABLE_CLI)
   set_target_properties(noctcli PROPERTIES OUTPUT_NAME "noct")
 
   # Define feature macros.
-  target_compile_definitions(noctcli PRIVATE ${NOCT_PUBLIC_CPPFLAGS})
+  target_compile_definitions(
+    noctcli
+    PRIVATE
+    ${NOCT_PUBLIC_CPPFLAGS}
+    ${NOCT_PRIVATE_CPPFLAGS}
+  )
   if(NOCT_ENABLE_API AND NOCT_ENABLE_API_HTTPSERVER)
     target_compile_definitions(noctcli PRIVATE NOCT_USE_HTTPSERVER)
   endif()
@@ -1029,7 +1067,13 @@ if(NOCT_ENABLE_CLI)
      ${CMAKE_CURRENT_SOURCE_DIR}/include
      ${CMAKE_CURRENT_SOURCE_DIR}/src/core
      ${CMAKE_CURRENT_SOURCE_DIR}/src/backend
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/cli
   )
+  if(NOCT_ENABLE_OPTIMIZER)
+    target_include_directories(noctcli PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
+    )
+  endif()
   if(NOCT_TARGET_ZEDBSD)
     target_compile_options(noctcli PRIVATE ${NOCT_ZEDBSD_COMPILE_OPTIONS})
   endif()
@@ -1139,6 +1183,13 @@ if(NOCT_LIB_TYPE STREQUAL "STATIC" AND NOT CMAKE_CROSSCOMPILING)
     ${NOCT_PUBLIC_CPPFLAGS}
     ${NOCT_PRIVATE_CPPFLAGS}
   )
+  if(NOCT_ENABLE_ACCEL OR NOCT_ENABLE_ACCEL_COMMON_TESTS)
+    target_compile_definitions(
+      noct-test-optimizer-callback
+      PRIVATE
+      NOCT_USE_ACCEL
+    )
+  endif()
   target_include_directories(
     noct-test-optimizer-callback
     PRIVATE

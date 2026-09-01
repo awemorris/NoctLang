@@ -1,9 +1,11 @@
-# Reusable REPL sessions
+Reusable REPL sessions
+======================
 
-Noct provides a host-independent REPL session engine when CMake is configured
-with `NOCT_ENABLE_REPL=ON`. The engine is part of `libnoct`; it does not read a
-terminal, print prompts, install signal handlers, or own a VM. This separation
-allows the same implementation to serve the desktop CLI and embedded hosts.
+Noct provides a host-independent REPL session engine when CMake is
+configured with `NOCT_ENABLE_REPL=ON`. The engine is part of
+`libnoct`; it does not read a terminal, print prompts, install signal
+handlers, or own a VM. This separation allows the same implementation
+to serve the desktop CLI and embedded hosts.
 
 Include the public interface with:
 

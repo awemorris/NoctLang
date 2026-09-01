@@ -211,8 +211,4 @@ enum vector_compare_predicate {
 #define VINDEX_REQUIRE_INDUCT		0x10	/* region contains exact VINDUCTF32X4 */
 #define VINDEX_REQUIRE_GATHER		0x20	/* region contains checked gather */
 
-/* Bytecode file header. */
-#define NOCT_BYTECODE_HEADER	"Noct Bytecode"
-#define NOCT_APP_SHEBANG	"#!/usr/bin/noct\n"
-
 #endif

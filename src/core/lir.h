@@ -13,7 +13,6 @@
 #define NOCT_LIR_H
 
 #include <noct/noct.h>
-#include "fast.h"
 
 #define LIR_PARAM_SIZE		32
 #define LIR_TMPVAR_MAX		128
@@ -63,11 +62,11 @@ struct lir_func {
 	/* The bytecode contains at least one vector operation. */
 	bool has_vector_ops;
 
-	/* Statically constrained CPU function. */
+	/* Did the optimizer commit the __fast contract? */
 	bool is_fast;
 
-	/* Exact entry contract for a fast function. */
-	struct fast_signature fast_signature;
+	/* Optimizer-owned entry contract. */
+	void *fast_info;
 
 	/* The bytecode contains a fused multiply-add operation. */
 	bool has_fma_ops;

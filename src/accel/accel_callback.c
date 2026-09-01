@@ -12,7 +12,7 @@
 #include "accel_context.h"
 #include "accel_lir_budget.h"
 #include "accel_rewrite.h"
-#include "hir_private.h"
+#include "hir.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -25,10 +25,11 @@ static bool accel_callback_error(struct hir_block *func_block, const char *messa
  */
 bool
 accel_optimize_callback(
-	struct hir_block *func_block,
+	void *func_data,
 	void *userdata)
 {
 	struct accel_context *context;
+	struct hir_block *func_block;
 	struct accel_function_plan *plan;
 	struct accel_prepared_program *prepared;
 	struct accel_registry_reservation *reservation;
@@ -43,6 +44,7 @@ accel_optimize_callback(
 	bool attached;
 
 	context = userdata;
+	func_block = func_data;
 	plan = NULL;
 	prepared = NULL;
 	reservation = NULL;

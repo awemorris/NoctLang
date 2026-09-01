@@ -66,11 +66,11 @@ replace_one(
     b"Parameter Restricted\n1\n0\n",
     b"Parameter Restricted\n0\n0\n",
 )
-replace_one("missing-return-type", b"Return Type\n0\n-1\n0\n", b"")
+replace_one("missing-return-type", b"Return Type\n0\n-1\n1\n", b"")
 replace_one(
     "return-type-mismatch",
-    b"Return Type\n0\n-1\n0\n",
-    b"Return Type\n5\n-1\n0\n",
+    b"Return Type\n0\n-1\n1\n",
+    b"Return Type\n5\n-1\n1\n",
 )
 replace_one(
     "param-type-text",
@@ -94,8 +94,8 @@ replace_one(
 )
 replace_one(
     "return-type-text",
-    b"Return Type\n0\n-1\n0\n",
-    b"Return Type\n0junk\n-1\n0\n",
+    b"Return Type\n0\n-1\n1\n",
+    b"Return Type\n0junk\n-1\n1\n",
 )
 
 truncated = source.index(b"Fast Signature\n") + len(b"Fast Signature\n1\n1\n2\n")

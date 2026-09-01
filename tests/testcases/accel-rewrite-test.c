@@ -18,7 +18,6 @@
 #include "ast.h"
 #include "hir.h"
 #include "hir_opt.h"
-#include "hir_private.h"
 #include "lir.h"
 #include "runtime.h"
 

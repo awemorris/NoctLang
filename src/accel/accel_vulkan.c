@@ -13,7 +13,7 @@
 #include "accel_context.h"
 #include "accel_mutex.h"
 #include "accel_vulkan_shader.h"
-#include "hir_private.h"
+#include "hir.h"
 #include "objectmodel.h"
 #include "runtime.h"
 

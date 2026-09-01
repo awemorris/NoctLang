@@ -14,6 +14,8 @@
 
 #include <noct/noct.h>
 
+#if defined(NOCT_USE_OPTIMIZER)
+
 #define NOCT_FAST_SIGNATURE_VERSION	1
 #define NOCT_FAST_RANK_MAX		8
 #define NOCT_FAST_RETURN_VOID		(-2)
@@ -49,6 +51,9 @@ struct fast_signature {
 	struct fast_param_contract *param;
 	int return_type;
 };
+
+struct rt_env;
+struct rt_func;
 
 /*
  * Initializes an empty signature before its first build or clone.
@@ -112,5 +117,43 @@ fast_signature_clone(
 bool
 fast_signature_valid(
 	const struct fast_signature *signature);
+
+/* Clones optimizer-owned metadata through an opaque boundary. */
+void *
+fast_info_clone(
+	const void *fast_info);
+
+/* Releases optimizer-owned metadata through an opaque boundary. */
+void
+fast_info_free(
+	void *fast_info);
+
+/* Gets the immutable signature stored in opaque optimizer metadata. */
+const struct fast_signature *
+fast_info_signature(
+	const void *fast_info);
+
+/* Restores an optimized generated function's runtime contract. */
+bool
+fast_mark_runtime_func(
+	struct rt_func *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value);
+
+/* Checks an optimized function call against its opaque entry contract. */
+bool
+fast_check_runtime_call(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t arg_count);
+
+#endif /* defined(NOCT_USE_OPTIMIZER) */
 
 #endif

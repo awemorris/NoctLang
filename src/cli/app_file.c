@@ -6,10 +6,10 @@
  */
 
 /*
- * Private Noct application container writer.
+ * CLI-private Noct application container writer.
  */
 
-#include "bcback_app.h"
+#include "app_file.h"
 
 #include "bcback_file.h"
 #include "bcback_private.h"
@@ -38,6 +38,12 @@ static bool bcback_app_source_is_portable(const char *source);
 static bool bcback_app_keep_embedded_source(const struct bytecode_file_module *module);
 static bool bcback_app_prepare_source(const struct bcback_app_module *input, const char *temporary_base, struct bcback_app_blob *blob);
 static bool bcback_app_prepare_bytecode(const struct bcback_app_module *input, const char *temporary_base, struct bcback_app_blob *blob);
+static bool bcback_app_serialize_inspected_module(const struct bytecode_file_module *module, const char *logical_source, const char *temporary_base, uint8_t **data, uint32_t *size);
+static bool bcback_app_build_inspected_function(const struct bytecode_file_function *function, const char *logical_source, const char *module_source, bool rewrite_source, struct lir_func *lir_function);
+static void bcback_app_cleanup_inspected_functions(const struct bytecode_file_module *module, struct lir_func lir_function[]);
+static bool bcback_app_contains_bytes(const uint8_t *data, uint32_t size, const char *needle);
+static bool bcback_app_inspected_needs_rewrite(const struct bytecode_file_module *module, const char *logical_source);
+static bool bcback_app_inspected_safe_to_rewrite(const struct bytecode_file_module *module);
 static void bcback_app_cleanup_blobs(uint32_t count, struct bcback_app_blob blob[]);
 static bool bcback_app_write_stream(FILE *stream, uint32_t module_count, const struct bcback_app_blob module[], uint32_t binding_count, const struct bcback_app_binding binding[], uint32_t root_count, const uint32_t root[]);
 static bool bcback_app_stream_to_blob(FILE *stream, uint8_t **data, uint32_t *size);
@@ -234,7 +240,9 @@ bcback_app_source_is_portable(
 
 	/* Reject every parent-directory component in either separator spelling. */
 	for (;;) {
-		if (*cursor == '/' || *cursor == '\\' || *cursor == '\0') {
+		if (*cursor == '/' ||
+		    *cursor == '\\' ||
+		    *cursor == '\0') {
 			length = (size_t)(cursor - component);
 			if (length == 2 &&
 			    component[0] == '.' &&
@@ -326,7 +334,7 @@ bcback_app_prepare_bytecode(
 	if (succeeded && bcback_app_keep_embedded_source(&module))
 		logical_source = module.source;
 	if (succeeded) {
-		succeeded = bcback_serialize_inspected_module(
+		succeeded = bcback_app_serialize_inspected_module(
 			&module,
 			logical_source,
 			temporary_base,
@@ -337,6 +345,274 @@ bcback_app_prepare_bytecode(
 	bytecode_file_cleanup_module(&module);
 
 	return succeeded;
+}
+
+/* Convert and serialize one inspected module without exposing CLI types. */
+static bool
+bcback_app_serialize_inspected_module(
+	const struct bytecode_file_module *module,
+	const char *logical_source,
+	const char *temporary_base,
+	uint8_t **data,
+	uint32_t *size)
+{
+	struct bcback_module canonical_module;
+	struct lir_func *lir_function;
+	struct lir_func **function_pointer;
+	bool rewrite_source;
+	bool succeeded;
+	uint32_t i;
+
+	memset(&canonical_module, 0, sizeof(canonical_module));
+	lir_function = NULL;
+	function_pointer = NULL;
+	succeeded = false;
+
+	assert(module != NULL);
+	assert(logical_source != NULL);
+	assert(temporary_base != NULL);
+	assert(data != NULL);
+	assert(size != NULL);
+
+	*data = NULL;
+	*size = 0;
+
+	if (module->kind != BYTECODE_FILE_MODULE_1_1)
+		goto cleanup;
+	if (!bcback_app_source_is_portable(logical_source))
+		goto cleanup;
+
+	rewrite_source = bcback_app_inspected_needs_rewrite(
+		module,
+		logical_source);
+	if (rewrite_source && !bcback_app_inspected_safe_to_rewrite(module))
+		goto cleanup;
+
+	if (module->function_count > 0) {
+		if (!bcback_app_array_size_valid(
+			module->function_count,
+			sizeof(*lir_function))) {
+			goto cleanup;
+		}
+
+		lir_function = noct_calloc(
+			(size_t)module->function_count,
+			sizeof(*lir_function));
+		if (lir_function == NULL)
+			goto cleanup;
+
+		if (!bcback_app_array_size_valid(
+			module->function_count,
+			sizeof(*function_pointer))) {
+			goto cleanup;
+		}
+
+		function_pointer = noct_calloc(
+			(size_t)module->function_count,
+			sizeof(*function_pointer));
+		if (function_pointer == NULL)
+			goto cleanup;
+	}
+
+	canonical_module.source = (char *)logical_source;
+	canonical_module.require_count = module->require_count;
+	canonical_module.require_name = module->require_name;
+	canonical_module.function_count = module->function_count;
+	canonical_module.function = function_pointer;
+
+	/* Convert every CLI descriptor to the backend's file-independent LIR. */
+	for (i = 0; i < module->function_count; i++) {
+		if (!bcback_app_build_inspected_function(
+			&module->function[i],
+			logical_source,
+			module->source,
+			rewrite_source,
+			&lir_function[i])) {
+			goto cleanup;
+		}
+
+		function_pointer[i] = &lir_function[i];
+	}
+
+	succeeded = bcback_serialize_module(
+		&canonical_module,
+		temporary_base,
+		data,
+		size);
+
+cleanup:
+	bcback_app_cleanup_inspected_functions(module, lir_function);
+	noct_free(function_pointer);
+	noct_free(lir_function);
+
+	return succeeded;
+}
+
+/* Convert one inspected function to a borrowed LIR descriptor. */
+static bool
+bcback_app_build_inspected_function(
+	const struct bytecode_file_function *function,
+	const char *logical_source,
+	const char *module_source,
+	bool rewrite_source,
+	struct lir_func *lir_function)
+{
+	char *rewritten_name;
+	size_t source_size;
+	uint32_t i;
+
+	rewritten_name = NULL;
+
+	assert(function != NULL);
+	assert(logical_source != NULL);
+	assert(module_source != NULL);
+	assert(lir_function != NULL);
+
+	if (function->param_count > LIR_PARAM_SIZE)
+		return false;
+
+	if (rewrite_source && strncmp(function->name, "$init.", 6) == 0) {
+		if (strcmp(function->name + 6, module_source) != 0)
+			return false;
+
+		source_size = strlen(logical_source);
+		if (source_size > SIZE_MAX - 7)
+			return false;
+
+		rewritten_name = noct_malloc(source_size + 7);
+		if (rewritten_name == NULL)
+			return false;
+
+		memcpy(rewritten_name, "$init.", 6);
+		memcpy(
+			rewritten_name + 6,
+			logical_source,
+			source_size + 1);
+		lir_function->func_name = rewritten_name;
+	} else {
+		lir_function->func_name = function->name;
+	}
+
+	lir_function->file_name = (char *)logical_source;
+	lir_function->param_count = function->param_count;
+
+	/* Copy every inspected parameter into the fixed LIR descriptor. */
+	for (i = 0; i < function->param_count; i++) {
+		lir_function->param_name[i] = function->param_name[i];
+		lir_function->param_type[i] = function->param_type[i];
+		lir_function->param_packed_type[i] =
+			function->param_packed_type[i];
+		lir_function->param_restricted[i] =
+			function->param_restricted[i];
+	}
+
+	lir_function->return_type = function->return_type;
+	lir_function->return_packed_type = function->return_packed_type;
+	lir_function->return_type_checked = function->return_type_checked;
+	lir_function->has_vector_ops = function->has_vector_ops;
+	lir_function->has_fma_ops = function->has_fma_ops;
+	lir_function->is_fast = false;
+	lir_function->fast_info = NULL;
+#if defined(NOCT_USE_OPTIMIZER)
+	lir_function->is_fast = function->is_fast;
+	lir_function->fast_info = function->fast_info;
+#endif
+	lir_function->tmpvar_size = function->tmpvar_size;
+	lir_function->bytecode = (uint8_t *)function->bytecode.data;
+	lir_function->bytecode_size = function->bytecode.size;
+
+	return true;
+}
+
+/* Release names allocated while converting inspected functions. */
+static void
+bcback_app_cleanup_inspected_functions(
+	const struct bytecode_file_module *module,
+	struct lir_func lir_function[])
+{
+	uint32_t i;
+
+	if (lir_function == NULL)
+		return;
+
+	/* Release only initializer names rewritten for the portable source. */
+	for (i = 0; i < module->function_count; i++) {
+		if (lir_function[i].func_name != module->function[i].name)
+			noct_free(lir_function[i].func_name);
+	}
+}
+
+/* Search one bytecode span for a fixed non-empty ASCII token. */
+static bool
+bcback_app_contains_bytes(
+	const uint8_t *data,
+	uint32_t size,
+	const char *needle)
+{
+	size_t needle_size;
+	uint32_t i;
+
+	needle_size = strlen(needle);
+	if (needle_size == 0)
+		return true;
+	if ((size_t)size < needle_size)
+		return false;
+
+	/* Compare the token at every possible byte offset. */
+	for (i = 0; (size_t)i <= (size_t)size - needle_size; i++) {
+		if (memcmp(data + i, needle, needle_size) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+/* Test whether any serialized source identity needs canonicalization. */
+static bool
+bcback_app_inspected_needs_rewrite(
+	const struct bytecode_file_module *module,
+	const char *logical_source)
+{
+	uint32_t i;
+
+	if (strcmp(module->source, logical_source) != 0)
+		return true;
+
+	/* Compare every function source with the portable module identity. */
+	for (i = 0; i < module->function_count; i++) {
+		if (strcmp(module->function[i].source, logical_source) != 0)
+			return true;
+	}
+
+	return false;
+}
+
+/* Reject source rewrites that would require a bytecode symbol relinker. */
+static bool
+bcback_app_inspected_safe_to_rewrite(
+	const struct bytecode_file_module *module)
+{
+	const struct bytecode_file_function *function;
+	uint32_t i;
+
+	/* Inspect every link name and raw opcode span conservatively. */
+	for (i = 0; i < module->function_count; i++) {
+		function = &module->function[i];
+		if (strstr(function->name, "$static.") != NULL)
+			return false;
+		if (bcback_app_contains_bytes(
+			function->bytecode.data,
+			function->bytecode.size,
+			"$static.")) {
+			return false;
+		}
+		if (strncmp(function->name, "$init.", 6) == 0 &&
+		    strcmp(function->name + 6, module->source) != 0) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 /* Release every prepared module blob. */
@@ -446,6 +722,7 @@ bcback_app_stream_to_blob(
 {
 	long stream_size;
 	size_t read_size;
+	uint32_t blob_size;
 
 	if (fflush(stream) != 0)
 		return false;
@@ -455,19 +732,23 @@ bcback_app_stream_to_blob(
 	stream_size = ftell(stream);
 	if (stream_size <= 0)
 		return false;
-	if ((unsigned long)stream_size > (unsigned long)UINT32_MAX)
-		return false;
 	if (fseek(stream, 0, SEEK_SET) != 0)
 		return false;
 
 	read_size = (size_t)stream_size;
+	if ((long)read_size != stream_size)
+		return false;
+	blob_size = (uint32_t)read_size;
+	if ((size_t)blob_size != read_size)
+		return false;
+
 	*data = noct_malloc(read_size);
 	if (*data == NULL)
 		return false;
 	if (fread(*data, 1, read_size, stream) != read_size)
 		return false;
 
-	*size = (uint32_t)read_size;
+	*size = blob_size;
 
 	return true;
 }

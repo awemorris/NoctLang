@@ -6,12 +6,13 @@
  */
 
 /*
- * Mandatory checked HIR support for __fast functions.
+ * Optimizer-owned checked HIR support for __fast functions.
  */
 
 #include "hir_fast_checked.h"
+#include "fast.h"
 #include "hir.h"
-#include "hir_private.h"
+#include "ast.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -62,6 +63,9 @@ static uint32_t fast_checked_prototype_edge_count;
 static uint32_t fast_checked_prototype_edge_capacity;
 
 static struct fast_checked_prototype *fast_checked_find_prototype(const char *name);
+static bool fast_checked_build_ast_signature(const struct ast_func *func, struct fast_signature *signature);
+static bool fast_checked_build_hir_signature(struct hir_block *func);
+static const struct fast_signature *fast_checked_get_signature(const struct hir_block *func);
 static bool fast_checked_signature_equal(const struct fast_signature *first, const struct fast_signature *second);
 static bool fast_checked_add_prototype_edge(const char *caller_name, const char *callee_name, int line);
 static bool fast_checked_validate_prototype_cycles(void);
@@ -97,6 +101,55 @@ static bool fast_checked_visit_cycle(struct fast_checked_module *module, uint32_
 static bool fast_checked_reject_nonfast_multi(struct hir_block *func);
 static bool fast_checked_find_multi_chain(struct hir_block *head, int *line);
 static bool fast_checked_find_multi_expr(const struct hir_expr *expr);
+
+/*
+ * Collects externally visible optimizer prototypes from the current AST.
+ */
+bool
+hir_fast_checked_collect_prototypes(
+	void)
+{
+	struct ast_func_list *func_list;
+	struct ast_func *func;
+	struct fast_signature signature;
+	const struct fast_signature *signature_ptr;
+
+	func_list = ast_get_func_list();
+	func = func_list != NULL ? func_list->list : NULL;
+
+	/* Collect every function that is visible outside this source file. */
+	while (func != NULL) {
+		if (func->is_static) {
+			func = func->next;
+			continue;
+		}
+
+		fast_signature_init(&signature);
+		signature_ptr = NULL;
+
+		if (func->is_fast) {
+			if (!fast_checked_build_ast_signature(func, &signature)) {
+				fast_signature_free(&signature);
+				return false;
+			}
+
+			signature_ptr = &signature;
+		}
+
+		if (!hir_fast_checked_add_prototype(
+			func->name,
+			func->is_fast,
+			signature_ptr)) {
+			fast_signature_free(&signature);
+			return false;
+		}
+
+		fast_signature_free(&signature);
+		func = func->next;
+	}
+
+	return true;
+}
 
 /*
  * Clears every externally collected function prototype.
@@ -255,12 +308,24 @@ hir_fast_checked_module(
 	module.func_count = func_count;
 	result = true;
 
-	/* Reject the multi-index syntax outside its shaped fast contract. */
+	/* Build every optimizer-owned signature before validating calls. */
 	for (i = 0; i < func_count; i++) {
-		if (!func_table[i]->val.func.is_fast &&
-		    !fast_checked_reject_nonfast_multi(func_table[i])) {
+		if (!fast_checked_build_hir_signature(func_table[i])) {
 			result = false;
 			break;
+		}
+	}
+
+	/* Reject the multi-index syntax outside its shaped fast contract. */
+	if (result) {
+		/* Inspect every ordinary function for residual multi-index syntax. */
+		for (i = 0; i < func_count; i++) {
+			if (func_table[i]->val.func.is_fast)
+				continue;
+			if (!fast_checked_reject_nonfast_multi(func_table[i])) {
+				result = false;
+				break;
+			}
 		}
 	}
 
@@ -287,6 +352,21 @@ hir_fast_checked_module(
 	return result;
 }
 
+/*
+ * Releases optimizer-owned metadata attached to one HIR function.
+ */
+void
+hir_fast_checked_cleanup_func(
+	struct hir_block *func)
+{
+	if (func == NULL || func->type != HIR_BLOCK_FUNC)
+		return;
+
+	fast_info_free(func->val.func.fast_info);
+	func->val.func.fast_info = NULL;
+	func->val.func.fast_optimized = false;
+}
+
 /* Find one externally collected function prototype. */
 static struct fast_checked_prototype *
 fast_checked_find_prototype(
@@ -301,6 +381,153 @@ fast_checked_find_prototype(
 	}
 
 	return NULL;
+}
+
+/* Build one prototype contract directly from its source AST declaration. */
+static bool
+fast_checked_build_ast_signature(
+	const struct ast_func *func,
+	struct fast_signature *signature)
+{
+	struct ast_param *param;
+	const char *param_name[HIR_PARAM_SIZE];
+	const char *param_annotation[HIR_PARAM_SIZE];
+	int param_type[HIR_PARAM_SIZE];
+	int param_packed_type[HIR_PARAM_SIZE];
+	bool param_restricted[HIR_PARAM_SIZE];
+	char message[256];
+	uint32_t param_count;
+	int return_type;
+	int return_packed_type;
+	bool return_restricted;
+
+	assert(func != NULL);
+	assert(func->is_fast);
+	assert(signature != NULL);
+
+	param = func->param_list != NULL ? func->param_list->list : NULL;
+	param_count = 0;
+
+	/* Resolve every parameter without constructing its function body. */
+	while (param != NULL) {
+		if (param_count == HIR_PARAM_SIZE) {
+			hir_error(0, N_TR("Exceeded the maximum parameter count."));
+			return false;
+		}
+
+		param_name[param_count] = param->name;
+		param_annotation[param_count] = param->type_name;
+		if (!hir_resolve_type_annotation(
+			0,
+			param->type_name,
+			true,
+			&param_type[param_count],
+			&param_packed_type[param_count],
+			&param_restricted[param_count])) {
+			return false;
+		}
+
+		param_count++;
+		param = param->next;
+	}
+
+	if (!hir_resolve_type_annotation(
+		0,
+		func->return_type_name,
+		false,
+		&return_type,
+		&return_packed_type,
+		&return_restricted)) {
+		return false;
+	}
+
+	if (!fast_signature_build(
+		signature,
+		true,
+		param_count,
+		param_name,
+		param_annotation,
+		param_type,
+		param_packed_type,
+		param_restricted,
+		func->return_type_name,
+		return_type,
+		message,
+		sizeof(message))) {
+		hir_error(0, message);
+		return false;
+	}
+
+	return true;
+}
+
+/* Build and attach the optimizer-owned contract for one HIR function. */
+static bool
+fast_checked_build_hir_signature(
+	struct hir_block *func)
+{
+	struct fast_signature candidate;
+	struct fast_signature *signature;
+	const char *param_name[HIR_PARAM_SIZE];
+	const char *param_annotation[HIR_PARAM_SIZE];
+	char message[256];
+	uint32_t i;
+
+	assert(func != NULL);
+	assert(func->type == HIR_BLOCK_FUNC);
+
+	fast_info_free(func->val.func.fast_info);
+	func->val.func.fast_info = NULL;
+	func->val.func.fast_optimized = false;
+	if (!func->val.func.is_fast)
+		return true;
+
+	/* Borrow the source metadata retained by the target-neutral HIR. */
+	for (i = 0; i < func->val.func.param_count; i++) {
+		param_name[i] = func->val.func.param_name[i];
+		param_annotation[i] = func->val.func.param_type_name[i];
+	}
+
+	fast_signature_init(&candidate);
+	if (!fast_signature_build(
+		&candidate,
+		true,
+		func->val.func.param_count,
+		param_name,
+		param_annotation,
+		func->val.func.param_type,
+		func->val.func.param_packed_type,
+		func->val.func.param_restricted,
+		func->val.func.return_type_name,
+		func->val.func.return_type,
+		message,
+		sizeof(message))) {
+		hir_error(func->line, message);
+		return false;
+	}
+
+	signature = noct_malloc(sizeof(*signature));
+	if (signature == NULL) {
+		fast_signature_free(&candidate);
+		hir_out_of_memory();
+		return false;
+	}
+
+	*signature = candidate;
+	func->val.func.fast_info = signature;
+
+	return true;
+}
+
+/* Read a HIR function's optimizer-owned contract. */
+static const struct fast_signature *
+fast_checked_get_signature(
+	const struct hir_block *func)
+{
+	assert(func != NULL);
+	assert(func->type == HIR_BLOCK_FUNC);
+
+	return fast_info_signature(func->val.func.fast_info);
 }
 
 /* Compare every owned field of two fast signatures. */
@@ -514,7 +741,7 @@ fast_checked_validate_function(
 	assert(func != NULL);
 	assert(func->type == HIR_BLOCK_FUNC);
 
-	signature = func->val.func.fast_signature;
+	signature = fast_checked_get_signature(func);
 	if (signature == NULL ||
 	    !signature->valid ||
 	    signature->version != NOCT_FAST_SIGNATURE_VERSION ||
@@ -526,6 +753,14 @@ fast_checked_validate_function(
 	if (fast_checked_intrinsic_name(func->val.func.name) ||
 	    strncmp(func->val.func.name, "$Fast", 5) == 0) {
 		hir_error(0, N_TR("A __fast function name conflicts with a compiler intrinsic."));
+		return false;
+	}
+
+	if (func->val.func.return_type != HIR_TYPE_VOID &&
+	    !func->val.func.returns_on_all_paths) {
+		hir_error(
+			0,
+			N_TR("Every reachable path of a non-void __fast func must return a value."));
 		return false;
 	}
 
@@ -819,7 +1054,9 @@ fast_checked_expr(
 {
 	int operand;
 
-	if (expr == NULL || *expr == NULL || type == NULL)
+	if (expr == NULL ||
+	    *expr == NULL ||
+	    type == NULL)
 		return false;
 	if (depth > FAST_CHECKED_EXPR_DEPTH_MAX) {
 		hir_error(line, N_TR("A __fast expression is too deeply nested."));
@@ -1082,7 +1319,7 @@ fast_checked_subscript(
 	local = fast_checked_find_local(
 		context->func,
 		base->val.term.term->val.symbol);
-	contract = &context->func->val.func.fast_signature->param[parameter];
+	contract = &fast_checked_get_signature(context->func)->param[parameter];
 	if (local == NULL ||
 	    local->declared_type != NOCT_VALUE_PACKED ||
 	    contract->rank == 0 ||
@@ -1203,7 +1440,7 @@ fast_checked_call(
 	if (callee_index >= 0) {
 		callee = context->module->func_table[callee_index];
 		if (callee->val.func.is_fast)
-			signature = callee->val.func.fast_signature;
+			signature = fast_checked_get_signature(callee);
 	} else if (prototype != NULL && prototype->is_fast) {
 		signature = &prototype->signature;
 	}
@@ -1746,7 +1983,7 @@ fast_checked_validate_call_shape(
 		return false;
 	}
 
-	actual = &context->func->val.func.fast_signature->param[parameter];
+	actual = &fast_checked_get_signature(context->func)->param[parameter];
 	if (actual->packed_type != formal->packed_type) {
 		hir_error(
 			line,

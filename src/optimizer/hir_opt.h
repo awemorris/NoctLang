@@ -14,7 +14,6 @@
 
 #include <noct/noct.h>
 #include "hir.h"
-#include "hir_private.h"
 
 /*
  * Optimizer pass entry points.

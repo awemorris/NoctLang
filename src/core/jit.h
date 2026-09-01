@@ -171,7 +171,7 @@ jit_free(
 /*
  * JIT codegen context
  */
-struct jit_context {
+struct rt_jit_context {
 	/* Env. */
 	struct rt_env *env;
 
@@ -225,6 +225,7 @@ struct jit_context {
 	int branch_patch_count;
 	uint32_t branch_patch_capacity;
 
+#if defined(NOCT_USE_OPTIMIZER)
 	/*
 	 * For vectorized code.
 	 */
@@ -298,74 +299,75 @@ struct jit_context {
 	unsigned gpr_spills;
 	unsigned gpr_dead_drops;
 	unsigned gpr_proven_divisions;
+#endif
 };
 
 /*
  * Slab: VM-local JIT allocation.
  */
-struct jit_slab {
+struct rt_jit_slab {
 	uint8_t *base;
 	uint8_t *current;
 	uint8_t *committed;
 	uint8_t *end;
 	size_t size;
-	struct jit_slab *next;
+	struct rt_jit_slab *next;
 };
 
 /* Map a region. */
-bool jit_map_memory_region(void **region, size_t size);
+bool rt_jit_map_memory_region(void **region, size_t size);
 
 /* Unmap a region. */
-bool jit_unmap_memory_region(void *region, size_t size);
+bool rt_jit_unmap_memory_region(void *region, size_t size);
 
 /* Make a region executable. */
-bool jit_map_executable(void *region, size_t size);
+bool rt_jit_map_executable(void *region, size_t size);
 
 /* Acquire a JIT slab. */
 bool
-jit_slab_acquire(
+rt_jit_slab_acquire(
 	struct rt_env *env,
-	struct jit_slab **slab,
+	struct rt_jit_slab **slab,
 	void **code_top,
 	void **code_end);
 
 /* Reserve a JIT slab. */
 bool
-jit_slab_reserve(
+rt_jit_slab_reserve(
 	struct rt_env *env,
 	size_t estimated_size);
 
 /* Finish a JIT slab. */
 void
-jit_slab_finish(
+rt_jit_slab_finish(
 	struct rt_env *env,
-	struct jit_slab *slab,
+	struct rt_jit_slab *slab,
 	void *code_end);
 
 /* Abandon a JIT slab. */
 void
-jit_slab_abandon(
+rt_jit_slab_abandon(
 	struct rt_env *env,
-	struct jit_slab *slab);
+	struct rt_jit_slab *slab);
 
 /* Clear a JIT slab overflow. */
 void
-jit_slab_clear_overflow(
+rt_jit_slab_clear_overflow(
 	struct rt_env *env);
 
 /* Commit all JIT slabs. */
 bool
-jit_slab_commit_all(
+rt_jit_slab_commit_all(
 	struct rt_env *env);
 
 /* Free all JIT slabs. */
 bool
-jit_slab_free_all(
+rt_jit_slab_free_all(
 	struct rt_env *env);
 
 /* Return the per-VM JIT reservation. */
 size_t
-jit_get_code_size(
+rt_jit_get_code_size(
 	struct rt_env *env);
 
 #if defined(NOCT_ARCH_X86_64) || defined(NOCT_ARCH_ARM64)
@@ -379,62 +381,62 @@ jit_get_code_size(
  * memory-canonical visitors.
  */
 uint16_t
-jit_ploop_read_u16(const uint8_t *p);
+rt_jit_ploop_read_u16(const uint8_t *p);
 
 uint32_t
-jit_ploop_read_u32(const uint8_t *p);
+rt_jit_ploop_read_u32(const uint8_t *p);
 
 bool
-jit_ploop_reject(struct jit_context *ctx, const char *reason);
+rt_jit_ploop_reject(struct rt_jit_context *ctx, const char *reason);
 
 bool
-jit_ploop_add_base(struct jit_context *ctx, uint16_t base, int scale);
+rt_jit_ploop_add_base(struct rt_jit_context *ctx, uint16_t base, int scale);
 
 bool
-jit_ploop_is_index_alias(struct jit_context *ctx, int tmp);
+rt_jit_ploop_is_index_alias(struct rt_jit_context *ctx, int tmp);
 
 bool
-jit_ploop_index_alias_disp(struct jit_context *ctx, int tmp, int32_t *disp);
+rt_jit_ploop_index_alias_disp(struct rt_jit_context *ctx, int tmp, int32_t *disp);
 
 void
-jit_ploop_remove_index_alias(struct jit_context *ctx, int tmp);
+rt_jit_ploop_remove_index_alias(struct rt_jit_context *ctx, int tmp);
 
 bool
-jit_ploop_add_index_alias_disp(struct jit_context *ctx, int tmp,
+rt_jit_ploop_add_index_alias_disp(struct rt_jit_context *ctx, int tmp,
 			       int32_t disp);
 
 bool
-jit_ploop_add_index_alias(struct jit_context *ctx, int tmp);
+rt_jit_ploop_add_index_alias(struct rt_jit_context *ctx, int tmp);
 
 int
-jit_ploop_resolve_base(struct jit_context *ctx, int tmp);
+rt_jit_ploop_resolve_base(struct rt_jit_context *ctx, int tmp);
 
 void
-jit_ploop_remove_base_alias(struct jit_context *ctx, int tmp);
+rt_jit_ploop_remove_base_alias(struct rt_jit_context *ctx, int tmp);
 
 bool
-jit_ploop_set_base_alias(struct jit_context *ctx, int dst, int src);
+rt_jit_ploop_set_base_alias(struct rt_jit_context *ctx, int dst, int src);
 
 void
-jit_ploop_note_use(struct jit_context *ctx, int tmp);
+rt_jit_ploop_note_use(struct rt_jit_context *ctx, int tmp);
 
 void
-jit_ploop_note_def(struct jit_context *ctx, int tmp);
+rt_jit_ploop_note_def(struct rt_jit_context *ctx, int tmp);
 
 bool
-jit_ploop_has_loop_carried_scalar(struct jit_context *ctx);
+rt_jit_ploop_has_loop_carried_scalar(struct rt_jit_context *ctx);
 
 void
-jit_ploop_count_use(struct jit_context *ctx, int tmp, bool address_only);
+rt_jit_ploop_count_use(struct rt_jit_context *ctx, int tmp, bool address_only);
 
 bool
-jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried);
+rt_jit_scan_packed_loop(struct rt_jit_context *ctx, bool reject_loop_carried);
 
 bool
-jit_ploop_current_access_disp(struct jit_context *ctx, int32_t *disp);
+rt_jit_ploop_current_access_disp(struct rt_jit_context *ctx, int32_t *disp);
 
 bool
-jit_ploop_current_elided(struct jit_context *ctx, uint32_t size);
+rt_jit_ploop_current_elided(struct rt_jit_context *ctx, uint32_t size);
 
 /*
  * Return the next bytecode position that reads tmp, stopping at its
@@ -444,7 +446,7 @@ jit_ploop_current_elided(struct jit_context *ctx, uint32_t size);
  * general CFG liveness structure.
  */
 uint32_t
-jit_ploop_next_use_lpc(struct jit_context *ctx, int tmp, uint32_t from);
+rt_jit_ploop_next_use_lpc(struct rt_jit_context *ctx, int tmp, uint32_t from);
 #endif /* PLOOP scanner backends */
 
 /*
@@ -454,43 +456,43 @@ jit_ploop_next_use_lpc(struct jit_context *ctx, int tmp, uint32_t from);
  * 2048-instruction ceiling.
  */
 bool
-jit_context_init_tables(struct jit_context *ctx);
+rt_jit_context_init_tables(struct rt_jit_context *ctx);
 
 /* Allocate scalar register-cache analysis storage only for a function that
  * actually contains an eligible PLOOP region. */
 bool
-jit_context_init_regcache(struct jit_context *ctx);
+rt_jit_context_init_regcache(struct rt_jit_context *ctx);
 
 void
-jit_context_dispose_tables(struct jit_context *ctx);
+rt_jit_context_dispose_tables(struct rt_jit_context *ctx);
 
 void
-jit_configure_simd(struct jit_context *ctx, uint32_t detected,
+rt_jit_configure_simd(struct rt_jit_context *ctx, uint32_t detected,
 		   const char *backend);
 
 void
-jit_dump_standard_code(struct jit_context *ctx, void *generated_end,
+rt_jit_dump_standard_code(struct rt_jit_context *ctx, void *generated_end,
 		       const char *backend);
 
 
 /* Build a function with the standard JIT backend workflow. */
 bool
-jit_build_standard(
+rt_jit_build_standard(
 	struct rt_env *env,
 	struct rt_func *func,
 	uint32_t detected_caps,
 	const char *backend,
-	bool (*visit_bytecode)(struct jit_context *ctx),
-	bool (*patch_branch)(struct jit_context *ctx, int patch_index));
+	bool (*visit_bytecode)(struct rt_jit_context *ctx),
+	bool (*patch_branch)(struct rt_jit_context *ctx, int patch_index));
 
 
 /*
  * Get an opcode.
  */
-#define CONSUME_OPCODE(d)	if (!jit_get_opcode(ctx, &d)) return false
+#define CONSUME_OPCODE(d)	if (!rt_jit_get_opcode(ctx, &d)) return false
 static INLINE bool
-jit_get_opcode(
-	struct jit_context *ctx,
+rt_jit_get_opcode(
+	struct rt_jit_context *ctx,
 	uint8_t *opcode)
 {
 	if (ctx->lpc + 1 > ctx->func->bytecode_size) {
@@ -509,10 +511,10 @@ jit_get_opcode(
 /*
  * Get an imm32 operand.
  */
-#define CONSUME_IMM32(d)	if (!jit_get_opr_imm32(ctx, &d)) return false
+#define CONSUME_IMM32(d)	if (!rt_jit_get_opr_imm32(ctx, &d)) return false
 static INLINE bool
-jit_get_opr_imm32(
-	struct jit_context *ctx,
+rt_jit_get_opr_imm32(
+	struct rt_jit_context *ctx,
 	uint32_t *d)
 {
 	if (ctx->lpc + 4 > ctx->func->bytecode_size) {
@@ -534,10 +536,10 @@ jit_get_opr_imm32(
 /*
  * Get an imm64 operand.
  */
-#define CONSUME_IMM64(d)	if (!jit_get_opr_imm64(ctx, &d)) return false
+#define CONSUME_IMM64(d)	if (!rt_jit_get_opr_imm64(ctx, &d)) return false
 static INLINE bool
-jit_get_opr_imm64(
-	struct jit_context *ctx,
+rt_jit_get_opr_imm64(
+	struct rt_jit_context *ctx,
 	uint64_t *d)
 {
 	if (ctx->lpc + 8 > ctx->func->bytecode_size) {
@@ -563,10 +565,10 @@ jit_get_opr_imm64(
 /*
  * Get an imm16 operand that represents tmpvar index.
  */
-#define CONSUME_TMPVAR(d)	if (!jit_get_opr_tmpvar(ctx, &d)) return false
+#define CONSUME_TMPVAR(d)	if (!rt_jit_get_opr_tmpvar(ctx, &d)) return false
 static INLINE bool
-jit_get_opr_tmpvar(
-	struct jit_context *ctx,
+rt_jit_get_opr_tmpvar(
+	struct rt_jit_context *ctx,
 	int *d)
 {
 	if (ctx->lpc + 2 > ctx->func->bytecode_size) {
@@ -590,10 +592,10 @@ jit_get_opr_tmpvar(
 /*
  * Get an imm8 operand.
  */
-#define CONSUME_IMM8(d)		if (!jit_get_imm8(ctx, &d)) return false
+#define CONSUME_IMM8(d)		if (!rt_jit_get_imm8(ctx, &d)) return false
 static INLINE bool
-jit_get_imm8(
-	struct jit_context *ctx,
+rt_jit_get_imm8(
+	struct rt_jit_context *ctx,
 	int *imm8)
 {
 	if (ctx->lpc + 1 > ctx->func->bytecode_size) {
@@ -611,27 +613,27 @@ jit_get_imm8(
 
 /* Consume the architecture-neutral scalar Packed-loop hint. */
 bool
-jit_visit_ploop_hint_op(struct jit_context *ctx);
+rt_jit_visit_ploop_hint_op(struct rt_jit_context *ctx);
 
 /* Function-head metadata emitted after whole-function type aggregation. */
 bool
-jit_visit_tmpvar_type_op(struct jit_context *ctx);
+rt_jit_visit_tmpvar_type_op(struct rt_jit_context *ctx);
 
 /* Non-optimizing backends keep frame tags canonical and only need to consume
  * the explicit materialization boundary. */
 bool
-jit_visit_materialize_type_metadata_op(struct jit_context *ctx);
+rt_jit_visit_materialize_type_metadata_op(struct rt_jit_context *ctx);
 
 bool
-jit_tmp_has_fixed_primitive_type(struct jit_context *ctx, int tmp, int type);
+rt_jit_tmp_has_fixed_primitive_type(struct rt_jit_context *ctx, int tmp, int type);
 
 /*
  * Get a string operand.
  */
-#define CONSUME_STRING(s,l,h)	if (!jit_get_opr_string(ctx, &s, &l, &h)) return false
+#define CONSUME_STRING(s,l,h)	if (!rt_jit_get_opr_string(ctx, &s, &l, &h)) return false
 static INLINE bool
-jit_get_opr_string(
-	struct jit_context *ctx,
+rt_jit_get_opr_string(
+	struct rt_jit_context *ctx,
 	const char **s,
 	uint32_t *len,
 	uint32_t *hash)

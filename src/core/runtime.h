@@ -48,13 +48,13 @@ struct rt_func;
 struct rt_bindglobal;
 struct rt_vm_finalizer;
 struct rt_required_source;
-struct jit_slab;
-struct hir_block;
+struct rt_jit_slab;
 
 /*
  * String object.
  */
 struct rt_string {
+	/* GC object head. */
 	struct rt_gc_object head;
 
 	/* UTF-8 data. */
@@ -84,6 +84,7 @@ struct rt_string {
  * Array object.
  */
 struct rt_array {
+	/* GC object head. */
 	struct rt_gc_object head;
 
 	/* Allocation size. */
@@ -117,6 +118,7 @@ struct rt_array {
  * Dictionary object.
  */
 struct rt_dict {
+	/* GC object head. */
 	struct rt_gc_object head;
 
 	/* Allocation size. */
@@ -162,6 +164,7 @@ struct rt_dict {
  * Packed (Buffer) object.
  */
 struct rt_packed {
+	/* GC object head. */
 	struct rt_gc_object head;
 
 	/* Primitive type. */
@@ -190,9 +193,10 @@ struct rt_packed {
  * Function object.
  */
 struct rt_func {
+	/* GC object head. */
 	struct rt_gc_object head;
 
-	/* Functio nname. */
+	/* Function name. */
 	char *name;
 
 	/* Parameter count. */
@@ -211,10 +215,6 @@ struct rt_func {
 	uint8_t *bytecode;
 	uint32_t tmpvar_size;
 
-	/* JIT-generated code. */
-	bool (CDECL *jit_code)(struct rt_env *env);
-	int call_count;
-
 	/* File name. */
 	char *file_name;
 
@@ -222,9 +222,18 @@ struct rt_func {
 	struct rt_func *next;
 
 	/*
+	 * JIT Extension
+	 */
+#if defined(NOCT_USE_JIT)
+	/* JIT-generated code. */
+	bool (CDECL *jit_code)(struct rt_env *env);
+	int call_count;
+#endif
+
+	/*
 	 * Parameter Type Annotation Extension
 	 */
-
+#if defined(NOCT_USE_OPTIMIZER)
 	/* NOCT_VALUE_* tag per param, or -1 = unannotated. */
 	int param_type[NOCT_ARG_MAX];
 
@@ -233,35 +242,39 @@ struct rt_func {
 
 	/* rpacked* source annotation. */
 	bool param_restricted[NOCT_ARG_MAX];
+#endif
 
 	/*
 	 * Return Type Annotation Extension
 	 */
-
+#if defined(NOCT_USE_OPTIMIZER)
 	/* Optional declared return type contract. */
 	int return_type;
 	int return_packed_type;
 	bool return_type_checked;
+#endif
 
 	/*
 	 * "__fast" Function Extension
 	 */
-
+#if defined(NOCT_USE_OPTIMIZER)
 	/* Statically constrained CPU function. */
 	bool is_fast;
 
-	/* Exact entry contract for a fast function. */
-	struct fast_signature fast_signature;
+	/* __fast optimization info. */
+	void *fast_info;
+#endif
 
 	/*
 	 * SIMD Optimization
 	 */
-
+#if defined(NOCT_USE_OPTIMIZER)
 	/* ABI/prologue metadata: bytecode contains OP_V* instructions. */
 	bool has_vector_ops;
 
 	/* Bytecode contains OP_VFMAF32X4 and requires fused semantics. */
 	bool has_fma_ops;
+#endif
 };
 
 /*
@@ -409,35 +422,40 @@ struct rt_env {
  * VM.
  */
 struct rt_vm {
-	/* Global symbols. */
-	struct rt_bindglobal *global;
-	uint32_t global_alloc_size;
-	uint32_t global_size;
+	/* Config. */
+	struct rt_config config;
+
+	/* Env list. */
+	struct rt_env *env_list;
 
 	/* Function list. */
 	struct rt_func *func_list;
 
-	/* Required source load state. */
-	struct rt_required_source *required_source_list;
+	/*
+	 * Global symbols.
+	 */
+	struct rt_bindglobal *global;
+	uint32_t global_alloc_size;
+	uint32_t global_size;
 
-	/* VM-owned native finalizers. */
-	struct rt_vm_finalizer *vm_finalizer_list;
-
-	/* Optional accelerator HIR optimizer attachment. */
-	bool (*accel_optimize_func)(struct hir_block *func_block,
-				    void *userdata);
-	void *accel_optimize_userdata;
+	/*
+	 * GC
+	 */
 
 	/* GC. */
 	struct rt_gc_info gc;
-
-	/* Env list. */
-	struct rt_env *env_list;
 
 	/* Pinned C global variables. */
 	struct rt_value *pinned[RT_GLOBAL_PIN_MAX];
 	uint32_t pinned_count;
 
+	/* GC nest counter. */
+	int gc_in_progress_counter;
+
+	/* GC level. */
+	int gc_level;
+
+#if defined(NOCT_USE_JIT)
 	/* Per-VM JIT slabs.  Published pages are never made writable again. */
 	struct jit_slab *jit_slab_head;
 	struct jit_slab *jit_slab_tail;
@@ -445,15 +463,7 @@ struct rt_vm {
 
 	/* Is JIT code written and not commited? */
 	bool is_jit_dirty;
-
-	/* Config. */
-	struct rt_config config;
-
-	/* GC nest counter. */
-	int gc_in_progress_counter;
-
-	/* GC level. */
-	int gc_level;
+#endif
 
 #if defined(NOCT_USE_MULTITHREAD)
 	/*
@@ -498,6 +508,12 @@ struct rt_vm {
 	 *  - Never held across a GC or a safepoint park.
 	 */
 	int heap_lock;
+#endif
+
+#if defined(NOCT_USE_ACCEL)
+	/* Optional accelerator HIR optimizer attachment. */
+	bool (*accel_optimize_func)(void *func_block, void *userdata);
+	void *accel_optimize_userdata;
 #endif
 };
 
@@ -565,24 +581,6 @@ rt_register_cfunc(
 	const char *param_name[],
 	bool (*cfunc)(struct rt_env *env),
 	struct rt_func **ret_func);
-
-/* Register a native function carrying VM-local data. */
-bool
-rt_register_cfunc_with_data(
-	struct rt_env *env,
-	const char *name,
-	size_t param_count,
-	const char *param_name[],
-	bool (*cfunc)(struct rt_env *env, void *userdata),
-	void *userdata,
-	struct rt_func **ret_func);
-
-/* Register native cleanup for normal VM destruction. */
-bool
-rt_register_vm_finalizer(
-	struct rt_env *env,
-	void (*finalizer)(void *userdata),
-	void *userdata);
 
 /*
  * Call
@@ -975,24 +973,6 @@ rt_safepoint(
 	struct rt_env *env);
 
 /*
- * "__fast" Function
- */
-
-/* Restores a generated __fast function's caller-side contract. */
-bool
-rt_mark_fast_func(
-	struct rt_func *func,
-	uint32_t tmpvar_size,
-	int return_type,
-	uint32_t param_count,
-	const int *value_type,
-	const int *packed_type,
-	const int *restricted,
-	const uint32_t *rank,
-	const int *extent_kind,
-	const int64_t *extent_value);
-
-/*
  * Error Handling
  */
 
@@ -1023,4 +1003,24 @@ void
 rt_out_of_memory(
 	struct rt_env *env);
 
+#endif
+
+#if 0
+/*
+ * "__fast" Function
+ */
+
+/* Restores a generated __fast function's caller-side contract. */
+bool
+rt_mark_fast_func(
+	struct rt_func *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value);
 #endif

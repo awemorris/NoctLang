@@ -6,10 +6,12 @@
  */
 
 /*
- * Noct __fast function contracts.
+ * Noct optimizer __fast function contracts.
  */
 
 #include "fast.h"
+#include <noct/aot.h>
+#include "runtime.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -383,6 +385,410 @@ fast_signature_valid(
 	return fast_signature_layout_valid(signature);
 }
 
+/*
+ * Clones a signature without exposing its layout to the owner.
+ */
+void *
+fast_info_clone(
+	const void *fast_info)
+{
+	const struct fast_signature *source;
+	struct fast_signature *destination;
+
+	if (fast_info == NULL)
+		return NULL;
+
+	source = fast_info;
+	destination = noct_malloc(sizeof(*destination));
+	if (destination == NULL)
+		return NULL;
+
+	fast_signature_init(destination);
+	if (!fast_signature_clone(destination, source)) {
+		noct_free(destination);
+		return NULL;
+	}
+
+	return destination;
+}
+
+/*
+ * Releases an opaque fast signature.
+ */
+void
+fast_info_free(
+	void *fast_info)
+{
+	struct fast_signature *signature;
+
+	if (fast_info == NULL)
+		return;
+
+	signature = fast_info;
+	fast_signature_free(signature);
+	noct_free(signature);
+}
+
+/*
+ * Returns the signature behind the optimizer-owned handle.
+ */
+const struct fast_signature *
+fast_info_signature(
+	const void *fast_info)
+{
+	return fast_info;
+}
+
+/*
+ * Restores an optimized generated function through the AOT interface.
+ */
+NOCT_DLL
+bool
+noct_ex_mark_fast_func(
+	NoctFunc *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value)
+{
+	return fast_mark_runtime_func(
+		(struct rt_func *)func,
+		tmpvar_size,
+		return_type,
+		param_count,
+		value_type,
+		packed_type,
+		restricted,
+		rank,
+		extent_kind,
+		extent_value);
+}
+
+/*
+ * Restores an optimized generated function's runtime contract.
+ */
+bool
+fast_mark_runtime_func(
+	struct rt_func *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value)
+{
+	struct fast_signature candidate;
+	struct fast_param_contract *contract;
+	struct fast_extent *extent;
+	struct fast_signature *fast_info;
+	uint32_t extent_count;
+	uint32_t param_index;
+	uint32_t i;
+	uint32_t axis;
+
+	if (func == NULL)
+		return false;
+	if (param_count != func->param_count || param_count > NOCT_ARG_MAX)
+		return false;
+	if (tmpvar_size < param_count + 1 || tmpvar_size > RT_TMPVAR_MAX)
+		return false;
+	if (param_count > 0 &&
+	    (value_type == NULL ||
+	     packed_type == NULL ||
+	     restricted == NULL ||
+	     rank == NULL)) {
+		return false;
+	}
+
+	extent_count = 0;
+
+	/* Validate and total every exact-rank extent table. */
+	for (i = 0; i < param_count; i++) {
+		if (restricted[i] != 0 && restricted[i] != 1)
+			return false;
+		if (rank[i] > NOCT_FAST_RANK_MAX)
+			return false;
+		if (extent_count > UINT32_MAX - rank[i])
+			return false;
+
+		extent_count += rank[i];
+	}
+
+	if (extent_count > 0 &&
+	    (extent_kind == NULL || extent_value == NULL)) {
+		return false;
+	}
+
+	fast_signature_init(&candidate);
+	candidate.valid = true;
+	candidate.param_count = param_count;
+	candidate.return_type = return_type;
+
+	if (param_count > 0) {
+		candidate.param = noct_calloc(
+			(size_t)param_count,
+			sizeof(*candidate.param));
+		if (candidate.param == NULL)
+			return false;
+	}
+
+	extent_count = 0;
+
+	/* Restore every parameter and its exact-rank extent table. */
+	for (i = 0; i < param_count; i++) {
+		contract = &candidate.param[i];
+		contract->value_type = value_type[i];
+		contract->packed_type = packed_type[i];
+		contract->restricted = restricted[i] != 0;
+		contract->rank = rank[i];
+
+		if (rank[i] == 0)
+			continue;
+
+		contract->extent = noct_calloc(
+			(size_t)rank[i],
+			sizeof(*contract->extent));
+		if (contract->extent == NULL) {
+			fast_signature_free(&candidate);
+			return false;
+		}
+
+		/* Decode this parameter's consecutive extent entries. */
+		for (axis = 0; axis < rank[i]; axis++) {
+			extent = &contract->extent[axis];
+			extent->kind = extent_kind[extent_count];
+
+			if (extent->kind == FAST_EXTENT_CONST) {
+				extent->value.constant = extent_value[extent_count];
+			} else if (extent->kind == FAST_EXTENT_PARAM) {
+				if (extent_value[extent_count] < 0) {
+					fast_signature_free(&candidate);
+					return false;
+				}
+
+				param_index = (uint32_t)extent_value[extent_count];
+				if ((int64_t)param_index != extent_value[extent_count]) {
+					fast_signature_free(&candidate);
+					return false;
+				}
+				extent->value.param_index = param_index;
+			} else {
+				fast_signature_free(&candidate);
+				return false;
+			}
+
+			extent_count++;
+		}
+	}
+
+	if (!fast_signature_valid(&candidate)) {
+		fast_signature_free(&candidate);
+		return false;
+	}
+
+	fast_info = noct_malloc(sizeof(*fast_info));
+	if (fast_info == NULL) {
+		fast_signature_free(&candidate);
+		return false;
+	}
+	*fast_info = candidate;
+
+	fast_info_free(func->fast_info);
+	func->fast_info = fast_info;
+	func->is_fast = true;
+	func->tmpvar_size = tmpvar_size;
+	func->return_type = return_type;
+	func->return_packed_type = -1;
+
+	/* Mirror the contract in ordinary optimizer metadata. */
+	for (i = 0; i < param_count; i++) {
+		func->param_type[i] = value_type[i];
+		func->param_packed_type[i] = packed_type[i];
+		func->param_restricted[i] = restricted[i] != 0;
+	}
+
+	return true;
+}
+
+/*
+ * Validates an optimized entry contract against rooted arguments.
+ */
+bool
+fast_check_runtime_call(
+	struct rt_env *env,
+	struct rt_func *func,
+	uint32_t arg_count)
+{
+	const struct fast_signature *signature;
+	const struct fast_param_contract *contract;
+	const struct fast_extent *extent;
+	struct rt_value *arguments;
+	struct rt_value *argument;
+	struct rt_value *extent_argument;
+	struct rt_packed *packed;
+	uint64_t extent_value;
+	size_t element_count;
+	uint32_t i;
+	uint32_t axis;
+
+	assert(env != NULL);
+	assert(env->frame != NULL);
+	assert(func != NULL);
+
+	signature = fast_info_signature(func->fast_info);
+	arguments = env->frame->tmpvar;
+	if (signature == NULL ||
+	    !signature->valid ||
+	    signature->version != NOCT_FAST_SIGNATURE_VERSION ||
+	    signature->param_count != arg_count ||
+	    (arg_count > 0 && signature->param == NULL)) {
+		rt_error(
+			env,
+			N_TR("Invalid __fast function signature for '%s'."),
+			func->name);
+		return false;
+	}
+
+	/* Validate every exact value tag and Packed element kind first. */
+	for (i = 0; i < arg_count; i++) {
+		contract = &signature->param[i];
+		argument = &arguments[i];
+
+		if (argument->type != contract->value_type) {
+			rt_error(
+				env,
+				N_TR("__fast call '%s': argument %u has the wrong primitive type."),
+				func->name,
+				(unsigned int)i + 1);
+			return false;
+		}
+
+		if (contract->value_type != NOCT_VALUE_PACKED)
+			continue;
+
+		packed = argument->val.packed;
+		if (packed == NULL || packed->type != contract->packed_type) {
+			rt_error(
+				env,
+				N_TR("__fast call '%s': argument %u has the wrong packed element type."),
+				func->name,
+				(unsigned int)i + 1);
+			return false;
+		}
+	}
+
+	/* Validate every Packed shape after all scalar tags are known valid. */
+	for (i = 0; i < arg_count; i++) {
+		contract = &signature->param[i];
+		if (contract->value_type != NOCT_VALUE_PACKED)
+			continue;
+
+		if (contract->rank == 0 ||
+		    contract->rank > NOCT_FAST_RANK_MAX ||
+		    contract->extent == NULL) {
+			rt_error(
+				env,
+				N_TR("Invalid __fast function signature for '%s'."),
+				func->name);
+			return false;
+		}
+
+		element_count = 1;
+
+		/* Multiply every positive extent into the exact element count. */
+		for (axis = 0; axis < contract->rank; axis++) {
+			extent = &contract->extent[axis];
+			if (extent->kind == FAST_EXTENT_CONST) {
+				if (extent->value.constant <= 0) {
+					rt_error(
+						env,
+						N_TR("__fast call '%s': shape extents must be positive."),
+						func->name);
+					return false;
+				}
+
+				extent_value = (uint64_t)extent->value.constant;
+			} else if (extent->kind == FAST_EXTENT_PARAM) {
+				if (extent->value.param_index >= arg_count) {
+					rt_error(
+						env,
+						N_TR("Invalid __fast function signature for '%s'."),
+						func->name);
+					return false;
+				}
+
+				extent_argument = &arguments[extent->value.param_index];
+				if (extent_argument->type == NOCT_VALUE_INT) {
+					if (extent_argument->val.i <= 0) {
+						rt_error(
+							env,
+							N_TR("__fast call '%s': shape extents must be positive."),
+							func->name);
+						return false;
+					}
+
+					extent_value =
+						(uint64_t)(uint32_t)
+							extent_argument->val.i;
+				} else if (extent_argument->type == NOCT_VALUE_LONG) {
+					if (extent_argument->val.l <= 0) {
+						rt_error(
+							env,
+							N_TR("__fast call '%s': shape extents must be positive."),
+							func->name);
+						return false;
+					}
+
+					extent_value = (uint64_t)extent_argument->val.l;
+				} else {
+					rt_error(
+						env,
+						N_TR("Invalid __fast function signature for '%s'."),
+						func->name);
+					return false;
+				}
+			} else {
+				rt_error(
+					env,
+					N_TR("Invalid __fast function signature for '%s'."),
+					func->name);
+				return false;
+			}
+
+			if (extent_value > (uint64_t)SIZE_MAX ||
+			    element_count > SIZE_MAX / (size_t)extent_value) {
+				rt_error(
+					env,
+					N_TR("__fast call '%s': shape element count overflow."),
+					func->name);
+				return false;
+			}
+
+			element_count *= (size_t)extent_value;
+		}
+
+		packed = arguments[i].val.packed;
+		if (packed->elem_size != element_count) {
+			rt_error(
+				env,
+				N_TR("__fast call '%s': argument %u does not match the exact shape."),
+				func->name,
+				(unsigned int)i + 1);
+			return false;
+		}
+	}
+
+	return true;
+}
+
 /* Copy one fixed diagnostic into the caller's buffer. */
 static void
 fast_set_error(
@@ -596,7 +1002,9 @@ fast_parse_shape(
 	}
 
 	close = strrchr(cursor + 1, ')');
-	if (close == NULL || close[1] != '\0' || cursor + 1 == close) {
+	if (close == NULL ||
+	    close[1] != '\0' ||
+	    cursor + 1 == close) {
 		fast_set_error(
 			error,
 			error_size,

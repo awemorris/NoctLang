@@ -36,7 +36,9 @@ static const char ordinary_source[] =
 static const char accel_source[] =
 	"__accel func target(value: int): int { return value + 1; }\n";
 
-static bool accelerator_callback(struct hir_block *func_block, void *userdata);
+#if defined(NOCT_USE_ACCEL)
+static bool accelerator_callback(void *func_data, void *userdata);
+#endif
 static bool run_registration_case(const char *label, bool is_accel, int optimize_level, enum callback_action action, int expected_calls, bool expected_success);
 static bool check_callback_error(NoctEnv *env);
 
@@ -50,7 +52,7 @@ main(
 	int optimized_calls;
 	bool optimized_error_success;
 
-#if defined(NOCT_USE_OPTIMIZER)
+#if defined(NOCT_USE_OPTIMIZER) && defined(NOCT_USE_ACCEL)
 	optimized_calls = 1;
 	optimized_error_success = false;
 #else
@@ -104,14 +106,17 @@ main(
 	return 0;
 }
 
+#if defined(NOCT_USE_ACCEL)
 /* Apply, decline, or fail one accelerator optimization request. */
 static bool
 accelerator_callback(
-	struct hir_block *func_block,
+	void *func_data,
 	void *userdata)
 {
+	struct hir_block *func_block;
 	struct callback_state *state;
 
+	func_block = func_data;
 	state = userdata;
 	state->call_count++;
 
@@ -144,6 +149,7 @@ accelerator_callback(
 		return false;
 	}
 }
+#endif
 
 /* Register one source and verify its callback behavior. */
 static bool
@@ -180,8 +186,10 @@ run_registration_case(
 		return false;
 	}
 
+#if defined(NOCT_USE_ACCEL)
 	vm->accel_optimize_func = accelerator_callback;
 	vm->accel_optimize_userdata = &state;
+#endif
 	source = is_accel ? accel_source : ordinary_source;
 	registered = noct_register_source(
 		env,

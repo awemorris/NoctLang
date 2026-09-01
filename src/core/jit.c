@@ -35,8 +35,11 @@
 
 /*
  * Architecture Independent
+ *
+ * Scalar JIT support is independent of the optimizer.  Optimizer-owned
+ * vector, packed-loop, and register-cache metadata is guarded separately.
  */
-#if defined(NOCT_USE_JIT) &&          \
+#if defined(NOCT_USE_JIT) && \
       (                               \
         defined(NOCT_ARCH_X86)     || \
         defined(NOCT_ARCH_X86_64)  || \
@@ -72,14 +75,16 @@
 static bool jit_debug_enabled(void);
 static void jit_debug_memory(const char *operation, size_t size,
 			     bool success, unsigned long error);
+#if defined(NOCT_USE_OPTIMIZER)
 static uint32_t jit_apply_simd_max(uint32_t detected);
+#endif
 static size_t jit_page_size(void);
 static size_t jit_align_up(size_t value, size_t alignment);
-static bool jit_slab_allocate(struct rt_env *env, size_t requested_size, struct jit_slab **result);
+static bool jit_slab_allocate(struct rt_env *env, size_t requested_size, struct rt_jit_slab **result);
 
 /* Architecture-neutral JIT helpers. */
 size_t
-jit_get_code_size(
+rt_jit_get_code_size(
 	struct rt_env *env)
 {
 	size_t size;
@@ -92,15 +97,16 @@ jit_get_code_size(
 	return size;
 }
 
-#if defined(NOCT_ARCH_X86_64) || defined(NOCT_ARCH_ARM64)
+#if defined(NOCT_USE_OPTIMIZER) && \
+    (defined(NOCT_ARCH_X86_64) || defined(NOCT_ARCH_ARM64))
 uint16_t
-jit_ploop_read_u16(const uint8_t *p)
+rt_jit_ploop_read_u16(const uint8_t *p)
 {
 	return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
 }
 
 uint32_t
-jit_ploop_read_u32(const uint8_t *p)
+rt_jit_ploop_read_u32(const uint8_t *p)
 {
 	return ((uint32_t)p[0] << 24) |
 		((uint32_t)p[1] << 16) |
@@ -109,7 +115,7 @@ jit_ploop_read_u32(const uint8_t *p)
 }
 
 bool
-jit_ploop_reject(struct jit_context *ctx, const char *reason)
+rt_jit_ploop_reject(struct rt_jit_context *ctx, const char *reason)
 {
 	ctx->packed_loop_reject_reason = reason;
 
@@ -117,7 +123,7 @@ jit_ploop_reject(struct jit_context *ctx, const char *reason)
 }
 
 bool
-jit_ploop_add_base(struct jit_context *ctx, uint16_t base, int scale)
+rt_jit_ploop_add_base(struct rt_jit_context *ctx, uint16_t base, int scale)
 {
 	int i;
 
@@ -125,7 +131,7 @@ jit_ploop_add_base(struct jit_context *ctx, uint16_t base, int scale)
 		if (ctx->packed_loop_base_tmp[i] == (int)base) {
 			return ctx->packed_loop_base_scale[i] == scale ?
 				true :
-				jit_ploop_reject(ctx, "mixed-base-scale");
+				rt_jit_ploop_reject(ctx, "mixed-base-scale");
 		}
 
 		if (ctx->packed_loop_base_tmp[i] < 0) {
@@ -135,11 +141,11 @@ jit_ploop_add_base(struct jit_context *ctx, uint16_t base, int scale)
 		}
 	}
 
-	return jit_ploop_reject(ctx, "too-many-bases");
+	return rt_jit_ploop_reject(ctx, "too-many-bases");
 }
 
 bool
-jit_ploop_is_index_alias(struct jit_context *ctx, int tmp)
+rt_jit_ploop_is_index_alias(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -152,7 +158,7 @@ jit_ploop_is_index_alias(struct jit_context *ctx, int tmp)
 }
 
 bool
-jit_ploop_index_alias_disp(struct jit_context *ctx, int tmp, int32_t *disp)
+rt_jit_ploop_index_alias_disp(struct rt_jit_context *ctx, int tmp, int32_t *disp)
 {
 	int i;
 
@@ -167,7 +173,7 @@ jit_ploop_index_alias_disp(struct jit_context *ctx, int tmp, int32_t *disp)
 }
 
 void
-jit_ploop_remove_index_alias(struct jit_context *ctx, int tmp)
+rt_jit_ploop_remove_index_alias(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -181,7 +187,7 @@ jit_ploop_remove_index_alias(struct jit_context *ctx, int tmp)
 }
 
 bool
-jit_ploop_add_index_alias_disp(struct jit_context *ctx, int tmp,
+rt_jit_ploop_add_index_alias_disp(struct rt_jit_context *ctx, int tmp,
 			       int32_t disp)
 {
 	int i;
@@ -196,7 +202,7 @@ jit_ploop_add_index_alias_disp(struct jit_context *ctx, int tmp,
 	if (ctx->packed_loop_index_alias_count >=
 	    (int)(sizeof(ctx->packed_loop_index_alias) /
 		  sizeof(ctx->packed_loop_index_alias[0]))) {
-		return jit_ploop_reject(ctx, "index-alias-overflow");
+		return rt_jit_ploop_reject(ctx, "index-alias-overflow");
 	}
 
 	ctx->packed_loop_index_alias[ctx->packed_loop_index_alias_count] = (uint16_t)tmp;
@@ -207,13 +213,13 @@ jit_ploop_add_index_alias_disp(struct jit_context *ctx, int tmp,
 }
 
 bool
-jit_ploop_add_index_alias(struct jit_context *ctx, int tmp)
+rt_jit_ploop_add_index_alias(struct rt_jit_context *ctx, int tmp)
 {
-	return jit_ploop_add_index_alias_disp(ctx, tmp, 0);
+	return rt_jit_ploop_add_index_alias_disp(ctx, tmp, 0);
 }
 
 int
-jit_ploop_resolve_base(struct jit_context *ctx, int tmp)
+rt_jit_ploop_resolve_base(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -225,7 +231,7 @@ jit_ploop_resolve_base(struct jit_context *ctx, int tmp)
 }
 
 void
-jit_ploop_remove_base_alias(struct jit_context *ctx, int tmp)
+rt_jit_ploop_remove_base_alias(struct rt_jit_context *ctx, int tmp)
 {
 	int i;
 
@@ -239,17 +245,17 @@ jit_ploop_remove_base_alias(struct jit_context *ctx, int tmp)
 }
 
 bool
-jit_ploop_set_base_alias(struct jit_context *ctx, int dst, int src)
+rt_jit_ploop_set_base_alias(struct rt_jit_context *ctx, int dst, int src)
 {
 	int root;
 
-	root = jit_ploop_resolve_base(ctx, src);
-	jit_ploop_remove_base_alias(ctx, dst);
+	root = rt_jit_ploop_resolve_base(ctx, src);
+	rt_jit_ploop_remove_base_alias(ctx, dst);
 
 	if (ctx->packed_loop_base_alias_count >=
 	    (int)(sizeof(ctx->packed_loop_base_alias_tmp) /
 		  sizeof(ctx->packed_loop_base_alias_tmp[0]))) {
-		return jit_ploop_reject(ctx, "base-alias-overflow");
+		return rt_jit_ploop_reject(ctx, "base-alias-overflow");
 	}
 
 	ctx->packed_loop_base_alias_tmp[ctx->packed_loop_base_alias_count] = (uint16_t)dst;
@@ -260,7 +266,7 @@ jit_ploop_set_base_alias(struct jit_context *ctx, int dst, int src)
 }
 
 void
-jit_ploop_note_use(struct jit_context *ctx, int tmp)
+rt_jit_ploop_note_use(struct rt_jit_context *ctx, int tmp)
 {
 	/*
 	 * gpr_tmp_dirty/range_valid are scratch bitsets during the grammar scan.
@@ -272,14 +278,14 @@ jit_ploop_note_use(struct jit_context *ctx, int tmp)
 }
 
 void
-jit_ploop_note_def(struct jit_context *ctx, int tmp)
+rt_jit_ploop_note_def(struct rt_jit_context *ctx, int tmp)
 {
 	if (tmp >= 0 && (uint32_t)tmp < ctx->func->tmpvar_size)
 		ctx->gpr_tmp_dirty[tmp] = 1;
 }
 
 bool
-jit_ploop_has_loop_carried_scalar(struct jit_context *ctx)
+rt_jit_ploop_has_loop_carried_scalar(struct rt_jit_context *ctx)
 {
 	uint32_t i;
 
@@ -293,7 +299,7 @@ jit_ploop_has_loop_carried_scalar(struct jit_context *ctx)
 }
 
 void
-jit_ploop_count_use(struct jit_context *ctx, int tmp, bool address_only)
+rt_jit_ploop_count_use(struct rt_jit_context *ctx, int tmp, bool address_only)
 {
 	uint32_t def;
 
@@ -311,7 +317,7 @@ jit_ploop_count_use(struct jit_context *ctx, int tmp, bool address_only)
 }
 
 bool
-jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
+rt_jit_scan_packed_loop(struct rt_jit_context *ctx, bool reject_loop_carried)
 {
 	uint32_t p;
 	uint32_t body_lpc;
@@ -331,7 +337,7 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 	ctx->packed_loop_reject_reason = "none";
 
 	if (ctx->gpr_tmp_dirty == NULL || ctx->gpr_range_valid == NULL)
-		return jit_ploop_reject(ctx, "analysis-storage");
+		return rt_jit_ploop_reject(ctx, "analysis-storage");
 
 	for (i = 0; i < ctx->func->tmpvar_size; i++) {
 		ctx->gpr_tmp_dirty[i] = 0;
@@ -373,7 +379,7 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 		switch (op) {
 		case OP_LINEINFO:
 			if (p + 5 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 5;
 			break;
 		case OP_MATERIALIZE_TYPE:
@@ -383,66 +389,66 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 			 * in the packed-loop region.
 			 */
 			if (p + 4 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 
-			dst = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+			dst = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
 			if (dst >= ctx->func->tmpvar_size ||
 			    (ctx->func->bytecode[p + 3] != NOCT_VALUE_INT &&
 			     ctx->func->bytecode[p + 3] != NOCT_VALUE_LONG &&
 			     ctx->func->bytecode[p + 3] != NOCT_VALUE_FLOAT &&
 			     ctx->func->bytecode[p + 3] != NOCT_VALUE_DOUBLE))
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 4;
 			break;
 		case OP_ASSIGN:
 			if (p + 5 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 5;
-			dst = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
-			src1 = jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
-			jit_ploop_note_use(ctx, src1);
+			dst = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+			src1 = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
+			rt_jit_ploop_note_use(ctx, src1);
 			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
 			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
-				return jit_ploop_reject(ctx, "index-escape");
+				return rt_jit_ploop_reject(ctx, "index-escape");
 			if (ctx->packed_index_valid[src1]) {
 				ctx->packed_index_valid[dst] = 1;
 				ctx->packed_index_disp[dst] = ctx->packed_index_disp[src1];
 
-				if (!jit_ploop_add_index_alias_disp(ctx, dst,
+				if (!rt_jit_ploop_add_index_alias_disp(ctx, dst,
 						ctx->packed_index_disp[dst]))
 					return false;
 
 				ctx->packed_elide_lpc[p] = 1;
-				jit_ploop_count_use(ctx, src1, true);
+				rt_jit_ploop_count_use(ctx, src1, true);
 			} else {
-				jit_ploop_count_use(ctx, src1, false);
+				rt_jit_ploop_count_use(ctx, src1, false);
 				ctx->packed_index_valid[dst] = 0;
-				jit_ploop_remove_index_alias(ctx, dst);
+				rt_jit_ploop_remove_index_alias(ctx, dst);
 			}
 			ctx->packed_const_valid[dst] = ctx->packed_const_valid[src1];
 			if (ctx->packed_const_valid[src1])
 				ctx->packed_const_value[dst] = ctx->packed_const_value[src1];
-			if (!jit_ploop_set_base_alias(ctx, dst, src1))
+			if (!rt_jit_ploop_set_base_alias(ctx, dst, src1))
 				return false;
 			ctx->packed_def_lpc[dst] = p;
-			jit_ploop_note_def(ctx, dst);
+			rt_jit_ploop_note_def(ctx, dst);
 			break;
 		case OP_ICONST:
 			if (p + 7 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 7;
-			dst = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+			dst = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
 			ctx->packed_def_lpc[dst] = p;
 			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
 			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
-				return jit_ploop_reject(ctx, "index-escape");
-			jit_ploop_remove_index_alias(ctx, dst);
+				return rt_jit_ploop_reject(ctx, "index-escape");
+			rt_jit_ploop_remove_index_alias(ctx, dst);
 			ctx->packed_index_valid[dst] = 0;
 			ctx->packed_const_valid[dst] = 1;
 			ctx->packed_const_value[dst] = (int32_t)
-				jit_ploop_read_u32(&ctx->func->bytecode[p + 3]);
-			jit_ploop_remove_base_alias(ctx, dst);
-			jit_ploop_note_def(ctx, dst);
+				rt_jit_ploop_read_u32(&ctx->func->bytecode[p + 3]);
+			rt_jit_ploop_remove_base_alias(ctx, dst);
+			rt_jit_ploop_note_def(ctx, dst);
 			break;
 		case OP_PLOAD8U:
 		case OP_PLOAD8S:
@@ -450,23 +456,23 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 		case OP_PLOAD16S:
 		case OP_PLOAD32:
 			if (p + 7 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 7;
-			base = (uint16_t)jit_ploop_resolve_base(ctx,
-				jit_ploop_read_u16(&ctx->func->bytecode[p + 3]));
-			ofs = jit_ploop_read_u16(&ctx->func->bytecode[p + 5]);
+			base = (uint16_t)rt_jit_ploop_resolve_base(ctx,
+				rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 3]));
+			ofs = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 5]);
 			if (!ctx->packed_index_valid[ofs])
-				return jit_ploop_reject(ctx, "index-escape");
+				return rt_jit_ploop_reject(ctx, "index-escape");
 			ctx->packed_access_valid[p] = 1;
 			ctx->packed_access_disp[p] = ctx->packed_index_disp[ofs];
-			jit_ploop_count_use(ctx, ofs, true);
-			dst = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
-			jit_ploop_remove_index_alias(ctx, dst);
+			rt_jit_ploop_count_use(ctx, ofs, true);
+			dst = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+			rt_jit_ploop_remove_index_alias(ctx, dst);
 			ctx->packed_index_valid[dst] = 0;
 			ctx->packed_const_valid[dst] = 0;
-			jit_ploop_remove_base_alias(ctx, dst);
+			rt_jit_ploop_remove_base_alias(ctx, dst);
 			ctx->packed_def_lpc[dst] = p;
-			jit_ploop_note_def(ctx, dst);
+			rt_jit_ploop_note_def(ctx, dst);
 			scale = op == OP_PLOAD32 ? 4 :
 				op == OP_PLOAD16U || op == OP_PLOAD16S ? 2 : 1;
 			break;
@@ -474,21 +480,21 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 		case OP_PSTORE16:
 		case OP_PSTORE32:
 			if (p + 7 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 7;
-			base = (uint16_t)jit_ploop_resolve_base(ctx,
-				jit_ploop_read_u16(&ctx->func->bytecode[p + 1]));
-			ofs = jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
+			base = (uint16_t)rt_jit_ploop_resolve_base(ctx,
+				rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]));
+			ofs = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
 			if (!ctx->packed_index_valid[ofs])
-				return jit_ploop_reject(ctx, "index-escape");
+				return rt_jit_ploop_reject(ctx, "index-escape");
 			ctx->packed_access_valid[p] = 1;
 			ctx->packed_access_disp[p] = ctx->packed_index_disp[ofs];
-			jit_ploop_count_use(ctx, ofs, true);
-			src1 = jit_ploop_read_u16(&ctx->func->bytecode[p + 5]);
-			if (jit_ploop_is_index_alias(ctx, src1))
-				return jit_ploop_reject(ctx, "index-escape");
-			jit_ploop_note_use(ctx, src1);
-			jit_ploop_count_use(ctx, src1, false);
+			rt_jit_ploop_count_use(ctx, ofs, true);
+			src1 = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 5]);
+			if (rt_jit_ploop_is_index_alias(ctx, src1))
+				return rt_jit_ploop_reject(ctx, "index-escape");
+			rt_jit_ploop_note_use(ctx, src1);
+			rt_jit_ploop_count_use(ctx, src1, false);
 			scale = op == OP_PSTORE32 ? 4 :
 				op == OP_PSTORE16 ? 2 : 1;
 			break;
@@ -507,17 +513,17 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 		case OP_IDIV_CHECKED:
 		case OP_IMOD_CHECKED:
 			if (p + 7 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 7;
-			dst = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
-			src1 = jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
-			src2 = jit_ploop_read_u16(&ctx->func->bytecode[p + 5]);
+			dst = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+			src1 = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
+			src2 = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 5]);
 			address_expr = false;
-			jit_ploop_note_use(ctx, src1);
-			jit_ploop_note_use(ctx, src2);
+			rt_jit_ploop_note_use(ctx, src1);
+			rt_jit_ploop_note_use(ctx, src2);
 			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
 			    dst == (uint16_t)ctx->packed_loop_remaining_tmp)
-				return jit_ploop_reject(ctx, "index-escape");
+				return rt_jit_ploop_reject(ctx, "index-escape");
 			ctx->packed_index_valid[dst] = 0;
 			ctx->packed_const_valid[dst] = 0;
 			if ((op == OP_IADD || op == OP_ISUB) &&
@@ -529,11 +535,11 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 					ctx->packed_const_value[src2] :
 					-ctx->packed_const_value[src2];
 				if (d < INT32_MIN || d > INT32_MAX)
-					return jit_ploop_reject(ctx,
+					return rt_jit_ploop_reject(ctx,
 						"index-displacement-overflow");
 				ctx->packed_index_valid[dst] = 1;
 				ctx->packed_index_disp[dst] = (int32_t)d;
-				if (!jit_ploop_add_index_alias_disp(ctx, dst,
+				if (!rt_jit_ploop_add_index_alias_disp(ctx, dst,
 						(int32_t)d))
 					return false;
 				ctx->packed_elide_lpc[p] = 1;
@@ -545,47 +551,47 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 					ctx->packed_index_disp[src2];
 
 				if (d < INT32_MIN || d > INT32_MAX)
-					return jit_ploop_reject(ctx,
+					return rt_jit_ploop_reject(ctx,
 						"index-displacement-overflow");
 				ctx->packed_index_valid[dst] = 1;
 				ctx->packed_index_disp[dst] = (int32_t)d;
-				if (!jit_ploop_add_index_alias_disp(ctx, dst,
+				if (!rt_jit_ploop_add_index_alias_disp(ctx, dst,
 						(int32_t)d))
 					return false;
 				ctx->packed_elide_lpc[p] = 1;
 				address_expr = true;
 			} else if (ctx->packed_index_valid[src1] ||
 				   ctx->packed_index_valid[src2]) {
-				return jit_ploop_reject(ctx, "index-escape");
+				return rt_jit_ploop_reject(ctx, "index-escape");
 			}
-			jit_ploop_remove_index_alias(ctx, dst);
+			rt_jit_ploop_remove_index_alias(ctx, dst);
 			if (ctx->packed_index_valid[dst] &&
-			    !jit_ploop_add_index_alias_disp(ctx, dst,
+			    !rt_jit_ploop_add_index_alias_disp(ctx, dst,
 					ctx->packed_index_disp[dst]))
 				return false;
-			jit_ploop_remove_base_alias(ctx, dst);
-			jit_ploop_count_use(ctx, src1, address_expr);
-			jit_ploop_count_use(ctx, src2, address_expr);
+			rt_jit_ploop_remove_base_alias(ctx, dst);
+			rt_jit_ploop_count_use(ctx, src1, address_expr);
+			rt_jit_ploop_count_use(ctx, src2, address_expr);
 			ctx->packed_def_lpc[dst] = p;
-			jit_ploop_note_def(ctx, dst);
+			rt_jit_ploop_note_def(ctx, dst);
 			break;
 		case OP_ISHL:
 		case OP_ISHR:
 			if (p + 6 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
+				return rt_jit_ploop_reject(ctx, "malformed-region");
 			size = 6;
-			dst = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
-			src1 = jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
-			jit_ploop_note_use(ctx, src1);
+			dst = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+			src1 = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 3]);
+			rt_jit_ploop_note_use(ctx, src1);
 			if (dst == (uint16_t)ctx->packed_loop_index_tmp ||
 			    dst == (uint16_t)ctx->packed_loop_remaining_tmp ||
-			    jit_ploop_is_index_alias(ctx, src1))
-				return jit_ploop_reject(ctx, "index-escape");
-			jit_ploop_remove_index_alias(ctx, dst);
-			jit_ploop_remove_base_alias(ctx, dst);
-			jit_ploop_count_use(ctx, src1, false);
+			    rt_jit_ploop_is_index_alias(ctx, src1))
+				return rt_jit_ploop_reject(ctx, "index-escape");
+			rt_jit_ploop_remove_index_alias(ctx, dst);
+			rt_jit_ploop_remove_base_alias(ctx, dst);
+			rt_jit_ploop_count_use(ctx, src1, false);
 			ctx->packed_def_lpc[dst] = p;
-			jit_ploop_note_def(ctx, dst);
+			rt_jit_ploop_note_def(ctx, dst);
 			break;
 		case OP_INC:
 			{
@@ -594,29 +600,29 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 				factor = (ctx->packed_loop_flags &
 					  PLOOP_UNROLL4) != 0 ? 4 : 1;
 			if (p + 4 > ctx->func->bytecode_size ||
-			    jit_ploop_read_u16(&ctx->func->bytecode[p + 1]) !=
+			    rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]) !=
 				(uint16_t)ctx->packed_loop_index_tmp ||
 			    ctx->func->bytecode[p + 3] != factor)
-				return jit_ploop_reject(ctx, "wrong-latch");
+				return rt_jit_ploop_reject(ctx, "wrong-latch");
 			inc_count++;
 			size = 4;
 			break;
 			}
 		case OP_SUBJNZ:
 			if (p + 8 > ctx->func->bytecode_size)
-				return jit_ploop_reject(ctx, "malformed-region");
-			value = jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
+				return rt_jit_ploop_reject(ctx, "malformed-region");
+			value = rt_jit_ploop_read_u16(&ctx->func->bytecode[p + 1]);
 			if (value != (uint16_t)ctx->packed_loop_remaining_tmp ||
 			    ctx->func->bytecode[p + 3] !=
 				((ctx->packed_loop_flags & PLOOP_UNROLL4) != 0 ?
 				 4 : 1) ||
-			    jit_ploop_read_u32(&ctx->func->bytecode[p + 4]) !=
+			    rt_jit_ploop_read_u32(&ctx->func->bytecode[p + 4]) !=
 				body_lpc || inc_count != 1 ||
 			    ctx->packed_loop_base_tmp[0] < 0)
-				return jit_ploop_reject(ctx, "wrong-latch");
+				return rt_jit_ploop_reject(ctx, "wrong-latch");
 			if (reject_loop_carried &&
-			    jit_ploop_has_loop_carried_scalar(ctx))
-				return jit_ploop_reject(ctx,
+			    rt_jit_ploop_has_loop_carried_scalar(ctx))
+				return rt_jit_ploop_reject(ctx,
 					"loop-carried-scalar");
 			for (i = body_lpc; i <= p; i++) {
 				if (ctx->packed_lpc_use_count[i] != 0 &&
@@ -641,20 +647,20 @@ jit_scan_packed_loop(struct jit_context *ctx, bool reject_loop_carried)
 			}
 			return true;
 		default:
-			return jit_ploop_reject(ctx, "unsupported-opcode");
+			return rt_jit_ploop_reject(ctx, "unsupported-opcode");
 		}
 		if (p + size > ctx->func->bytecode_size)
-			return jit_ploop_reject(ctx, "malformed-region");
+			return rt_jit_ploop_reject(ctx, "malformed-region");
 		if (base != 0xffffu &&
-		    !jit_ploop_add_base(ctx, base, scale))
+		    !rt_jit_ploop_add_base(ctx, base, scale))
 			return false;
 		p += size;
 	}
-	return jit_ploop_reject(ctx, "malformed-region");
+	return rt_jit_ploop_reject(ctx, "malformed-region");
 }
 
 bool
-jit_ploop_current_access_disp(struct jit_context *ctx, int32_t *disp)
+rt_jit_ploop_current_access_disp(struct rt_jit_context *ctx, int32_t *disp)
 {
 	uint32_t p;
 
@@ -669,7 +675,7 @@ jit_ploop_current_access_disp(struct jit_context *ctx, int32_t *disp)
 }
 
 bool
-jit_ploop_current_elided(struct jit_context *ctx, uint32_t size)
+rt_jit_ploop_current_elided(struct rt_jit_context *ctx, uint32_t size)
 {
 	uint32_t p;
 
@@ -681,7 +687,7 @@ jit_ploop_current_elided(struct jit_context *ctx, uint32_t size)
 }
 
 uint32_t
-jit_ploop_next_use_lpc(struct jit_context *ctx, int tmp, uint32_t from)
+rt_jit_ploop_next_use_lpc(struct rt_jit_context *ctx, int tmp, uint32_t from)
 {
 	const uint8_t *bc;
 	uint32_t p;
@@ -696,27 +702,27 @@ jit_ploop_next_use_lpc(struct jit_context *ctx, int tmp, uint32_t from)
 		switch (op) {
 		case OP_LINEINFO: p += 5; break;
 		case OP_ASSIGN:
-			a = jit_ploop_read_u16(bc + p + 1);
-			b = jit_ploop_read_u16(bc + p + 3);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
+			b = rt_jit_ploop_read_u16(bc + p + 3);
 			if (b == (uint16_t)tmp) return p;
 			if (a == (uint16_t)tmp) return UINT32_MAX;
 			p += 5; break;
 		case OP_ICONST:
-			a = jit_ploop_read_u16(bc + p + 1);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
 			if (a == (uint16_t)tmp) return UINT32_MAX;
 			p += 7; break;
 		case OP_PLOAD8U: case OP_PLOAD8S:
 		case OP_PLOAD16U: case OP_PLOAD16S: case OP_PLOAD32:
-			a = jit_ploop_read_u16(bc + p + 1);
-			b = jit_ploop_read_u16(bc + p + 3);
-			c = jit_ploop_read_u16(bc + p + 5);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
+			b = rt_jit_ploop_read_u16(bc + p + 3);
+			c = rt_jit_ploop_read_u16(bc + p + 5);
 			if (b == (uint16_t)tmp || c == (uint16_t)tmp) return p;
 			if (a == (uint16_t)tmp) return UINT32_MAX;
 			p += 7; break;
 		case OP_PSTORE8: case OP_PSTORE16: case OP_PSTORE32:
-			a = jit_ploop_read_u16(bc + p + 1);
-			b = jit_ploop_read_u16(bc + p + 3);
-			c = jit_ploop_read_u16(bc + p + 5);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
+			b = rt_jit_ploop_read_u16(bc + p + 3);
+			c = rt_jit_ploop_read_u16(bc + p + 5);
 			if (a == (uint16_t)tmp || b == (uint16_t)tmp ||
 			    c == (uint16_t)tmp) return p;
 			p += 7; break;
@@ -724,24 +730,24 @@ jit_ploop_next_use_lpc(struct jit_context *ctx, int tmp, uint32_t from)
 		case OP_IDIV: case OP_IMOD: case OP_IAND: case OP_IOR:
 		case OP_IXOR: case OP_ILT: case OP_ILTE: case OP_IGT:
 		case OP_IGTE: case OP_IDIV_CHECKED: case OP_IMOD_CHECKED:
-			a = jit_ploop_read_u16(bc + p + 1);
-			b = jit_ploop_read_u16(bc + p + 3);
-			c = jit_ploop_read_u16(bc + p + 5);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
+			b = rt_jit_ploop_read_u16(bc + p + 3);
+			c = rt_jit_ploop_read_u16(bc + p + 5);
 			if (b == (uint16_t)tmp || c == (uint16_t)tmp) return p;
 			if (a == (uint16_t)tmp) return UINT32_MAX;
 			p += 7; break;
 		case OP_ISHL: case OP_ISHR:
-			a = jit_ploop_read_u16(bc + p + 1);
-			b = jit_ploop_read_u16(bc + p + 3);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
+			b = rt_jit_ploop_read_u16(bc + p + 3);
 			if (b == (uint16_t)tmp) return p;
 			if (a == (uint16_t)tmp) return UINT32_MAX;
 			p += 6; break;
 		case OP_INC:
-			a = jit_ploop_read_u16(bc + p + 1);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
 			if (a == (uint16_t)tmp) return p;
 			p += 4; break;
 		case OP_SUBJNZ:
-			a = jit_ploop_read_u16(bc + p + 1);
+			a = rt_jit_ploop_read_u16(bc + p + 1);
 			return a == (uint16_t)tmp ? p : UINT32_MAX;
 		default:
 			return UINT32_MAX;
@@ -749,10 +755,10 @@ jit_ploop_next_use_lpc(struct jit_context *ctx, int tmp, uint32_t from)
 	}
 	return UINT32_MAX;
 }
-#endif /* PLOOP scanner backends */
+#endif /* NOCT_USE_OPTIMIZER && PLOOP scanner backends */
 
 bool
-jit_context_init_tables(struct jit_context *ctx)
+rt_jit_context_init_tables(struct rt_jit_context *ctx)
 {
 	size_t pc_capacity;
 	size_t branch_capacity;
@@ -789,8 +795,9 @@ jit_context_init_tables(struct jit_context *ctx)
 	return true;
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 bool
-jit_context_init_regcache(struct jit_context *ctx)
+rt_jit_context_init_regcache(struct rt_jit_context *ctx)
 {
 	size_t tmp_capacity;
 
@@ -905,15 +912,19 @@ jit_context_init_regcache(struct jit_context *ctx)
 	}
 	return true;
 }
+#endif
 
 void
-jit_context_dispose_tables(struct jit_context *ctx)
+rt_jit_context_dispose_tables(struct rt_jit_context *ctx)
 {
+#if defined(NOCT_USE_OPTIMIZER)
 	noct_free(ctx->tmp_frame_tag_known);
 	noct_free(ctx->tmp_fixed_type);
 	noct_free(ctx->tmp_compiler_temp);
+#endif
 	noct_free(ctx->branch_patch);
 	noct_free(ctx->pc_entry);
+#if defined(NOCT_USE_OPTIMIZER)
 	noct_free(ctx->gpr_tmp_dirty);
 	noct_free(ctx->gpr_remat_value);
 	noct_free(ctx->gpr_remat_valid);
@@ -931,11 +942,15 @@ jit_context_dispose_tables(struct jit_context *ctx)
 	noct_free(ctx->packed_lpc_address_use_count);
 	noct_free(ctx->packed_lpc_use_count);
 	noct_free(ctx->packed_def_lpc);
+#endif
 	ctx->branch_patch = NULL;
+#if defined(NOCT_USE_OPTIMIZER)
 	ctx->tmp_frame_tag_known = NULL;
 	ctx->tmp_fixed_type = NULL;
 	ctx->tmp_compiler_temp = NULL;
+#endif
 	ctx->pc_entry = NULL;
+#if defined(NOCT_USE_OPTIMIZER)
 	ctx->gpr_tmp_dirty = NULL;
 	ctx->gpr_remat_value = NULL;
 	ctx->gpr_remat_valid = NULL;
@@ -953,14 +968,16 @@ jit_context_dispose_tables(struct jit_context *ctx)
 	ctx->packed_lpc_address_use_count = NULL;
 	ctx->packed_lpc_use_count = NULL;
 	ctx->packed_def_lpc = NULL;
+#endif
 	ctx->branch_patch_capacity = 0;
 	ctx->pc_entry_capacity = 0;
 }
 
 void
-jit_configure_simd(struct jit_context *ctx, uint32_t detected,
-		   const char *backend)
+rt_jit_configure_simd(struct rt_jit_context *ctx, uint32_t detected,
+			   const char *backend)
 {
+#if defined(NOCT_USE_OPTIMIZER)
 	ctx->simd_caps = jit_apply_simd_max(detected);
 	ctx->has_vector_ops = ctx->func->has_vector_ops;
 	if (ctx->func->has_fma_ops &&
@@ -974,12 +991,17 @@ jit_configure_simd(struct jit_context *ctx, uint32_t detected,
 			ctx->func->has_fma_ops ? 1 : 0,
 			ctx->func->has_fma_ops &&
 			(ctx->simd_caps & JIT_SIMD_CAP_FMAF32X4) == 0 ?
-				"portable" : "native");
+					"portable" : "native");
 	}
+#else
+	UNUSED_PARAMETER(ctx);
+	UNUSED_PARAMETER(detected);
+	UNUSED_PARAMETER(backend);
+#endif
 }
 
 void
-jit_dump_standard_code(struct jit_context *ctx, void *generated_end,
+rt_jit_dump_standard_code(struct rt_jit_context *ctx, void *generated_end,
 		       const char *backend)
 {
 	const char *dir;
@@ -1015,8 +1037,9 @@ jit_dump_standard_code(struct jit_context *ctx, void *generated_end,
 	(void)fclose(fp);
 }
 
+#if defined(NOCT_USE_OPTIMIZER)
 bool
-jit_visit_ploop_hint_op(struct jit_context *ctx)
+rt_jit_visit_ploop_hint_op(struct rt_jit_context *ctx)
 {
 	int index_tmp;
 	int stop_tmp;
@@ -1024,11 +1047,11 @@ jit_visit_ploop_hint_op(struct jit_context *ctx)
 	int lanes;
 	int flags;
 
-	if (!jit_get_opr_tmpvar(ctx, &index_tmp) ||
-	    !jit_get_opr_tmpvar(ctx, &stop_tmp) ||
-	    !jit_get_opr_tmpvar(ctx, &remaining_tmp) ||
-	    !jit_get_imm8(ctx, &lanes) ||
-	    !jit_get_imm8(ctx, &flags))
+	if (!rt_jit_get_opr_tmpvar(ctx, &index_tmp) ||
+	    !rt_jit_get_opr_tmpvar(ctx, &stop_tmp) ||
+	    !rt_jit_get_opr_tmpvar(ctx, &remaining_tmp) ||
+	    !rt_jit_get_imm8(ctx, &lanes) ||
+	    !rt_jit_get_imm8(ctx, &flags))
 		return false;
 	if (lanes != 1 ||
 	    ((flags & PLOOP_TYPED_INT) != 0 &&
@@ -1046,14 +1069,14 @@ jit_visit_ploop_hint_op(struct jit_context *ctx)
 }
 
 bool
-jit_visit_tmpvar_type_op(struct jit_context *ctx)
+rt_jit_visit_tmpvar_type_op(struct rt_jit_context *ctx)
 {
 	int tmp;
 	int type;
 	size_t count;
 	bool compiler_temp;
 
-	if (!jit_get_opr_tmpvar(ctx, &tmp) || !jit_get_imm8(ctx, &type))
+	if (!rt_jit_get_opr_tmpvar(ctx, &tmp) || !rt_jit_get_imm8(ctx, &type))
 		return false;
 
 	compiler_temp = (type & TMPVAR_TYPE_COMPILER_TEMP) != 0;
@@ -1095,12 +1118,12 @@ jit_visit_tmpvar_type_op(struct jit_context *ctx)
 }
 
 bool
-jit_visit_materialize_type_metadata_op(struct jit_context *ctx)
+rt_jit_visit_materialize_type_metadata_op(struct rt_jit_context *ctx)
 {
 	int tmp;
 	int type;
 
-	if (!jit_get_opr_tmpvar(ctx, &tmp) || !jit_get_imm8(ctx, &type))
+	if (!rt_jit_get_opr_tmpvar(ctx, &tmp) || !rt_jit_get_imm8(ctx, &type))
 		return false;
 	if (type != NOCT_VALUE_INT && type != NOCT_VALUE_LONG &&
 	    type != NOCT_VALUE_FLOAT && type != NOCT_VALUE_DOUBLE) {
@@ -1111,26 +1134,83 @@ jit_visit_materialize_type_metadata_op(struct jit_context *ctx)
 }
 
 bool
-jit_tmp_has_fixed_primitive_type(struct jit_context *ctx, int tmp, int type)
+rt_jit_tmp_has_fixed_primitive_type(struct rt_jit_context *ctx, int tmp, int type)
 {
 	return ctx->tmp_fixed_type != NULL &&
 	       (type == NOCT_VALUE_INT || type == NOCT_VALUE_LONG ||
 		type == NOCT_VALUE_FLOAT || type == NOCT_VALUE_DOUBLE) &&
 	       ctx->tmp_fixed_type[tmp] == type;
 }
+#else
+bool
+rt_jit_visit_ploop_hint_op(struct rt_jit_context *ctx)
+{
+	int index_tmp;
+	int stop_tmp;
+	int remaining_tmp;
+	int lanes;
+	int flags;
+
+	if (!rt_jit_get_opr_tmpvar(ctx, &index_tmp) ||
+	    !rt_jit_get_opr_tmpvar(ctx, &stop_tmp) ||
+	    !rt_jit_get_opr_tmpvar(ctx, &remaining_tmp) ||
+	    !rt_jit_get_imm8(ctx, &lanes) ||
+	    !rt_jit_get_imm8(ctx, &flags))
+		return false;
+
+	return true;
+}
+
+bool
+rt_jit_visit_tmpvar_type_op(struct rt_jit_context *ctx)
+{
+	int tmp;
+	int type;
+
+	if (!rt_jit_get_opr_tmpvar(ctx, &tmp) ||
+	    !rt_jit_get_imm8(ctx, &type))
+		return false;
+
+	return true;
+}
+
+bool
+rt_jit_visit_materialize_type_metadata_op(struct rt_jit_context *ctx)
+{
+	int tmp;
+	int type;
+
+	if (!rt_jit_get_opr_tmpvar(ctx, &tmp) ||
+	    !rt_jit_get_imm8(ctx, &type))
+		return false;
+
+	return true;
+}
+
+bool
+rt_jit_tmp_has_fixed_primitive_type(struct rt_jit_context *ctx, int tmp,
+				    int type)
+{
+	UNUSED_PARAMETER(ctx);
+	UNUSED_PARAMETER(tmp);
+	UNUSED_PARAMETER(type);
+
+	return false;
+}
+#endif
 
 /* Build a function with the standard JIT backend workflow. */
 bool
-jit_build_standard(
+rt_jit_build_standard(
 	struct rt_env *env,
 	struct rt_func *func,
 	uint32_t detected_caps,
 	const char *backend,
-	bool (*visit_bytecode)(struct jit_context *ctx),
-	bool (*patch_branch)(struct jit_context *ctx, int patch_index))
+	bool (*visit_bytecode)(struct rt_jit_context *ctx),
+	bool (*patch_branch)(struct rt_jit_context *ctx, int patch_index))
 {
-	struct jit_context ctx;
-	struct jit_slab *slab;
+	struct rt_jit_context ctx;
+	struct rt_jit_slab *slab;
 	void *code_top;
 	void *code_end;
 	void *generated_end;
@@ -1138,7 +1218,7 @@ jit_build_standard(
 	int i;
 
 	for (attempt = 0; attempt < 2; attempt++) {
-		if (!jit_slab_acquire(env, &slab, &code_top, &code_end))
+		if (!rt_jit_slab_acquire(env, &slab, &code_top, &code_end))
 			return false;
 		memset(&ctx, 0, sizeof(ctx));
 		ctx.code_top = code_top;
@@ -1146,30 +1226,30 @@ jit_build_standard(
 		ctx.code = code_top;
 		ctx.env = env;
 		ctx.func = func;
-		if (!jit_context_init_tables(&ctx))
+		if (!rt_jit_context_init_tables(&ctx))
 			return false;
-		jit_configure_simd(&ctx, detected_caps, backend);
+		rt_jit_configure_simd(&ctx, detected_caps, backend);
 		if (!visit_bytecode(&ctx)) {
 			if (ctx.code_overflow && attempt == 0 &&
 			    ((uint8_t *)code_top != slab->base ||
-			     slab->size < jit_get_code_size(env))) {
-				jit_slab_abandon(env, slab);
-				jit_slab_clear_overflow(env);
-				jit_context_dispose_tables(&ctx);
+			     slab->size < rt_jit_get_code_size(env))) {
+				rt_jit_slab_abandon(env, slab);
+				rt_jit_slab_clear_overflow(env);
+				rt_jit_context_dispose_tables(&ctx);
 				continue;
 			}
-			jit_context_dispose_tables(&ctx);
+			rt_jit_context_dispose_tables(&ctx);
 			return false;
 		}
 		generated_end = ctx.code;
 		for (i = 0; i < ctx.branch_patch_count; i++) {
 			if (!patch_branch(&ctx, i)) {
-				jit_context_dispose_tables(&ctx);
+				rt_jit_context_dispose_tables(&ctx);
 				return false;
 			}
 		}
-		jit_dump_standard_code(&ctx, generated_end, backend);
-		jit_slab_finish(env, slab, generated_end);
+		rt_jit_dump_standard_code(&ctx, generated_end, backend);
+		rt_jit_slab_finish(env, slab, generated_end);
 		if (getenv("NOCT_JIT_CODEGEN_DEBUG") != NULL) {
 			fprintf(stderr,
 				"noct-jit-codegen: %s: func=%s bytes=%lu "
@@ -1181,7 +1261,7 @@ jit_build_standard(
 		}
 		func->jit_code =
 			(bool (CDECL *)(struct rt_env *))ctx.code_top;
-		jit_context_dispose_tables(&ctx);
+		rt_jit_context_dispose_tables(&ctx);
 		return true;
 	}
 	return false;
@@ -1191,7 +1271,7 @@ jit_build_standard(
  * Map the memory region for the generated code.
  */
 bool
-jit_map_memory_region(
+rt_jit_map_memory_region(
 	void **region,
 	size_t size)
 {
@@ -1270,7 +1350,7 @@ jit_map_memory_region(
  * Unmap the memory region for the generated code.
  */
 bool
-jit_unmap_memory_region(
+rt_jit_unmap_memory_region(
 	void *region,
 	size_t size)
 {
@@ -1305,7 +1385,7 @@ jit_unmap_memory_region(
  * Make a region executable and non-writable.
  */
 bool
-jit_map_executable(
+rt_jit_map_executable(
 	void *region,
 	size_t size)
 {
@@ -1365,15 +1445,15 @@ jit_map_executable(
  * Acquire the slab.
  */
 bool
-jit_slab_acquire(
+rt_jit_slab_acquire(
 	struct rt_env *env,
-	struct jit_slab **slab,
+	struct rt_jit_slab **slab,
 	void **code_top,
 	void **code_end)
 {
-	struct jit_slab *current;
+	struct rt_jit_slab *current;
 
-	current = env->vm->jit_slab_current;
+	current = (struct rt_jit_slab *)env->vm->jit_slab_current;
 
 	if (current == NULL || current->current >= current->end) {
 		if (!jit_slab_allocate(env, 0, &current))
@@ -1391,11 +1471,11 @@ jit_slab_acquire(
  * Reserve the slab.
  */
 bool
-jit_slab_reserve(
+rt_jit_slab_reserve(
 	struct rt_env *env,
 	size_t estimated_size)
 {
-	struct jit_slab *slab;
+	struct rt_jit_slab *slab;
 
 	if (!env->vm->config.jit_enable ||
 	    env->vm->jit_slab_current != NULL)
@@ -1408,9 +1488,9 @@ jit_slab_reserve(
  * Finish using the slab.
  */
 void
-jit_slab_finish(struct rt_env *env, struct jit_slab *slab, void *code_end)
+rt_jit_slab_finish(struct rt_env *env, struct rt_jit_slab *slab, void *code_end)
 {
-	assert(slab == env->vm->jit_slab_current);
+	assert(slab == (struct rt_jit_slab *)env->vm->jit_slab_current);
 	assert((uint8_t *)code_end >= slab->current);
 	assert((uint8_t *)code_end <= slab->end);
 
@@ -1421,9 +1501,9 @@ jit_slab_finish(struct rt_env *env, struct jit_slab *slab, void *code_end)
  * Abort using the slab.
  */
 void
-jit_slab_abandon(struct rt_env *env, struct jit_slab *slab)
+rt_jit_slab_abandon(struct rt_env *env, struct rt_jit_slab *slab)
 {
-	if (env->vm->jit_slab_current == slab)
+	if ((struct rt_jit_slab *)env->vm->jit_slab_current == slab)
 		env->vm->jit_slab_current = NULL;
 }
 
@@ -1431,7 +1511,7 @@ jit_slab_abandon(struct rt_env *env, struct jit_slab *slab)
  * Clear the slab overflow status.
  */
 void
-jit_slab_clear_overflow(
+rt_jit_slab_clear_overflow(
 	struct rt_env *env)
 {
 	env->error_message[0] = '\0';
@@ -1442,14 +1522,16 @@ jit_slab_clear_overflow(
  * Commit the slab.
  */
 bool
-jit_slab_commit_all(struct rt_env *env)
+rt_jit_slab_commit_all(struct rt_env *env)
 {
-	struct jit_slab *slab;
+	struct rt_jit_slab *slab;
 	size_t page_size;
 
 	page_size = jit_page_size();
 
-	for (slab = env->vm->jit_slab_head; slab != NULL; slab = slab->next) {
+	for (slab = (struct rt_jit_slab *)env->vm->jit_slab_head;
+	     slab != NULL;
+	     slab = slab->next) {
 		uint8_t *end;
 
 		if (slab->committed >= slab->current)
@@ -1459,7 +1541,7 @@ jit_slab_commit_all(struct rt_env *env)
 
 		assert(end <= slab->end);
 
-		if (!jit_map_executable(slab->committed, (size_t)(end - slab->committed)))
+		if (!rt_jit_map_executable(slab->committed, (size_t)(end - slab->committed)))
 			return false;
 
 		slab->committed = end;
@@ -1473,20 +1555,20 @@ jit_slab_commit_all(struct rt_env *env)
  * Free all slabs.
  */
 bool
-jit_slab_free_all(struct rt_env *env)
+rt_jit_slab_free_all(struct rt_env *env)
 {
-	struct jit_slab *slab;
+	struct rt_jit_slab *slab;
 	bool succeeded;
 
-	slab = env->vm->jit_slab_head;
+	slab = (struct rt_jit_slab *)env->vm->jit_slab_head;
 	succeeded = true;
 
 	while (slab != NULL) {
-		struct jit_slab *next;
+		struct rt_jit_slab *next;
 
 		next = slab->next;
 
-		if (!jit_unmap_memory_region(slab->base, slab->size))
+		if (!rt_jit_unmap_memory_region(slab->base, slab->size))
 			succeeded = false;
 		noct_free(slab);
 		slab = next;
@@ -1522,6 +1604,7 @@ jit_debug_memory(
 }
 
 /* Limit detected SIMD capabilities according to the test ceiling. */
+#if defined(NOCT_USE_OPTIMIZER)
 static uint32_t
 jit_apply_simd_max(uint32_t detected)
 {
@@ -1552,6 +1635,7 @@ jit_apply_simd_max(uint32_t detected)
 		return detected;
 	return detected;
 }
+#endif
 
 /* Get the OS page size. */
 static size_t
@@ -1611,16 +1695,16 @@ static bool
 jit_slab_allocate(
 	struct rt_env *env,
 	size_t requested_size,
-	struct jit_slab **result)
+	struct rt_jit_slab **result)
 {
-	struct jit_slab *slab;
+	struct rt_jit_slab *slab;
 	size_t size;
 	size_t page_size;
 
 	page_size = jit_page_size();
 
-	if (requested_size == 0 || requested_size > jit_get_code_size(env))
-		requested_size = jit_get_code_size(env);
+	if (requested_size == 0 || requested_size > rt_jit_get_code_size(env))
+		requested_size = rt_jit_get_code_size(env);
 
 	if (requested_size < page_size)
 		requested_size = page_size;
@@ -1635,7 +1719,7 @@ jit_slab_allocate(
 
 	memset(slab, 0, sizeof(*slab));
 
-	if (!jit_map_memory_region((void **)&slab->base, size)) {
+	if (!rt_jit_map_memory_region((void **)&slab->base, size)) {
 		noct_free(slab);
 		rt_error(env, "Memory mapping failed.");
 		return false;
@@ -1647,12 +1731,12 @@ jit_slab_allocate(
 	slab->size = size;
 
 	if (env->vm->jit_slab_tail != NULL)
-		env->vm->jit_slab_tail->next = slab;
+		((struct rt_jit_slab *)env->vm->jit_slab_tail)->next = slab;
 	else
-		env->vm->jit_slab_head = slab;
+		env->vm->jit_slab_head = (void *)slab;
 
-	env->vm->jit_slab_tail = slab;
-	env->vm->jit_slab_current = slab;
+	env->vm->jit_slab_tail = (void *)slab;
+	env->vm->jit_slab_current = (void *)slab;
 
 	*result = slab;
 

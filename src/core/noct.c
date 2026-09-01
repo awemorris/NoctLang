@@ -127,38 +127,6 @@ noct_register_cfunc(
 	return true;
 }
 
-NOCT_DLL
-bool
-noct_register_cfunc_with_data(
-	NoctEnv *env,
-	const char *name,
-	size_t param_count,
-	const char *param_name[],
-	bool (*cfunc)(NoctEnv *env, void *userdata),
-	void *userdata,
-	NoctFunc **ret_func)
-{
-	assert(env != NULL);
-	assert(name != NULL);
-	assert(cfunc != NULL);
-
-	return rt_register_cfunc_with_data(env, name, param_count, param_name,
-					   cfunc, userdata, ret_func);
-}
-
-NOCT_DLL
-bool
-noct_register_vm_finalizer(
-	NoctEnv *env,
-	void (*finalizer)(void *userdata),
-	void *userdata)
-{
-	assert(env != NULL);
-	assert(finalizer != NULL);
-
-	return rt_register_vm_finalizer(env, finalizer, userdata);
-}
-
 #if defined(NOCT_USE_MULTITHREAD)
 NOCT_DLL
 bool

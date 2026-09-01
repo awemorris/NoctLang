@@ -13,6 +13,9 @@
 #include "lir.h"
 #include "hir.h"
 #include "bytecode.h"
+#if defined(NOCT_USE_OPTIMIZER)
+#include "fast.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -240,8 +243,10 @@ lir_emit_return_check(struct hir_block *block)
 
 	func = lir_root_func(block);
 	assert(func != NULL);
-	if (lir_optimize_level < 2 || func->val.func.return_type < 0)
+	if ((lir_optimize_level < 2 && !func->val.func.is_fast) ||
+	    func->val.func.return_type < 0) {
 		return true;
+	}
 	code = lir_typecheck_code(func->val.func.return_type,
 				  func->val.func.return_packed_type,
 				  false, true, false);
@@ -321,7 +326,9 @@ lir_build(
 	{
 		struct hir_local *local = hir_func->val.func.local;
 		while (local != NULL) {
-			if (lir_optimize_level >= 1 && !local->is_parameter &&
+			if ((lir_optimize_level >= 1 ||
+			     hir_func->val.func.is_fast) &&
+			    !local->is_parameter &&
 			    (local->declared_type == NOCT_VALUE_INT ||
 			     local->declared_type == NOCT_VALUE_LONG ||
 			     local->declared_type == NOCT_VALUE_FLOAT ||
@@ -336,8 +343,8 @@ lir_build(
 	/* Initialize the relocation table. */
 	loc_count = 0;
 
-	/* Typed entry checks are part of -O/-O1 and above. */
-	if (lir_optimize_level >= 1) {
+	/* __fast keeps ordinary checked entry semantics without optimization. */
+	if (lir_optimize_level >= 1 || hir_func->val.func.is_fast) {
 		uint32_t k;
 		for (k = 0; k < hir_func->val.func.param_count; k++) {
 			int check_type;
@@ -383,21 +390,24 @@ lir_build(
 		return false;
 	}
 
-	fast_signature_init(&(*lir_func)->fast_signature);
-	(*lir_func)->is_fast = hir_func->val.func.is_fast;
+	(*lir_func)->is_fast = false;
+	(*lir_func)->fast_info = NULL;
+#if defined(NOCT_USE_OPTIMIZER)
+	(*lir_func)->is_fast = hir_func->val.func.fast_optimized;
 	if ((*lir_func)->is_fast) {
-		if (hir_func->val.func.fast_signature == NULL) {
+		if (hir_func->val.func.fast_info == NULL) {
 			lir_fatal(N_TR("Invalid __fast function signature."));
 			goto fail_func;
 		}
 
-		if (!fast_signature_clone(
-			&(*lir_func)->fast_signature,
-			hir_func->val.func.fast_signature)) {
+		(*lir_func)->fast_info =
+			fast_info_clone(hir_func->val.func.fast_info);
+		if ((*lir_func)->fast_info == NULL) {
 			lir_out_of_memory();
 			goto fail_func;
 		}
 	}
+#endif
 
 	/* Copy the function name. */
 	(*lir_func)->func_name = noct_strdup(hir_func->val.func.name);
@@ -424,7 +434,8 @@ lir_build(
 	(*lir_func)->return_packed_type =
 		hir_func->val.func.return_packed_type;
 	(*lir_func)->return_type_checked =
-		lir_optimize_level >= 2 && (*lir_func)->return_type >= 0;
+		(lir_optimize_level >= 2 || hir_func->val.func.is_fast) &&
+		(*lir_func)->return_type >= 0;
 	for (i = 0; i < hir_func->val.func.param_count; i++) {
 		(*lir_func)->param_name[i] = noct_strdup(hir_func->val.func.param_name[i]);
 		if ((*lir_func)->param_name[i] == NULL) {
@@ -2997,12 +3008,19 @@ lir_visit_stmt(
 	struct hir_block *parent,
 	struct hir_stmt *stmt)
 {
+	struct hir_block *func;
 	int rhs_tmpvar, obj_tmpvar, access_tmpvar;
 	bool is_lhs_local;
 	bool is_return;
+	bool checked_annotations;
 
 	assert(stmt != NULL);
 	assert(stmt->rhs != NULL);
+
+	func = lir_root_func(parent);
+	assert(func != NULL);
+	checked_annotations = lir_optimize_level >= 1 ||
+		func->val.func.is_fast;
 
 	/* Put a line number. */
 	if (lir_lineinfo) {
@@ -3029,10 +3047,11 @@ lir_visit_stmt(
 	if (!lir_visit_expr(rhs_tmpvar, stmt->rhs, parent))
 		return false;
 
-	/* Primitive annotations on ordinary locals are checked contracts at
-	 * -O1 and above.  A proven narrow-to-wide assignment still needs the
-	 * check because it canonicalizes the frame tag and payload. */
-	if (is_lhs_local && !is_return && lir_optimize_level >= 1) {
+	/*
+	 * Primitive annotations are checked at -O1 and above.  A source fast
+	 * hint keeps this ordinary checked path even without optimization.
+	 */
+	if (is_lhs_local && !is_return && checked_annotations) {
 		struct hir_local *local;
 		int declared;
 		int proven;
@@ -3040,9 +3059,12 @@ lir_visit_stmt(
 
 		local = lir_get_local_by_index(parent, rhs_tmpvar);
 		declared = local != NULL ? local->declared_type : -1;
-		if (local != NULL && !local->is_parameter &&
-		    (declared == NOCT_VALUE_INT || declared == NOCT_VALUE_LONG ||
-		     declared == NOCT_VALUE_FLOAT || declared == NOCT_VALUE_DOUBLE)) {
+		if (local != NULL &&
+		    !local->is_parameter &&
+		    (declared == NOCT_VALUE_INT ||
+		     declared == NOCT_VALUE_LONG ||
+		     declared == NOCT_VALUE_FLOAT ||
+		     declared == NOCT_VALUE_DOUBLE)) {
 			proven = lir_expr_proven_type(stmt->rhs, parent);
 			widening = (declared == NOCT_VALUE_LONG &&
 				    proven == NOCT_VALUE_INT) ||
@@ -3065,14 +3087,14 @@ lir_visit_stmt(
 		}
 	}
 
-	/* Level-2 return contracts are checked per edge.  A proven mismatch
-	   is a compile error; an unknown value gets an exact runtime check. */
-	if (is_return && lir_optimize_level >= 2) {
-		struct hir_block *func;
+	/*
+	 * Return contracts are checked at level 2, or on the ordinary checked
+	 * path for a source fast hint.
+	 */
+	if (is_return &&
+	    (lir_optimize_level >= 2 || func->val.func.is_fast)) {
 		int proven;
 
-		func = lir_root_func(parent);
-		assert(func != NULL);
 		if (func->val.func.return_type == HIR_TYPE_VOID &&
 		    !stmt->is_bare_return) {
 			lir_error_line = stmt->line;
@@ -6327,6 +6349,8 @@ lir_free_func_body(
 
 	noct_free(func->file_name);
 	noct_free(func->bytecode);
-	fast_signature_free(&func->fast_signature);
+#if defined(NOCT_USE_OPTIMIZER)
+	fast_info_free(func->fast_info);
+#endif
 	noct_free(func);
 }

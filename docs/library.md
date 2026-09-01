@@ -170,7 +170,8 @@ File.writeForEachLine("text.txt", [
 
 ### System.import()
 
-Imports a script file or a bytecode file.
+Imports one source script. Bytecode files and application containers are
+owned by the command-line host and are not loaded by this runtime API.
 
 ```
 System.import("script.noct");

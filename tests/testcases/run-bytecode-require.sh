@@ -24,7 +24,9 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 export TMPDIR=$TMP
 
 ${CMAKE:-cmake} --build "$BUILD_DIR" \
-	--target noctcli noct-test-bytecode-require-host
+	--target noctcli noct-test-require-core
+
+"$BUILD_DIR/noct-test-require-core"
 
 cp -R "$SCRIPT_DIR/app/require" "$TMP/require"
 MODULES=$TMP/require/modules
@@ -76,19 +78,6 @@ cp "$TMP/bytecode.nap" "$TMP/isolated/bytecode.nap"
 	> "$TMP/bytecode-app-jit.out"
 diff -u "$TMP/require/require.out" "$TMP/source-app-interpreter.out"
 diff -u "$TMP/require/require.out" "$TMP/bytecode-app-jit.out"
-
-# Verify the public host resolver contract for all three input classes.
-HOST_TEST=$BUILD_DIR/noct-test-bytecode-require-host
-"$HOST_TEST" source "$TMP/require/main.noct" \
-	middle="$MODULES/middle.noct" leaf="$MODULES/leaf.nct" \
-	> "$TMP/host-source.out"
-"$HOST_TEST" bytecode "$TMP/require/main.nbc" \
-	middle="$TMP/cache/middle.nbc" leaf="$TMP/cache/leaf.nbc" \
-	> "$TMP/host-bytecode.out"
-"$HOST_TEST" app "$TMP/source.nap" > "$TMP/host-app.out"
-diff -u "$TMP/require/require.out" "$TMP/host-source.out"
-diff -u "$TMP/require/require.out" "$TMP/host-bytecode.out"
-diff -u "$TMP/require/require.out" "$TMP/host-app.out"
 
 # Preserve an already portable Source identity when packaging static links.
 mkdir "$TMP/static"

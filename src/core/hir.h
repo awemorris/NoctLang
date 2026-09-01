@@ -13,7 +13,6 @@
 #define NOCT_HIR_H
 
 #include <noct/noct.h>
-#include "fast.h"
 
 /* Maximum Parameters and Arguments Size */
 #define HIR_PARAM_SIZE		32
@@ -223,6 +222,9 @@ struct hir_block {
 			 */
 			int param_packed_type[HIR_PARAM_SIZE];
 
+			/* Original parameter annotation spellings. */
+			char *param_type_name[HIR_PARAM_SIZE];
+
 			/*
 			 * Restrict packed parameter type annotation:
 			 *  - rpacked* source annotation.
@@ -232,6 +234,7 @@ struct hir_block {
 			/* Return type. */
 			int return_type;
 			int return_packed_type;
+			char *return_type_name;
 
 			/* Is static? */
 			bool is_static;
@@ -239,14 +242,20 @@ struct hir_block {
 			/* Is inline? */
 			bool is_inline;
 
-			/* Statically constrained CPU function. */
+			/* Source-level __fast optimization hint. */
 			bool is_fast;
 
 			/* Accelerator optimization hint. */
 			bool is_accel;
 
-			/* Exact entry contract for a fast function. */
-			struct fast_signature *fast_signature;
+			/* Did the optimizer commit the __fast contract? */
+			bool fast_optimized;
+
+			/* Do all syntactic paths return a value? */
+			bool returns_on_all_paths;
+
+			/* Optimizer-owned __fast metadata. */
+			void *fast_info;
 
 			/* File name. */
 			char *file_name;
@@ -551,10 +560,50 @@ struct hir_local {
 };
 
 /*
- * Collects externally visible function prototypes from the current AST.
+ * Allocates memory from the HIR arena.
+ */
+void *
+hir_malloc(
+	size_t size);
+
+/*
+ * Duplicates a string in the HIR arena.
+ */
+char *
+hir_strdup(
+	const char *s);
+
+/*
+ * Reports an out-of-memory error while constructing HIR.
+ */
+void
+hir_out_of_memory(void);
+
+/*
+ * Adds a local variable to a function block.
  */
 bool
-hir_collect_fast_prototypes(void);
+hir_add_local(
+	struct hir_block *cur_block,
+	const char *symbol);
+
+/*
+ * Allocates a fresh HIR block identifier.
+ */
+int
+hir_next_block_id(void);
+
+/*
+ * Resolves a source type annotation into target-neutral HIR tags.
+ */
+bool
+hir_resolve_type_annotation(
+	int line,
+	const char *type_name,
+	bool allow_shape,
+	int *tag,
+	int *packed_type,
+	bool *restricted);
 
 /*
  * Build HIR functions from an AST.

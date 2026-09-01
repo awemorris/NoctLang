@@ -11,6 +11,15 @@ esac
 cc=${CC:-cc}
 noct="$build_dir/noct"
 work_dir="$build_dir/ctrans-test"
+CTRANS_EXPECT_OPTIMIZER=${CTRANS_EXPECT_OPTIMIZER:-1}
+
+case "$CTRANS_EXPECT_OPTIMIZER" in
+0|1) ;;
+*)
+	echo 'CTRANS_EXPECT_OPTIMIZER must be 0 or 1.' >&2
+	exit 2
+	;;
+esac
 
 test -x "$noct" || {
 	echo "Noct CLI not found: $noct" >&2
@@ -34,6 +43,7 @@ for level in 0 2; do
 	echo "(-O$level)"
 	for tc in "$root"/tests/testcases/ctrans/*.noct; do
 		name=$(basename "$tc" .noct)-O$level
+		expected="$tc.out"
 		echo "$tc"
 
 		# Translate to C, compile standalone against the public
@@ -50,12 +60,16 @@ for level in 0 2; do
 				echo "Expected AOT __fast shape check to fail: $tc" >&2
 				exit 1
 			fi
+			if [ "$level" -eq 0 ] || \
+			   [ "$CTRANS_EXPECT_OPTIMIZER" -eq 0 ]; then
+				expected="$tc.out0"
+			fi
 			;;
 		*)
 			"$work_dir/$name" > "$work_dir/$name.out"
 			;;
 		esac
-		diff "$tc.out" "$work_dir/$name.out"
+		diff "$expected" "$work_dir/$name.out"
 	done
 done
 

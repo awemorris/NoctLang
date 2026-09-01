@@ -14,6 +14,9 @@
 #include "hir.h"
 #include "lir.h"
 #include "bytecode.h"
+#if defined(NOCT_USE_OPTIMIZER)
+#include "fast.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,7 +55,7 @@ struct c_func {
 	uint32_t tmpvar_size;
 	char *param_name[CBACK_ARG_MAX];
 	bool is_fast;
-	struct fast_signature fast_signature;
+	void *fast_info;
 };
 
 static struct c_func func_table[FUNC_MAX];
@@ -102,8 +105,10 @@ static void cback_cleanup_func_table(void);
 
 static bool cback_visit_op(struct lir_func *func, uint32_t *pc);
 static bool cback_write_aot_init(void);
+#if defined(NOCT_USE_OPTIMIZER)
 static uint32_t cback_fast_extent_count(const struct fast_signature *signature);
 static void cback_write_fast_signature_arrays(const struct fast_signature *signature);
+#endif
 
 /*
  * Start the C backend.
@@ -241,7 +246,6 @@ cback_translate_func(
 	}
 
 	memset(&entry, 0, sizeof(entry));
-	fast_signature_init(&entry.fast_signature);
 
 	entry.c_name = cback_make_c_name(func->func_name);
 	if (entry.c_name == NULL) {
@@ -259,16 +263,19 @@ cback_translate_func(
 
 	entry.param_count = func->param_count;
 	entry.tmpvar_size = func->tmpvar_size;
+	entry.is_fast = false;
+	entry.fast_info = NULL;
+#if defined(NOCT_USE_OPTIMIZER)
 	entry.is_fast = func->is_fast;
 	if (entry.is_fast) {
-		if (!fast_signature_clone(
-			&entry.fast_signature,
-			&func->fast_signature)) {
+		entry.fast_info = fast_info_clone(func->fast_info);
+		if (entry.fast_info == NULL) {
 			printf("Out of memory.\n");
 			cback_free_func_entry(&entry);
 			return false;
 		}
 	}
+#endif
 
 	/* Save every parameter name. */
 	for (i = 0; i < func->param_count; i++) {
@@ -341,7 +348,9 @@ cback_free_func_entry(
 	for (i = 0; i < CBACK_ARG_MAX; i++)
 		free(func->param_name[i]);
 
-	fast_signature_free(&func->fast_signature);
+#if defined(NOCT_USE_OPTIMIZER)
+	fast_info_free(func->fast_info);
+#endif
 	memset(func, 0, sizeof(*func));
 }
 
@@ -2265,6 +2274,7 @@ cback_visit_op(
 }
 
 /* Count the entries in a signature's sparse extent table. */
+#if defined(NOCT_USE_OPTIMIZER)
 static uint32_t
 cback_fast_extent_count(
 	const struct fast_signature *signature)
@@ -2379,6 +2389,7 @@ cback_write_fast_signature_arrays(
 
 	fprintf(fp, "};\n");
 }
+#endif
 
 /* Write the function-registration entry point for generated code. */
 static bool
@@ -2424,8 +2435,17 @@ cback_write_aot_init(void)
 		}
 
 		if (func_table[i].is_fast) {
+#if defined(NOCT_USE_OPTIMIZER)
+			const struct fast_signature *signature;
+
+			signature = fast_info_signature(func_table[i].fast_info);
+			if (signature == NULL)
+				return false;
 			cback_write_fast_signature_arrays(
-				&func_table[i].fast_signature);
+				signature);
+#else
+			return false;
+#endif
 		}
 
 		if (func_table[i].param_count > 0) {
@@ -2450,8 +2470,9 @@ cback_write_aot_init(void)
 		}
 
 		if (func_table[i].is_fast) {
+#if defined(NOCT_USE_OPTIMIZER)
 			const struct fast_signature *signature =
-				&func_table[i].fast_signature;
+				fast_info_signature(func_table[i].fast_info);
 			uint32_t extent_count =
 				cback_fast_extent_count(signature);
 
@@ -2474,6 +2495,9 @@ cback_write_aot_init(void)
 				extent_count > 0 ?
 					"fast_extent_value" : "NULL");
 			fprintf(fp, "            return false;\n");
+#else
+			return false;
+#endif
 		}
 
 		fprintf(fp, "    }\n");

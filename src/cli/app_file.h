@@ -6,7 +6,7 @@
  */
 
 /*
- * Private Noct application container writer.
+ * CLI-private Noct application container writer.
  */
 
 #ifndef NOCT_BCBACK_APP_H
