@@ -517,12 +517,17 @@ jobs:
           cmake --preset msdos
           cmake --build --preset msdos
           mv build-msdos/noct.exe noct-dos.exe
+          cmake --preset pc98
+          cmake --build --preset pc98
+          mv build-pc98/noct.exe noct-pc98.exe
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: pc98
-          path: noct-dos.exe
+          path: |
+            noct-dos.exe
+            noct-pc98.exe
 
   release:
     name: Create GitHub Release
@@ -603,7 +608,8 @@ jobs:
             | Android     | Noct.aar                       | Android AAR      | Android NDK                                  |
             | OpenHarmony | noct-openharmony.tar.gz        | Tarball          | OpenHarmony (HarmonyOS NEXT)                 |
             | Wasm        | noct-wasm.tar.gz               | Emscripten       | Wasm                                         |
-            | DOS         | noct-dos.exe                   | Executable       | DOS4GW: PC-9801, PC/AT, OS/2, Windows 3.1-XP |
+            | DOS         | noct-dos.exe                   | Executable       | DOS4GW: PC/AT                                |
+            | PC-9800     | noct-pc98.exe                  | Executable       | DOS4GW: PC-9800                              |
 
           files: |
             windows/noct-win64.exe
@@ -617,3 +623,4 @@ jobs:
             wasm/noct-wasm.tar.gz
             unity/noct-unity.tar.gz
             pc98/noct-dos.exe
+            pc98/noct-pc98.exe
