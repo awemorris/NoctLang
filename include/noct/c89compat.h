@@ -2,7 +2,9 @@
 
 /*
  * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
+ * Copyright (C) 2025, 2026 Awe Morris
+ *
+ * SPDX-License-Identifier: Zlib
  */
 
 /*-

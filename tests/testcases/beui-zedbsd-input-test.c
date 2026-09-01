@@ -1,7 +1,14 @@
+/* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
+
 /*
- * zedBSD BeUI evdev state-engine host corpus.
- * Copyright (c) 2026, Awe Morris
+ * Noct Programming Language
+ * Copyright (C) 2025, 2026 Awe Morris
+ *
  * SPDX-License-Identifier: Zlib
+ */
+
+/*
+ * The zedBSD BeUI evdev state-engine host corpus.
  */
 
 #define NOCT_BEUI_ZEDBSD_INPUT_TEST 1
