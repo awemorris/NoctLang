@@ -6,7 +6,7 @@
  */
 
 /*
- * Noct Virtual Machine AOT Interface
+ * Noct Virtual Machine Executor Interface
  */
 
 #ifndef NOCT_AOT_H

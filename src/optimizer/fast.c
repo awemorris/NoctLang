@@ -9,8 +9,9 @@
  * Noct optimizer __fast function contracts.
  */
 
+#include <noct/noct.h>
+#include <noct/executor.h>
 #include "fast.h"
-#include <noct/aot.h>
 #include "runtime.h"
 
 #include <assert.h>

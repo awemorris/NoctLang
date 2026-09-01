@@ -690,5 +690,4 @@ void
 hir_dump_block(
 	struct hir_block *block);
 
-
 #endif

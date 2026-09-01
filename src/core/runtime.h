@@ -1003,24 +1003,21 @@ void
 rt_out_of_memory(
 	struct rt_env *env);
 
-#endif
-
-#if 0
 /*
- * "__fast" Function
+ * Interpreter
  */
 
-/* Restores a generated __fast function's caller-side contract. */
+/* Visit bytecode. */
 bool
-rt_mark_fast_func(
-	struct rt_func *func,
-	uint32_t tmpvar_size,
-	int return_type,
-	uint32_t param_count,
-	const int *value_type,
-	const int *packed_type,
-	const int *restricted,
-	const uint32_t *rank,
-	const int *extent_kind,
-	const int64_t *extent_value);
+rt_visit_bytecode(struct rt_env *rt, struct rt_func *func);
+
+/*
+ * Intrinsics
+ */
+
+/* Register intrinsics. */
+bool
+rt_register_intrinsics(
+	struct rt_env *rt);
+
 #endif

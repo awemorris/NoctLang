@@ -12,7 +12,8 @@
 #ifndef NOCT_JIT_H
 #define NOCT_JIT_H
 
-#include <noct/c89compat.h>
+#include <noct/noct.h>
+#include <noct/executor.h>
 #include "bytecode.h"
 
 #include <stdlib.h>

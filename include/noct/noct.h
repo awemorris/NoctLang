@@ -2101,10 +2101,4 @@ noct_register_api_httpserver(
 #define noct_free	free
 #endif
 
-/*
- * Other divided headers.
- */
-
-#include <noct/aot.h>
-
 #endif

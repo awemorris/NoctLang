@@ -452,7 +452,7 @@ rt_visit_add_op(
 {
         DEBUG_TRACE(*pc, "ADD");
 
-        BINARY_OP(ex_add_helper);
+        BINARY_OP(noct_ex_add_helper);
 }
 
 /* Visit a OP_SUB instruction. */
@@ -464,7 +464,7 @@ rt_visit_sub_op(
 {
         DEBUG_TRACE(*pc, "SUB");
 
-        BINARY_OP(ex_sub_helper);
+        BINARY_OP(noct_ex_sub_helper);
 }
 
 /* Visit a OP_MUL instruction. */
@@ -476,7 +476,7 @@ rt_visit_mul_op(
 {
         DEBUG_TRACE(*pc, "MUL");
 
-        BINARY_OP(ex_mul_helper);
+        BINARY_OP(noct_ex_mul_helper);
 }
 
 /* Visit a OP_DIV instruction. */
@@ -488,7 +488,7 @@ rt_visit_div_op(
 {
         DEBUG_TRACE(*pc, "DIV");
 
-        BINARY_OP(ex_div_helper);
+        BINARY_OP(noct_ex_div_helper);
 }
 
 /* Visit a OP_MOD instruction. */
@@ -500,7 +500,7 @@ rt_visit_mod_op(
 {
         DEBUG_TRACE(*pc, "MOD");
 
-        BINARY_OP(ex_mod_helper);
+        BINARY_OP(noct_ex_mod_helper);
 }
 
 /* Visit a OP_AND instruction. */
@@ -512,7 +512,7 @@ rt_visit_and_op(
 {
         DEBUG_TRACE(*pc, "AND");
 
-        BINARY_OP(ex_and_helper);
+        BINARY_OP(noct_ex_and_helper);
 }
 
 /* Visit a OP_OR instruction. */
@@ -524,7 +524,7 @@ rt_visit_or_op(
 {
         DEBUG_TRACE(*pc, "OR");
 
-        BINARY_OP(ex_or_helper);
+        BINARY_OP(noct_ex_or_helper);
 }
 
 /* Visit a OP_XOR instruction. */
@@ -536,7 +536,7 @@ rt_visit_xor_op(
 {
         DEBUG_TRACE(*pc, "XOR");
 
-        BINARY_OP(ex_xor_helper);
+        BINARY_OP(noct_ex_xor_helper);
 }
 
 /* Visit a OP_SHL instruction. */
@@ -548,7 +548,7 @@ rt_visit_shl_op(
 {
         DEBUG_TRACE(*pc, "SHL");
 
-        BINARY_OP(ex_shl_helper);
+        BINARY_OP(noct_ex_shl_helper);
 }
 
 /* Visit a OP_SHR instruction. */
@@ -560,7 +560,7 @@ rt_visit_shr_op(
 {
         DEBUG_TRACE(*pc, "SHR");
 
-        BINARY_OP(ex_shr_helper);
+        BINARY_OP(noct_ex_shr_helper);
 }
 
 /* Visit a OP_NEG instruction. */
@@ -572,7 +572,7 @@ rt_visit_neg_op(
 {
         DEBUG_TRACE(*pc, "NEG");
 
-        UNARY_OP(ex_neg_helper);
+        UNARY_OP(noct_ex_neg_helper);
 }
 
 /* Visit a OP_NOT instruction. */
@@ -584,7 +584,7 @@ rt_visit_not_op(
 {
         DEBUG_TRACE(*pc, "NOT");
 
-        UNARY_OP(ex_not_helper);
+        UNARY_OP(noct_ex_not_helper);
 }
 
 /* Visit a OP_LT instruction. */
@@ -596,7 +596,7 @@ rt_visit_lt_op(
 {
         DEBUG_TRACE(*pc, "LT");
 
-        BINARY_OP(ex_lt_helper);
+        BINARY_OP(noct_ex_lt_helper);
 }
 
 /* Visit a OP_LTE instruction. */
@@ -608,7 +608,7 @@ rt_visit_lte_op(
 {
         DEBUG_TRACE(*pc, "LTE");
 
-        BINARY_OP(ex_lte_helper);
+        BINARY_OP(noct_ex_lte_helper);
 }
 
 /* Visit a OP_GT instruction. */
@@ -620,7 +620,7 @@ rt_visit_gt_op(
 {
         DEBUG_TRACE(*pc, "GT");
 
-        BINARY_OP(ex_gt_helper);
+        BINARY_OP(noct_ex_gt_helper);
 }
 
 /* Visit a OP_GTE instruction. */
@@ -632,7 +632,7 @@ rt_visit_gte_op(
 {
         DEBUG_TRACE(*pc, "GTE");
 
-        BINARY_OP(ex_gte_helper);
+        BINARY_OP(noct_ex_gte_helper);
 }
 
 /* Visit a OP_EQ instruction. */
@@ -644,7 +644,7 @@ rt_visit_eq_op(
 {
         DEBUG_TRACE(*pc, "EQ");
 
-        BINARY_OP(ex_eq_helper);
+        BINARY_OP(noct_ex_eq_helper);
 }
 
 /* Visit a OP_NEQ instruction. */
@@ -656,7 +656,7 @@ rt_visit_neq_op(
 {
         DEBUG_TRACE(*pc, "NEQ");
 
-        BINARY_OP(ex_neq_helper);
+        BINARY_OP(noct_ex_neq_helper);
 }
 
 /* Visit a OP_STOREARRAY instruction. */
@@ -668,7 +668,7 @@ rt_visit_storearray_op(
 {
         DEBUG_TRACE(*pc, "STOREARRAY");
 
-        BINARY_OP(ex_storearray_helper);
+        BINARY_OP(noct_ex_storearray_helper);
 }
 
 /* Visit a OP_LOADARRAY instruction. */
@@ -680,7 +680,7 @@ rt_visit_loadarray_op(
 {
         DEBUG_TRACE(*pc, "LOADARRAY");
 
-        BINARY_OP(ex_loadarray_helper);
+        BINARY_OP(noct_ex_loadarray_helper);
 }
 
 /* Visit a OP_LEN instruction. */
@@ -692,7 +692,7 @@ rt_visit_len_op(
 {
         DEBUG_TRACE(*pc, "LEN");
 
-        UNARY_OP(ex_len_helper);
+        UNARY_OP(noct_ex_len_helper);
 }
 
 /* Visit a OP_GETDICTKEYBYINDEX instruction. */
@@ -704,7 +704,7 @@ rt_visit_getdictkeybyindex_op(
 {
         DEBUG_TRACE(*pc, "GETDICTKEYBYINDEX");
 
-        BINARY_OP(ex_getdictkeybyindex_helper);
+        BINARY_OP(noct_ex_getdictkeybyindex_helper);
 }
 
 /* Visit a OP_GETDICTVALBYINDEX instruction. */
@@ -716,7 +716,7 @@ rt_visit_getdictvalbyindex_op(
 {
         DEBUG_TRACE(*pc, "GETDICTVALBYINDEX");
 
-        BINARY_OP(ex_getdictvalbyindex_helper);
+        BINARY_OP(noct_ex_getdictvalbyindex_helper);
 }
 
 /* Visit a OP_LOADYMBOL instruction. */
@@ -735,7 +735,7 @@ rt_visit_loadsymbol_op(
         GET_TMPVAR(&dst);
         GET_STRING(&s, &len, &hash);
 
-        if (!ex_loadsymbol_helper(env, dst, s, len, hash))
+        if (!noct_ex_loadsymbol_helper(env, dst, s, len, hash))
                 return false;
 
         return true;
@@ -757,7 +757,7 @@ rt_visit_storesymbol_op(
         GET_STRING(&s, &len, &hash);
         GET_TMPVAR(&src);
 
-        if (!ex_storesymbol_helper(env, s, len, hash, src))
+        if (!noct_ex_storesymbol_helper(env, s, len, hash, src))
                 return false;
 
         return true;
@@ -780,7 +780,7 @@ rt_visit_loaddot_op(
         GET_TMPVAR(&dict);
         GET_STRING(&field, &len, &hash);
 
-        if (!ex_loaddot_helper(env, dst, dict, field, len, hash))
+        if (!noct_ex_loaddot_helper(env, dst, dict, field, len, hash))
                 return false;
 
         return true;
@@ -803,7 +803,7 @@ rt_visit_storedot_op(
         GET_STRING(&field, &len, &hash);
         GET_TMPVAR(&src);
 
-        if (!ex_storedot_helper(env, dict, field, len, hash, src))
+        if (!noct_ex_storedot_helper(env, dict, field, len, hash, src))
                 return false;
 
         return true;
@@ -834,7 +834,7 @@ rt_visit_call_op(
                 arg[i] = arg_tmpvar;
         }
 
-        if (!ex_call_helper(env, dst_tmpvar, func_tmpvar, arg_count, arg))
+        if (!noct_ex_call_helper(env, dst_tmpvar, func_tmpvar, arg_count, arg))
                 return false;
 
         return true;
@@ -867,7 +867,7 @@ rt_visit_thiscall_op(
                 arg[i] = arg_tmpvar;
         }
 
-	if (!ex_thiscall_helper(env,
+	if (!noct_ex_thiscall_helper(env,
                                 dst_tmpvar,
                                 obj_tmpvar,
                                 NULL,
@@ -1025,7 +1025,10 @@ rt_visit_pbase_op(
 	GET_TMPVAR(&src);
 	GET_U8(&base_id);
 
-	return ex_pbase_helper(env, dst, src);
+	if (!noct_ex_pbase_helper(env, dst, src))
+                return false;
+
+        return true;
 }
 
 /* Visit a OP_PLEN instruction. */
@@ -1037,7 +1040,7 @@ rt_visit_plen_op(
 {
         DEBUG_TRACE(*pc, "PLEN");
 
-        UNARY_OP(ex_plen_helper);
+        UNARY_OP(noct_ex_plen_helper);
 }
 
 /* Visit a OP_PCHECK instruction. */
@@ -1055,7 +1058,7 @@ rt_visit_pcheck_op(
         GET_TMPVAR(&src);
         GET_U8(&type);
 
-        if (!ex_pcheck_helper(env, (int)dst, (int)src, (int)type))
+        if (!noct_ex_pcheck_helper(env, (int)dst, (int)src, (int)type))
                 return false;
 
         return true;
@@ -1076,7 +1079,7 @@ rt_visit_typeis_op(
         GET_TMPVAR(&src);
         GET_U8(&type);
 
-        if (!ex_typeis_helper(env, (int)dst, (int)src, (int)type))
+        if (!noct_ex_typeis_helper(env, (int)dst, (int)src, (int)type))
                 return false;
 
         return true;
@@ -1091,7 +1094,7 @@ rt_visit_pload8u_op(
 {
         DEBUG_TRACE(*pc, "PLOAD8U");
 
-        BINARY_OP(ex_pload8u_helper);
+        BINARY_OP(noct_ex_pload8u_helper);
 }
 
 /* Visit a OP_PSTORE8 instruction. (Operand order: base, ofs, src.) */
@@ -1103,7 +1106,7 @@ rt_visit_pstore8_op(
 {
         DEBUG_TRACE(*pc, "PSTORE8");
 
-        BINARY_OP(ex_pstore8_helper);
+        BINARY_OP(noct_ex_pstore8_helper);
 }
 
 /* Visit a OP_PLOAD8S instruction. */
@@ -1115,7 +1118,7 @@ rt_visit_pload8s_op(
 {
         DEBUG_TRACE(*pc, "PLOAD8S");
 
-        BINARY_OP(ex_pload8s_helper);
+        BINARY_OP(noct_ex_pload8s_helper);
 }
 
 /* Visit a OP_PLOAD16U instruction. */
@@ -1127,7 +1130,7 @@ rt_visit_pload16u_op(
 {
         DEBUG_TRACE(*pc, "PLOAD16U");
 
-        BINARY_OP(ex_pload16u_helper);
+        BINARY_OP(noct_ex_pload16u_helper);
 }
 
 /* Visit a OP_PLOAD16S instruction. */
@@ -1139,7 +1142,7 @@ rt_visit_pload16s_op(
 {
         DEBUG_TRACE(*pc, "PLOAD16S");
 
-        BINARY_OP(ex_pload16s_helper);
+        BINARY_OP(noct_ex_pload16s_helper);
 }
 
 /* Visit a OP_PLOAD32 instruction. */
@@ -1151,7 +1154,7 @@ rt_visit_pload32_op(
 {
         DEBUG_TRACE(*pc, "PLOAD32");
 
-        BINARY_OP(ex_pload32_helper);
+        BINARY_OP(noct_ex_pload32_helper);
 }
 
 /* Visit a OP_PLOAD64 instruction. */
@@ -1163,7 +1166,7 @@ rt_visit_pload64_op(
 {
         DEBUG_TRACE(*pc, "PLOAD64");
 
-        BINARY_OP(ex_pload64_helper);
+        BINARY_OP(noct_ex_pload64_helper);
 }
 
 /* Visit a OP_PSTORE16 instruction. (Operand order: base, ofs, src.) */
@@ -1175,7 +1178,7 @@ rt_visit_pstore16_op(
 {
         DEBUG_TRACE(*pc, "PSTORE16");
 
-        BINARY_OP(ex_pstore16_helper);
+        BINARY_OP(noct_ex_pstore16_helper);
 }
 
 /* Visit a OP_PSTORE32 instruction. (Operand order: base, ofs, src.) */
@@ -1187,7 +1190,7 @@ rt_visit_pstore32_op(
 {
         DEBUG_TRACE(*pc, "PSTORE32");
 
-        BINARY_OP(ex_pstore32_helper);
+        BINARY_OP(noct_ex_pstore32_helper);
 }
 
 /* Visit a OP_PSTORE64 instruction. (Operand order: base, ofs, src.) */
@@ -1199,7 +1202,7 @@ rt_visit_pstore64_op(
 {
         DEBUG_TRACE(*pc, "PSTORE64");
 
-        BINARY_OP(ex_pstore64_helper);
+        BINARY_OP(noct_ex_pstore64_helper);
 }
 
 /* Visit raw float32 packed load/store operations. */
@@ -1210,7 +1213,7 @@ rt_visit_ploadf32_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "PLOADF32");
-        BINARY_OP(ex_ploadf32_helper);
+        BINARY_OP(noct_ex_ploadf32_helper);
 }
 
 static INLINE bool
@@ -1221,7 +1224,7 @@ rt_visit_pstoref32_op(
 {
         DEBUG_TRACE(*pc, "PSTOREF32");
 
-        BINARY_OP(ex_pstoref32_helper);
+        BINARY_OP(noct_ex_pstoref32_helper);
 }
 
 /* Visit a OP_CHECKTYPE instruction. */
@@ -1238,7 +1241,7 @@ rt_visit_checktype_op(
         GET_TMPVAR(&slot);
         GET_U8(&type);
 
-        if (!ex_checktype_helper(env, (int)slot, (int)type))
+        if (!noct_ex_checktype_helper(env, (int)slot, (int)type))
                 return false;
 
         return true;
@@ -1252,7 +1255,7 @@ rt_visit_iadd_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IADD");
-        BINARY_OP(ex_iadd_helper);
+        BINARY_OP(noct_ex_iadd_helper);
 }
 
 /* Visit an OP_ISUB instruction. */
@@ -1263,7 +1266,7 @@ rt_visit_isub_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "ISUB");
-        BINARY_OP(ex_isub_helper);
+        BINARY_OP(noct_ex_isub_helper);
 }
 
 /* Visit an OP_IMUL instruction. */
@@ -1274,7 +1277,7 @@ rt_visit_imul_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IMUL");
-        BINARY_OP(ex_imul_helper);
+        BINARY_OP(noct_ex_imul_helper);
 }
 
 /* Visit an OP_IDIV instruction. */
@@ -1285,7 +1288,7 @@ rt_visit_idiv_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IDIV");
-        BINARY_OP(ex_idiv_helper);
+        BINARY_OP(noct_ex_idiv_helper);
 }
 
 /* Visit an OP_IMOD instruction. */
@@ -1296,7 +1299,7 @@ rt_visit_imod_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IMOD");
-        BINARY_OP(ex_imod_helper);
+        BINARY_OP(noct_ex_imod_helper);
 }
 
 /* Visit an OP_IAND instruction. */
@@ -1307,7 +1310,7 @@ rt_visit_iand_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IAND");
-        BINARY_OP(ex_iand_helper);
+        BINARY_OP(noct_ex_iand_helper);
 }
 
 /* Visit an OP_IOR instruction. */
@@ -1318,7 +1321,7 @@ rt_visit_ior_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IOR");
-        BINARY_OP(ex_ior_helper);
+        BINARY_OP(noct_ex_ior_helper);
 }
 
 /* Visit an OP_IXOR instruction. */
@@ -1329,7 +1332,7 @@ rt_visit_ixor_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IXOR");
-        BINARY_OP(ex_ixor_helper);
+        BINARY_OP(noct_ex_ixor_helper);
 }
 
 /* Visit an OP_ISHL instruction. */
@@ -1349,7 +1352,7 @@ rt_visit_ishl_op(
         GET_TMPVAR(&src);
         GET_U8(&imm);
 
-        if (!ex_ishl_helper(env, dst, src, imm))
+        if (!noct_ex_ishl_helper(env, dst, src, imm))
                 return false;
 
         return true;
@@ -1372,7 +1375,7 @@ rt_visit_ishr_op(
         GET_TMPVAR(&src);
         GET_U8(&imm);
 
-        if (!ex_ishr_helper(env, dst, src, imm))
+        if (!noct_ex_ishr_helper(env, dst, src, imm))
                 return false;
 
         return true;
@@ -1386,7 +1389,7 @@ rt_visit_ilt_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "ILT");
-        BINARY_OP(ex_ilt_helper);
+        BINARY_OP(noct_ex_ilt_helper);
 }
 
 /* Visit an OP_ILTE instruction. */
@@ -1397,7 +1400,7 @@ rt_visit_ilte_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "ILTE");
-        BINARY_OP(ex_ilte_helper);
+        BINARY_OP(noct_ex_ilte_helper);
 }
 
 /* Visit an OP_IGT instruction. */
@@ -1408,7 +1411,7 @@ rt_visit_igt_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IGT");
-        BINARY_OP(ex_igt_helper);
+        BINARY_OP(noct_ex_igt_helper);
 }
 
 /* Visit an OP_IGTE instruction. */
@@ -1419,7 +1422,7 @@ rt_visit_igte_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IGTE");
-        BINARY_OP(ex_igte_helper);
+        BINARY_OP(noct_ex_igte_helper);
 }
 
 /* Visit an OP_FADD instruction. */
@@ -1430,7 +1433,7 @@ rt_visit_fadd_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FADD");
-        BINARY_OP(ex_fadd_helper);
+        BINARY_OP(noct_ex_fadd_helper);
 }
 
 /* Visit an OP_FSUB instruction. */
@@ -1441,7 +1444,7 @@ rt_visit_fsub_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FSUB");
-        BINARY_OP(ex_fsub_helper);
+        BINARY_OP(noct_ex_fsub_helper);
 }
 
 /* Visit an OP_FMUL instruction. */
@@ -1452,7 +1455,7 @@ rt_visit_fmul_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FMUL");
-        BINARY_OP(ex_fmul_helper);
+        BINARY_OP(noct_ex_fmul_helper);
 }
 
 /* Visit an OP_FDIV instruction. */
@@ -1463,7 +1466,7 @@ rt_visit_fdiv_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FDIV");
-        BINARY_OP(ex_fdiv_helper);
+        BINARY_OP(noct_ex_fdiv_helper);
 }
 
 /* Visit an OP_FLT instruction. */
@@ -1474,7 +1477,7 @@ rt_visit_flt_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FLT");
-        BINARY_OP(ex_flt_helper);
+        BINARY_OP(noct_ex_flt_helper);
 }
 
 /* Visit an OP_FLTE instruction. */
@@ -1485,7 +1488,7 @@ rt_visit_flte_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FLTE");
-        BINARY_OP(ex_flte_helper);
+        BINARY_OP(noct_ex_flte_helper);
 }
 
 /* Visit an OP_FGT instruction. */
@@ -1496,7 +1499,7 @@ rt_visit_fgt_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FGT");
-        BINARY_OP(ex_fgt_helper);
+        BINARY_OP(noct_ex_fgt_helper);
 }
 
 /* Visit an OP_FGTE instruction. */
@@ -1507,7 +1510,7 @@ rt_visit_fgte_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "FGTE");
-        BINARY_OP(ex_fgte_helper);
+        BINARY_OP(noct_ex_fgte_helper);
 }
 
 /* Visit an OP_IDIV_CHECKED instruction. */
@@ -1518,7 +1521,7 @@ rt_visit_idiv_checked_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IDIV_CHECKED");
-        BINARY_OP(ex_idiv_helper);
+        BINARY_OP(noct_ex_idiv_helper);
 }
 
 /* Visit an OP_IMOD_CHECKED instruction. */
@@ -1529,7 +1532,7 @@ rt_visit_imod_checked_op(
         uint32_t *pc)
 {
         DEBUG_TRACE(*pc, "IMOD_CHECKED");
-        BINARY_OP(ex_imod_helper);
+        BINARY_OP(noct_ex_imod_helper);
 }
 
 /* Visit an OP_VLOADI32X4 instruction. */
@@ -1549,7 +1552,7 @@ rt_visit_vloadi32x4_op(
         GET_TMPVAR(&base);
         GET_TMPVAR(&ofs);
 
-        if (!ex_vloadi32x4_helper(env, vd, base, ofs))
+        if (!noct_ex_vloadi32x4_helper(env, vd, base, ofs))
                 return false;
 
         return true;
@@ -1572,7 +1575,7 @@ rt_visit_vstorei32x4_op(
         GET_TMPVAR(&ofs);
         GET_U8(&vs);
 
-        if (!ex_vstorei32x4_helper(env, base, ofs, vs))
+        if (!noct_ex_vstorei32x4_helper(env, base, ofs, vs))
                 return false;
 
         return true;
@@ -1593,7 +1596,7 @@ rt_visit_vsplati32_op(
         GET_U8(&vd);
         GET_TMPVAR(&src);
 
-        if (!ex_vsplati32_helper(env, vd, src, 0))
+        if (!noct_ex_vsplati32_helper(env, vd, src, 0))
                 return false;
 
         return true;
@@ -1616,7 +1619,7 @@ rt_visit_vgetlanei32_op(
         GET_U8(&vs);
         GET_U8(&lane);
 
-        if (!ex_vgetlanei32_helper(env, dst, vs, lane))
+        if (!noct_ex_vgetlanei32_helper(env, dst, vs, lane))
                 return false;
 
         return true;
@@ -1637,7 +1640,7 @@ rt_visit_vmov128_op(
         GET_U8(&vd);
         GET_U8(&vs);
 
-        if (!ex_vmov128_helper(env, vd, vs, 0))
+        if (!noct_ex_vmov128_helper(env, vd, vs, 0))
                 return false;
 
         return true;
@@ -1660,7 +1663,7 @@ rt_visit_vaddi32x4_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vaddi32x4_helper(env, vd, va, vb))
+        if (!noct_ex_vaddi32x4_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1683,7 +1686,7 @@ rt_visit_vsubi32x4_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vsubi32x4_helper(env, vd, va, vb))
+        if (!noct_ex_vsubi32x4_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1706,7 +1709,7 @@ rt_visit_vmuli32x4_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vmuli32x4_helper(env, vd, va, vb))
+        if (!noct_ex_vmuli32x4_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1729,7 +1732,7 @@ rt_visit_vand128_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vand128_helper(env, vd, va, vb))
+        if (!noct_ex_vand128_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1752,7 +1755,7 @@ rt_visit_vor128_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vor128_helper(env, vd, va, vb))
+        if (!noct_ex_vor128_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1775,7 +1778,7 @@ rt_visit_vxor128_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vxor128_helper(env, vd, va, vb))
+        if (!noct_ex_vxor128_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1798,7 +1801,7 @@ rt_visit_vshli32x4_op(
         GET_U8(&va);
         GET_U8(&count);
 
-        if (!ex_vshli32x4_helper(env, vd, va, count))
+        if (!noct_ex_vshli32x4_helper(env, vd, va, count))
                 return false;
 
         return true;
@@ -1821,7 +1824,7 @@ rt_visit_vshri32x4_op(
         GET_U8(&va);
         GET_U8(&count);
 
-        if (!ex_vshri32x4_helper(env, vd, va, count))
+        if (!noct_ex_vshri32x4_helper(env, vd, va, count))
                 return false;
 
         return true;
@@ -1844,7 +1847,7 @@ rt_visit_vloadf32x4_op(
         GET_TMPVAR(&base);
         GET_TMPVAR(&ofs);
 
-        if (!ex_vloadf32x4_helper(env, vd, base, ofs))
+        if (!noct_ex_vloadf32x4_helper(env, vd, base, ofs))
                 return false;
 
         return true;
@@ -1867,7 +1870,7 @@ rt_visit_vstoref32x4_op(
         GET_TMPVAR(&ofs);
         GET_U8(&vs);
 
-        if (!ex_vstoref32x4_helper(env, base, ofs, vs))
+        if (!noct_ex_vstoref32x4_helper(env, base, ofs, vs))
                 return false;
 
         return true;
@@ -1888,7 +1891,7 @@ rt_visit_vsplatf32_op(
         GET_U8(&vd);
         GET_TMPVAR(&src);
 
-        if (!ex_vsplatf32_helper(env, vd, src, 0))
+        if (!noct_ex_vsplatf32_helper(env, vd, src, 0))
                 return false;
 
         return true;
@@ -1911,7 +1914,7 @@ rt_visit_vgetlanef32_op(
         GET_U8(&vs);
         GET_U8(&lane);
 
-        if (!ex_vgetlanef32_helper(env, dst, vs, lane))
+        if (!noct_ex_vgetlanef32_helper(env, dst, vs, lane))
                 return false;
 
         return true;
@@ -1934,7 +1937,7 @@ rt_visit_vaddf32x4_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vaddf32x4_helper(env, vd, va, vb))
+        if (!noct_ex_vaddf32x4_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1957,7 +1960,7 @@ rt_visit_vsubf32x4_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vsubf32x4_helper(env, vd, va, vb))
+        if (!noct_ex_vsubf32x4_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -1980,7 +1983,7 @@ rt_visit_vmulf32x4_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vmulf32x4_helper(env, vd, va, vb))
+        if (!noct_ex_vmulf32x4_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -2003,7 +2006,7 @@ rt_visit_vdivf32x4_op(
         GET_U8(&va);
         GET_U8(&vb);
 
-        if (!ex_vdivf32x4_helper(env, vd, va, vb))
+        if (!noct_ex_vdivf32x4_helper(env, vd, va, vb))
                 return false;
 
         return true;
@@ -2024,7 +2027,7 @@ rt_visit_vcvti32f32x4_op(
         GET_U8(&vd);
         GET_U8(&vs);
 
-        if (!ex_vcvti32f32x4_helper(env, vd, vs, 0))
+        if (!noct_ex_vcvti32f32x4_helper(env, vd, vs, 0))
                 return false;
 
         return true;
@@ -2045,7 +2048,7 @@ rt_visit_vcvtf32i32x4_op(
         GET_U8(&vd);
         GET_U8(&vs);
 
-        if (!ex_vcvtf32i32x4_helper(env, vd, vs, 0))
+        if (!noct_ex_vcvtf32i32x4_helper(env, vd, vs, 0))
                 return false;
 
         return true;
@@ -2203,7 +2206,10 @@ rt_visit_vori32x4i_op(
 	GET_U8(&imm);
 	GET_U8(&shift);
 
-	return ex_vori32x4i_helper(env, vd, vs, (imm << 8) | shift);
+	if (!noct_ex_vori32x4i_helper(env, vd, vs, (imm << 8) | shift))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2221,7 +2227,10 @@ rt_visit_vfmaf32x4_op(
 	GET_U8(&vb);
 	GET_U8(&vc);
 
-	return ex_vfmaf32x4_helper(env, vd, va, (vb << 8) | vc);
+	if (!noct_ex_vfmaf32x4_helper(env, vd, va, (vb << 8) | vc))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2245,7 +2254,10 @@ rt_visit_vcmpi32x4_op(
 		return false;
 	}
 
-	return ex_vcmpi32x4_helper(env, vd, va, (vb << 8) | pred);
+	if (!noct_ex_vcmpi32x4_helper(env, vd, va, (vb << 8) | pred))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2269,7 +2281,10 @@ rt_visit_vcmpf32x4_op(
 		return false;
 	}
 
-	return ex_vcmpf32x4_helper(env, vd, va, (vb << 8) | pred);
+	if (!noct_ex_vcmpf32x4_helper(env, vd, va, (vb << 8) | pred))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2284,7 +2299,10 @@ rt_visit_vselect128_op(struct rt_env *env, struct rt_func *func, uint32_t *pc)
 		return false;
 	}
 
-	return ex_vselect128_helper(env, vd, vm, (vt << 8) | vf);
+	if (!noct_ex_vselect128_helper(env, vd, vm, (vt << 8) | vf))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2306,7 +2324,10 @@ rt_visit_vmins32x4_op(
 		return false;
 	}
 
-	return ex_vmins32x4_helper(env, vd, va, vb);
+	if (!noct_ex_vmins32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2328,7 +2349,10 @@ rt_visit_vmaxs32x4_op(
 		return false;
 	}
 
-	return ex_vmaxs32x4_helper(env, vd, va, vb);
+	if (!noct_ex_vmaxs32x4_helper(env, vd, va, vb))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2347,7 +2371,10 @@ rt_visit_vmaskstorei32x4_op(struct rt_env *env, struct rt_func *func,
 		return false;
 	}
 
-	return ex_vmaskstorei32x4_helper(env, base, ofs, (vs << 8) | vm);
+	if (!noct_ex_vmaskstorei32x4_helper(env, base, ofs, (vs << 8) | vm))
+                return false;
+
+        return true;
 }
 
 static INLINE bool
@@ -2363,7 +2390,8 @@ rt_visit_vinductf32x4_op(struct rt_env *env, struct rt_func *func,
 		return false;
 	}
 
-	return ex_vinductf32x4_helper(env, vd, state, step);
+	if (!noct_ex_vinductf32x4_helper(env, vd, state, step))
+                return false;
 }
 
 static INLINE bool
@@ -2382,7 +2410,10 @@ rt_visit_vgatheri32x4_checked_op(struct rt_env *env, struct rt_func *func,
 		return false;
 	}
 
-	return ex_vgatheri32x4_checked_helper(env, vd, base, (plen << 8) | vi);
+	if (!noct_ex_vgatheri32x4_checked_helper(env, vd, base, (plen << 8) | vi))
+                return false;
+
+        return true;
 }
 
 /* Visit an instruction. */

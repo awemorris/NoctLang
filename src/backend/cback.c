@@ -127,7 +127,7 @@ noct_cback_start(
 
 	/* NOCT_AOT_INTERNAL exposes the head layout of rt_env/rt_frame. */
 	fprintf(fp, "#define NOCT_AOT_INTERNAL\n");
-	fprintf(fp, "#include <noct/aot.h>\n");
+	fprintf(fp, "#include <noct/executor.h>\n");
 	fprintf(fp, "\n");
 
 	return true;
@@ -1612,7 +1612,7 @@ cback_visit_typed_op(
 /*
  * Visit an OP_VLOADI32X4..OP_VSHRI32X4 instruction.  (128-bit SIMD,
  * design 06.)  The generated C calls the portable emulation helpers,
- * which the runtime always compiles (aot.h declares them).
+ * which the runtime always compiles (executor.h declares them).
  */
 static INLINE bool
 cback_visit_vector_op(
