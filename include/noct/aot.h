@@ -52,30 +52,6 @@ init_aot_code(
 	NoctEnv *env);
 
 /*
- * Restore a generated __fast function's caller-side contract.
- *
- * tmpvar_size is the generated LIR's full temporary count.  It restores the
- * frame initialization and GC root-scan boundary used while the AOT function
- * is running.
- *
- * The per-parameter arrays contain param_count entries.  The extent arrays
- * contain exactly the sum of the rank entries, in parameter order.
- */
-NOCT_DLL
-bool
-noct_ex_mark_fast_func(
-	NoctFunc *func,
-	uint32_t tmpvar_size,
-	int return_type,
-	uint32_t param_count,
-	const int *value_type,
-	const int *packed_type,
-	const int *restricted,
-	const uint32_t *rank,
-	const int *extent_kind,
-	const int64_t *extent_value);
-
-/*
  * AOT Execution Helpers
  *
  * Some exotic compilers for x86 including Watcom utilize registers to
@@ -538,12 +514,6 @@ noct_ex_condition_helper(
 	NoctEnv *rt,
 	int slot);
 
-/*
- * Typed arithmetic helpers (docs/design/07-typed-ops.md).  All share
- * the (env, dst, src1, src2) int-operand signature; for the shift
- * helpers src2 is the shift count immediate (0..31).
- */
-
 #define NOCT_DECL_TYPED_HELPER(name)		\
 NOCT_DLL					\
 bool						\
@@ -577,10 +547,6 @@ NOCT_DECL_TYPED_HELPER(noct_ex_flte_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_fgt_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_fgte_helper)
 
-/*
- * 128-bit SIMD helpers (docs/design/06-simd.md).  Same (env, int,
- * int, int) shape; see execution.c for the operand meanings per op.
- */
 NOCT_DECL_TYPED_HELPER(noct_ex_vloadi32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vstorei32x4_helper)
 NOCT_DECL_TYPED_HELPER(noct_ex_vsplati32_helper)

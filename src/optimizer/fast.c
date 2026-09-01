@@ -442,9 +442,8 @@ fast_info_signature(
 /*
  * Restores an optimized generated function through the AOT interface.
  */
-NOCT_DLL
 bool
-noct_ex_mark_fast_func(
+fast_mark_func(
 	NoctFunc *func,
 	uint32_t tmpvar_size,
 	int return_type,

@@ -26,6 +26,9 @@ enum fast_extent_kind {
 	FAST_EXTENT_PARAM
 };
 
+struct rt_env;
+struct rt_func;
+
 struct fast_extent {
 	int kind;
 	union {
@@ -51,9 +54,6 @@ struct fast_signature {
 	struct fast_param_contract *param;
 	int return_type;
 };
-
-struct rt_env;
-struct rt_func;
 
 /*
  * Initializes an empty signature before its first build or clone.
@@ -153,6 +153,19 @@ fast_check_runtime_call(
 	struct rt_env *env,
 	struct rt_func *func,
 	uint32_t arg_count);
+
+bool
+fast_mark_func(
+	NoctFunc *func,
+	uint32_t tmpvar_size,
+	int return_type,
+	uint32_t param_count,
+	const int *value_type,
+	const int *packed_type,
+	const int *restricted,
+	const uint32_t *rank,
+	const int *extent_kind,
+	const int64_t *extent_value);
 
 #endif /* defined(NOCT_USE_OPTIMIZER) */
 

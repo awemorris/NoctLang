@@ -319,7 +319,7 @@ endif()
 if(NOCT_ENABLE_REPL)
   set(
     NOCT_REPL_SOURCE
-    src/repl/repl.c
+    src/cli/repl.c
   )
 endif()
 

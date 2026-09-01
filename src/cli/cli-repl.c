@@ -9,18 +9,15 @@
  * CLI: REPL Mode
  */
 
-#include "cli-main.h"
-
-#include <noct/repl.h>
-#if defined(NOCT_USE_BEUI)
 #include <noct/noct.h>
-#endif
+#include "cli-main.h"
+#include "repl.h"
 
 #include <errno.h>
 #include <signal.h>
 
-#define REPL_SOURCE_SIZE 32768
-#define REPL_LINE_SIZE (REPL_SOURCE_SIZE + 2)
+#define REPL_SOURCE_SIZE	32768
+#define REPL_LINE_SIZE		(REPL_SOURCE_SIZE + 2)
 
 enum repl_read_result {
 	REPL_READ_LINE,
@@ -31,7 +28,7 @@ enum repl_read_result {
 
 static volatile sig_atomic_t repl_interrupted;
 
-#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_MACOS)
+#if defined(NOCT_TARGET_POSIX)
 static struct sigaction repl_old_action;
 #else
 static void (*repl_old_handler)(int);
