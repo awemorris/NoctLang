@@ -183,6 +183,7 @@ extern "C" {
  * | NOCT_TARGET_SOLARIS10 | Solaris        |                             |
  * | NOCT_TARGET_BEOS      | BeOS and Haiku |                             |
  * | NOCT_TARGET_DOS4G     | DOS4G          |                             |
+ * | NOCT_TARGET_PC98DOS   | PC-98 DOS      |                             |
  * | NOCT_TARGET_PC98BE    | PC-98 BE       | Freestanding bootstrap env. |
  * | NOCT_TARGET_ZEDBSD    | zedBSD         |                             |
  *
@@ -191,7 +192,14 @@ extern "C" {
  * | Macro               | Description             |
  * |---------------------|-------------------------|
  * | NOCT_TARGET_POSIX   | POSIX compliant systems |
+ * | NOCT_TARGET_DOS     | DOS-based systems        |
  */
+
+/* Common DOS characteristics without conflating the machine targets. */
+#if (defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98DOS)) &&           \
+    !defined(NOCT_TARGET_DOS)
+#define NOCT_TARGET_DOS
+#endif
 
 /* Windows */
 #if defined(_WIN32) && !defined(NOCT_TARGET_UNITY)
@@ -306,7 +314,7 @@ extern "C" {
     !defined(NOCT_TARGET_IOS) && !defined(NOCT_TARGET_ANDROID) &&              \
     !defined(NOCT_TARGET_OPENHARMONY) && !defined(NOCT_TARGET_WASM) &&         \
     !defined(NOCT_TARGET_BEOS) && !defined(NOCT_TARGET_UNITY) &&               \
-    !defined(NOCT_TARGET_DOS4G) && !defined(NOCT_TARGET_PC98BE) &&             \
+    !defined(NOCT_TARGET_DOS) && !defined(NOCT_TARGET_PC98BE) &&               \
     !defined(NOCT_TARGET_ZEDBSD)
 #error "No target detected."
 #endif
@@ -451,7 +459,7 @@ typedef unsigned long uintptr_t;
  * Definition of the CDECL keyword
  */
 #if !defined(CDECL)
-#if defined(NOCT_TARGET_DOS4G)
+#if defined(NOCT_TARGET_DOS)
 #define CDECL __cdecl
 #else
 #define CDECL

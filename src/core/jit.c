@@ -62,7 +62,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>		/* VirtualAlloc(), VirtualProtect(), VirtualFree() */
-#elif defined(NOCT_TARGET_DOS4G)
+#elif defined(NOCT_TARGET_DOS)
 #include <dos.h>
 #include <i86.h>
 #elif defined(NOCT_TARGET_POSIX)
@@ -1294,7 +1294,7 @@ rt_jit_map_memory_region(
 #elif defined(__NetBSD__) && defined(PROT_MPROTECT)
 	/* Use PROT_MPROTECT() to avoid W^X. */
 	*region = mmap(NULL, size, PROT_READ | PROT_WRITE | PROT_MPROTECT(PROT_READ | PROT_EXEC), MAP_ANON | MAP_PRIVATE, -1, 0);
-#elif defined(NOCT_TARGET_DOS4G)
+#elif defined(NOCT_TARGET_DOS)
 	*region = noct_malloc(size);
 	{
 		union REGS regs;
@@ -1319,7 +1319,7 @@ rt_jit_map_memory_region(
 	/* Assume no W^X. */
 	*region = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
 #endif
-#if !defined(_WIN32) && !defined(NOCT_TARGET_DOS4G) && \
+#if !defined(_WIN32) && !defined(NOCT_TARGET_DOS) && \
     !defined(NOCT_TARGET_PC98BE)
 	if (*region == MAP_FAILED) {
 		error = (unsigned long)errno;
@@ -1336,7 +1336,7 @@ rt_jit_map_memory_region(
 
 	/* Anonymous mappings and VirtualAlloc are already zero-filled.  Only
 	 * malloc-backed freestanding targets require eager initialization. */
-#if defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
+#if defined(NOCT_TARGET_DOS) || defined(NOCT_TARGET_PC98BE)
 	memset(*region, 0, size);
 #endif
 
@@ -1364,7 +1364,7 @@ rt_jit_unmap_memory_region(
 		succeeded = false;
 		error = (unsigned long)GetLastError();
 	}
-#elif defined(NOCT_TARGET_DOS4G)
+#elif defined(NOCT_TARGET_DOS)
 	/* Do nothing. */
 #elif defined(NOCT_TARGET_PC98BE)
 	UNUSED_PARAMETER(size);
@@ -1408,10 +1408,10 @@ rt_jit_map_executable(
 		error = (unsigned long)GetLastError();
 	}
 
-#elif defined(NOCT_TARGET_DOS4G)
+#elif defined(NOCT_TARGET_DOS)
 
 	/*
-	 * DOS4G
+	 * DOS/DPMI
 	 */
 
 	UNUSED_PARAMETER(region);
@@ -1649,10 +1649,10 @@ jit_page_size(void)
 	GetSystemInfo(&info);
 	return (size_t)info.dwPageSize;
 
-#elif defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98BE)
+#elif defined(NOCT_TARGET_DOS) || defined(NOCT_TARGET_PC98BE)
 
 	/*
-	 * DOS4G
+	 * DOS/DPMI
 	 */
 
 	return 16;

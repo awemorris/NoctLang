@@ -20,7 +20,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
-#elif defined(NOCT_TARGET_DOS4G)
+#elif defined(NOCT_TARGET_DOS)
 #include <dos.h>
 #include <sys/stat.h>
 #endif
@@ -344,7 +344,7 @@ bool add_file(const char *fname, bool (*add_file_hook)(const char *))
 
 #endif
 
-#if defined(NOCT_TARGET_DOS4G)
+#if defined(NOCT_TARGET_DOS)
 
 #ifndef _A_SUBDIR
 #define _A_SUBDIR 0x10

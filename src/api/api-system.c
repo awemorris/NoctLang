@@ -20,7 +20,7 @@
 #if defined(NOCT_TARGET_WINDOWS)
 #include <fcntl.h>
 #include <windows.h>
-#elif defined(NOCT_TARGET_DOS4G)
+#elif defined(NOCT_TARGET_DOS)
 #include <io.h>
 #else
 #include <sys/wait.h>

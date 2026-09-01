@@ -56,7 +56,7 @@ option(NOCT_TARGET_UNITY          "Build for Unity"                       OFF)
 option(NOCT_TARGET_OPENHARMONY    "Build for OpenHarmony"                 OFF)
 option(NOCT_TARGET_MACOS7         "Build for MacOS 7"                     OFF)
 option(NOCT_TARGET_DOS4G          "Build for DOS4G"                       OFF)
-option(NOCT_TARGET_PC98DOS        "Build for DOS4G PC-98"                 OFF)
+option(NOCT_TARGET_PC98DOS        "Build for MS-DOS on PC-98"             OFF)
 option(NOCT_TARGET_ZEDBSD         "Build for zedBSD"                      OFF)
 
 # Installation options.
@@ -633,12 +633,17 @@ endif()
 
 # DOS4G Target
 if(NOCT_TARGET_DOS4G)
-  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_DOS4G NOCT_MEMORY_SMALL)
+  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_DOS4G)
 endif()
 
 # MS-DOS on PC-98 Target
 if(NOCT_TARGET_PC98DOS)
   list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_TARGET_PC98DOS)
+endif()
+
+# Common memory profile for DOS targets.
+if(NOCT_TARGET_DOS4G OR NOCT_TARGET_PC98DOS)
+  list(APPEND NOCT_PUBLIC_CPPFLAGS NOCT_MEMORY_SMALL)
 endif()
 
 # PC-98 Bootstrap Environment Target

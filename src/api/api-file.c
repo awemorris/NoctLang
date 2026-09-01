@@ -39,7 +39,7 @@
 #define F_OK	0
 #endif
 
-#if defined(NOCT_TARGET_DOS4G)
+#if defined(NOCT_TARGET_DOS)
 /* OpenWatcom DOS: getcwd/chdir live in <direct.h>. */
 #include <direct.h>
 #endif
@@ -2667,7 +2667,7 @@ cfunc_FileUtil_makeDirectoryExclusive(
 	}
 
 	/* Creates the directory without replacing an existing entry. */
-#if defined(NOCT_TARGET_WINDOWS) || defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98DOS)
+#if defined(NOCT_TARGET_WINDOWS) || defined(NOCT_TARGET_DOS)
 	make_result = _mkdir(path);
 #elif defined(NOCT_TARGET_POSIX)
 	make_result = mkdir(path, 0777);
