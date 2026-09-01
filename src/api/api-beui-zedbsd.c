@@ -8,23 +8,19 @@
  */
 
 /*
- * The zedBSD BeUI backend and evdev state engine.
- *
- * Define NOCT_BEUI_ZEDBSD_INPUT_TEST when including this file in the pure
- * state-engine host corpus so the descriptor and ioctl adapter is omitted.
+ * The zedBSD BeUI backend and evdev input implementation.
  */
 
 #include <noct/noct.h>
 
+#include <zedbsd/graphics.h>
 #include <zedbsd/input.h>
 
 #include <limits.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-#include <zedbsd/graphics.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -34,122 +30,102 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <stdlib.h>
-#endif
-#define NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES 16U
+#define INPUT_MAX_SOURCES	16U
+#define INPUT_BITS_PER_WORD	(sizeof(unsigned long) * 8U)
 
-#define NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD (sizeof(unsigned long) * 8U)
+#define INPUT_WORDS(maximum)	(((maximum) + 1U + INPUT_BITS_PER_WORD - 1U) / INPUT_BITS_PER_WORD)
 
-#define NOCT_BEUI_ZEDBSD_INPUT_WORDS(maximum)                                  \
-	(((maximum) + 1U + NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD - 1U) /        \
-	 NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD)
+#define INPUT_EVENT_WORDS	INPUT_WORDS(EV_MAX)
+#define INPUT_KEY_WORDS		INPUT_WORDS(KEY_MAX)
+#define INPUT_REL_WORDS		INPUT_WORDS(REL_MAX)
+#define INPUT_ABS_WORDS		INPUT_WORDS(ABS_MAX)
 
-#define NOCT_BEUI_ZEDBSD_INPUT_EVENT_WORDS NOCT_BEUI_ZEDBSD_INPUT_WORDS(EV_MAX)
+#define IMAGE_SOURCE_MAX	(2U * 1024U * 1024U)
+#define IMAGE_PIXELS_MAX	(2U * 1024U * 1024U)
 
-#define NOCT_BEUI_ZEDBSD_INPUT_KEY_WORDS NOCT_BEUI_ZEDBSD_INPUT_WORDS(KEY_MAX)
+#define READ_EVENTS		16U
+#define FLUSH_RECTS		32U
+#define GLYPH_BYTES		256U
+#define RESCAN_MS		1000U
+#define BITS_PER_ULONG		((unsigned)(sizeof(unsigned long) * 8U))
 
-#define NOCT_BEUI_ZEDBSD_INPUT_REL_WORDS NOCT_BEUI_ZEDBSD_INPUT_WORDS(REL_MAX)
+#define BIT_WORDS(maximum)	(((unsigned)(maximum) + BITS_PER_ULONG) / BITS_PER_ULONG)
 
-#define NOCT_BEUI_ZEDBSD_INPUT_ABS_WORDS NOCT_BEUI_ZEDBSD_INPUT_WORDS(ABS_MAX)
-
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-#define NOCT_BEUI_IMAGE_SOURCE_MAX (2U * 1024U * 1024U)
-
-#define NOCT_BEUI_IMAGE_PIXELS_MAX (2U * 1024U * 1024U)
-
-#define BEUI_ZEDBSD_READ_EVENTS 16U
-
-#define BEUI_ZEDBSD_FLUSH_RECTS 32U
-
-#define BEUI_ZEDBSD_GLYPH_BYTES 256U
-
-#define BEUI_ZEDBSD_RESCAN_MS 1000U
-
-#define BITS_PER_ULONG ((unsigned)(sizeof(unsigned long) * 8U))
-
-#define BIT_WORDS(maximum)                                                     \
-	(((unsigned)(maximum) + BITS_PER_ULONG) / BITS_PER_ULONG)
-
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */
-
-
-enum noct_beui_image_format {
-	NOCT_BEUI_IMAGE_INDEX8 = 1,
-	NOCT_BEUI_IMAGE_RGB24 = 2
+enum image_format {
+	IMAGE_INDEX8 = 1,
+	IMAGE_RGB24 = 2
 };
 
-enum noct_beui_pointer_button {
-	NOCT_BEUI_BUTTON_LEFT = 1U << 0,
-	NOCT_BEUI_BUTTON_RIGHT = 1U << 1,
-	NOCT_BEUI_BUTTON_MIDDLE = 1U << 2
+enum pointer_button {
+	BUTTON_LEFT = 1U << 0,
+	BUTTON_RIGHT = 1U << 1,
+	BUTTON_MIDDLE = 1U << 2
 };
 
 /*
- * Key codes shared with the Boots BeUI implementation; the same compiled
- * script must observe identical Key.* values on both hosts.
+ * Key codes exposed through BeUI.Key are identical on every backend.
  */
-enum noct_beui_key_code {
-	NOCT_BEUI_KEY_ESCAPE = 0x1b,
-	NOCT_BEUI_KEY_BACKSPACE = 0x08,
-	NOCT_BEUI_KEY_TAB = 0x09,
-	NOCT_BEUI_KEY_ENTER = 0x0d,
-	NOCT_BEUI_KEY_PAGE_UP = 0x136,
-	NOCT_BEUI_KEY_PAGE_DOWN = 0x137,
-	NOCT_BEUI_KEY_INSERT = 0x138,
-	NOCT_BEUI_KEY_DELETE = 0x139,
-	NOCT_BEUI_KEY_UP = 0x13a,
-	NOCT_BEUI_KEY_LEFT = 0x13b,
-	NOCT_BEUI_KEY_RIGHT = 0x13c,
-	NOCT_BEUI_KEY_DOWN = 0x13d,
-	NOCT_BEUI_KEY_HOME = 0x13e,
-	NOCT_BEUI_KEY_END = 0x13f,
-	NOCT_BEUI_KEY_F1 = 0x162,
-	NOCT_BEUI_KEY_F2 = 0x163,
-	NOCT_BEUI_KEY_F3 = 0x164,
-	NOCT_BEUI_KEY_F4 = 0x165,
-	NOCT_BEUI_KEY_F5 = 0x166,
-	NOCT_BEUI_KEY_F6 = 0x167,
-	NOCT_BEUI_KEY_F7 = 0x168,
-	NOCT_BEUI_KEY_F8 = 0x169,
-	NOCT_BEUI_KEY_F9 = 0x16a,
-	NOCT_BEUI_KEY_F10 = 0x16b,
+enum key_code {
+	BEUI_KEY_ESCAPE = 0x1b,
+	BEUI_KEY_BACKSPACE = 0x08,
+	BEUI_KEY_TAB = 0x09,
+	BEUI_KEY_ENTER = 0x0d,
+	BEUI_KEY_PAGE_UP = 0x136,
+	BEUI_KEY_PAGE_DOWN = 0x137,
+	BEUI_KEY_INSERT = 0x138,
+	BEUI_KEY_DELETE = 0x139,
+	BEUI_KEY_UP = 0x13a,
+	BEUI_KEY_LEFT = 0x13b,
+	BEUI_KEY_RIGHT = 0x13c,
+	BEUI_KEY_DOWN = 0x13d,
+	BEUI_KEY_HOME = 0x13e,
+	BEUI_KEY_END = 0x13f,
+	BEUI_KEY_F1 = 0x162,
+	BEUI_KEY_F2 = 0x163,
+	BEUI_KEY_F3 = 0x164,
+	BEUI_KEY_F4 = 0x165,
+	BEUI_KEY_F5 = 0x166,
+	BEUI_KEY_F6 = 0x167,
+	BEUI_KEY_F7 = 0x168,
+	BEUI_KEY_F8 = 0x169,
+	BEUI_KEY_F9 = 0x16a,
+	BEUI_KEY_F10 = 0x16b,
+
 	/* State-only: modifiers never appear in buffered key streams. */
-	NOCT_BEUI_KEY_SHIFT = 0x170
+	BEUI_KEY_SHIFT = 0x170
 };
 
-enum noct_beui_zedbsd_input_role {
-	NOCT_BEUI_ZEDBSD_INPUT_ROLE_NONE = 0,
-	NOCT_BEUI_ZEDBSD_INPUT_ROLE_KEYBOARD = 1U << 0,
-	NOCT_BEUI_ZEDBSD_INPUT_ROLE_RELATIVE_POINTER = 1U << 1,
-	NOCT_BEUI_ZEDBSD_INPUT_ROLE_ABSOLUTE_POINTER = 1U << 2
+enum input_role {
+	INPUT_ROLE_NONE = 0,
+	INPUT_ROLE_KEYBOARD = 1U << 0,
+	INPUT_ROLE_RELATIVE_POINTER = 1U << 1,
+	INPUT_ROLE_ABSOLUTE_POINTER = 1U << 2
 };
 
-enum noct_beui_zedbsd_input_update {
-	NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE = 0,
-	NOCT_BEUI_ZEDBSD_INPUT_UPDATE_KEY = 1U << 0,
-	NOCT_BEUI_ZEDBSD_INPUT_UPDATE_POINTER = 1U << 1,
+enum input_update {
+	INPUT_UPDATE_NONE = 0,
+	INPUT_UPDATE_KEY = 1U << 0,
+	INPUT_UPDATE_POINTER = 1U << 1,
+
 	/* Committed state was visibly cleared after SYN_DROPPED. */
-	NOCT_BEUI_ZEDBSD_INPUT_UPDATE_RESET = 1U << 2,
-	/* Query EVIOCGKEY/EVIOCGABS and call resync() for this source. */
-	NOCT_BEUI_ZEDBSD_INPUT_UPDATE_RESYNC = 1U << 3
-};
+	INPUT_UPDATE_RESET = 1U << 2,
 
+	/* Query EVIOCGKEY/EVIOCGABS and call resync() for this source. */
+	INPUT_UPDATE_RESYNC = 1U << 3
+};
 
 /*
- * Complete platform-private BeUI data contract.  The state engine remains
- * available to its include-based focused test, while the runtime functions
- * below are compiled only for the production translation unit.
+ * Defines the values used by the BeUI implementation.
  */
-struct noct_beui_rect {
+struct rect {
 	unsigned x;
 	unsigned y;
 	unsigned width;
 	unsigned height;
 };
 
-struct noct_beui_display_info {
-	/* Input hint to enter(); zero means the backend's default depth. */
+struct display_info {
+	/* Input hint to enter(), zero means the backend's default depth. */
 	unsigned preferred_bits_per_pixel;
 	unsigned width;
 	unsigned height;
@@ -158,12 +134,13 @@ struct noct_beui_display_info {
 };
 
 /*
- * Images use a target-independent representation.  Indexed images always
- * contain one palette index per pixel; RGB24 pixels are tightly packed in
- * R, G, B order.  Palette entries and solid colors use 0x00RRGGBB.
+ * Images use a target-independent representation.  Indexed images
+ * always contain one palette index per pixel, RGB24 pixels are
+ * tightly packed in R, G, B order.  Palette entries and solid colors
+ * use 0x00RRGGBB.
  */
-struct noct_beui_image {
-	enum noct_beui_image_format format;
+struct image {
+	enum image_format format;
 	unsigned width;
 	unsigned height;
 	size_t stride;
@@ -173,121 +150,32 @@ struct noct_beui_image {
 };
 
 /*
- * Pointer positions are absolute display coordinates.  Targets whose
- * hardware reports motion deltas (the PC-98 bus mouse) integrate and
- * clamp inside their backend, so scripts see one coordinate space on
- * every host.
+ * Pointer positions are absolute display coordinates.  Relative
+ * zedBSD input is integrated and clamped here so scripts see one
+ * coordinate space for every input device.
  */
-struct noct_beui_pointer_event {
+struct pointer_event {
 	unsigned x;
 	unsigned y;
 	unsigned buttons;
 };
 
-struct noct_beui_display_hal {
-	void *context;
-	int (*enter)(void *context, struct noct_beui_display_info *info);
-	void (*leave)(void *context);
-	/*
-	 * Optional.  Services the host window system and reports whether
-	 * the display is still alive: 1 to continue, 0 once the user has
-	 * asked to close it, negative on error.  Targets that own the
-	 * whole machine leave this NULL and never close.
-	 */
-	int (*poll_events)(void *context);
-	int (*fill)(void *context, const struct noct_beui_rect *rect,
-		    uint32_t color);
-	int (*line)(void *context, unsigned x0, unsigned y0, unsigned x1,
-		    unsigned y1, uint32_t color);
-	int (*pattern_fill)(void *context, const struct noct_beui_rect *rect,
-			    uint32_t color, uint64_t pattern);
-	int (*draw_image)(void *context, unsigned x, unsigned y,
-			  const struct noct_beui_image *image);
-	int (*draw_image_pattern)(void *context, unsigned x, unsigned y,
-				  const struct noct_beui_image *image,
-				  uint64_t pattern);
-	int (*flush)(void *context, const struct noct_beui_rect *rectangles,
-		     size_t rectangle_count);
-};
-
-struct noct_beui_glyph_hal {
-	void *context;
-	int (*measure)(void *context, uint32_t codepoint, unsigned *width,
-		       unsigned *height);
-	int (*draw)(void *context, unsigned x, unsigned y, uint32_t codepoint,
-		    uint32_t foreground, uint32_t background);
-};
-
-/*
- * poll() reports the current absolute pointer state: 1 when the event
- * was filled in, 0 when nothing has changed since the last call, and a
- * negative value on error.  start() receives the display geometry so
- * relative-motion hardware can clamp to the visible area.
- */
-struct noct_beui_pointer_hal {
-	void *context;
-	int (*start)(void *context,
-		     const struct noct_beui_display_info *display);
-	void (*stop)(void *context);
-	int (*poll)(void *context, struct noct_beui_pointer_event *event);
-};
-
-/*
- * The clock derives time from a polled counter on some targets; callers
- * must invoke milliseconds() (or the core sleep/poll helpers) at least
- * once per hardware counter period or elapsed time is lost.
- */
-struct noct_beui_clock_hal {
-	void *context;
-	uint64_t (*milliseconds)(void *context);
-};
-
-struct noct_beui_audio_hal {
-	void *context;
-	int (*start)(void *context, unsigned sample_rate, unsigned channels);
-	void (*stop)(void *context);
-	int (*poll)(void *context);
-	int (*write)(void *context, const int16_t *samples, size_t frame_count);
-};
-
-/*
- * Real-time key state for the NOCT_BEUI_KEY_* namespace plus lowercase
- * ASCII.  is_key_down() returns 1 while the key is held, 0 when it is
- * up, and -1 for keys the target cannot sense.  drain() empties the
- * platform type-ahead buffer so keys held during a game never leak to
- * the caller after BeUI closes; the core calls it from poll and sleep.
- */
-struct noct_beui_input_hal {
-	void *context;
-	int (*is_key_down)(void *context, int key);
-	void (*drain)(void *context);
-};
-
-struct noct_beui_hal {
-	struct noct_beui_display_hal display;
-	struct noct_beui_glyph_hal glyph;
-	struct noct_beui_pointer_hal pointer;
-	struct noct_beui_clock_hal clock;
-	struct noct_beui_audio_hal audio;
-	struct noct_beui_input_hal input;
-};
-
-struct noct_beui_zedbsd_input_capabilities {
-	unsigned long event_bits[NOCT_BEUI_ZEDBSD_INPUT_EVENT_WORDS];
-	unsigned long key_bits[NOCT_BEUI_ZEDBSD_INPUT_KEY_WORDS];
-	unsigned long relative_bits[NOCT_BEUI_ZEDBSD_INPUT_REL_WORDS];
-	unsigned long absolute_bits[NOCT_BEUI_ZEDBSD_INPUT_ABS_WORDS];
+struct input_capabilities {
+	unsigned long event_bits[INPUT_EVENT_WORDS];
+	unsigned long key_bits[INPUT_KEY_WORDS];
+	unsigned long relative_bits[INPUT_REL_WORDS];
+	unsigned long absolute_bits[INPUT_ABS_WORDS];
 	struct input_absinfo absolute_x;
 	struct input_absinfo absolute_y;
 };
 
-struct noct_beui_zedbsd_input_source {
+struct input_source {
 	int active;
 	unsigned roles;
 	int synchronization_lost;
-	struct noct_beui_zedbsd_input_capabilities capabilities;
-	unsigned long keys[NOCT_BEUI_ZEDBSD_INPUT_KEY_WORDS];
-	unsigned long staged_keys[NOCT_BEUI_ZEDBSD_INPUT_KEY_WORDS];
+	struct input_capabilities capabilities;
+	unsigned long keys[INPUT_KEY_WORDS];
+	unsigned long staged_keys[INPUT_KEY_WORDS];
 	int64_t relative_x;
 	int64_t relative_y;
 	int32_t absolute_x;
@@ -300,9 +188,9 @@ struct noct_beui_zedbsd_input_source {
 	size_t partial_event_size;
 };
 
-struct noct_beui_zedbsd_input {
-	struct noct_beui_zedbsd_input_source
-	    sources[NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES];
+struct input_state {
+	struct input_source
+	    sources[INPUT_MAX_SOURCES];
 	unsigned display_width;
 	unsigned display_height;
 	unsigned pointer_x;
@@ -311,35 +199,31 @@ struct noct_beui_zedbsd_input {
 	int pointer_changed;
 };
 
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-/* Platform-private BeUI lifecycle, drawing state, and image registry. */
 /*
  * A decoded image lives until the script destroys it or the VM shuts
- * down.  Pixels are appended to the entry so one allocation covers both.
+ * down.  Pixels are appended to the entry so one allocation covers
+ * both.
  */
-struct noct_beui_image_entry {
-	struct noct_beui_image_entry *next;
+struct image_entry {
+	struct image_entry *next;
 	int handle;
-	struct noct_beui_image image;
+	struct image image;
 	uint8_t pixels[1];
 };
 
-struct noct_beui_state {
-	const struct noct_beui_hal *hal;
-	struct noct_beui_display_info display;
+struct ui_state {
+	struct display_info display;
 	int display_open;
 	int pointer_open;
-	int audio_open;
 	int close_requested;
 	unsigned pointer_x;
 	unsigned pointer_y;
 	unsigned pointer_buttons;
-	struct noct_beui_image_entry *images;
+	struct image_entry *images;
 	int next_image_handle;
 };
 
-/* Platform-private BMP decoder. */
+/* BeUI bitmap decoder. */
 struct bmp_layout {
 	const uint8_t *bytes;
 	size_t size;
@@ -353,10 +237,10 @@ struct bmp_layout {
 	unsigned height;
 	unsigned bits_per_pixel;
 	int top_down;
-	enum noct_beui_image_format format;
+	enum image_format format;
 };
 
-struct beui_ffi_item {
+struct ffi_item {
 	const char *global_name;
 	const char *field_name;
 	size_t param_count;
@@ -364,349 +248,194 @@ struct beui_ffi_item {
 	bool (*cfunc)(NoctEnv *env);
 };
 
-struct beui_int_constant {
+struct int_constant {
 	const char *name;
 	int value;
 };
 
-struct beui_zedbsd_source {
+struct input_device {
 	int fd;
 	char event_name[32];
 	int engine_slot;
 };
 
-struct beui_zedbsd_context {
+struct backend_context {
 	int graphics_fd;
 	uint32_t graphics_capabilities;
-	struct noct_beui_display_info display;
-	struct noct_beui_zedbsd_input input;
-	struct beui_zedbsd_source sources[NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES];
+	struct display_info display;
+	struct input_state input;
+	struct input_device sources[INPUT_MAX_SOURCES];
 	uint64_t next_rescan;
 	int input_initialized;
 };
 
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */
+static struct ui_state state;
 
-
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-static struct noct_beui_state state;
-
-/* Key names shared with the Boots BeUI implementation. */
-static const struct beui_int_constant beui_keys[] = {
-	{"Escape", NOCT_BEUI_KEY_ESCAPE},
-	{"Tab", NOCT_BEUI_KEY_TAB},
-	{"Enter", NOCT_BEUI_KEY_ENTER},
-	{"Backspace", NOCT_BEUI_KEY_BACKSPACE},
-	{"Delete", NOCT_BEUI_KEY_DELETE},
-	{"Insert", NOCT_BEUI_KEY_INSERT},
-	{"Up", NOCT_BEUI_KEY_UP},
-	{"Down", NOCT_BEUI_KEY_DOWN},
-	{"Left", NOCT_BEUI_KEY_LEFT},
-	{"Right", NOCT_BEUI_KEY_RIGHT},
-	{"Home", NOCT_BEUI_KEY_HOME},
-	{"End", NOCT_BEUI_KEY_END},
-	{"PageUp", NOCT_BEUI_KEY_PAGE_UP},
-	{"PageDown", NOCT_BEUI_KEY_PAGE_DOWN},
-	{"F1", NOCT_BEUI_KEY_F1}, {"F2", NOCT_BEUI_KEY_F2},
-	{"F3", NOCT_BEUI_KEY_F3}, {"F4", NOCT_BEUI_KEY_F4},
-	{"F5", NOCT_BEUI_KEY_F5}, {"F6", NOCT_BEUI_KEY_F6},
-	{"F7", NOCT_BEUI_KEY_F7}, {"F8", NOCT_BEUI_KEY_F8},
-	{"F9", NOCT_BEUI_KEY_F9}, {"F10", NOCT_BEUI_KEY_F10},
+/* Key names exposed through the BeUI.Key dictionary. */
+static const struct int_constant keys[] = {
+	{"Escape", BEUI_KEY_ESCAPE},
+	{"Tab", BEUI_KEY_TAB},
+	{"Enter", BEUI_KEY_ENTER},
+	{"Backspace", BEUI_KEY_BACKSPACE},
+	{"Delete", BEUI_KEY_DELETE},
+	{"Insert", BEUI_KEY_INSERT},
+	{"Up", BEUI_KEY_UP},
+	{"Down", BEUI_KEY_DOWN},
+	{"Left", BEUI_KEY_LEFT},
+	{"Right", BEUI_KEY_RIGHT},
+	{"Home", BEUI_KEY_HOME},
+	{"End", BEUI_KEY_END},
+	{"PageUp", BEUI_KEY_PAGE_UP},
+	{"PageDown", BEUI_KEY_PAGE_DOWN},
+	{"F1", BEUI_KEY_F1}, {"F2", BEUI_KEY_F2},
+	{"F3", BEUI_KEY_F3}, {"F4", BEUI_KEY_F4},
+	{"F5", BEUI_KEY_F5}, {"F6", BEUI_KEY_F6},
+	{"F7", BEUI_KEY_F7}, {"F8", BEUI_KEY_F8},
+	{"F9", BEUI_KEY_F9}, {"F10", BEUI_KEY_F10},
 	{"Space", ' '},
-	{"Shift", NOCT_BEUI_KEY_SHIFT},
+	{"Shift", BEUI_KEY_SHIFT},
 };
 
 /* Bit values returned by BeUI.getPointerButtons. */
-static const struct beui_int_constant beui_buttons[] = {
-	{"Left", NOCT_BEUI_BUTTON_LEFT},
-	{"Right", NOCT_BEUI_BUTTON_RIGHT},
-	{"Middle", NOCT_BEUI_BUTTON_MIDDLE},
+static const struct int_constant buttons[] = {
+	{"Left", BUTTON_LEFT},
+	{"Right", BUTTON_RIGHT},
+	{"Middle", BUTTON_MIDDLE},
 };
 
-static struct beui_zedbsd_context zedbsd_context;
-
-static struct noct_beui_hal zedbsd_hal;
-
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */
-
+static struct backend_context backend;
 
 static int bit_is_set(const unsigned long *bits, unsigned maximum, unsigned bit);
-
 static void bit_set(unsigned long *bits, unsigned maximum, unsigned bit);
-
 static void bit_clear(unsigned long *bits, unsigned maximum, unsigned bit);
-
 static int is_keyboard_code(unsigned code);
-
 static int bitmap_any(const unsigned long *bits, size_t word_count);
-
-static int source_has_pointer(const struct noct_beui_zedbsd_input_source *source);
-
-static int input_has_pointer(const struct noct_beui_zedbsd_input *input);
-
-static unsigned aggregate_buttons(const struct noct_beui_zedbsd_input *input);
-
-static unsigned refresh_buttons(struct noct_beui_zedbsd_input *input);
-
+static int source_has_pointer(const struct input_source *source);
+static int input_has_pointer(const struct input_state *input);
+static unsigned aggregate_buttons(const struct input_state *input);
+static unsigned refresh_buttons(struct input_state *input);
 static unsigned clamp_coordinate(int64_t coordinate, unsigned extent);
-
-static unsigned center_pointer(struct noct_beui_zedbsd_input *input);
-
+static unsigned center_pointer(struct input_state *input);
 static unsigned apply_relative(unsigned coordinate, int64_t delta, unsigned extent);
-
 static unsigned scale_absolute(int32_t value, const struct input_absinfo *information, unsigned extent);
-
 static int64_t saturating_add(int64_t left, int32_t right);
-
-static void noct_beui_zedbsd_input_capabilities_clear(struct noct_beui_zedbsd_input_capabilities *capabilities);
-
-static void noct_beui_zedbsd_input_capabilities_set_event(struct noct_beui_zedbsd_input_capabilities *capabilities, unsigned event_type);
-
-static void noct_beui_zedbsd_input_capabilities_set_key(struct noct_beui_zedbsd_input_capabilities *capabilities, unsigned code);
-
-static void noct_beui_zedbsd_input_capabilities_set_relative(struct noct_beui_zedbsd_input_capabilities *capabilities, unsigned axis);
-
-static void noct_beui_zedbsd_input_capabilities_set_absolute(struct noct_beui_zedbsd_input_capabilities *capabilities, unsigned axis, const struct input_absinfo *information);
-
-static unsigned noct_beui_zedbsd_input_classify(const struct noct_beui_zedbsd_input_capabilities *capabilities);
-
-static void noct_beui_zedbsd_input_init(struct noct_beui_zedbsd_input *input, unsigned display_width, unsigned display_height);
-
-static void noct_beui_zedbsd_input_set_display(struct noct_beui_zedbsd_input *input, unsigned display_width, unsigned display_height);
-
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-static void noct_beui_zedbsd_input_reset(struct noct_beui_zedbsd_input *input);
-
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */
-
-static int noct_beui_zedbsd_input_attach(struct noct_beui_zedbsd_input *input, const struct noct_beui_zedbsd_input_capabilities *capabilities);
-
-static unsigned noct_beui_zedbsd_input_detach(struct noct_beui_zedbsd_input *input, unsigned source_index);
-
-static unsigned reset_source_after_drop(struct noct_beui_zedbsd_input *input, struct noct_beui_zedbsd_input_source *source);
-
-static unsigned commit_source(struct noct_beui_zedbsd_input *input, struct noct_beui_zedbsd_input_source *source);
-
-static unsigned process_event(struct noct_beui_zedbsd_input *input, struct noct_beui_zedbsd_input_source *source, const struct input_event *event);
-
-static unsigned noct_beui_zedbsd_input_feed(struct noct_beui_zedbsd_input *input, unsigned source_index, const void *bytes, size_t byte_count);
-
-static unsigned noct_beui_zedbsd_input_resync(struct noct_beui_zedbsd_input *input, unsigned source_index, const void *key_bits, size_t key_byte_count, const struct input_absinfo *absolute_x, const struct input_absinfo *absolute_y);
-
-static int beui_key_to_evdev(int key);
-
-static int source_key_state(const struct noct_beui_zedbsd_input *input, unsigned code, int alternate_code);
-
-static int noct_beui_zedbsd_input_is_key_down(const struct noct_beui_zedbsd_input *input, int beui_key);
-
-static int noct_beui_zedbsd_input_poll_pointer(struct noct_beui_zedbsd_input *input, struct noct_beui_pointer_event *event);
-
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-static int noct_beui_bind(const struct noct_beui_hal *hal);
-
-static int noct_beui_init(void);
-
-static int noct_beui_init_with_hint(unsigned preferred_bits_per_pixel);
-
-static void noct_beui_close(void);
-
-static void noct_beui_cleanup(void);
-
-static int noct_beui_is_open(void);
-
-static int noct_beui_get_display_info(struct noct_beui_display_info *info);
-
-static int noct_beui_fill(const struct noct_beui_rect *rect, uint32_t color);
-
-static int noct_beui_line(unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
-
-static int noct_beui_pattern_fill(const struct noct_beui_rect *rect, uint32_t color, uint64_t pattern);
-
-static int image_valid(const struct noct_beui_image *image);
-
-static int noct_beui_draw_image(unsigned x, unsigned y, const struct noct_beui_image *image);
-
-static int noct_beui_draw_image_region(const struct noct_beui_image *image, unsigned source_x, unsigned source_y, unsigned width, unsigned height, unsigned destination_x, unsigned destination_y);
-
-static int noct_beui_draw_image_pattern(unsigned x, unsigned y, const struct noct_beui_image *image, uint64_t pattern);
-
+static void input_capabilities_clear(struct input_capabilities *capabilities);
+static void input_capabilities_set_event(struct input_capabilities *capabilities, unsigned event_type);
+static void input_capabilities_set_key(struct input_capabilities *capabilities, unsigned code);
+static void input_capabilities_set_relative(struct input_capabilities *capabilities, unsigned axis);
+static void input_capabilities_set_absolute(struct input_capabilities *capabilities, unsigned axis, const struct input_absinfo *information);
+static unsigned input_classify(const struct input_capabilities *capabilities);
+static void input_init(struct input_state *input, unsigned display_width, unsigned display_height);
+static void input_set_display(struct input_state *input, unsigned display_width, unsigned display_height);
+static void input_reset(struct input_state *input);
+static int input_attach(struct input_state *input, const struct input_capabilities *capabilities);
+static unsigned input_detach(struct input_state *input, unsigned source_index);
+static unsigned reset_source_after_drop(struct input_state *input, struct input_source *source);
+static unsigned commit_source(struct input_state *input, struct input_source *source);
+static unsigned process_event(struct input_state *input, struct input_source *source, const struct input_event *event);
+static unsigned input_feed(struct input_state *input, unsigned source_index, const void *bytes, size_t byte_count);
+static unsigned input_resync(struct input_state *input, unsigned source_index, const void *key_bits, size_t key_byte_count, const struct input_absinfo *absolute_x, const struct input_absinfo *absolute_y);
+static int key_to_evdev(int key);
+static int source_key_state(const struct input_state *input, unsigned code, int alternate_code);
+static int input_is_key_down(const struct input_state *input, int beui_key);
+static int input_poll_pointer(struct input_state *input, struct pointer_event *event);
+static int init_ui(void);
+static int init_ui_with_hint(unsigned preferred_bits_per_pixel);
+static void close_ui(void);
+static void cleanup_ui(void);
+static int is_ui_open(void);
+static int get_display_info(struct display_info *info);
+static int fill(const struct rect *rect, uint32_t color);
+static int draw_line(unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
+static int pattern_fill(const struct rect *rect, uint32_t color, uint64_t pattern);
+static int image_valid(const struct image *image);
+static int draw_image(unsigned x, unsigned y, const struct image *image);
+static int draw_image_region(const struct image *image, unsigned source_x, unsigned source_y, unsigned width, unsigned height, unsigned destination_x, unsigned destination_y);
+static int draw_image_pattern(unsigned x, unsigned y, const struct image *image, uint64_t pattern);
 static uint32_t decode_utf8(const char **cursor);
-
-static int noct_beui_measure_text(const char *text, unsigned *width, unsigned *height);
-
-static int noct_beui_draw_text(const char *text, unsigned x, unsigned y, uint32_t foreground, uint32_t background);
-
-static int noct_beui_poll(void);
-
-static int noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
-
-static int noct_beui_flush(void);
-
-static int noct_beui_get_milliseconds(uint64_t *milliseconds);
-
-static int noct_beui_sleep(unsigned milliseconds);
-
-static int noct_beui_is_key_down(int key);
-
-static void noct_beui_drain_input(void);
-
-static int noct_beui_image_load_bmp(const void *data, size_t size);
-
-static const struct noct_beui_image *noct_beui_image_get(int handle);
-
-static int noct_beui_image_destroy(int handle);
-
+static int measure_text(const char *text, unsigned *width, unsigned *height);
+static int draw_text(const char *text, unsigned x, unsigned y, uint32_t foreground, uint32_t background);
+static int poll_ui(void);
+static int get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
+static int flush(void);
+static int get_milliseconds(uint64_t *milliseconds);
+static int sleep_milliseconds(unsigned milliseconds);
+static int is_key_down(int key);
+static void drain_input(void);
+static int image_load_bmp(const void *data, size_t size);
+static const struct image *image_get(int handle);
+static int image_destroy(int handle);
 static uint16_t read_u16(const uint8_t *bytes);
-
 static uint32_t read_u32(const uint8_t *bytes);
-
 static int32_t read_s32(const uint8_t *bytes);
-
 static int add_overflows(size_t left, size_t right);
-
 static int multiply_overflows(size_t left, size_t right);
-
 static int parse_layout(const void *data, size_t size, struct bmp_layout *layout);
-
-static int noct_beui_bmp_measure(const void *data, size_t size, enum noct_beui_image_format *format, unsigned *width, unsigned *height, size_t *pixel_bytes);
-
-static int noct_beui_bmp_decode(const void *data, size_t size, void *pixel_storage, size_t pixel_capacity, struct noct_beui_image *image);
-
+static int bmp_measure(const void *data, size_t size, enum image_format *format, unsigned *width, unsigned *height, size_t *pixel_bytes);
+static int bmp_decode(const void *data, size_t size, void *pixel_storage, size_t pixel_capacity, struct image *image);
 static bool return_int(NoctEnv *env, int value);
-
 static bool get_int_arg(NoctEnv *env, uint32_t index, int *result);
-
 static bool cfunc_BeUI_init(NoctEnv *env);
-
 static bool cfunc_BeUI_initWithHint(NoctEnv *env);
-
 static bool cfunc_BeUI_close(NoctEnv *env);
-
 static bool cfunc_BeUI_isOpen(NoctEnv *env);
-
 static bool cfunc_BeUI_getWidth(NoctEnv *env);
-
 static bool cfunc_BeUI_getHeight(NoctEnv *env);
-
 static bool cfunc_BeUI_poll(NoctEnv *env);
-
 static bool cfunc_BeUI_flush(NoctEnv *env);
-
 static bool cfunc_BeUI_fill(NoctEnv *env);
-
 static bool cfunc_BeUI_line(NoctEnv *env);
-
 static bool cfunc_BeUI_patternFill(NoctEnv *env);
-
 static bool measure_text_arg(NoctEnv *env, const char *api, unsigned *width, unsigned *height);
-
 static bool cfunc_BeUI_textWidth(NoctEnv *env);
-
 static bool cfunc_BeUI_textHeight(NoctEnv *env);
-
 static bool cfunc_BeUI_drawText(NoctEnv *env);
-
 static bool cfunc_BeUI_getMilliseconds(NoctEnv *env);
-
 static bool cfunc_BeUI_sleep(NoctEnv *env);
-
 static bool cfunc_BeUI_isKeyDown(NoctEnv *env);
-
 static bool pointer_field(NoctEnv *env, const char *api, unsigned *x, unsigned *y, unsigned *buttons);
-
 static bool cfunc_BeUI_getPointerX(NoctEnv *env);
-
 static bool cfunc_BeUI_getPointerY(NoctEnv *env);
-
 static bool cfunc_BeUI_getPointerButtons(NoctEnv *env);
-
 static bool cfunc_BeUI_loadImage(NoctEnv *env);
-
 static bool cfunc_BeUI_getImageWidth(NoctEnv *env);
-
 static bool cfunc_BeUI_getImageHeight(NoctEnv *env);
-
 static bool cfunc_BeUI_drawImage(NoctEnv *env);
-
 static bool cfunc_BeUI_drawImageRegion(NoctEnv *env);
-
 static bool cfunc_BeUI_drawImagePattern(NoctEnv *env);
-
 static bool cfunc_BeUI_destroyImage(NoctEnv *env);
-
-static bool register_int_dictionary(NoctEnv *env, const char *name, const struct beui_int_constant *entries, size_t count);
-
-static bool register_beui_api(NoctEnv *env, const struct noct_beui_hal *hal);
-
+static bool register_int_dictionary(NoctEnv *env, const char *name, const struct int_constant *entries, size_t count);
+static bool register_api(NoctEnv *env);
 static int uapi_bit_is_set(const unsigned long *bits, unsigned bit);
-
-static int graphics_has(const struct beui_zedbsd_context *context, uint32_t capability);
-
-static void copy_rect(struct graphics_rect *to, const struct noct_beui_rect *from);
-
-static int zedbsd_display_enter(void *opaque, struct noct_beui_display_info *info);
-
-static int zedbsd_display_poll(void *opaque);
-
-static int zedbsd_display_fill(void *opaque, const struct noct_beui_rect *rect, uint32_t color);
-
-static int zedbsd_display_line(void *opaque, unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
-
-static int zedbsd_display_pattern(void *opaque, const struct noct_beui_rect *rect, uint32_t color, uint64_t pattern);
-
-static int zedbsd_display_image_common(void *opaque, unsigned x, unsigned y, const struct noct_beui_image *image, uint64_t pattern, int patterned);
-
-static int zedbsd_display_image(void *opaque, unsigned x, unsigned y, const struct noct_beui_image *image);
-
-static int zedbsd_display_image_pattern(void *opaque, unsigned x, unsigned y, const struct noct_beui_image *image, uint64_t pattern);
-
-static int zedbsd_display_flush(void *opaque, const struct noct_beui_rect *rectangles, size_t rectangle_count);
-
-static int zedbsd_glyph_get(struct beui_zedbsd_context *context, uint32_t codepoint, struct graphics_glyph *glyph, uint8_t *bitmap, size_t capacity);
-
-static int zedbsd_glyph_measure(void *opaque, uint32_t codepoint, unsigned *width, unsigned *height);
-
-static int zedbsd_glyph_draw(void *opaque, unsigned x, unsigned y, uint32_t codepoint, uint32_t foreground, uint32_t background);
-
-static uint64_t zedbsd_milliseconds(void *opaque);
-
-static int zedbsd_input_query_capabilities(int fd, struct noct_beui_zedbsd_input_capabilities *capabilities);
-
-static unsigned zedbsd_input_resync_source(struct beui_zedbsd_context *context, unsigned source_index);
-
+static int graphics_has(const struct backend_context *context, uint32_t capability);
+static void copy_rect(struct graphics_rect *to, const struct rect *from);
+static int zedbsd_display_enter(struct backend_context *context, struct display_info *info);
+static void zedbsd_display_leave(struct backend_context *context);
+static int zedbsd_display_poll(struct backend_context *context);
+static int zedbsd_display_fill(struct backend_context *context, const struct rect *rect, uint32_t color);
+static int zedbsd_display_line(struct backend_context *context, unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
+static int zedbsd_display_pattern(struct backend_context *context, const struct rect *rect, uint32_t color, uint64_t pattern);
+static int zedbsd_display_image_common(struct backend_context *context, unsigned x, unsigned y, const struct image *image, uint64_t pattern, int patterned);
+static int zedbsd_display_image(struct backend_context *context, unsigned x, unsigned y, const struct image *image);
+static int zedbsd_display_image_pattern(struct backend_context *context, unsigned x, unsigned y, const struct image *image, uint64_t pattern);
+static int zedbsd_display_flush(struct backend_context *context, const struct rect *rectangles, size_t rectangle_count);
+static int zedbsd_glyph_get(struct backend_context *context, uint32_t codepoint, struct graphics_glyph *glyph, uint8_t *bitmap, size_t capacity);
+static int zedbsd_glyph_measure(struct backend_context *context, uint32_t codepoint, unsigned *width, unsigned *height);
+static int zedbsd_glyph_draw(struct backend_context *context, unsigned x, unsigned y, uint32_t codepoint, uint32_t foreground, uint32_t background);
+static uint64_t zedbsd_milliseconds(struct backend_context *context);
+static int zedbsd_input_query_capabilities(int fd, struct input_capabilities *capabilities);
+static unsigned zedbsd_input_resync_source(struct backend_context *context, unsigned source_index);
 static int zedbsd_input_event_name(const char *name);
-
-static int zedbsd_input_has_event_name(const struct beui_zedbsd_context *context, const char *event_name);
-
-static void zedbsd_input_discover(struct beui_zedbsd_context *context, int force);
-
-static void zedbsd_input_detach_source(struct beui_zedbsd_context *context, unsigned source_index);
-
-static void zedbsd_input_service_source(struct beui_zedbsd_context *context, unsigned source_index);
-
-static void zedbsd_input_service(struct beui_zedbsd_context *context);
-
-static void zedbsd_input_close(struct beui_zedbsd_context *context);
-
-static void zedbsd_display_leave(void *opaque);
-
-static int zedbsd_pointer_start(void *opaque, const struct noct_beui_display_info *display);
-
-static void zedbsd_pointer_stop(void *opaque);
-
-static int zedbsd_pointer_poll(void *opaque, struct noct_beui_pointer_event *event);
-
-static int zedbsd_key_state(void *opaque, int key);
-
-static void zedbsd_input_drain(void *opaque);
-
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */
-
-
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
+static int zedbsd_input_has_event_name(const struct backend_context *context, const char *event_name);
+static void zedbsd_input_discover(struct backend_context *context, int force);
+static void zedbsd_input_detach_source(struct backend_context *context, unsigned source_index);
+static void zedbsd_input_service_source(struct backend_context *context, unsigned source_index);
+static void zedbsd_input_service(struct backend_context *context);
+static void zedbsd_input_close(struct backend_context *context);
+static int zedbsd_pointer_start(struct backend_context *context, const struct display_info *display);
+static int zedbsd_pointer_poll(struct backend_context *context, struct pointer_event *event);
+static int zedbsd_key_state(struct backend_context *context, int key);
+static void zedbsd_input_drain(struct backend_context *context);
 
 /*
  * Registers the BeUI API.
@@ -719,48 +448,23 @@ noct_register_api_beui(
 	bool call_result;
 	unsigned index;
 
-	noct_beui_cleanup();
-	memset(&zedbsd_context, 0, sizeof(zedbsd_context));
-	zedbsd_context.graphics_fd = -1;
+	/* Releases resources owned by a previous registration. */
+	cleanup_ui();
 
-	/* Processes each noct_register_api_beui item. */
-	for (index = 0; index < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; index++) {
-		zedbsd_context.sources[index].fd = -1;
-		zedbsd_context.sources[index].engine_slot = -1;
+	/* Initializes the zedBSD backend descriptor sentinels. */
+	memset(&backend, 0, sizeof(backend));
+	backend.graphics_fd = -1;
+	for (index = 0; index < INPUT_MAX_SOURCES; index++) {
+		backend.sources[index].fd = -1;
+		backend.sources[index].engine_slot = -1;
 	}
-	memset(&zedbsd_hal, 0, sizeof(zedbsd_hal));
-	zedbsd_hal.display.context = &zedbsd_context;
-	zedbsd_hal.display.enter = zedbsd_display_enter;
-	zedbsd_hal.display.leave = zedbsd_display_leave;
-	zedbsd_hal.display.poll_events = zedbsd_display_poll;
-	zedbsd_hal.display.fill = zedbsd_display_fill;
-	zedbsd_hal.display.line = zedbsd_display_line;
-	zedbsd_hal.display.pattern_fill = zedbsd_display_pattern;
-	zedbsd_hal.display.draw_image = zedbsd_display_image;
-	zedbsd_hal.display.draw_image_pattern = zedbsd_display_image_pattern;
-	zedbsd_hal.display.flush = zedbsd_display_flush;
-	zedbsd_hal.glyph.context = &zedbsd_context;
-	zedbsd_hal.glyph.measure = zedbsd_glyph_measure;
-	zedbsd_hal.glyph.draw = zedbsd_glyph_draw;
-	zedbsd_hal.pointer.context = &zedbsd_context;
-	zedbsd_hal.pointer.start = zedbsd_pointer_start;
-	zedbsd_hal.pointer.stop = zedbsd_pointer_stop;
-	zedbsd_hal.pointer.poll = zedbsd_pointer_poll;
-	zedbsd_hal.clock.context = &zedbsd_context;
-	zedbsd_hal.clock.milliseconds = zedbsd_milliseconds;
-	zedbsd_hal.input.context = &zedbsd_context;
-	zedbsd_hal.input.is_key_down = zedbsd_key_state;
-	zedbsd_hal.input.drain = zedbsd_input_drain;
 
-	/* Reports the noct_register_api_beui result. */
-	call_result = register_beui_api(env, &zedbsd_hal);
+	/* Registers the BeUI functions and constants. */
+	call_result = register_api(env);
 
-	/* Reports the noct_register_api_beui result. */
+	/* Reports whether the API was registered. */
 	return call_result;
 }
-
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */
-
 
 /* Implements bit_is_set(). */
 static int
@@ -774,8 +478,8 @@ bit_is_set(
 		return 0;
 
 	/* Reports the bit_is_set result. */
-	return (bits[bit / NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD] &
-		(1UL << (bit % NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD))) != 0;
+	return (bits[bit / INPUT_BITS_PER_WORD] &
+		(1UL << (bit % INPUT_BITS_PER_WORD))) != 0;
 }
 
 /* Implements bit_set(). */
@@ -787,8 +491,8 @@ bit_set(
 {
 	/* Handles the next bit_set decision. */
 	if (bits != NULL && bit <= maximum) {
-		bits[bit / NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD] |=
-		    1UL << (bit % NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD);
+		bits[bit / INPUT_BITS_PER_WORD] |=
+		    1UL << (bit % INPUT_BITS_PER_WORD);
 	}
 }
 
@@ -801,8 +505,8 @@ bit_clear(
 {
 	/* Handles the next bit_clear decision. */
 	if (bits != NULL && bit <= maximum) {
-		bits[bit / NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD] &=
-		    ~(1UL << (bit % NOCT_BEUI_ZEDBSD_INPUT_BITS_PER_WORD));
+		bits[bit / INPUT_BITS_PER_WORD] &=
+		    ~(1UL << (bit % INPUT_BITS_PER_WORD));
 	}
 }
 
@@ -841,7 +545,7 @@ bitmap_any(
 /* Implements source_has_pointer(). */
 static int
 source_has_pointer(
-	const struct noct_beui_zedbsd_input_source *source)
+	const struct input_source *source)
 {
 	/* Requires an attached source before inspecting its roles. */
 	if (!source->active)
@@ -849,19 +553,19 @@ source_has_pointer(
 
 	/* Reports whether the source exposes either pointer role. */
 	return (source->roles &
-		(NOCT_BEUI_ZEDBSD_INPUT_ROLE_RELATIVE_POINTER |
-		 NOCT_BEUI_ZEDBSD_INPUT_ROLE_ABSOLUTE_POINTER)) != 0U;
+		(INPUT_ROLE_RELATIVE_POINTER |
+		 INPUT_ROLE_ABSOLUTE_POINTER)) != 0U;
 }
 
 /* Implements input_has_pointer(). */
 static int
 input_has_pointer(
-	const struct noct_beui_zedbsd_input *input)
+	const struct input_state *input)
 {
 	unsigned i;
 
 	/* Processes each input_has_pointer item. */
-	for (i = 0; i < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; i++) {
+	for (i = 0; i < INPUT_MAX_SOURCES; i++) {
 		/* Handles the next input_has_pointer decision. */
 		if (source_has_pointer(&input->sources[i]))
 			return 1;
@@ -874,16 +578,16 @@ input_has_pointer(
 /* Implements aggregate_buttons(). */
 static unsigned
 aggregate_buttons(
-	const struct noct_beui_zedbsd_input *input)
+	const struct input_state *input)
 {
-	const struct noct_beui_zedbsd_input_source *source;
+	const struct input_source *source;
 	unsigned buttons;
 	unsigned i;
 
 	buttons = 0;
 
 	/* Processes each aggregate_buttons item. */
-	for (i = 0; i < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; i++) {
+	for (i = 0; i < INPUT_MAX_SOURCES; i++) {
 		source = &input->sources[i];
 
 		/* Handles the next aggregate_buttons decision. */
@@ -892,15 +596,15 @@ aggregate_buttons(
 
 		/* Handles the next aggregate_buttons decision. */
 		if (bit_is_set(source->keys, KEY_MAX, BTN_LEFT))
-			buttons |= NOCT_BEUI_BUTTON_LEFT;
+			buttons |= BUTTON_LEFT;
 
 		/* Handles the next aggregate_buttons decision. */
 		if (bit_is_set(source->keys, KEY_MAX, BTN_RIGHT))
-			buttons |= NOCT_BEUI_BUTTON_RIGHT;
+			buttons |= BUTTON_RIGHT;
 
 		/* Handles the next aggregate_buttons decision. */
 		if (bit_is_set(source->keys, KEY_MAX, BTN_MIDDLE))
-			buttons |= NOCT_BEUI_BUTTON_MIDDLE;
+			buttons |= BUTTON_MIDDLE;
 	}
 
 	/* Reports the aggregate_buttons result. */
@@ -910,7 +614,7 @@ aggregate_buttons(
 /* Implements refresh_buttons(). */
 static unsigned
 refresh_buttons(
-	struct noct_beui_zedbsd_input *input)
+	struct input_state *input)
 {
 	unsigned buttons;
 
@@ -918,12 +622,12 @@ refresh_buttons(
 
 	/* Handles the next refresh_buttons decision. */
 	if (buttons == input->pointer_buttons)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	input->pointer_buttons = buttons;
 	input->pointer_changed = 1;
 
 	/* Reports the refresh_buttons result. */
-	return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_POINTER;
+	return INPUT_UPDATE_POINTER;
 }
 
 /* Implements clamp_coordinate(). */
@@ -947,7 +651,7 @@ clamp_coordinate(
 /* Implements center_pointer(). */
 static unsigned
 center_pointer(
-	struct noct_beui_zedbsd_input *input)
+	struct input_state *input)
 {
 	unsigned x;
 	unsigned y;
@@ -957,13 +661,13 @@ center_pointer(
 
 	/* Handles the next center_pointer decision. */
 	if (input->pointer_x == x && input->pointer_y == y)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	input->pointer_x = x;
 	input->pointer_y = y;
 	input->pointer_changed = 1;
 
 	/* Reports the center_pointer result. */
-	return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_POINTER;
+	return INPUT_UPDATE_POINTER;
 }
 
 /* Implements apply_relative(). */
@@ -1051,99 +755,102 @@ saturating_add(
 	return left + right;
 }
 
-/* Implements noct_beui_zedbsd_input_capabilities_clear(). */
+/* Implements input_capabilities_clear(). */
 static void
-noct_beui_zedbsd_input_capabilities_clear(
-	struct noct_beui_zedbsd_input_capabilities *capabilities)
+input_capabilities_clear(
+	struct input_capabilities *capabilities)
 {
-	/* Handles the next noct_beui_zedbsd_input_capabilities_clear decision. */
+	/* Handles the next input_capabilities_clear decision. */
 	if (capabilities != NULL)
 		memset(capabilities, 0, sizeof(*capabilities));
 }
 
-/* Implements noct_beui_zedbsd_input_capabilities_set_event(). */
+/* Implements input_capabilities_set_event(). */
 static void
-noct_beui_zedbsd_input_capabilities_set_event(
-	struct noct_beui_zedbsd_input_capabilities *capabilities,
+input_capabilities_set_event(
+	struct input_capabilities *capabilities,
 	unsigned event_type)
 {
-	/* Handles the next noct_beui_zedbsd_input_capabilities_set_event decision. */
+	/* Handles the next input_capabilities_set_event decision. */
 	if (capabilities != NULL)
 		bit_set(capabilities->event_bits, EV_MAX, event_type);
 }
 
-/* Implements noct_beui_zedbsd_input_capabilities_set_key(). */
+/* Implements input_capabilities_set_key(). */
 static void
-noct_beui_zedbsd_input_capabilities_set_key(
-	struct noct_beui_zedbsd_input_capabilities *capabilities,
+input_capabilities_set_key(
+	struct input_capabilities *capabilities,
 	unsigned code)
 {
-	/* Handles the next noct_beui_zedbsd_input_capabilities_set_key decision. */
+	/* Handles the next input_capabilities_set_key decision. */
 	if (capabilities == NULL)
 		return;
 	bit_set(capabilities->event_bits, EV_MAX, EV_KEY);
 	bit_set(capabilities->key_bits, KEY_MAX, code);
 }
 
-/* Implements noct_beui_zedbsd_input_capabilities_set_relative(). */
+/* Implements input_capabilities_set_relative(). */
 static void
-noct_beui_zedbsd_input_capabilities_set_relative(
-	struct noct_beui_zedbsd_input_capabilities *capabilities,
+input_capabilities_set_relative(
+	struct input_capabilities *capabilities,
 	unsigned axis)
 {
-	/* Handles the next noct_beui_zedbsd_input_capabilities_set_relative decision. */
+	/* Handles the next input_capabilities_set_relative decision. */
 	if (capabilities == NULL)
 		return;
 	bit_set(capabilities->event_bits, EV_MAX, EV_REL);
 	bit_set(capabilities->relative_bits, REL_MAX, axis);
 }
 
-/* Implements noct_beui_zedbsd_input_capabilities_set_absolute(). */
+/* Implements input_capabilities_set_absolute(). */
 static void
-noct_beui_zedbsd_input_capabilities_set_absolute(
-	struct noct_beui_zedbsd_input_capabilities *capabilities,
+input_capabilities_set_absolute(
+	struct input_capabilities *capabilities,
 	unsigned axis,
 	const struct input_absinfo *information)
 {
-	/* Handles the next noct_beui_zedbsd_input_capabilities_set_absolute decision. */
+	/* Handles the next input_capabilities_set_absolute decision. */
 	if (capabilities == NULL)
 		return;
 	bit_set(capabilities->event_bits, EV_MAX, EV_ABS);
 	bit_set(capabilities->absolute_bits, ABS_MAX, axis);
 
-	/* Handles the next noct_beui_zedbsd_input_capabilities_set_absolute decision. */
+	/* Handles the next input_capabilities_set_absolute decision. */
 	if (information == NULL)
 		return;
 
-	/* Handles the next noct_beui_zedbsd_input_capabilities_set_absolute decision. */
+	/* Handles the next input_capabilities_set_absolute decision. */
 	if (axis == ABS_X)
 		capabilities->absolute_x = *information;
 	else if (axis == ABS_Y)
 		capabilities->absolute_y = *information;
 }
 
-/* Implements noct_beui_zedbsd_input_classify(). */
+/* Implements input_classify(). */
 static unsigned
-noct_beui_zedbsd_input_classify(
-	const struct noct_beui_zedbsd_input_capabilities *capabilities)
+input_classify(
+	const struct input_capabilities *capabilities)
 {
 	unsigned code;
 	unsigned roles;
 
 	/* Requires a capability record before inspecting its event bits. */
 	if (capabilities == NULL)
-		return NOCT_BEUI_ZEDBSD_INPUT_ROLE_NONE;
+		return INPUT_ROLE_NONE;
 
-	/* EVIOCGBIT(0) is the event-type bitmap.  Like Linux evdev it does
-	 * not provide a distinct query for SYN codes; zedBSD registration
-	 * already requires SYN_REPORT for every input device. */
+	/*
+	 * EVIOCGBIT(0) is the event-type bitmap.  Like Linux evdev it
+	 * does not provide a distinct query for SYN codes; zedBSD
+	 * registration already requires SYN_REPORT for every input
+	 * device.
+	 */
 	if (!bit_is_set(capabilities->event_bits, EV_MAX, EV_SYN))
-		return NOCT_BEUI_ZEDBSD_INPUT_ROLE_NONE;
-	roles = NOCT_BEUI_ZEDBSD_INPUT_ROLE_NONE;
+		return INPUT_ROLE_NONE;
+	roles = INPUT_ROLE_NONE;
 
-	/* Handles the next noct_beui_zedbsd_input_classify decision. */
+	/* Handles the next input_classify decision. */
 	if (bit_is_set(capabilities->event_bits, EV_MAX, EV_KEY)) {
-		/* Processes each noct_beui_zedbsd_input_classify item. */
+		/* Processes each input_classify item. */
 		for (code = KEY_RESERVED + 1U; code < BTN_MOUSE; code++) {
 			/* Selects only key codes exposed through the BeUI API. */
 			if (is_keyboard_code(code)) {
@@ -1153,7 +860,7 @@ noct_beui_zedbsd_input_classify(
 					KEY_MAX,
 					code)) {
 					roles |=
-						NOCT_BEUI_ZEDBSD_INPUT_ROLE_KEYBOARD;
+						INPUT_ROLE_KEYBOARD;
 					break;
 				}
 			}
@@ -1170,7 +877,7 @@ noct_beui_zedbsd_input_classify(
 				REL_MAX,
 				REL_Y)) {
 				roles |=
-					NOCT_BEUI_ZEDBSD_INPUT_ROLE_RELATIVE_POINTER;
+					INPUT_ROLE_RELATIVE_POINTER;
 			}
 		}
 	}
@@ -1185,25 +892,26 @@ noct_beui_zedbsd_input_classify(
 				ABS_MAX,
 				ABS_Y)) {
 				roles |=
-					NOCT_BEUI_ZEDBSD_INPUT_ROLE_ABSOLUTE_POINTER;
+					INPUT_ROLE_ABSOLUTE_POINTER;
 			}
 		}
 	}
 
-	/* Reports the noct_beui_zedbsd_input_classify result. */
+	/* Reports the input_classify result. */
 	return roles;
 }
 
-/* Implements noct_beui_zedbsd_input_init(). */
+/* Implements input_init(). */
 static void
-noct_beui_zedbsd_input_init(
-	struct noct_beui_zedbsd_input *input,
+input_init(
+	struct input_state *input,
 	unsigned display_width,
 	unsigned display_height)
 {
-	/* Handles the next noct_beui_zedbsd_input_init decision. */
+	/* Handles the next input_init decision. */
 	if (input == NULL)
 		return;
+
 	memset(input, 0, sizeof(*input));
 	input->display_width = display_width;
 	input->display_height = display_height;
@@ -1211,10 +919,10 @@ noct_beui_zedbsd_input_init(
 	input->pointer_y = display_height == 0U ? 0U : display_height / 2U;
 }
 
-/* Implements noct_beui_zedbsd_input_set_display(). */
+/* Implements input_set_display(). */
 static void
-noct_beui_zedbsd_input_set_display(
-	struct noct_beui_zedbsd_input *input,
+input_set_display(
+	struct input_state *input,
 	unsigned display_width,
 	unsigned display_height)
 {
@@ -1223,86 +931,84 @@ noct_beui_zedbsd_input_set_display(
 	unsigned old_width;
 	unsigned old_height;
 
-	/* Handles the next noct_beui_zedbsd_input_set_display decision. */
+	/* Handles the next input_set_display decision. */
 	if (input == NULL)
 		return;
+
 	old_x = input->pointer_x;
 	old_y = input->pointer_y;
 	old_width = input->display_width;
 	old_height = input->display_height;
 	input->display_width = display_width;
 	input->display_height = display_height;
-	input->pointer_x =
-	    old_width == 0U && display_width != 0U
-		? display_width / 2U
-		: clamp_coordinate(input->pointer_x, display_width);
-	input->pointer_y =
-	    old_height == 0U && display_height != 0U
-		? display_height / 2U
-		: clamp_coordinate(input->pointer_y, display_height);
+	input->pointer_x = old_width == 0U && display_width != 0U ?
+		display_width / 2U :
+		clamp_coordinate(input->pointer_x, display_width);
+	input->pointer_y = old_height == 0U && display_height != 0U ?
+		display_height / 2U :
+		clamp_coordinate(input->pointer_y, display_height);
 
-	/* Handles the next noct_beui_zedbsd_input_set_display decision. */
+	/* Handles the next input_set_display decision. */
 	if (old_x != input->pointer_x || old_y != input->pointer_y)
 		input->pointer_changed = 1;
 }
 
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-/* Implements noct_beui_zedbsd_input_reset(). */
+/* Implements input_reset(). */
 static void
-noct_beui_zedbsd_input_reset(
-	struct noct_beui_zedbsd_input *input)
+input_reset(
+	struct input_state *input)
 {
 	unsigned width;
 	unsigned height;
 
-	/* Handles the next noct_beui_zedbsd_input_reset decision. */
+	/* Handles the next input_reset decision. */
 	if (input == NULL)
 		return;
+
 	width = input->display_width;
 	height = input->display_height;
-	noct_beui_zedbsd_input_init(input, width, height);
+
+	input_init(input, width, height);
 }
 
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */
-
-/* Implements noct_beui_zedbsd_input_attach(). */
+/* Implements input_attach(). */
 static int
-noct_beui_zedbsd_input_attach(
-	struct noct_beui_zedbsd_input *input,
-	const struct noct_beui_zedbsd_input_capabilities *capabilities)
+input_attach(
+	struct input_state *input,
+	const struct input_capabilities *capabilities)
 {
-	struct noct_beui_zedbsd_input_source *source;
+	struct input_source *source;
 	unsigned roles;
 	unsigned i;
 
-	/* Handles the next noct_beui_zedbsd_input_attach decision. */
+	/* Handles the next input_attach decision. */
 	if (input == NULL || capabilities == NULL)
 		return -1;
-	roles = noct_beui_zedbsd_input_classify(capabilities);
+	roles = input_classify(capabilities);
 
-	/* Handles the next noct_beui_zedbsd_input_attach decision. */
-	if (roles == NOCT_BEUI_ZEDBSD_INPUT_ROLE_NONE)
+	/* Handles the next input_attach decision. */
+	if (roles == INPUT_ROLE_NONE)
 		return -1;
 
-	/* Processes each noct_beui_zedbsd_input_attach item. */
-	for (i = 0; i < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; i++) {
-		/* Handles the next noct_beui_zedbsd_input_attach decision. */
+	/* Processes each input_attach item. */
+	for (i = 0; i < INPUT_MAX_SOURCES; i++) {
+		/* Handles the next input_attach decision. */
 		if (!input->sources[i].active)
 			break;
 	}
 
-	/* Handles the next noct_beui_zedbsd_input_attach decision. */
-	if (i == NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES)
+	/* Handles the next input_attach decision. */
+	if (i == INPUT_MAX_SOURCES)
 		return -1;
+
 	source = &input->sources[i];
 	memset(source, 0, sizeof(*source));
 	source->active = 1;
 	source->roles = roles;
 	source->capabilities = *capabilities;
 
-	/* Handles the next noct_beui_zedbsd_input_attach decision. */
-	if ((roles & NOCT_BEUI_ZEDBSD_INPUT_ROLE_ABSOLUTE_POINTER) != 0U) {
+	/* Handles the next input_attach decision. */
+	if ((roles & INPUT_ROLE_ABSOLUTE_POINTER) != 0U) {
 		source->absolute_x = capabilities->absolute_x.value;
 		source->absolute_y = capabilities->absolute_y.value;
 		source->staged_absolute_x = source->absolute_x;
@@ -1317,38 +1023,38 @@ noct_beui_zedbsd_input_attach(
 			input->display_height);
 	}
 
-	/* Handles the next noct_beui_zedbsd_input_attach decision. */
+	/* Handles the next input_attach decision. */
 	if (source_has_pointer(source))
 		input->pointer_changed = 1;
 
-	/* Reports the noct_beui_zedbsd_input_attach result. */
+	/* Reports the input_attach result. */
 	return (int)i;
 }
 
-/* Implements noct_beui_zedbsd_input_detach(). */
+/* Implements input_detach(). */
 static unsigned
-noct_beui_zedbsd_input_detach(
-	struct noct_beui_zedbsd_input *input,
+input_detach(
+	struct input_state *input,
 	unsigned source_index)
 {
-	struct noct_beui_zedbsd_input_source *source;
+	struct input_source *source;
 	unsigned result;
 	int had_keys;
 	int had_pointer;
 
-	/* Handles the next noct_beui_zedbsd_input_detach decision. */
-	if (input == NULL || source_index >= NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+	/* Handles the next input_detach decision. */
+	if (input == NULL || source_index >= INPUT_MAX_SOURCES)
+		return INPUT_UPDATE_NONE;
 	source = &input->sources[source_index];
 
-	/* Handles the next noct_beui_zedbsd_input_detach decision. */
+	/* Handles the next input_detach decision. */
 	if (!source->active)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
-	had_keys = bitmap_any(source->keys, NOCT_BEUI_ZEDBSD_INPUT_KEY_WORDS);
+		return INPUT_UPDATE_NONE;
+	had_keys = bitmap_any(source->keys, INPUT_KEY_WORDS);
 	had_pointer = source_has_pointer(source);
 	memset(source, 0, sizeof(*source));
-	result = had_keys ? NOCT_BEUI_ZEDBSD_INPUT_UPDATE_KEY
-			  : NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+	result = had_keys ? INPUT_UPDATE_KEY
+			  : INPUT_UPDATE_NONE;
 	result |= refresh_buttons(input);
 
 	/* Checks whether detaching a pointer removed the final pointer source. */
@@ -1357,28 +1063,33 @@ noct_beui_zedbsd_input_detach(
 		if (!input_has_pointer(input)) {
 			input->pointer_buttons = 0U;
 			result |= center_pointer(input);
-			/* Publish one final all-up/centered state even though no source
-			 * remains.  This prevents a button held at detach from becoming
-			 * permanently stuck in the BeUI core. */
+
+			/*
+			 * Publish one final all-up/centered state
+			 * even though no source remains.  This
+			 * prevents a button held at detach from
+			 * becoming permanently stuck in the BeUI
+			 * core.
+			 */
 			input->pointer_changed = 1;
-			result |= NOCT_BEUI_ZEDBSD_INPUT_UPDATE_POINTER;
+			result |= INPUT_UPDATE_POINTER;
 		}
 	}
 
-	/* Reports the noct_beui_zedbsd_input_detach result. */
+	/* Reports the input_detach result. */
 	return result;
 }
 
 /* Implements reset_source_after_drop(). */
 static unsigned
 reset_source_after_drop(
-	struct noct_beui_zedbsd_input *input,
-	struct noct_beui_zedbsd_input_source *source)
+	struct input_state *input,
+	struct input_source *source)
 {
 	unsigned result;
 	int had_keys;
 
-	had_keys = bitmap_any(source->keys, NOCT_BEUI_ZEDBSD_INPUT_KEY_WORDS);
+	had_keys = bitmap_any(source->keys, INPUT_KEY_WORDS);
 	memset(source->keys, 0, sizeof(source->keys));
 	memset(source->staged_keys, 0, sizeof(source->staged_keys));
 	source->relative_x = 0;
@@ -1386,16 +1097,20 @@ reset_source_after_drop(
 	source->staged_absolute_x_valid = 0;
 	source->staged_absolute_y_valid = 0;
 	source->synchronization_lost = 1;
-	result = NOCT_BEUI_ZEDBSD_INPUT_UPDATE_RESET;
+	result = INPUT_UPDATE_RESET;
 
 	/* Handles the next reset_source_after_drop decision. */
 	if (had_keys)
-		result |= NOCT_BEUI_ZEDBSD_INPUT_UPDATE_KEY;
+		result |= INPUT_UPDATE_KEY;
+
 	result |= refresh_buttons(input);
-	/* Relative coordinates cannot be queried back after queue loss.  A
-	 * centered state is the deterministic, visible reset from which later
-	 * deltas continue. */
-	if ((source->roles & NOCT_BEUI_ZEDBSD_INPUT_ROLE_RELATIVE_POINTER) !=
+
+	/*
+	 * Relative coordinates cannot be queried back after queue
+	 * loss.  A centered state is the deterministic, visible reset
+	 * from which later deltas continue.
+	 */
+	if ((source->roles & INPUT_ROLE_RELATIVE_POINTER) !=
 	    0U)
 		result |= center_pointer(input);
 
@@ -1406,8 +1121,8 @@ reset_source_after_drop(
 /* Implements commit_source(). */
 static unsigned
 commit_source(
-	struct noct_beui_zedbsd_input *input,
-	struct noct_beui_zedbsd_input_source *source)
+	struct input_state *input,
+	struct input_source *source)
 {
 	unsigned old_x;
 	unsigned old_y;
@@ -1416,14 +1131,13 @@ commit_source(
 
 	old_x = input->pointer_x;
 	old_y = input->pointer_y;
-	keys_changed = memcmp(
-		source->keys,
-		source->staged_keys,
-		sizeof(source->keys)) != 0;
+
+	keys_changed = memcmp(source->keys, source->staged_keys, sizeof(source->keys)) != 0;
+
 	memcpy(source->keys, source->staged_keys, sizeof(source->keys));
 
 	/* Handles the next commit_source decision. */
-	if ((source->roles & NOCT_BEUI_ZEDBSD_INPUT_ROLE_ABSOLUTE_POINTER) !=
+	if ((source->roles & INPUT_ROLE_ABSOLUTE_POINTER) !=
 	    0U) {
 		/* Handles the next commit_source decision. */
 		if (source->staged_absolute_x_valid)
@@ -1450,7 +1164,7 @@ commit_source(
 	}
 
 	/* Handles the next commit_source decision. */
-	if ((source->roles & NOCT_BEUI_ZEDBSD_INPUT_ROLE_RELATIVE_POINTER) !=
+	if ((source->roles & INPUT_ROLE_RELATIVE_POINTER) !=
 	    0U) {
 		input->pointer_x = apply_relative(
 			input->pointer_x,
@@ -1466,14 +1180,14 @@ commit_source(
 	source->relative_y = 0;
 	source->staged_absolute_x_valid = 0;
 	source->staged_absolute_y_valid = 0;
-	result = keys_changed ? NOCT_BEUI_ZEDBSD_INPUT_UPDATE_KEY
-			      : NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+	result = keys_changed ? INPUT_UPDATE_KEY
+			      : INPUT_UPDATE_NONE;
 	result |= refresh_buttons(input);
 
 	/* Handles the next commit_source decision. */
 	if (old_x != input->pointer_x || old_y != input->pointer_y) {
 		input->pointer_changed = 1;
-		result |= NOCT_BEUI_ZEDBSD_INPUT_UPDATE_POINTER;
+		result |= INPUT_UPDATE_POINTER;
 	}
 
 	/* Reports the commit_source result. */
@@ -1483,8 +1197,8 @@ commit_source(
 /* Implements process_event(). */
 static unsigned
 process_event(
-	struct noct_beui_zedbsd_input *input,
-	struct noct_beui_zedbsd_input_source *source,
+	struct input_state *input,
+	struct input_source *source,
 	const struct input_event *event)
 {
 	unsigned call_result;
@@ -1502,10 +1216,10 @@ process_event(
 	if (source->synchronization_lost) {
 		/* Handles the next process_event decision. */
 		if (event->type == EV_SYN && event->code == SYN_REPORT)
-			return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_RESYNC;
+			return INPUT_UPDATE_RESYNC;
 
 		/* Reports the process_event result. */
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	}
 
 	/* Handles the next process_event decision. */
@@ -1519,7 +1233,7 @@ process_event(
 		}
 
 		/* Reports the process_event result. */
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	}
 
 	/* Matches a supported key event in short-circuit order. */
@@ -1548,7 +1262,7 @@ process_event(
 			bit_set(source->staged_keys, KEY_MAX, event->code);
 
 		/* Reports the process_event result. */
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	}
 
 	/* Matches a supported relative-axis event in short-circuit order. */
@@ -1580,7 +1294,7 @@ process_event(
 		}
 
 		/* Reports the process_event result. */
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	}
 
 	/* Matches a supported absolute-axis event in short-circuit order. */
@@ -1613,42 +1327,42 @@ process_event(
 	}
 
 	/* Reports the process_event result. */
-	return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+	return INPUT_UPDATE_NONE;
 }
 
-/* Implements noct_beui_zedbsd_input_feed(). */
+/* Implements input_feed(). */
 static unsigned
-noct_beui_zedbsd_input_feed(
-	struct noct_beui_zedbsd_input *input,
+input_feed(
+	struct input_state *input,
 	unsigned source_index,
 	const void *bytes,
 	size_t byte_count)
 {
-	struct noct_beui_zedbsd_input_source *source;
+	struct input_source *source;
 	struct input_event event;
 	const unsigned char *cursor;
 	size_t copy_size;
 	unsigned result;
 
-	/* Handles the next noct_beui_zedbsd_input_feed decision. */
+	/* Handles the next input_feed decision. */
 	if (input == NULL ||
-	    source_index >= NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES ||
+	    source_index >= INPUT_MAX_SOURCES ||
 	    (bytes == NULL && byte_count != 0U))
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	source = &input->sources[source_index];
 
-	/* Handles the next noct_beui_zedbsd_input_feed decision. */
+	/* Handles the next input_feed decision. */
 	if (!source->active)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	cursor = bytes;
-	result = NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+	result = INPUT_UPDATE_NONE;
 
-	/* Continues noct_beui_zedbsd_input_feed processing while work remains. */
+	/* Continues input_feed processing while work remains. */
 	while (byte_count != 0U) {
 		copy_size =
 		    sizeof(source->partial_event) - source->partial_event_size;
 
-		/* Handles the next noct_beui_zedbsd_input_feed decision. */
+		/* Handles the next input_feed decision. */
 		if (copy_size > byte_count)
 			copy_size = byte_count;
 		memcpy(
@@ -1659,7 +1373,7 @@ noct_beui_zedbsd_input_feed(
 		cursor += copy_size;
 		byte_count -= copy_size;
 
-		/* Handles the next noct_beui_zedbsd_input_feed decision. */
+		/* Handles the next input_feed decision. */
 		if (source->partial_event_size == sizeof(struct input_event)) {
 			memcpy(&event, source->partial_event, sizeof(event));
 			source->partial_event_size = 0U;
@@ -1667,22 +1381,22 @@ noct_beui_zedbsd_input_feed(
 		}
 	}
 
-	/* Reports the noct_beui_zedbsd_input_feed result. */
+	/* Reports the input_feed result. */
 	return result;
 }
 
-/* Implements noct_beui_zedbsd_input_resync(). */
+/* Implements input_resync(). */
 static unsigned
-noct_beui_zedbsd_input_resync(
-	struct noct_beui_zedbsd_input *input,
+input_resync(
+	struct input_state *input,
 	unsigned source_index,
 	const void *key_bits,
 	size_t key_byte_count,
 	const struct input_absinfo *absolute_x,
 	const struct input_absinfo *absolute_y)
 {
-	struct noct_beui_zedbsd_input_source *source;
-	unsigned long queried[NOCT_BEUI_ZEDBSD_INPUT_KEY_WORDS];
+	struct input_source *source;
+	unsigned long queried[INPUT_KEY_WORDS];
 	unsigned old_x;
 	unsigned old_y;
 	unsigned result;
@@ -1690,26 +1404,26 @@ noct_beui_zedbsd_input_resync(
 	int down;
 	int keys_changed;
 
-	/* Handles the next noct_beui_zedbsd_input_resync decision. */
-	if (input == NULL || source_index >= NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+	/* Handles the next input_resync decision. */
+	if (input == NULL || source_index >= INPUT_MAX_SOURCES)
+		return INPUT_UPDATE_NONE;
 	source = &input->sources[source_index];
 
-	/* Handles the next noct_beui_zedbsd_input_resync decision. */
+	/* Handles the next input_resync decision. */
 	if (!source->active)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
 	memset(queried, 0, sizeof(queried));
 
-	/* Handles the next noct_beui_zedbsd_input_resync decision. */
+	/* Handles the next input_resync decision. */
 	if (key_bits != NULL) {
-		/* Handles the next noct_beui_zedbsd_input_resync decision. */
+		/* Handles the next input_resync decision. */
 		if (key_byte_count > sizeof(queried))
 			key_byte_count = sizeof(queried);
 		memcpy(queried, key_bits, key_byte_count);
 	}
 	keys_changed = 0;
 
-	/* Processes each noct_beui_zedbsd_input_resync item. */
+	/* Processes each input_resync item. */
 	for (code = 0; code <= KEY_MAX; code++) {
 		/* Intersects queried state with the source capabilities. */
 		down = bit_is_set(queried, KEY_MAX, code);
@@ -1720,11 +1434,11 @@ noct_beui_zedbsd_input_resync(
 				code);
 		}
 
-		/* Handles the next noct_beui_zedbsd_input_resync decision. */
+		/* Handles the next input_resync decision. */
 		if (down != bit_is_set(source->keys, KEY_MAX, code))
 			keys_changed = 1;
 
-		/* Handles the next noct_beui_zedbsd_input_resync decision. */
+		/* Handles the next input_resync decision. */
 		if (down)
 			bit_set(source->keys, KEY_MAX, code);
 		else
@@ -1758,8 +1472,8 @@ noct_beui_zedbsd_input_resync(
 		}
 	}
 
-	/* Handles the next noct_beui_zedbsd_input_resync decision. */
-	if ((source->roles & NOCT_BEUI_ZEDBSD_INPUT_ROLE_ABSOLUTE_POINTER) !=
+	/* Handles the next input_resync decision. */
+	if ((source->roles & INPUT_ROLE_ABSOLUTE_POINTER) !=
 		0U &&
 	    (absolute_x != NULL || absolute_y != NULL)) {
 		input->pointer_x = scale_absolute(
@@ -1776,193 +1490,194 @@ noct_beui_zedbsd_input_resync(
 	source->staged_absolute_x_valid = 0;
 	source->staged_absolute_y_valid = 0;
 	source->synchronization_lost = 0;
-	result = keys_changed ? NOCT_BEUI_ZEDBSD_INPUT_UPDATE_KEY
-			      : NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+	result = keys_changed ? INPUT_UPDATE_KEY
+			      : INPUT_UPDATE_NONE;
 	result |= refresh_buttons(input);
 
-	/* Handles the next noct_beui_zedbsd_input_resync decision. */
+	/* Handles the next input_resync decision. */
 	if (old_x != input->pointer_x || old_y != input->pointer_y) {
 		input->pointer_changed = 1;
-		result |= NOCT_BEUI_ZEDBSD_INPUT_UPDATE_POINTER;
+		result |= INPUT_UPDATE_POINTER;
 	}
 
-	/* Reports the noct_beui_zedbsd_input_resync result. */
+	/* Reports the input_resync result. */
 	return result;
 }
 
-/* Implements beui_key_to_evdev(). */
+/* Implements key_to_evdev(). */
 static int
-beui_key_to_evdev(
+key_to_evdev(
 	int key)
 {
 	static const uint16_t letters[26] = {
-	    KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I,
-	    KEY_J, KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R,
-	    KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z};
-	static const uint16_t digits[10] = {KEY_0, KEY_1, KEY_2, KEY_3, KEY_4,
-					    KEY_5, KEY_6, KEY_7, KEY_8, KEY_9};
+		KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I,
+		KEY_J, KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R,
+		KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z};
+	static const uint16_t digits[10] = {
+		KEY_0, KEY_1, KEY_2, KEY_3, KEY_4,
+		KEY_5, KEY_6, KEY_7, KEY_8, KEY_9};
 
-	/* Handles the next beui_key_to_evdev decision. */
+	/* Handles the next key_to_evdev decision. */
 	if (key >= 'a' && key <= 'z')
 		return letters[key - 'a'];
 
-	/* Handles the next beui_key_to_evdev decision. */
+	/* Handles the next key_to_evdev decision. */
 	if (key >= '0' && key <= '9')
 		return digits[key - '0'];
 
-	/* Selects the matching beui_key_to_evdev operation. */
+	/* Selects the matching key_to_evdev operation. */
 	switch (key) {
 	case ' ':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_SPACE;
 	case '-':
 	case '_':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_MINUS;
 	case '=':
 	case '+':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_EQUAL;
 	case '[':
 	case '{':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_LEFTBRACE;
 	case ']':
 	case '}':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_RIGHTBRACE;
 	case ';':
 	case ':':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_SEMICOLON;
 	case '\'':
 	case '"':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_APOSTROPHE;
 	case '`':
 	case '~':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_GRAVE;
 	case '\\':
 	case '|':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_BACKSLASH;
 	case ',':
 	case '<':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_COMMA;
 	case '.':
 	case '>':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_DOT;
 	case '/':
 	case '?':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_SLASH;
 	case '!':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_1;
 	case '@':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_2;
 	case '#':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_3;
 	case '$':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_4;
 	case '%':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_5;
 	case '^':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_6;
 	case '&':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_7;
 	case '*':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_8;
 	case '(':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_9;
 	case ')':
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return KEY_0;
-	case NOCT_BEUI_KEY_ESCAPE:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_ESCAPE:
+		/* Reports the key_to_evdev result. */
 		return KEY_ESC;
-	case NOCT_BEUI_KEY_BACKSPACE:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_BACKSPACE:
+		/* Reports the key_to_evdev result. */
 		return KEY_BACKSPACE;
-	case NOCT_BEUI_KEY_TAB:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_TAB:
+		/* Reports the key_to_evdev result. */
 		return KEY_TAB;
-	case NOCT_BEUI_KEY_ENTER:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_ENTER:
+		/* Reports the key_to_evdev result. */
 		return KEY_ENTER;
-	case NOCT_BEUI_KEY_PAGE_UP:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_PAGE_UP:
+		/* Reports the key_to_evdev result. */
 		return KEY_PAGEUP;
-	case NOCT_BEUI_KEY_PAGE_DOWN:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_PAGE_DOWN:
+		/* Reports the key_to_evdev result. */
 		return KEY_PAGEDOWN;
-	case NOCT_BEUI_KEY_INSERT:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_INSERT:
+		/* Reports the key_to_evdev result. */
 		return KEY_INSERT;
-	case NOCT_BEUI_KEY_DELETE:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_DELETE:
+		/* Reports the key_to_evdev result. */
 		return KEY_DELETE;
-	case NOCT_BEUI_KEY_UP:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_UP:
+		/* Reports the key_to_evdev result. */
 		return KEY_UP;
-	case NOCT_BEUI_KEY_LEFT:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_LEFT:
+		/* Reports the key_to_evdev result. */
 		return KEY_LEFT;
-	case NOCT_BEUI_KEY_RIGHT:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_RIGHT:
+		/* Reports the key_to_evdev result. */
 		return KEY_RIGHT;
-	case NOCT_BEUI_KEY_DOWN:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_DOWN:
+		/* Reports the key_to_evdev result. */
 		return KEY_DOWN;
-	case NOCT_BEUI_KEY_HOME:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_HOME:
+		/* Reports the key_to_evdev result. */
 		return KEY_HOME;
-	case NOCT_BEUI_KEY_END:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_END:
+		/* Reports the key_to_evdev result. */
 		return KEY_END;
-	case NOCT_BEUI_KEY_F1:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F1:
+		/* Reports the key_to_evdev result. */
 		return KEY_F1;
-	case NOCT_BEUI_KEY_F2:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F2:
+		/* Reports the key_to_evdev result. */
 		return KEY_F2;
-	case NOCT_BEUI_KEY_F3:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F3:
+		/* Reports the key_to_evdev result. */
 		return KEY_F3;
-	case NOCT_BEUI_KEY_F4:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F4:
+		/* Reports the key_to_evdev result. */
 		return KEY_F4;
-	case NOCT_BEUI_KEY_F5:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F5:
+		/* Reports the key_to_evdev result. */
 		return KEY_F5;
-	case NOCT_BEUI_KEY_F6:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F6:
+		/* Reports the key_to_evdev result. */
 		return KEY_F6;
-	case NOCT_BEUI_KEY_F7:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F7:
+		/* Reports the key_to_evdev result. */
 		return KEY_F7;
-	case NOCT_BEUI_KEY_F8:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F8:
+		/* Reports the key_to_evdev result. */
 		return KEY_F8;
-	case NOCT_BEUI_KEY_F9:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F9:
+		/* Reports the key_to_evdev result. */
 		return KEY_F9;
-	case NOCT_BEUI_KEY_F10:
-		/* Reports the beui_key_to_evdev result. */
+	case BEUI_KEY_F10:
+		/* Reports the key_to_evdev result. */
 		return KEY_F10;
 	default:
-		/* Reports the beui_key_to_evdev result. */
+		/* Reports the key_to_evdev result. */
 		return -1;
 	}
 }
@@ -1970,23 +1685,23 @@ beui_key_to_evdev(
 /* Implements source_key_state(). */
 static int
 source_key_state(
-	const struct noct_beui_zedbsd_input *input,
+	const struct input_state *input,
 	unsigned code,
 	int alternate_code)
 {
-	const struct noct_beui_zedbsd_input_source *source;
+	const struct input_source *source;
 	unsigned i;
 	int supported;
 
 	supported = 0;
 
 	/* Processes each source_key_state item. */
-	for (i = 0; i < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; i++) {
+	for (i = 0; i < INPUT_MAX_SOURCES; i++) {
 		source = &input->sources[i];
 
 		/* Handles the next source_key_state decision. */
 		if (!source->active ||
-		    (source->roles & NOCT_BEUI_ZEDBSD_INPUT_ROLE_KEYBOARD) ==
+		    (source->roles & INPUT_ROLE_KEYBOARD) ==
 			0U)
 			continue;
 
@@ -2009,10 +1724,9 @@ source_key_state(
 				supported = 1;
 
 				/* Reports a pressed alternate key. */
-				if (bit_is_set(
-					source->keys,
-					KEY_MAX,
-					(unsigned)alternate_code))
+				if (bit_is_set(source->keys,
+					       KEY_MAX,
+					       (unsigned)alternate_code))
 					return 1;
 			}
 		}
@@ -2022,224 +1736,201 @@ source_key_state(
 	return supported ? 0 : -1;
 }
 
-/* Implements noct_beui_zedbsd_input_is_key_down(). */
+/* Implements input_is_key_down(). */
 static int
-noct_beui_zedbsd_input_is_key_down(
-	const struct noct_beui_zedbsd_input *input,
+input_is_key_down(
+	const struct input_state *input,
 	int beui_key)
 {
 	int call_result;
 	int code;
 
-	/* Handles the next noct_beui_zedbsd_input_is_key_down decision. */
+	/* Handles the next input_is_key_down decision. */
 	if (input == NULL)
 		return -1;
 
-	/* Handles the next noct_beui_zedbsd_input_is_key_down decision. */
-	if (beui_key == NOCT_BEUI_KEY_SHIFT) {
+	/* Handles the next input_is_key_down decision. */
+	if (beui_key == BEUI_KEY_SHIFT) {
 		call_result = source_key_state(input, KEY_LEFTSHIFT, KEY_RIGHTSHIFT);
 
-		/* Reports the noct_beui_zedbsd_input_is_key_down result. */
+		/* Reports the input_is_key_down result. */
 		return call_result;
 	}
-	code = beui_key_to_evdev(beui_key);
+	code = key_to_evdev(beui_key);
 
-	/* Handles the next noct_beui_zedbsd_input_is_key_down decision. */
+	/* Handles the next input_is_key_down decision. */
 	if (code < 0)
 		return -1;
 
-	/* Reports the noct_beui_zedbsd_input_is_key_down result. */
+	/* Reports the input_is_key_down result. */
 	call_result = source_key_state(input, (unsigned)code, -1);
 
-	/* Reports the noct_beui_zedbsd_input_is_key_down result. */
+	/* Reports the input_is_key_down result. */
 	return call_result;
 }
 
-/* Implements noct_beui_zedbsd_input_poll_pointer(). */
+/* Implements input_poll_pointer(). */
 static int
-noct_beui_zedbsd_input_poll_pointer(
-	struct noct_beui_zedbsd_input *input,
-	struct noct_beui_pointer_event *event)
+input_poll_pointer(
+	struct input_state *input,
+	struct pointer_event *event)
 {
-	/* Handles the next noct_beui_zedbsd_input_poll_pointer decision. */
+	/* Handles the next input_poll_pointer decision. */
 	if (input == NULL ||
 	    event == NULL ||
 	    !input->pointer_changed)
 		return 0;
+
 	event->x = input->pointer_x;
 	event->y = input->pointer_y;
 	event->buttons = input->pointer_buttons;
 	input->pointer_changed = 0;
 
-	/* Reports the noct_beui_zedbsd_input_poll_pointer result. */
+	/* Reports the input_poll_pointer result. */
 	return 1;
 }
 
-#ifndef NOCT_BEUI_ZEDBSD_INPUT_TEST
-
-/* Implements noct_beui_bind(). */
+/* Implements init_ui(). */
 static int
-noct_beui_bind(
-	const struct noct_beui_hal *hal)
-{
-	/* Prevents rebinding while any backend service owns resources. */
-	if (state.display_open ||
-	    state.pointer_open ||
-	    state.audio_open)
-		return 0;
-	state.hal = hal;
-
-	/* Reports the noct_beui_bind result. */
-	return 1;
-}
-
-/* Implements noct_beui_init(). */
-static int
-noct_beui_init(
+init_ui(
 	void)
 {
-	int call_result;
+	int initialized;
 
-	/* Reports the noct_beui_init result. */
-	call_result = noct_beui_init_with_hint(0);
+	/* Opens the display without a preferred pixel depth. */
+	initialized = init_ui_with_hint(0);
 
-	/* Reports the noct_beui_init result. */
-	return call_result;
+	/* Reports whether the display was opened. */
+	return initialized;
 }
 
-/* Implements noct_beui_init_with_hint(). */
+/* Implements init_ui_with_hint(). */
 static int
-noct_beui_init_with_hint(
+init_ui_with_hint(
 	unsigned preferred_bits_per_pixel)
 {
-	/* Handles the next noct_beui_init_with_hint decision. */
+	int entered;
+	int pointer_started;
+
+	/* Preserves an already open display session. */
 	if (state.display_open)
 		return 1;
 
-	/* Requires the display lifecycle operations. */
-	if (state.hal == NULL ||
-	    state.hal->display.enter == NULL ||
-	    state.hal->display.leave == NULL)
-		return 0;
+	/* Initializes the requested display description. */
 	memset(&state.display, 0, sizeof(state.display));
 	state.display.preferred_bits_per_pixel = preferred_bits_per_pixel;
 
-	/* Handles the next noct_beui_init_with_hint decision. */
-	if (!state.hal->display.enter(
-		state.hal->display.context,
-		&state.display))
+	/* Enters the zedBSD graphics mode. */
+	entered = zedbsd_display_enter(&backend, &state.display);
+	if (!entered)
 		return 0;
+
+	/* Publishes the active display state. */
 	state.display_open = 1;
 	state.close_requested = 0;
 	state.pointer_buttons = 0;
-	/* Input typed before the graphics session belongs to the caller's
-	 * previous screen.  Discard it before the application begins waiting
-	 * for BeUI keys, just as close() drains keys before returning. */
-	noct_beui_drain_input();
+
+	/* Discards input that predates the graphics session. */
+	drain_input();
+
 	/* Rejects an unusable display mode. */
 	if (state.display.width == 0 || state.display.height == 0) {
-		noct_beui_close();
-
-		/* Reports the noct_beui_init_with_hint result. */
+		close_ui();
 		return 0;
 	}
-	/* A pointer starts centred so scripts never read a stale origin. */
+
+	/* Centers the initial pointer state. */
 	state.pointer_x = state.display.width / 2U;
 	state.pointer_y = state.display.height / 2U;
 
-	/* Handles the next noct_beui_init_with_hint decision. */
-	if (state.hal->pointer.start != NULL) {
-		/* Handles the next noct_beui_init_with_hint decision. */
-		if (!state.hal->pointer.start(
-			state.hal->pointer.context,
-			&state.display)) {
-			noct_beui_close();
-
-			/* Reports the noct_beui_init_with_hint result. */
-			return 0;
-		}
-		state.pointer_open = 1;
+	/* Starts the zedBSD input service for this display. */
+	pointer_started = zedbsd_pointer_start(&backend, &state.display);
+	if (!pointer_started) {
+		close_ui();
+		return 0;
 	}
+	state.pointer_open = 1;
 
-	/* Reports the noct_beui_init_with_hint result. */
+	/* Reports a successfully opened display. */
 	return 1;
 }
 
-/* Implements noct_beui_close(). */
+/* Implements close_ui(). */
 static void
-noct_beui_close(
+close_ui(
 	void)
 {
-	/* Handles the next noct_beui_close decision. */
-	if (state.hal == NULL)
+	/* Leaves an already closed display unchanged. */
+	if (!state.display_open && !state.pointer_open)
 		return;
-	/* Keys held during a session must not leak to the caller. */
-	noct_beui_drain_input();
 
-	/* Handles the next noct_beui_close decision. */
-	if (state.audio_open && state.hal->audio.stop != NULL)
-		state.hal->audio.stop(state.hal->audio.context);
-	state.audio_open = 0;
+	/* Discards input held or buffered during the session. */
+	drain_input();
 
-	/* Handles the next noct_beui_close decision. */
-	if (state.pointer_open && state.hal->pointer.stop != NULL)
-		state.hal->pointer.stop(state.hal->pointer.context);
+	/* Releases ownership of the input service. */
 	state.pointer_open = 0;
 
-	/* Handles the next noct_beui_close decision. */
-	if (state.display_open && state.hal->display.leave != NULL)
-		state.hal->display.leave(state.hal->display.context);
+	/* Leaves the zedBSD graphics mode. */
+	if (state.display_open)
+		zedbsd_display_leave(&backend);
 	state.display_open = 0;
+
+	/* Clears geometry that no longer describes an active display. */
 	memset(&state.display, 0, sizeof(state.display));
 }
 
-/* Implements noct_beui_cleanup(). */
+/* Implements cleanup_ui(). */
 static void
-noct_beui_cleanup(
+cleanup_ui(
 	void)
 {
-	struct noct_beui_image_entry *entry;
-	struct noct_beui_image_entry *next;
+	struct image_entry *entry;
+	struct image_entry *next;
 
+	/* Captures the image registry before clearing the UI state. */
 	entry = state.images;
-	noct_beui_close();
 
-	/* Continues noct_beui_cleanup processing while work remains. */
+	/* Releases all active zedBSD resources. */
+	close_ui();
+
+	/* Releases every decoded image. */
 	while (entry != NULL) {
 		next = entry->next;
 		free(entry);
 		entry = next;
 	}
+
+	/* Clears the complete UI state. */
 	memset(&state, 0, sizeof(state));
 }
 
-/* Implements noct_beui_is_open(). */
+/* Implements is_ui_open(). */
 static int
-noct_beui_is_open(
+is_ui_open(
 	void)
 {
-	/* Reports the noct_beui_is_open result. */
+	/* Reports the is_ui_open result. */
 	return state.display_open;
 }
 
-/* Implements noct_beui_get_display_info(). */
+/* Implements get_display_info(). */
 static int
-noct_beui_get_display_info(
-	struct noct_beui_display_info *info)
+get_display_info(
+	struct display_info *info)
 {
-	/* Handles the next noct_beui_get_display_info decision. */
+	/* Handles the next get_display_info decision. */
 	if (!state.display_open || info == NULL)
 		return 0;
 	*info = state.display;
 
-	/* Reports the noct_beui_get_display_info result. */
+	/* Reports the get_display_info result. */
 	return 1;
 }
 
-/* Implements noct_beui_fill(). */
+/* Implements fill(). */
 static int
-noct_beui_fill(
-	const struct noct_beui_rect *rect,
+fill(
+	const struct rect *rect,
 	uint32_t color)
 {
 	int call_result;
@@ -2252,20 +1943,19 @@ noct_beui_fill(
 	    rect->x >= state.display.width ||
 	    rect->y >= state.display.height ||
 	    rect->width > state.display.width - rect->x ||
-	    rect->height > state.display.height - rect->y ||
-	    state.hal->display.fill == NULL)
+	    rect->height > state.display.height - rect->y)
 		return 0;
 
-	/* Reports the noct_beui_fill result. */
-	call_result = state.hal->display.fill(state.hal->display.context, rect, color);
+	/* Fills the validated rectangle through the graphics driver. */
+	call_result = zedbsd_display_fill(&backend, rect, color);
 
-	/* Reports the noct_beui_fill result. */
+	/* Reports the fill result. */
 	return call_result;
 }
 
-/* Implements noct_beui_line(). */
+/* Implements draw_line(). */
 static int
-noct_beui_line(
+draw_line(
 	unsigned x0,
 	unsigned y0,
 	unsigned x1,
@@ -2279,27 +1969,25 @@ noct_beui_line(
 	    x0 >= state.display.width ||
 	    x1 >= state.display.width ||
 	    y0 >= state.display.height ||
-	    y1 >= state.display.height ||
-	    state.hal->display.line == NULL)
+	    y1 >= state.display.height)
 		return 0;
 
-	/* Reports the noct_beui_line result. */
-	call_result = state.hal->display.line(
-		state.hal->display.context,
-		x0,
-		y0,
-		x1,
-		y1,
-		color);
+	/* Draws the validated line through the graphics driver. */
+	call_result = zedbsd_display_line(&backend,
+					  x0,
+					  y0,
+					  x1,
+					  y1,
+					  color);
 
-	/* Reports the noct_beui_line result. */
+	/* Reports the draw_line result. */
 	return call_result;
 }
 
-/* Implements noct_beui_pattern_fill(). */
+/* Implements pattern_fill(). */
 static int
-noct_beui_pattern_fill(
-	const struct noct_beui_rect *rect,
+pattern_fill(
+	const struct rect *rect,
 	uint32_t color,
 	uint64_t pattern)
 {
@@ -2313,51 +2001,49 @@ noct_beui_pattern_fill(
 	    rect->x >= state.display.width ||
 	    rect->y >= state.display.height ||
 	    rect->width > state.display.width - rect->x ||
-	    rect->height > state.display.height - rect->y ||
-	    state.hal->display.pattern_fill == NULL)
+	    rect->height > state.display.height - rect->y)
 		return 0;
 
-	/* Reports the noct_beui_pattern_fill result. */
-	call_result = state.hal->display.pattern_fill(
-		state.hal->display.context,
-		rect,
-		color,
-		pattern);
+	/* Fills the validated pattern through the graphics driver. */
+	call_result = zedbsd_display_pattern(&backend,
+					     rect,
+					     color,
+					     pattern);
 
-	/* Reports the noct_beui_pattern_fill result. */
+	/* Reports the pattern_fill result. */
 	return call_result;
 }
 
 /* Implements image_valid(). */
 static int
 image_valid(
-	const struct noct_beui_image *image)
+	const struct image *image)
 {
 	/* Rejects incomplete or unsupported image descriptions. */
 	if (image == NULL ||
 	    image->pixels == NULL ||
 	    image->width == 0 ||
 	    image->height == 0 ||
-	    (image->format != NOCT_BEUI_IMAGE_INDEX8 &&
-	     image->format != NOCT_BEUI_IMAGE_RGB24) ||
-	    (image->format == NOCT_BEUI_IMAGE_INDEX8 &&
+	    (image->format != IMAGE_INDEX8 &&
+	     image->format != IMAGE_RGB24) ||
+	    (image->format == IMAGE_INDEX8 &&
 	     (image->palette_size == 0 || image->palette_size > 256)))
 		return 0;
 
 	/* Handles the next image_valid decision. */
-	if (image->format == NOCT_BEUI_IMAGE_RGB24)
+	if (image->format == IMAGE_RGB24)
 		return image->stride / 3U >= image->width;
 
 	/* Reports the image_valid result. */
 	return image->stride >= image->width;
 }
 
-/* Implements noct_beui_draw_image(). */
+/* Implements draw_image(). */
 static int
-noct_beui_draw_image(
+draw_image(
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image)
+	const struct image *image)
 {
 	int call_result;
 
@@ -2373,25 +2059,23 @@ noct_beui_draw_image(
 	if (x >= state.display.width ||
 	    y >= state.display.height ||
 	    image->width > state.display.width - x ||
-	    image->height > state.display.height - y ||
-	    state.hal->display.draw_image == NULL)
+	    image->height > state.display.height - y)
 		return 0;
 
-	/* Reports the noct_beui_draw_image result. */
-	call_result = state.hal->display.draw_image(
-		state.hal->display.context,
-		x,
-		y,
-		image);
+	/* Draws the validated image through the graphics driver. */
+	call_result = zedbsd_display_image(&backend,
+					   x,
+					   y,
+					   image);
 
-	/* Reports the noct_beui_draw_image result. */
+	/* Reports the draw_image result. */
 	return call_result;
 }
 
-/* Implements noct_beui_draw_image_region(). */
+/* Implements draw_image_region(). */
 static int
-noct_beui_draw_image_region(
-	const struct noct_beui_image *image,
+draw_image_region(
+	const struct image *image,
 	unsigned source_x,
 	unsigned source_y,
 	unsigned width,
@@ -2400,7 +2084,7 @@ noct_beui_draw_image_region(
 	unsigned destination_y)
 {
 	int call_result;
-	struct noct_beui_image region;
+	struct image region;
 	size_t pixel_size;
 	size_t offset;
 
@@ -2417,31 +2101,33 @@ noct_beui_draw_image_region(
 	    height > image->height - source_y ||
 	    source_y > (size_t)-1 / image->stride)
 		return 0;
-	pixel_size = image->format == NOCT_BEUI_IMAGE_RGB24 ? 3U : 1U;
+
+	pixel_size = image->format == IMAGE_RGB24 ? 3U : 1U;
 	offset = (size_t)source_y * image->stride;
 
-	/* Handles the next noct_beui_draw_image_region decision. */
+	/* Handles the next draw_image_region decision. */
 	if (source_x > ((size_t)-1 - offset) / pixel_size)
 		return 0;
+
 	offset += (size_t)source_x * pixel_size;
 	region = *image;
 	region.width = width;
 	region.height = height;
 	region.pixels += offset;
 
-	/* Reports the noct_beui_draw_image_region result. */
-	call_result = noct_beui_draw_image(destination_x, destination_y, &region);
+	/* Reports the draw_image_region result. */
+	call_result = draw_image(destination_x, destination_y, &region);
 
-	/* Reports the noct_beui_draw_image_region result. */
+	/* Reports the draw_image_region result. */
 	return call_result;
 }
 
-/* Implements noct_beui_draw_image_pattern(). */
+/* Implements draw_image_pattern(). */
 static int
-noct_beui_draw_image_pattern(
+draw_image_pattern(
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image,
+	const struct image *image,
 	uint64_t pattern)
 {
 	int call_result;
@@ -2458,19 +2144,17 @@ noct_beui_draw_image_pattern(
 	if (x >= state.display.width ||
 	    y >= state.display.height ||
 	    image->width > state.display.width - x ||
-	    image->height > state.display.height - y ||
-	    state.hal->display.draw_image_pattern == NULL)
+	    image->height > state.display.height - y)
 		return 0;
 
-	/* Reports the noct_beui_draw_image_pattern result. */
-	call_result = state.hal->display.draw_image_pattern(
-		state.hal->display.context,
-		x,
-		y,
-		image,
-		pattern);
+	/* Draws the validated pattern through the graphics driver. */
+	call_result = zedbsd_display_image_pattern(&backend,
+						   x,
+						   y,
+						   image,
+						   pattern);
 
-	/* Reports the noct_beui_draw_image_pattern result. */
+	/* Reports the draw_image_pattern result. */
 	return call_result;
 }
 
@@ -2542,9 +2226,9 @@ decode_utf8(
 	return codepoint;
 }
 
-/* Implements noct_beui_measure_text(). */
+/* Implements measure_text(). */
 static int
-noct_beui_measure_text(
+measure_text(
 	const char *text,
 	unsigned *width,
 	unsigned *height)
@@ -2562,30 +2246,29 @@ noct_beui_measure_text(
 	maximum_width = 0;
 	total_height = 16;
 
-	/* Requires text, result destinations, and an active glyph backend. */
+	/* Requires text, result destinations, and an active display. */
 	if (!state.display_open ||
 	    text == NULL ||
 	    width == NULL ||
-	    height == NULL ||
-	    state.hal->glyph.measure == NULL)
+	    height == NULL)
 		return 0;
 
-	/* Continues noct_beui_measure_text processing while work remains. */
+	/* Continues measure_text processing while work remains. */
 	while (*cursor != '\0') {
 		codepoint = decode_utf8(&cursor);
 
-		/* Handles the next noct_beui_measure_text decision. */
+		/* Handles the next measure_text decision. */
 		if (codepoint == '\r')
 			continue;
 
-		/* Handles the next noct_beui_measure_text decision. */
+		/* Handles the next measure_text decision. */
 		if (codepoint == '\n') {
-			/* Handles the next noct_beui_measure_text decision. */
+			/* Handles the next measure_text decision. */
 			if (line_width > maximum_width)
 				maximum_width = line_width;
 			line_width = 0;
 
-			/* Handles the next noct_beui_measure_text decision. */
+			/* Handles the next measure_text decision. */
 			if (total_height > (unsigned)-1 - 16U)
 				return 0;
 			total_height += 16U;
@@ -2593,8 +2276,8 @@ noct_beui_measure_text(
 		}
 
 		/* Measures the next printable glyph. */
-		if (!state.hal->glyph.measure(
-			state.hal->glyph.context,
+		if (!zedbsd_glyph_measure(
+			&backend,
 			codepoint,
 			&glyph_width,
 			&glyph_height))
@@ -2607,19 +2290,20 @@ noct_beui_measure_text(
 		line_width += glyph_width;
 	}
 
-	/* Handles the next noct_beui_measure_text decision. */
+	/* Handles the next measure_text decision. */
 	if (line_width > maximum_width)
 		maximum_width = line_width;
+
 	*width = maximum_width;
 	*height = total_height;
 
-	/* Reports the noct_beui_measure_text result. */
+	/* Reports the measure_text result. */
 	return 1;
 }
 
-/* Implements noct_beui_draw_text(). */
+/* Implements draw_text(). */
 static int
-noct_beui_draw_text(
+draw_text(
 	const char *text,
 	unsigned x,
 	unsigned y,
@@ -2638,26 +2322,25 @@ noct_beui_draw_text(
 	origin_x = x;
 
 	/* Measures the text before validating its destination. */
-	if (!noct_beui_measure_text(text, &width, &height))
+	if (!measure_text(text, &width, &height))
 		return 0;
 
-	/* Requires the complete text block and glyph backend. */
+	/* Requires the complete text block to fit the display. */
 	if (x > state.display.width ||
 	    y > state.display.height ||
 	    width > state.display.width - x ||
-	    height > state.display.height - y ||
-	    state.hal->glyph.draw == NULL)
+	    height > state.display.height - y)
 		return 0;
 
-	/* Continues noct_beui_draw_text processing while work remains. */
+	/* Continues draw_text processing while work remains. */
 	while (*cursor != '\0') {
 		codepoint = decode_utf8(&cursor);
 
-		/* Handles the next noct_beui_draw_text decision. */
+		/* Handles the next draw_text decision. */
 		if (codepoint == '\r')
 			continue;
 
-		/* Handles the next noct_beui_draw_text decision. */
+		/* Handles the next draw_text decision. */
 		if (codepoint == '\n') {
 			x = origin_x;
 			y += 16U;
@@ -2665,231 +2348,208 @@ noct_beui_draw_text(
 		}
 
 		/* Measures the next printable glyph. */
-		if (!state.hal->glyph.measure(
-			state.hal->glyph.context,
-			codepoint,
-			&glyph_width,
-			&glyph_height))
+		if (!zedbsd_glyph_measure(&backend,
+					  codepoint,
+					  &glyph_width,
+					  &glyph_height))
 			return 0;
 
 		/* Draws the measured glyph. */
-		if (!state.hal->glyph.draw(
-			state.hal->glyph.context,
-			x,
-			y,
-			codepoint,
-			foreground,
-			background))
+		if (!zedbsd_glyph_draw(&backend,
+				       x,
+				       y,
+				       codepoint,
+				       foreground,
+				       background))
 			return 0;
+
 		x += glyph_width;
 	}
 
-	/* Reports the noct_beui_draw_text result. */
+	/* Reports the draw_text result. */
 	return 1;
 }
 
-/* Implements noct_beui_poll(). */
+/* Implements poll_ui(). */
 static int
-noct_beui_poll(
+poll_ui(
 	void)
 {
-	struct noct_beui_pointer_event event;
+	struct pointer_event event;
 	int updated;
 
-	/* Handles the next noct_beui_poll decision. */
+	/* Handles the next poll_ui decision. */
 	if (!state.display_open || state.close_requested)
 		return 0;
 
-	/* Services an optional host display event source. */
-	if (state.hal->display.poll_events != NULL) {
-		updated = state.hal->display.poll_events(
-			state.hal->display.context);
-
-		/* Detects a closed or failed host display. */
-		if (updated != 1) {
-			/* A closed window is sticky: every later poll reports it, so a
-			 * script loop ends on the iteration after the user closes it. */
-			state.close_requested = 1;
-
-			/* Reports the closed display. */
-			return 0;
-		}
+	/* Checks whether the graphics descriptor remains open. */
+	updated = zedbsd_display_poll(&backend);
+	if (updated != 1) {
+		/* Makes a closed display sticky for every later poll. */
+		state.close_requested = 1;
+		return 0;
 	}
-	noct_beui_drain_input();
 
-	/* Handles the next noct_beui_poll decision. */
-	if (state.pointer_open && state.hal->pointer.poll != NULL) {
+	/* Services pending input and device discovery. */
+	drain_input();
+
+	/* Captures a changed absolute pointer state. */
+	if (state.pointer_open) {
 		memset(&event, 0, sizeof(event));
-		updated = state.hal->pointer.poll(
-			state.hal->pointer.context,
-			&event);
+		updated = zedbsd_pointer_poll(&backend, &event);
 
-		/* Handles the next noct_beui_poll decision. */
+		/* Makes an input failure close the UI session. */
 		if (updated < 0) {
 			state.close_requested = 1;
-
-			/* Reports the noct_beui_poll result. */
 			return 0;
 		}
 
-		/* Handles the next noct_beui_poll decision. */
+		/* Clamps a changed pointer to the active display. */
 		if (updated > 0) {
 			state.pointer_x = event.x < state.display.width ?
-				event.x : state.display.width - 1U;
+				event.x :
+				state.display.width - 1U;
 			state.pointer_y = event.y < state.display.height ?
-				event.y : state.display.height - 1U;
+				event.y :
+				state.display.height - 1U;
 			state.pointer_buttons = event.buttons;
 		}
 	}
 
-	/* Services an optional active audio backend. */
-	if (state.audio_open && state.hal->audio.poll != NULL) {
-		/* Detects a failed audio service operation. */
-		if (!state.hal->audio.poll(state.hal->audio.context)) {
-			state.close_requested = 1;
-
-			/* Reports the failed audio poll. */
-			return 0;
-		}
-	}
-
-	/* Reports the noct_beui_poll result. */
+	/* Reports a live display after servicing its input. */
 	return 1;
 }
 
-/* Implements noct_beui_get_pointer(). */
+/* Implements get_pointer(). */
 static int
-noct_beui_get_pointer(
+get_pointer(
 	unsigned *x,
 	unsigned *y,
 	unsigned *buttons)
 {
-	/* Handles the next noct_beui_get_pointer decision. */
+	/* Handles the next get_pointer decision. */
 	if (!state.display_open || !state.pointer_open)
 		return 0;
 
-	/* Handles the next noct_beui_get_pointer decision. */
+	/* Handles the next get_pointer decision. */
 	if (x != NULL)
 		*x = state.pointer_x;
 
-	/* Handles the next noct_beui_get_pointer decision. */
+	/* Handles the next get_pointer decision. */
 	if (y != NULL)
 		*y = state.pointer_y;
 
-	/* Handles the next noct_beui_get_pointer decision. */
+	/* Handles the next get_pointer decision. */
 	if (buttons != NULL)
 		*buttons = state.pointer_buttons;
 
-	/* Reports the noct_beui_get_pointer result. */
+	/* Reports the get_pointer result. */
 	return 1;
 }
 
-/* Implements noct_beui_flush(). */
+/* Implements flush(). */
 static int
-noct_beui_flush(
+flush(
 	void)
 {
 	int call_result;
 
-	/* Handles the next noct_beui_flush decision. */
+	/* Handles the next flush decision. */
 	if (!state.display_open)
 		return 0;
 
-	/* Handles the next noct_beui_flush decision. */
-	if (state.hal->display.flush == NULL)
-		return 1;
+	/* Flushes all pending graphics operations. */
+	call_result = zedbsd_display_flush(&backend, NULL, 0);
 
-	/* Reports the noct_beui_flush result. */
-	call_result = state.hal->display.flush(state.hal->display.context, NULL, 0);
-
-	/* Reports the noct_beui_flush result. */
+	/* Reports the flush result. */
 	return call_result;
 }
 
-/* Implements noct_beui_get_milliseconds(). */
+/* Implements get_milliseconds(). */
 static int
-noct_beui_get_milliseconds(
+get_milliseconds(
 	uint64_t *milliseconds)
 {
-	/* Requires a clock destination and bound clock backend. */
-	if (milliseconds == NULL ||
-	    state.hal == NULL ||
-	    state.hal->clock.milliseconds == NULL)
+	/* Requires a clock destination. */
+	if (milliseconds == NULL)
 		return 0;
-	*milliseconds = state.hal->clock.milliseconds(state.hal->clock.context);
 
-	/* Reports the noct_beui_get_milliseconds result. */
+	/* Reads the zedBSD monotonic clock. */
+	*milliseconds = zedbsd_milliseconds(&backend);
+
+	/* Reports the get_milliseconds result. */
 	return 1;
 }
 
-/* Implements noct_beui_sleep(). */
+/* Implements sleep_milliseconds(). */
 static int
-noct_beui_sleep(
+sleep_milliseconds(
 	unsigned milliseconds)
 {
 	uint64_t start;
 	uint64_t now;
 
-	/* Handles the next noct_beui_sleep decision. */
-	if (!noct_beui_get_milliseconds(&start))
+	/* Handles the next sleep_milliseconds decision. */
+	if (!get_milliseconds(&start))
 		return 0;
-	/* The busy loop doubles as the clock poll and keeps the pointer,
-	 * audio, and type-ahead backends serviced while the script idles. */
+
+	/*
+	 * The busy loop doubles as the clock poll and keeps input and
+	 * device discovery serviced while the script idles.
+	 */
 	do {
-		noct_beui_drain_input();
-		/* A window closed mid-sleep ends the wait; the script sees it
-		 * on its next BeUI.poll(). */
+		drain_input();
+
+		/*
+		 * A window closed mid-sleep ends the wait; the script
+		 * sees it on its next BeUI.poll().
+		 */
 		if (state.display_open) {
 			/* Ends the wait when display polling requests closure. */
-			if (!noct_beui_poll())
+			if (!poll_ui())
 				break;
 		}
 
-		/* Handles the next noct_beui_sleep decision. */
-		if (!noct_beui_get_milliseconds(&now))
+		/* Handles the next sleep_milliseconds decision. */
+		if (!get_milliseconds(&now))
 			return 0;
 	} while (now - start < milliseconds);
 
-	/* Reports the noct_beui_sleep result. */
+	/* Reports the sleep_milliseconds result. */
 	return 1;
 }
 
-/* Implements noct_beui_is_key_down(). */
+/* Implements is_key_down(). */
 static int
-noct_beui_is_key_down(
+is_key_down(
 	int key)
 {
 	int call_result;
 
-	/* Handles the next noct_beui_is_key_down decision. */
-	if (state.hal == NULL || state.hal->input.is_key_down == NULL)
-		return -1;
+	/* Reads the key state from the zedBSD input service. */
+	call_result = zedbsd_key_state(&backend, key);
 
-	/* Reports the noct_beui_is_key_down result. */
-	call_result = state.hal->input.is_key_down(state.hal->input.context, key);
-
-	/* Reports the noct_beui_is_key_down result. */
+	/* Reports the is_key_down result. */
 	return call_result;
 }
 
-/* Implements noct_beui_drain_input(). */
+/* Implements drain_input(). */
 static void
-noct_beui_drain_input(
+drain_input(
 	void)
 {
-	/* Handles the next noct_beui_drain_input decision. */
-	if (state.hal != NULL && state.hal->input.drain != NULL)
-		state.hal->input.drain(state.hal->input.context);
+	/* Services and drains the zedBSD input source. */
+	zedbsd_input_drain(&backend);
 }
 
-/* Implements noct_beui_image_load_bmp(). */
+/* Implements image_load_bmp(). */
 static int
-noct_beui_image_load_bmp(
+image_load_bmp(
 	const void *data,
 	size_t size)
 {
-	struct noct_beui_image_entry *entry;
-	enum noct_beui_image_format format;
+	struct image_entry *entry;
+	enum image_format format;
 	unsigned width;
 	unsigned height;
 	size_t pixel_size;
@@ -2897,11 +2557,11 @@ noct_beui_image_load_bmp(
 	/* Requires a bounded source bitmap. */
 	if (data == NULL ||
 	    size == 0 ||
-	    size > NOCT_BEUI_IMAGE_SOURCE_MAX)
+	    size > IMAGE_SOURCE_MAX)
 		return 0;
 
 	/* Measures the source bitmap. */
-	if (!noct_beui_bmp_measure(
+	if (!bmp_measure(
 		data,
 		size,
 		&format,
@@ -2911,17 +2571,17 @@ noct_beui_image_load_bmp(
 		return 0;
 
 	/* Requires a bounded decoded pixel buffer. */
-	if (pixel_size == 0 || pixel_size > NOCT_BEUI_IMAGE_PIXELS_MAX)
+	if (pixel_size == 0 || pixel_size > IMAGE_PIXELS_MAX)
 		return 0;
 	entry = malloc(
-		offsetof(struct noct_beui_image_entry, pixels) + pixel_size);
+		offsetof(struct image_entry, pixels) + pixel_size);
 
-	/* Handles the next noct_beui_image_load_bmp decision. */
+	/* Handles the next image_load_bmp decision. */
 	if (entry == NULL)
 		return 0;
 
-	/* Handles the next noct_beui_image_load_bmp decision. */
-	if (!noct_beui_bmp_decode(
+	/* Handles the next image_load_bmp decision. */
+	if (!bmp_decode(
 		data,
 		size,
 		entry->pixels,
@@ -2929,70 +2589,70 @@ noct_beui_image_load_bmp(
 		&entry->image)) {
 		free(entry);
 
-		/* Reports the noct_beui_image_load_bmp result. */
+		/* Reports the image_load_bmp result. */
 		return 0;
 	}
 
-	/* Handles the next noct_beui_image_load_bmp decision. */
+	/* Handles the next image_load_bmp decision. */
 	if (state.next_image_handle <= 0)
 		state.next_image_handle = 1;
 	entry->handle = state.next_image_handle++;
 	entry->next = state.images;
 	state.images = entry;
 
-	/* Reports the noct_beui_image_load_bmp result. */
+	/* Reports the image_load_bmp result. */
 	return entry->handle;
 }
 
-/* Implements noct_beui_image_get(). */
-static const struct noct_beui_image *
-noct_beui_image_get(
+/* Implements image_get(). */
+static const struct image *
+image_get(
 	int handle)
 {
-	struct noct_beui_image_entry *entry;
+	struct image_entry *entry;
 
-	/* Handles the next noct_beui_image_get decision. */
+	/* Handles the next image_get decision. */
 	if (handle <= 0)
 		return NULL;
 
 	/* Finds the image with the requested handle. */
 	for (entry = state.images; entry != NULL; entry = entry->next) {
-		/* Handles the next noct_beui_image_get decision. */
+		/* Handles the next image_get decision. */
 		if (entry->handle == handle)
 			return &entry->image;
 	}
 
-	/* Reports the noct_beui_image_get result. */
+	/* Reports the image_get result. */
 	return NULL;
 }
 
-/* Implements noct_beui_image_destroy(). */
+/* Implements image_destroy(). */
 static int
-noct_beui_image_destroy(
+image_destroy(
 	int handle)
 {
-	struct noct_beui_image_entry **link;
-	struct noct_beui_image_entry *entry;
+	struct image_entry **link;
+	struct image_entry *entry;
 
-	/* Handles the next noct_beui_image_destroy decision. */
+	/* Handles the next image_destroy decision. */
 	if (handle <= 0)
 		return 0;
 
-	/* Processes each noct_beui_image_destroy item. */
+	/* Processes each image_destroy item. */
 	for (link = &state.images; *link != NULL; link = &(*link)->next) {
 		entry = *link;
 
-		/* Handles the next noct_beui_image_destroy decision. */
+		/* Handles the next image_destroy decision. */
 		if (entry->handle != handle)
 			continue;
 		*link = entry->next;
 		free(entry);
 
-		/* Reports the noct_beui_image_destroy result. */
+		/* Reports the image_destroy result. */
 		return 1;
 	}
 
-	/* Reports the noct_beui_image_destroy result. */
+	/* Reports the image_destroy result. */
 	return 0;
 }
 
@@ -3129,7 +2789,7 @@ parse_layout(
 	case 1:
 	case 4:
 	case 8:
-		layout->format = NOCT_BEUI_IMAGE_INDEX8;
+		layout->format = IMAGE_INDEX8;
 		bytes_per_pixel = 1;
 		colors_used = read_u32(bytes + 46);
 		layout->palette_size = colors_used != 0 ? colors_used :
@@ -3159,7 +2819,7 @@ parse_layout(
 			return 0;
 		break;
 	case 24:
-		layout->format = NOCT_BEUI_IMAGE_RGB24;
+		layout->format = IMAGE_RGB24;
 		bytes_per_pixel = 3;
 		break;
 	default:
@@ -3206,12 +2866,12 @@ parse_layout(
 	return 1;
 }
 
-/* Implements noct_beui_bmp_measure(). */
+/* Implements bmp_measure(). */
 static int
-noct_beui_bmp_measure(
+bmp_measure(
 	const void *data,
 	size_t size,
-	enum noct_beui_image_format *format,
+	enum image_format *format,
 	unsigned *width,
 	unsigned *height,
 	size_t *pixel_bytes)
@@ -3235,18 +2895,18 @@ noct_beui_bmp_measure(
 	*height = layout.height;
 	*pixel_bytes = layout.output_size;
 
-	/* Reports the noct_beui_bmp_measure result. */
+	/* Reports the bmp_measure result. */
 	return 1;
 }
 
-/* Implements noct_beui_bmp_decode(). */
+/* Implements bmp_decode(). */
 static int
-noct_beui_bmp_decode(
+bmp_decode(
 	const void *data,
 	size_t size,
 	void *pixel_storage,
 	size_t pixel_capacity,
-	struct noct_beui_image *image)
+	struct image *image)
 {
 	struct bmp_layout layout;
 	const uint8_t *entry;
@@ -3278,29 +2938,29 @@ noct_beui_bmp_decode(
 	image->pixels = output;
 	image->palette_size = layout.palette_size;
 
-	/* Processes each noct_beui_bmp_decode item. */
+	/* Processes each bmp_decode item. */
 	for (y = 0; y < layout.palette_size; y++) {
 		entry = layout.bytes + layout.palette_offset + (size_t)y * 4U;
 		image->palette[y] = (uint32_t)entry[2] << 16 |
 			(uint32_t)entry[1] << 8 | entry[0];
 	}
 
-	/* Processes each noct_beui_bmp_decode item. */
+	/* Processes each bmp_decode item. */
 	for (y = 0; y < layout.height; y++) {
 		source_y = layout.top_down ? y : layout.height - 1U - y;
 		source = layout.bytes + layout.data_offset +
 			(size_t)source_y * layout.source_stride;
 		destination = output + (size_t)y * layout.output_stride;
 
-		/* Handles the next noct_beui_bmp_decode decision. */
+		/* Handles the next bmp_decode decision. */
 		if (layout.bits_per_pixel == 1U) {
-			/* Processes each noct_beui_bmp_decode item. */
+			/* Processes each bmp_decode item. */
 			for (x = 0; x < layout.width; x++) {
 				destination[x] = (uint8_t)(
 					(source[x >> 3] >> (7U - (x & 7U))) & 1U);
 			}
 		} else if (layout.bits_per_pixel == 4U) {
-			/* Processes each noct_beui_bmp_decode item. */
+			/* Processes each bmp_decode item. */
 			for (x = 0; x < layout.width; x++) {
 				destination[x] = (uint8_t)(
 					(source[x >> 1] >> ((x & 1U) ? 0U : 4U)) &
@@ -3309,7 +2969,7 @@ noct_beui_bmp_decode(
 		} else if (layout.bits_per_pixel == 8U) {
 			memcpy(destination, source, layout.width);
 		} else {
-			/* Processes each noct_beui_bmp_decode item. */
+			/* Processes each bmp_decode item. */
 			for (x = 0; x < layout.width; x++) {
 				destination[(size_t)x * 3U] = source[(size_t)x * 3U + 2U];
 				destination[(size_t)x * 3U + 1U] = source[(size_t)x * 3U + 1U];
@@ -3318,7 +2978,7 @@ noct_beui_bmp_decode(
 		}
 	}
 
-	/* Reports the noct_beui_bmp_decode result. */
+	/* Reports the bmp_decode result. */
 	return 1;
 }
 
@@ -3388,8 +3048,8 @@ cfunc_BeUI_init(
 	bool call_result;
 	int api_result;
 
-	/* Initializes BeUI through the bound backend. */
-	api_result = noct_beui_init() ? 1 : 0;
+	/* Initializes the zedBSD BeUI implementation. */
+	api_result = init_ui() ? 1 : 0;
 
 	/* Publishes the initialization result. */
 	call_result = return_int(env, api_result);
@@ -3428,7 +3088,7 @@ cfunc_BeUI_initWithHint(
 	}
 
 	/* Initializes BeUI with the validated display depth. */
-	api_result = noct_beui_init_with_hint((unsigned)bits_per_pixel) ? 1 : 0;
+	api_result = init_ui_with_hint((unsigned)bits_per_pixel) ? 1 : 0;
 
 	/* Publishes the initialization result. */
 	call_result = return_int(env, api_result);
@@ -3444,7 +3104,7 @@ cfunc_BeUI_close(
 {
 	bool call_result;
 
-	noct_beui_close();
+	close_ui();
 
 	/* Reports the cfunc_BeUI_close result. */
 	call_result = return_int(env, 1);
@@ -3462,7 +3122,7 @@ cfunc_BeUI_isOpen(
 	int api_result;
 
 	/* Reads the current BeUI lifecycle state. */
-	api_result = noct_beui_is_open() ? 1 : 0;
+	api_result = is_ui_open() ? 1 : 0;
 
 	/* Publishes the lifecycle state. */
 	call_result = return_int(env, api_result);
@@ -3477,10 +3137,10 @@ cfunc_BeUI_getWidth(
 	NoctEnv *env)
 {
 	bool call_result;
-	struct noct_beui_display_info info;
+	struct display_info info;
 
 	/* Handles the next cfunc_BeUI_getWidth decision. */
-	if (!noct_beui_get_display_info(&info)) {
+	if (!get_display_info(&info)) {
 		noct_error(env, "BeUI is not open.");
 
 		/* Reports the cfunc_BeUI_getWidth result. */
@@ -3500,10 +3160,10 @@ cfunc_BeUI_getHeight(
 	NoctEnv *env)
 {
 	bool call_result;
-	struct noct_beui_display_info info;
+	struct display_info info;
 
 	/* Handles the next cfunc_BeUI_getHeight decision. */
-	if (!noct_beui_get_display_info(&info)) {
+	if (!get_display_info(&info)) {
 		noct_error(env, "BeUI is not open.");
 
 		/* Reports the cfunc_BeUI_getHeight result. */
@@ -3519,10 +3179,8 @@ cfunc_BeUI_getHeight(
 
 /*
  * Returns 1 while the display is alive and 0 once it has closed, so the
- * canonical loop is "while (BeUI.poll()) { ... }".  Targets that own the
- * whole machine never return 0.
+ * canonical loop is "while (BeUI.poll()) { ... }".
  */
-/* Implements cfunc_BeUI_poll(). */
 static bool
 cfunc_BeUI_poll(
 	NoctEnv *env)
@@ -3530,8 +3188,8 @@ cfunc_BeUI_poll(
 	bool call_result;
 	int api_result;
 
-	/* Services the active BeUI backends. */
-	api_result = noct_beui_poll() ? 1 : 0;
+	/* Services the zedBSD display and input sources. */
+	api_result = poll_ui() ? 1 : 0;
 
 	/* Publishes the poll result. */
 	call_result = return_int(env, api_result);
@@ -3548,7 +3206,7 @@ cfunc_BeUI_flush(
 	bool call_result;
 
 	/* Handles the next cfunc_BeUI_flush decision. */
-	if (!noct_beui_flush()) {
+	if (!flush()) {
 		noct_error(env, "BeUI.flush failed.");
 
 		/* Reports the cfunc_BeUI_flush result. */
@@ -3568,7 +3226,7 @@ cfunc_BeUI_fill(
 	NoctEnv *env)
 {
 	bool call_result;
-	struct noct_beui_rect rectangle;
+	struct rect rectangle;
 	int x, y, width, height, color;
 
 	/* Reads the fill origin. */
@@ -3629,7 +3287,7 @@ cfunc_BeUI_fill(
 	rectangle.height = (unsigned)height;
 
 	/* Handles the next cfunc_BeUI_fill decision. */
-	if (!noct_beui_fill(&rectangle, (uint32_t)color)) {
+	if (!fill(&rectangle, (uint32_t)color)) {
 		noct_error(env, "BeUI.fill failed.");
 
 		/* Reports the cfunc_BeUI_fill result. */
@@ -3705,12 +3363,11 @@ cfunc_BeUI_line(
 	}
 
 	/* Handles the next cfunc_BeUI_line decision. */
-	if (!noct_beui_line(
-		(unsigned)x0,
-		(unsigned)y0,
-		(unsigned)x1,
-		(unsigned)y1,
-		(uint32_t)color)) {
+	if (!draw_line((unsigned)x0,
+		       (unsigned)y0,
+		       (unsigned)x1,
+		       (unsigned)y1,
+		       (uint32_t)color)) {
 		noct_error(env, "BeUI.line failed.");
 
 		/* Reports the cfunc_BeUI_line result. */
@@ -3730,7 +3387,7 @@ cfunc_BeUI_patternFill(
 	NoctEnv *env)
 {
 	bool call_result;
-	struct noct_beui_rect rectangle;
+	struct rect rectangle;
 	NoctValue value;
 	int x, y, width, height, color;
 	int int_pattern;
@@ -3739,9 +3396,7 @@ cfunc_BeUI_patternFill(
 
 	/* Reads the patterned fill origin. */
 	if (!get_int_arg(env, 0, &x)) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 
 		/* Reports an invalid patterned fill argument. */
 		return false;
@@ -3749,9 +3404,7 @@ cfunc_BeUI_patternFill(
 
 	/* Reads the vertical patterned-fill origin. */
 	if (!get_int_arg(env, 1, &y)) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 
 		/* Reports an invalid patterned fill argument. */
 		return false;
@@ -3759,9 +3412,7 @@ cfunc_BeUI_patternFill(
 
 	/* Reads the patterned fill extent. */
 	if (!get_int_arg(env, 2, &width)) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 
 		/* Reports an invalid patterned fill argument. */
 		return false;
@@ -3769,9 +3420,7 @@ cfunc_BeUI_patternFill(
 
 	/* Reads the patterned-fill height. */
 	if (!get_int_arg(env, 3, &height)) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 
 		/* Reports an invalid patterned fill argument. */
 		return false;
@@ -3779,9 +3428,7 @@ cfunc_BeUI_patternFill(
 
 	/* Reads the patterned fill color. */
 	if (!get_int_arg(env, 4, &color)) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 
 		/* Reports an invalid patterned fill argument. */
 		return false;
@@ -3794,9 +3441,7 @@ cfunc_BeUI_patternFill(
 	    height <= 0 ||
 	    color < 0 ||
 	    color > 0xffffff) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 
 		/* Reports the cfunc_BeUI_patternFill result. */
 		return false;
@@ -3806,6 +3451,7 @@ cfunc_BeUI_patternFill(
 	/* Handles the next cfunc_BeUI_patternFill decision. */
 	if (!noct_pin_local(env, 1, &value))
 		return false;
+
 	ok = noct_get_arg_check_long(env, 5, &value, &pattern);
 
 	/* Handles the next cfunc_BeUI_patternFill decision. */
@@ -3820,9 +3466,7 @@ cfunc_BeUI_patternFill(
 
 	/* Handles the next cfunc_BeUI_patternFill decision. */
 	if (!ok) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 
 		/* Reports the cfunc_BeUI_patternFill result. */
 		return false;
@@ -3833,10 +3477,9 @@ cfunc_BeUI_patternFill(
 	rectangle.height = (unsigned)height;
 
 	/* Handles the next cfunc_BeUI_patternFill decision. */
-	if (!noct_beui_pattern_fill(
-		&rectangle,
-		(uint32_t)color,
-		(uint64_t)pattern)) {
+	if (!pattern_fill(&rectangle,
+			  (uint32_t)color,
+			  (uint64_t)pattern)) {
 		noct_error(env, "BeUI.patternFill failed.");
 
 		/* Reports the cfunc_BeUI_patternFill result. */
@@ -3877,7 +3520,7 @@ measure_text_arg(
 	}
 
 	/* Handles the next measure_text_arg decision. */
-	if (!noct_beui_measure_text(text, width, height)) {
+	if (!measure_text(text, width, height)) {
 		noct_error(env, "%s failed.", api);
 		(void)noct_unpin_local(env, 1, &value);
 
@@ -3998,12 +3641,11 @@ cfunc_BeUI_drawText(
 	}
 
 	/* Handles the next cfunc_BeUI_drawText decision. */
-	if (!noct_beui_draw_text(
-		text,
-		(unsigned)x,
-		(unsigned)y,
-		(uint32_t)foreground,
-		(uint32_t)background)) {
+	if (!draw_text(text,
+		       (unsigned)x,
+		       (unsigned)y,
+		       (uint32_t)foreground,
+		       (uint32_t)background)) {
 		noct_error(env, "BeUI.drawText failed.");
 		(void)noct_unpin_local(env, 1, &value);
 
@@ -4026,7 +3668,7 @@ cfunc_BeUI_getMilliseconds(
 	uint64_t milliseconds;
 
 	/* Handles the next cfunc_BeUI_getMilliseconds decision. */
-	if (!noct_beui_get_milliseconds(&milliseconds)) {
+	if (!get_milliseconds(&milliseconds)) {
 		noct_error(env, "BeUI.getMilliseconds is unavailable.");
 
 		/* Reports the cfunc_BeUI_getMilliseconds result. */
@@ -4065,7 +3707,7 @@ cfunc_BeUI_sleep(
 	}
 
 	/* Handles the next cfunc_BeUI_sleep decision. */
-	if (!noct_beui_sleep((unsigned)milliseconds)) {
+	if (!sleep_milliseconds((unsigned)milliseconds)) {
 		noct_error(env, "BeUI.sleep is unavailable.");
 
 		/* Reports the cfunc_BeUI_sleep result. */
@@ -4103,8 +3745,8 @@ cfunc_BeUI_isKeyDown(
 		/* Reports the cfunc_BeUI_isKeyDown result. */
 		return false;
 	}
-	/* Keys the target cannot sense read as released. */
-	key_down = noct_beui_is_key_down(key) == 1;
+	/* Keys unavailable from zedBSD input read as released. */
+	key_down = is_key_down(key) == 1;
 
 	/* Publishes the normalized key state. */
 	call_result = return_int(env, key_down);
@@ -4123,7 +3765,7 @@ pointer_field(
 	unsigned *buttons)
 {
 	/* Handles the next pointer_field decision. */
-	if (!noct_beui_get_pointer(x, y, buttons)) {
+	if (!get_pointer(x, y, buttons)) {
 		noct_error(env, "%s is unavailable.", api);
 
 		/* Reports the pointer_field result. */
@@ -4196,7 +3838,6 @@ cfunc_BeUI_getPointerButtons(
  * and the File API reads, so the graphical layer needs no filesystem of
  * its own and behaves identically on every host.
  */
-/* Implements cfunc_BeUI_loadImage(). */
 static bool
 cfunc_BeUI_loadImage(
 	NoctEnv *env)
@@ -4239,7 +3880,7 @@ cfunc_BeUI_loadImage(
 		/* Reports the cfunc_BeUI_loadImage result. */
 		return false;
 	}
-	handle = noct_beui_image_load_bmp(data, size);
+	handle = image_load_bmp(data, size);
 
 	/* Handles the next cfunc_BeUI_loadImage decision. */
 	if (handle == 0) {
@@ -4262,25 +3903,21 @@ cfunc_BeUI_getImageWidth(
 	NoctEnv *env)
 {
 	bool call_result;
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle;
 
 	/* Reads the image handle. */
 	if (!get_int_arg(env, 0, &handle)) {
-		noct_error(
-			env,
-			"BeUI.getImageWidth received an invalid handle.");
+		noct_error(env, "BeUI.getImageWidth received an invalid handle.");
 
 		/* Reports an invalid image handle. */
 		return false;
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
-		noct_error(
-			env,
-			"BeUI.getImageWidth received an invalid handle.");
+		noct_error(env, "BeUI.getImageWidth received an invalid handle.");
 
 		/* Reports the cfunc_BeUI_getImageWidth result. */
 		return false;
@@ -4299,25 +3936,21 @@ cfunc_BeUI_getImageHeight(
 	NoctEnv *env)
 {
 	bool call_result;
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle;
 
 	/* Reads the image handle. */
 	if (!get_int_arg(env, 0, &handle)) {
-		noct_error(
-			env,
-			"BeUI.getImageHeight received an invalid handle.");
+		noct_error(env, "BeUI.getImageHeight received an invalid handle.");
 
 		/* Reports an invalid image handle. */
 		return false;
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
-		noct_error(
-			env,
-			"BeUI.getImageHeight received an invalid handle.");
+		noct_error(env, "BeUI.getImageHeight received an invalid handle.");
 
 		/* Reports the cfunc_BeUI_getImageHeight result. */
 		return false;
@@ -4336,7 +3969,7 @@ cfunc_BeUI_drawImage(
 	NoctEnv *env)
 {
 	bool call_result;
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle, x, y;
 
 	/* Reads the image handle. */
@@ -4372,7 +4005,7 @@ cfunc_BeUI_drawImage(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env, "BeUI.drawImage failed.");
 
@@ -4381,7 +4014,7 @@ cfunc_BeUI_drawImage(
 	}
 
 	/* Draws the resolved image. */
-	if (!noct_beui_draw_image((unsigned)x, (unsigned)y, image)) {
+	if (!draw_image((unsigned)x, (unsigned)y, image)) {
 		noct_error(env, "BeUI.drawImage failed.");
 
 		/* Reports the cfunc_BeUI_drawImage result. */
@@ -4401,7 +4034,7 @@ cfunc_BeUI_drawImageRegion(
 	NoctEnv *env)
 {
 	bool call_result;
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle, source_x, source_y, width, height, x, y;
 
 	/* Reads the image handle. */
@@ -4474,7 +4107,7 @@ cfunc_BeUI_drawImageRegion(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env, "BeUI.drawImageRegion failed.");
 
@@ -4483,7 +4116,7 @@ cfunc_BeUI_drawImageRegion(
 	}
 
 	/* Draws the requested source region. */
-	if (!noct_beui_draw_image_region(
+	if (!draw_image_region(
 		image,
 		(unsigned)source_x,
 		(unsigned)source_y,
@@ -4510,7 +4143,7 @@ cfunc_BeUI_drawImagePattern(
 	NoctEnv *env)
 {
 	bool call_result;
-	const struct noct_beui_image *image;
+	const struct image *image;
 	NoctValue value;
 	int handle, x, y;
 	int int_pattern;
@@ -4519,9 +4152,7 @@ cfunc_BeUI_drawImagePattern(
 
 	/* Reads the patterned image handle. */
 	if (!get_int_arg(env, 0, &handle)) {
-		noct_error(
-			env,
-			"BeUI.drawImagePattern received an invalid argument.");
+		noct_error(env, "BeUI.drawImagePattern received an invalid argument.");
 
 		/* Reports an invalid patterned image argument. */
 		return false;
@@ -4529,9 +4160,7 @@ cfunc_BeUI_drawImagePattern(
 
 	/* Reads the patterned image destination. */
 	if (!get_int_arg(env, 1, &x)) {
-		noct_error(
-			env,
-			"BeUI.drawImagePattern received an invalid argument.");
+		noct_error(env, "BeUI.drawImagePattern received an invalid argument.");
 
 		/* Reports an invalid patterned image argument. */
 		return false;
@@ -4539,9 +4168,7 @@ cfunc_BeUI_drawImagePattern(
 
 	/* Reads the vertical patterned-image destination. */
 	if (!get_int_arg(env, 2, &y)) {
-		noct_error(
-			env,
-			"BeUI.drawImagePattern received an invalid argument.");
+		noct_error(env, "BeUI.drawImagePattern received an invalid argument.");
 
 		/* Reports an invalid patterned image argument. */
 		return false;
@@ -4549,9 +4176,7 @@ cfunc_BeUI_drawImagePattern(
 
 	/* Validates the patterned image destination. */
 	if (x < 0 || y < 0) {
-		noct_error(
-			env,
-			"BeUI.drawImagePattern received an invalid argument.");
+		noct_error(env, "BeUI.drawImagePattern received an invalid argument.");
 
 		/* Reports the cfunc_BeUI_drawImagePattern result. */
 		return false;
@@ -4561,6 +4186,7 @@ cfunc_BeUI_drawImagePattern(
 	/* Handles the next cfunc_BeUI_drawImagePattern decision. */
 	if (!noct_pin_local(env, 1, &value))
 		return false;
+
 	ok = noct_get_arg_check_long(env, 3, &value, &pattern);
 
 	/* Handles the next cfunc_BeUI_drawImagePattern decision. */
@@ -4582,7 +4208,7 @@ cfunc_BeUI_drawImagePattern(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env, "BeUI.drawImagePattern failed.");
 
@@ -4590,12 +4216,11 @@ cfunc_BeUI_drawImagePattern(
 		return false;
 	}
 
-	/* Draws the image through the patterned backend operation. */
-	if (!noct_beui_draw_image_pattern(
-		(unsigned)x,
-		(unsigned)y,
-		image,
-		(uint64_t)pattern)) {
+	/* Draws the image with the requested pattern. */
+	if (!draw_image_pattern((unsigned)x,
+				(unsigned)y,
+				image,
+				(uint64_t)pattern)) {
 		noct_error(env, "BeUI.drawImagePattern failed.");
 
 		/* Reports the cfunc_BeUI_drawImagePattern result. */
@@ -4626,7 +4251,7 @@ cfunc_BeUI_destroyImage(
 	}
 
 	/* Destroys the resolved image handle. */
-	if (!noct_beui_image_destroy(handle)) {
+	if (!image_destroy(handle)) {
 		noct_error(env, "BeUI.destroyImage received an invalid handle.");
 
 		/* Reports the cfunc_BeUI_destroyImage result. */
@@ -4645,7 +4270,7 @@ static bool
 register_int_dictionary(
 	NoctEnv *env,
 	const char *name,
-	const struct beui_int_constant *entries,
+	const struct int_constant *entries,
 	size_t count)
 {
 	NoctValue dictionary;
@@ -4670,12 +4295,11 @@ register_int_dictionary(
 	/* Processes each register_int_dictionary item. */
 	for (index = 0; index < count; index++) {
 		/* Handles the next register_int_dictionary decision. */
-		if (!noct_set_dict_elem_make_int(
-			env,
-			&dictionary,
-			entries[index].name,
-			&scratch,
-			entries[index].value)) {
+		if (!noct_set_dict_elem_make_int(env,
+						 &dictionary,
+						 entries[index].name,
+						 &scratch,
+						 entries[index].value)) {
 			(void)noct_unpin_local(env, 2, &dictionary, &scratch);
 
 			/* Reports the register_int_dictionary result. */
@@ -4696,157 +4320,131 @@ register_int_dictionary(
 	return true;
 }
 
-/* Implements register_beui_api(). */
+/* Implements register_api(). */
 static bool
-register_beui_api(
-	NoctEnv *env,
-	const struct noct_beui_hal *hal)
+register_api(
+	NoctEnv *env)
 {
-	static struct beui_ffi_item beui_ffi_items[] = {
+	static struct ffi_item ffi_items[] = {
 		{"BeUI.init", "init", 0, {NULL}, cfunc_BeUI_init},
-		{"BeUI.initWithHint", "initWithHint", 1, {"bitsPerPixel"},
-		 cfunc_BeUI_initWithHint},
+		{"BeUI.initWithHint", "initWithHint", 1, {"bitsPerPixel"}, cfunc_BeUI_initWithHint},
 		{"BeUI.close", "close", 0, {NULL}, cfunc_BeUI_close},
 		{"BeUI.isOpen", "isOpen", 0, {NULL}, cfunc_BeUI_isOpen},
 		{"BeUI.getWidth", "getWidth", 0, {NULL}, cfunc_BeUI_getWidth},
 		{"BeUI.getHeight", "getHeight", 0, {NULL}, cfunc_BeUI_getHeight},
 		{"BeUI.poll", "poll", 0, {NULL}, cfunc_BeUI_poll},
 		{"BeUI.flush", "flush", 0, {NULL}, cfunc_BeUI_flush},
-		{"BeUI.fill", "fill", 5, {"x", "y", "width", "height", "color"},
-		 cfunc_BeUI_fill},
-		{"BeUI.line", "line", 5, {"x0", "y0", "x1", "y1", "color"},
-		 cfunc_BeUI_line},
-		{"BeUI.patternFill", "patternFill", 6,
-		 {"x", "y", "width", "height", "color", "pattern"},
-		 cfunc_BeUI_patternFill},
+		{"BeUI.fill", "fill", 5, {"x", "y", "width", "height", "color"}, cfunc_BeUI_fill},
+		{"BeUI.line", "line", 5, {"x0", "y0", "x1", "y1", "color"}, cfunc_BeUI_line},
+		{"BeUI.patternFill", "patternFill", 6, {"x", "y", "width", "height", "color", "pattern"}, cfunc_BeUI_patternFill},
 		{"BeUI.textWidth", "textWidth", 1, {"text"}, cfunc_BeUI_textWidth},
-		{"BeUI.textHeight", "textHeight", 1, {"text"},
-		 cfunc_BeUI_textHeight},
-		{"BeUI.drawText", "drawText", 5,
-		 {"text", "x", "y", "foreground", "background"},
-		 cfunc_BeUI_drawText},
-		{"BeUI.getMilliseconds", "getMilliseconds", 0, {NULL},
-		 cfunc_BeUI_getMilliseconds},
+		{"BeUI.textHeight", "textHeight", 1, {"text"}, cfunc_BeUI_textHeight},
+		{"BeUI.drawText", "drawText", 5, {"text", "x", "y", "foreground", "background"}, cfunc_BeUI_drawText},
+		{"BeUI.getMilliseconds", "getMilliseconds", 0, {NULL}, cfunc_BeUI_getMilliseconds},
 		{"BeUI.sleep", "sleep", 1, {"milliseconds"}, cfunc_BeUI_sleep},
 		{"BeUI.isKeyDown", "isKeyDown", 1, {"key"}, cfunc_BeUI_isKeyDown},
-		{"BeUI.getPointerX", "getPointerX", 0, {NULL},
-		 cfunc_BeUI_getPointerX},
-		{"BeUI.getPointerY", "getPointerY", 0, {NULL},
-		 cfunc_BeUI_getPointerY},
-		{"BeUI.getPointerButtons", "getPointerButtons", 0, {NULL},
-		 cfunc_BeUI_getPointerButtons},
-		{"BeUI.loadImage", "loadImage", 1, {"bytes"},
-		 cfunc_BeUI_loadImage},
-		{"BeUI.getImageWidth", "getImageWidth", 1, {"image"},
-		 cfunc_BeUI_getImageWidth},
-		{"BeUI.getImageHeight", "getImageHeight", 1, {"image"},
-		 cfunc_BeUI_getImageHeight},
-		{"BeUI.drawImage", "drawImage", 3, {"image", "x", "y"},
-		 cfunc_BeUI_drawImage},
-		{"BeUI.drawImageRegion", "drawImageRegion", 7,
-		 {"image", "sourceX", "sourceY", "width", "height", "x", "y"},
-		 cfunc_BeUI_drawImageRegion},
-		{"BeUI.drawImagePattern", "drawImagePattern", 4,
-		 {"image", "x", "y", "pattern"}, cfunc_BeUI_drawImagePattern},
-		{"BeUI.destroyImage", "destroyImage", 1, {"image"},
-		 cfunc_BeUI_destroyImage},
+		{"BeUI.getPointerX", "getPointerX", 0, {NULL}, cfunc_BeUI_getPointerX},
+		{"BeUI.getPointerY", "getPointerY", 0, {NULL}, cfunc_BeUI_getPointerY},
+		{"BeUI.getPointerButtons", "getPointerButtons", 0, {NULL}, cfunc_BeUI_getPointerButtons},
+		{"BeUI.loadImage", "loadImage", 1, {"bytes"}, cfunc_BeUI_loadImage},
+		{"BeUI.getImageWidth", "getImageWidth", 1, {"image"}, cfunc_BeUI_getImageWidth},
+		{"BeUI.getImageHeight", "getImageHeight", 1, {"image"}, cfunc_BeUI_getImageHeight},
+		{"BeUI.drawImage", "drawImage", 3, {"image", "x", "y"}, cfunc_BeUI_drawImage},
+		{"BeUI.drawImageRegion", "drawImageRegion", 7, {"image", "sourceX", "sourceY", "width", "height", "x", "y"},cfunc_BeUI_drawImageRegion},
+		{"BeUI.drawImagePattern", "drawImagePattern", 4, {"image", "x", "y", "pattern"}, cfunc_BeUI_drawImagePattern},
+		{"BeUI.destroyImage", "destroyImage", 1, {"image"}, cfunc_BeUI_destroyImage},
 	};
-	NoctValue beui_dict, function;
-	struct beui_ffi_item *item;
+
+	NoctValue beui_dict;
+	NoctValue function;
+	struct ffi_item *item;
 	size_t index;
 
-	/* Handles the next register_beui_api decision. */
-	if (!noct_beui_bind(hal))
-		return false;
+	/* Initializes the pinned registration values. */
 	memset(&beui_dict, 0, sizeof(beui_dict));
 	memset(&function, 0, sizeof(function));
 
-	/* Handles the next register_beui_api decision. */
+	/* Handles the next register_api decision. */
 	if (!noct_pin_local(env, 2, &beui_dict, &function))
 		return false;
 
-	/* Handles the next register_beui_api decision. */
+	/* Handles the next register_api decision. */
 	if (!noct_make_empty_dict(env, &beui_dict)) {
 		(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-		/* Reports the register_beui_api result. */
+		/* Reports the register_api result. */
 		return false;
 	}
 
-	/* Handles the next register_beui_api decision. */
+	/* Handles the next register_api decision. */
 	if (!noct_set_global(env, "BeUI", &beui_dict)) {
 		(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-		/* Reports the register_beui_api result. */
+		/* Reports the register_api result. */
 		return false;
 	}
 
-	/* Processes each register_beui_api item. */
-	for (index = 0; index < sizeof(beui_ffi_items) /
-					 sizeof(beui_ffi_items[0]); index++) {
-		item = &beui_ffi_items[index];
+	/* Processes each register_api item. */
+	for (index = 0; index < sizeof(ffi_items) / sizeof(ffi_items[0]); index++) {
+		item = &ffi_items[index];
 
-		/* Handles the next register_beui_api decision. */
-		if (!noct_register_cfunc(
-			env,
-			item->global_name,
-			item->param_count,
-			item->param,
-			item->cfunc,
-			NULL)) {
+		/* Handles the next register_api decision. */
+		if (!noct_register_cfunc(env,
+					 item->global_name,
+					 item->param_count,
+					 item->param,
+					 item->cfunc,
+					 NULL)) {
 			(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-			/* Reports the register_beui_api result. */
+			/* Reports the register_api result. */
 			return false;
 		}
 
-		/* Handles the next register_beui_api decision. */
+		/* Handles the next register_api decision. */
 		if (!noct_get_global(env, item->global_name, &function)) {
 			(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-			/* Reports the register_beui_api result. */
+			/* Reports the register_api result. */
 			return false;
 		}
 
-		/* Handles the next register_beui_api decision. */
-		if (!noct_set_dict_elem_cstr(
-			env,
-			&beui_dict,
-			item->field_name,
-			&function)) {
+		/* Handles the next register_api decision. */
+		if (!noct_set_dict_elem_cstr(env,
+					     &beui_dict,
+					     item->field_name,
+					     &function)) {
 			(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-			/* Reports the register_beui_api result. */
+			/* Reports the register_api result. */
 			return false;
 		}
 	}
 
-	/* Handles the next register_beui_api decision. */
-	if (!register_int_dictionary(
-		env,
-		"Key",
-		beui_keys,
-		sizeof(beui_keys) / sizeof(beui_keys[0]))) {
+	/* Handles the next register_api decision. */
+	if (!register_int_dictionary(env,
+				     "Key",
+				     keys,
+				     sizeof(keys) / sizeof(keys[0]))) {
 		(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-		/* Reports the register_beui_api result. */
+		/* Reports the register_api result. */
 		return false;
 	}
 
-	/* Handles the next register_beui_api decision. */
-	if (!register_int_dictionary(
-		env,
-		"Button",
-		beui_buttons,
-		sizeof(beui_buttons) / sizeof(beui_buttons[0]))) {
+	/* Handles the next register_api decision. */
+	if (!register_int_dictionary(env,
+				     "Button",
+				     buttons,
+				     sizeof(buttons) / sizeof(buttons[0]))) {
 		(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-		/* Reports the register_beui_api result. */
+		/* Reports the register_api result. */
 		return false;
 	}
 	(void)noct_unpin_local(env, 2, &beui_dict, &function);
 
-	/* Reports the register_beui_api result. */
+	/* Reports the register_api result. */
 	return true;
 }
 
@@ -4857,14 +4455,13 @@ uapi_bit_is_set(
 	unsigned bit)
 {
 	/* Reports the uapi_bit_is_set result. */
-	return (bits[bit / BITS_PER_ULONG] & (1UL << (bit % BITS_PER_ULONG))) !=
-	       0;
+	return (bits[bit / BITS_PER_ULONG] & (1UL << (bit % BITS_PER_ULONG))) != 0;
 }
 
 /* Implements graphics_has(). */
 static int
 graphics_has(
-	const struct beui_zedbsd_context *context,
+	const struct backend_context *context,
 	uint32_t capability)
 {
 	/* Requires an open graphics context. */
@@ -4879,7 +4476,7 @@ graphics_has(
 static void
 copy_rect(
 	struct graphics_rect *to,
-	const struct noct_beui_rect *from)
+	const struct rect *from)
 {
 	to->x = from->x;
 	to->y = from->y;
@@ -4890,10 +4487,9 @@ copy_rect(
 /* Implements zedbsd_display_enter(). */
 static int
 zedbsd_display_enter(
-	void *opaque,
-	struct noct_beui_display_info *info)
+	struct backend_context *context,
+	struct display_info *info)
 {
-	struct beui_zedbsd_context *context = opaque;
 	struct graphics_mode request;
 	int ioctl_result;
 
@@ -4902,19 +4498,20 @@ zedbsd_display_enter(
 	    info == NULL ||
 	    context->graphics_fd >= 0)
 		return 0;
+
 	context->graphics_fd = open("/dev/graphics", O_RDWR);
 
 	/* Handles the next zedbsd_display_enter decision. */
 	if (context->graphics_fd < 0)
 		return 0;
+
 	memset(&request, 0, sizeof(request));
 	request.preferred_bits_per_pixel = info->preferred_bits_per_pixel;
 
 	/* Enters the requested graphics mode. */
-	ioctl_result = ioctl(
-		context->graphics_fd,
-		ZEDBSD_GRAPHICS_ENTER,
-		&request);
+	ioctl_result = ioctl(context->graphics_fd,
+			     ZEDBSD_GRAPHICS_ENTER,
+			     &request);
 	if (ioctl_result != 0) {
 		(void)close(context->graphics_fd);
 		context->graphics_fd = -1;
@@ -4931,16 +4528,19 @@ zedbsd_display_enter(
 		/* Reports the zedbsd_display_enter result. */
 		return 0;
 	}
+
 	info->width = request.width;
 	info->height = request.height;
 	info->bits_per_pixel = request.bits_per_pixel;
 	info->stride = request.stride;
+
 	context->display = *info;
 	context->graphics_capabilities = request.capabilities;
-	noct_beui_zedbsd_input_init(
-		&context->input,
-		request.width,
-		request.height);
+
+	input_init(&context->input,
+		   request.width,
+		   request.height);
+
 	context->input_initialized = 1;
 
 	/* Reports the zedbsd_display_enter result. */
@@ -4950,10 +4550,8 @@ zedbsd_display_enter(
 /* Implements zedbsd_display_poll(). */
 static int
 zedbsd_display_poll(
-	void *opaque)
+	struct backend_context *context)
 {
-	struct beui_zedbsd_context *context = opaque;
-
 	/* Requires a display context before inspecting its descriptor. */
 	if (context == NULL)
 		return 0;
@@ -4965,12 +4563,11 @@ zedbsd_display_poll(
 /* Implements zedbsd_display_fill(). */
 static int
 zedbsd_display_fill(
-	void *opaque,
-	const struct noct_beui_rect *rect,
+	struct backend_context *context,
+	const struct rect *rect,
 	uint32_t color)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
 	struct graphics_fill request;
 
 	/* Requires a fill rectangle. */
@@ -4980,8 +4577,11 @@ zedbsd_display_fill(
 	/* Requires driver support for solid fills. */
 	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_FILL))
 		return 0;
+
 	memset(&request, 0, sizeof(request));
+
 	copy_rect(&request.rect, rect);
+
 	request.color = color;
 
 	/* Reports the zedbsd_display_fill result. */
@@ -4997,7 +4597,7 @@ zedbsd_display_fill(
 /* Implements zedbsd_display_line(). */
 static int
 zedbsd_display_line(
-	void *opaque,
+	struct backend_context *context,
 	unsigned x0,
 	unsigned y0,
 	unsigned x1,
@@ -5005,12 +4605,12 @@ zedbsd_display_line(
 	uint32_t color)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
 	struct graphics_line request;
 
 	/* Handles the next zedbsd_display_line decision. */
 	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_LINE))
 		return 0;
+
 	memset(&request, 0, sizeof(request));
 	request.x0 = x0;
 	request.y0 = y0;
@@ -5019,10 +4619,9 @@ zedbsd_display_line(
 	request.color = color;
 
 	/* Reports the zedbsd_display_line result. */
-	call_result = ioctl(
-		context->graphics_fd,
-		ZEDBSD_GRAPHICS_DRAW_LINE,
-		&request) == 0;
+	call_result = ioctl(context->graphics_fd,
+			    ZEDBSD_GRAPHICS_DRAW_LINE,
+			    &request) == 0;
 
 	/* Reports the zedbsd_display_line result. */
 	return call_result;
@@ -5031,13 +4630,12 @@ zedbsd_display_line(
 /* Implements zedbsd_display_pattern(). */
 static int
 zedbsd_display_pattern(
-	void *opaque,
-	const struct noct_beui_rect *rect,
+	struct backend_context *context,
+	const struct rect *rect,
 	uint32_t color,
 	uint64_t pattern)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
 	struct graphics_pattern_fill request;
 
 	/* Requires a patterned-fill rectangle. */
@@ -5047,16 +4645,16 @@ zedbsd_display_pattern(
 	/* Requires driver support for patterned fills. */
 	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_PATTERN))
 		return 0;
+
 	memset(&request, 0, sizeof(request));
 	copy_rect(&request.rect, rect);
 	request.color = color;
 	request.pattern = pattern;
 
 	/* Reports the zedbsd_display_pattern result. */
-	call_result = ioctl(
-		context->graphics_fd,
-		ZEDBSD_GRAPHICS_PATTERN_FILL,
-		&request) == 0;
+	call_result = ioctl(context->graphics_fd,
+			    ZEDBSD_GRAPHICS_PATTERN_FILL,
+			    &request) == 0;
 
 	/* Reports the zedbsd_display_pattern result. */
 	return call_result;
@@ -5065,15 +4663,14 @@ zedbsd_display_pattern(
 /* Implements zedbsd_display_image_common(). */
 static int
 zedbsd_display_image_common(
-	void *opaque,
+	struct backend_context *context,
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image,
+	const struct image *image,
 	uint64_t pattern,
 	int patterned)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
 	struct graphics_blit request;
 	uint32_t capability;
 
@@ -5082,6 +4679,7 @@ zedbsd_display_image_common(
 	    image->pixels == NULL ||
 	    image->stride > UINT32_MAX)
 		return 0;
+
 	memset(&request, 0, sizeof(request));
 	request.x = x;
 	request.y = y;
@@ -5091,10 +4689,10 @@ zedbsd_display_image_common(
 	request.pixels = (uapi_ptr_t)(uintptr_t)image->pixels;
 
 	/* Handles the next zedbsd_display_image_common decision. */
-	if (image->format == NOCT_BEUI_IMAGE_RGB24) {
+	if (image->format == IMAGE_RGB24) {
 		request.format = ZEDBSD_GRAPHICS_FORMAT_RGB24;
 		capability = ZEDBSD_GRAPHICS_CAP_BLIT_RGB24;
-	} else if (image->format == NOCT_BEUI_IMAGE_INDEX8 &&
+	} else if (image->format == IMAGE_INDEX8 &&
 		   image->palette_size <= 256U) {
 		request.format = ZEDBSD_GRAPHICS_FORMAT_INDEX8;
 		request.palette = (uapi_ptr_t)(uintptr_t)image->palette;
@@ -5108,13 +4706,13 @@ zedbsd_display_image_common(
 	/* Handles the next zedbsd_display_image_common decision. */
 	if (!graphics_has(context, capability))
 		return 0;
+
 	request.pattern = pattern;
 
 	/* Reports the zedbsd_display_image_common result. */
-	call_result = ioctl(
-		context->graphics_fd,
-		patterned ? ZEDBSD_GRAPHICS_BLIT_PATTERN : ZEDBSD_GRAPHICS_BLIT,
-		&request) == 0;
+	call_result = ioctl(context->graphics_fd,
+			    patterned ? ZEDBSD_GRAPHICS_BLIT_PATTERN : ZEDBSD_GRAPHICS_BLIT,
+			    &request) == 0;
 
 	/* Reports the zedbsd_display_image_common result. */
 	return call_result;
@@ -5123,15 +4721,15 @@ zedbsd_display_image_common(
 /* Implements zedbsd_display_image(). */
 static int
 zedbsd_display_image(
-	void *opaque,
+	struct backend_context *context,
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image)
+	const struct image *image)
 {
 	int call_result;
 
 	/* Reports the zedbsd_display_image result. */
-	call_result = zedbsd_display_image_common(opaque, x, y, image, 0, 0);
+	call_result = zedbsd_display_image_common(context, x, y, image, 0, 0);
 
 	/* Reports the zedbsd_display_image result. */
 	return call_result;
@@ -5140,16 +4738,21 @@ zedbsd_display_image(
 /* Implements zedbsd_display_image_pattern(). */
 static int
 zedbsd_display_image_pattern(
-	void *opaque,
+	struct backend_context *context,
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image,
+	const struct image *image,
 	uint64_t pattern)
 {
 	int call_result;
 
 	/* Reports the zedbsd_display_image_pattern result. */
-	call_result = zedbsd_display_image_common(opaque, x, y, image, pattern, 1);
+	call_result = zedbsd_display_image_common(context,
+						  x,
+						  y,
+						  image,
+						  pattern,
+						  1);
 
 	/* Reports the zedbsd_display_image_pattern result. */
 	return call_result;
@@ -5158,22 +4761,22 @@ zedbsd_display_image_pattern(
 /* Implements zedbsd_display_flush(). */
 static int
 zedbsd_display_flush(
-	void *opaque,
-	const struct noct_beui_rect *rectangles,
+	struct backend_context *context,
+	const struct rect *rectangles,
 	size_t rectangle_count)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
-	struct graphics_rect converted[BEUI_ZEDBSD_FLUSH_RECTS];
+	struct graphics_rect converted[FLUSH_RECTS];
 	struct graphics_flush request;
 	size_t index;
 
 	/* Requires a bounded flush request for an open graphics context. */
 	if (context == NULL ||
 	    context->graphics_fd < 0 ||
-	    rectangle_count > BEUI_ZEDBSD_FLUSH_RECTS ||
+	    rectangle_count > FLUSH_RECTS ||
 	    (rectangle_count != 0 && rectangles == NULL))
 		return 0;
+
 	/* A non-buffered driver has nothing to flush. */
 	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_FLUSH))
 		return 1;
@@ -5181,13 +4784,15 @@ zedbsd_display_flush(
 	/* Converts every dirty rectangle to the graphics ABI. */
 	for (index = 0; index < rectangle_count; index++)
 		copy_rect(&converted[index], &rectangles[index]);
-	request.rectangles =
-	    rectangle_count == 0 ? 0 : (uapi_ptr_t)(uintptr_t)converted;
+
+	request.rectangles = rectangle_count == 0 ?
+		0 :
+		(uapi_ptr_t)(uintptr_t)converted;
+
 	request.rectangle_count = (uint32_t)rectangle_count;
 
 	/* Reports the zedbsd_display_flush result. */
-	call_result = ioctl(context->graphics_fd, ZEDBSD_GRAPHICS_FLUSH, &request) ==
-	       0;
+	call_result = ioctl(context->graphics_fd, ZEDBSD_GRAPHICS_FLUSH, &request) == 0;
 
 	/* Reports the zedbsd_display_flush result. */
 	return call_result;
@@ -5196,7 +4801,7 @@ zedbsd_display_flush(
 /* Implements zedbsd_glyph_get(). */
 static int
 zedbsd_glyph_get(
-	struct beui_zedbsd_context *context,
+	struct backend_context *context,
 	uint32_t codepoint,
 	struct graphics_glyph *glyph,
 	uint8_t *bitmap,
@@ -5215,16 +4820,16 @@ zedbsd_glyph_get(
 	/* Requires a bitmap capacity representable by the graphics ABI. */
 	if (capacity > UINT32_MAX)
 		return 0;
+
 	memset(glyph, 0, sizeof(*glyph));
 	glyph->codepoint = codepoint;
 	glyph->bitmap = (uapi_ptr_t)(uintptr_t)bitmap;
 	glyph->bitmap_capacity = (uint32_t)capacity;
 
 	/* Retrieves the requested glyph. */
-	call_result = ioctl(
-		context->graphics_fd,
-		ZEDBSD_GRAPHICS_GET_GLYPH,
-		glyph) == 0;
+	call_result = ioctl(context->graphics_fd,
+			    ZEDBSD_GRAPHICS_GET_GLYPH,
+			    glyph) == 0;
 	if (!call_result)
 		return 0;
 
@@ -5239,26 +4844,24 @@ zedbsd_glyph_get(
 /* Implements zedbsd_glyph_measure(). */
 static int
 zedbsd_glyph_measure(
-	void *opaque,
+	struct backend_context *context,
 	uint32_t codepoint,
 	unsigned *width,
 	unsigned *height)
 {
-	struct beui_zedbsd_context *context = opaque;
 	struct graphics_glyph glyph;
-	uint8_t bitmap[BEUI_ZEDBSD_GLYPH_BYTES];
+	uint8_t bitmap[GLYPH_BYTES];
 
 	/* Requires both glyph measurement destinations. */
 	if (width == NULL || height == NULL)
 		return 0;
 
 	/* Retrieves the glyph metrics. */
-	if (!zedbsd_glyph_get(
-		context,
-		codepoint,
-		&glyph,
-		bitmap,
-		sizeof(bitmap)))
+	if (!zedbsd_glyph_get(context,
+			      codepoint,
+			      &glyph,
+			      bitmap,
+			      sizeof(bitmap)))
 		return 0;
 	*width = glyph.advance != 0 ? glyph.advance : glyph.width;
 	*height = glyph.height;
@@ -5270,7 +4873,7 @@ zedbsd_glyph_measure(
 /* Implements zedbsd_glyph_draw(). */
 static int
 zedbsd_glyph_draw(
-	void *opaque,
+	struct backend_context *context,
 	unsigned x,
 	unsigned y,
 	uint32_t codepoint,
@@ -5278,23 +4881,22 @@ zedbsd_glyph_draw(
 	uint32_t background)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
 	struct graphics_glyph glyph;
 	struct graphics_blit blit;
-	uint8_t bitmap[BEUI_ZEDBSD_GLYPH_BYTES];
+	uint8_t bitmap[GLYPH_BYTES];
 
 	/* Requires driver support for monochrome glyph blits. */
 	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_BLIT_MONO1))
 		return 0;
 
 	/* Retrieves the glyph bitmap. */
-	if (!zedbsd_glyph_get(
-		context,
-		codepoint,
-		&glyph,
-		bitmap,
-		sizeof(bitmap)))
+	if (!zedbsd_glyph_get(context,
+			      codepoint,
+			      &glyph,
+			      bitmap,
+			      sizeof(bitmap)))
 		return 0;
+
 	memset(&blit, 0, sizeof(blit));
 	blit.x = x;
 	blit.y = y;
@@ -5316,11 +4918,11 @@ zedbsd_glyph_draw(
 /* Implements zedbsd_milliseconds(). */
 static uint64_t
 zedbsd_milliseconds(
-	void *opaque)
+	struct backend_context *context)
 {
 	struct timespec now;
 
-	UNUSED_PARAMETER(opaque);
+	UNUSED_PARAMETER(context);
 
 	/* Handles the next zedbsd_milliseconds decision. */
 	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
@@ -5334,7 +4936,7 @@ zedbsd_milliseconds(
 static int
 zedbsd_input_query_capabilities(
 	int fd,
-	struct noct_beui_zedbsd_input_capabilities *capabilities)
+	struct input_capabilities *capabilities)
 {
 	int call_result;
 	unsigned long event_bits[BIT_WORDS(EV_MAX)];
@@ -5349,6 +4951,7 @@ zedbsd_input_query_capabilities(
 	/* Handles the next zedbsd_input_query_capabilities decision. */
 	if (capabilities == NULL)
 		return 0;
+
 	memset(event_bits, 0, sizeof(event_bits));
 	memset(&identity, 0, sizeof(identity));
 	version = 0;
@@ -5364,13 +4967,13 @@ zedbsd_input_query_capabilities(
 	/* Handles the next zedbsd_input_query_capabilities decision. */
 	if (ioctl(fd, EVIOCGBIT(0, sizeof(event_bits)), event_bits) != 0)
 		return 0;
-	noct_beui_zedbsd_input_capabilities_clear(capabilities);
+	input_capabilities_clear(capabilities);
 
 	/* Processes each zedbsd_input_query_capabilities item. */
 	for (code = 0; code <= EV_MAX; code++) {
 		/* Handles the next zedbsd_input_query_capabilities decision. */
 			if (uapi_bit_is_set(event_bits, code)) {
-				noct_beui_zedbsd_input_capabilities_set_event(
+				input_capabilities_set_event(
 					capabilities,
 					code);
 			}
@@ -5381,15 +4984,14 @@ zedbsd_input_query_capabilities(
 		memset(key_bits, 0, sizeof(key_bits));
 
 		/* Handles the next zedbsd_input_query_capabilities decision. */
-		if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) !=
-		    0)
+		if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) != 0)
 			return 0;
 
 		/* Processes each zedbsd_input_query_capabilities item. */
 		for (code = 0; code <= KEY_MAX; code++) {
 			/* Handles the next zedbsd_input_query_capabilities decision. */
 			if (uapi_bit_is_set(key_bits, code)) {
-				noct_beui_zedbsd_input_capabilities_set_key(
+				input_capabilities_set_key(
 					capabilities,
 					code);
 			}
@@ -5401,17 +5003,16 @@ zedbsd_input_query_capabilities(
 		memset(relative_bits, 0, sizeof(relative_bits));
 
 		/* Handles the next zedbsd_input_query_capabilities decision. */
-		if (ioctl(
-			fd,
-			EVIOCGBIT(EV_REL, sizeof(relative_bits)),
-			relative_bits) != 0)
+		if (ioctl(fd,
+			  EVIOCGBIT(EV_REL, sizeof(relative_bits)),
+			  relative_bits) != 0)
 			return 0;
 
 		/* Processes each zedbsd_input_query_capabilities item. */
 		for (code = 0; code <= REL_MAX; code++) {
 			/* Handles the next zedbsd_input_query_capabilities decision. */
 			if (uapi_bit_is_set(relative_bits, code)) {
-				noct_beui_zedbsd_input_capabilities_set_relative(
+				input_capabilities_set_relative(
 					capabilities,
 					code);
 			}
@@ -5423,10 +5024,9 @@ zedbsd_input_query_capabilities(
 		memset(absolute_bits, 0, sizeof(absolute_bits));
 
 		/* Handles the next zedbsd_input_query_capabilities decision. */
-		if (ioctl(
-			fd,
-			EVIOCGBIT(EV_ABS, sizeof(absolute_bits)),
-			absolute_bits) != 0)
+		if (ioctl(fd,
+			  EVIOCGBIT(EV_ABS, sizeof(absolute_bits)),
+			  absolute_bits) != 0)
 			return 0;
 
 		/* Processes each zedbsd_input_query_capabilities item. */
@@ -5434,11 +5034,12 @@ zedbsd_input_query_capabilities(
 			/* Handles the next zedbsd_input_query_capabilities decision. */
 			if (!uapi_bit_is_set(absolute_bits, code))
 				continue;
+
 			memset(&absolute, 0, sizeof(absolute));
 
 			/* Handles the next zedbsd_input_query_capabilities decision. */
 			if (ioctl(fd, EVIOCGABS(code), &absolute) == 0) {
-				noct_beui_zedbsd_input_capabilities_set_absolute(
+				input_capabilities_set_absolute(
 					capabilities,
 					code,
 					&absolute);
@@ -5447,8 +5048,7 @@ zedbsd_input_query_capabilities(
 	}
 
 	/* Reports the zedbsd_input_query_capabilities result. */
-	call_result = noct_beui_zedbsd_input_classify(capabilities) !=
-	       NOCT_BEUI_ZEDBSD_INPUT_ROLE_NONE;
+	call_result = input_classify(capabilities) != INPUT_ROLE_NONE;
 
 	/* Reports the zedbsd_input_query_capabilities result. */
 	return call_result;
@@ -5457,7 +5057,7 @@ zedbsd_input_query_capabilities(
 /* Implements zedbsd_input_resync_source(). */
 static unsigned
 zedbsd_input_resync_source(
-	struct beui_zedbsd_context *context,
+	struct backend_context *context,
 	unsigned source_index)
 {
 	unsigned call_result;
@@ -5471,29 +5071,31 @@ zedbsd_input_resync_source(
 
 	/* Handles the next zedbsd_input_resync_source decision. */
 	if (context == NULL ||
-	    source_index >= NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES ||
+	    source_index >= INPUT_MAX_SOURCES ||
 	    context->sources[source_index].fd < 0)
-		return NOCT_BEUI_ZEDBSD_INPUT_UPDATE_NONE;
+		return INPUT_UPDATE_NONE;
+
 	fd = context->sources[source_index].fd;
+
 	memset(key_bits, 0, sizeof(key_bits));
-	key_pointer = ioctl(fd, EVIOCGKEY(sizeof(key_bits)), key_bits) == 0
-			  ? (const void *)key_bits
-			  : NULL;
+
+	key_pointer = ioctl(fd, EVIOCGKEY(sizeof(key_bits)), key_bits) == 0 ?
+		(const void *)key_bits :
+		NULL;
+
 	memset(&absolute_x, 0, sizeof(absolute_x));
-	absolute_x_pointer =
-	    ioctl(fd, EVIOCGABS(ABS_X), &absolute_x) == 0 ? &absolute_x : NULL;
+	absolute_x_pointer = ioctl(fd, EVIOCGABS(ABS_X), &absolute_x) == 0 ? &absolute_x : NULL;
+
 	memset(&absolute_y, 0, sizeof(absolute_y));
-	absolute_y_pointer =
-	    ioctl(fd, EVIOCGABS(ABS_Y), &absolute_y) == 0 ? &absolute_y : NULL;
+	absolute_y_pointer = ioctl(fd, EVIOCGABS(ABS_Y), &absolute_y) == 0 ? &absolute_y : NULL;
 
 	/* Reports the zedbsd_input_resync_source result. */
-	call_result = noct_beui_zedbsd_input_resync(
-		&context->input,
-		source_index,
-		key_pointer,
-		sizeof(key_bits),
-		absolute_x_pointer,
-		absolute_y_pointer);
+	call_result = input_resync(&context->input,
+				   source_index,
+				   key_pointer,
+				   sizeof(key_bits),
+				   absolute_x_pointer,
+				   absolute_y_pointer);
 
 	/* Reports the zedbsd_input_resync_source result. */
 	return call_result;
@@ -5532,19 +5134,17 @@ zedbsd_input_event_name(
 /* Implements zedbsd_input_has_event_name(). */
 static int
 zedbsd_input_has_event_name(
-	const struct beui_zedbsd_context *context,
+	const struct backend_context *context,
 	const char *event_name)
 {
 	unsigned index;
 
 	/* Processes each zedbsd_input_has_event_name item. */
-	for (index = 0; index < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; index++) {
+	for (index = 0; index < INPUT_MAX_SOURCES; index++) {
 		/* Compares names only for an attached input source. */
 		if (context->sources[index].fd >= 0) {
 			/* Reports a matching attached event name. */
-			if (strcmp(
-				context->sources[index].event_name,
-				event_name) == 0)
+			if (strcmp(context->sources[index].event_name, event_name) == 0)
 				return 1;
 		}
 	}
@@ -5556,10 +5156,10 @@ zedbsd_input_has_event_name(
 /* Implements zedbsd_input_discover(). */
 static void
 zedbsd_input_discover(
-	struct beui_zedbsd_context *context,
+	struct backend_context *context,
 	int force)
 {
-	struct noct_beui_zedbsd_input_capabilities capabilities;
+	struct input_capabilities capabilities;
 	struct dirent *entry;
 	DIR *directory;
 	char path[32];
@@ -5571,6 +5171,7 @@ zedbsd_input_discover(
 	/* Handles the next zedbsd_input_discover decision. */
 	if (context == NULL || !context->input_initialized)
 		return;
+
 	now = zedbsd_milliseconds(context);
 
 	/* Handles the next zedbsd_input_discover decision. */
@@ -5578,7 +5179,9 @@ zedbsd_input_discover(
 	    context->next_rescan != 0 &&
 	    now < context->next_rescan)
 		return;
-	context->next_rescan = now + BEUI_ZEDBSD_RESCAN_MS;
+
+	context->next_rescan = now + RESCAN_MS;
+
 	directory = opendir("/dev/input");
 
 	/* Handles the next zedbsd_input_discover decision. */
@@ -5599,6 +5202,7 @@ zedbsd_input_discover(
 		/* Filters devices that are already attached. */
 		if (zedbsd_input_has_event_name(context, entry->d_name))
 			continue;
+
 		length = snprintf(
 			path,
 			sizeof(path),
@@ -5608,6 +5212,7 @@ zedbsd_input_discover(
 		/* Handles the next zedbsd_input_discover decision. */
 		if (length < 0 || (size_t)length >= sizeof(path))
 			continue;
+
 		fd = open(path, O_RDONLY | O_NONBLOCK);
 
 		/* Handles the next zedbsd_input_discover decision. */
@@ -5619,79 +5224,79 @@ zedbsd_input_discover(
 			(void)close(fd);
 			continue;
 		}
-		slot = noct_beui_zedbsd_input_attach(
-			&context->input,
-			&capabilities);
+
+		slot = input_attach(&context->input, &capabilities);
 
 		/* Handles the next zedbsd_input_discover decision. */
 		if (slot < 0 ||
-		    (unsigned)slot >= NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES) {
+		    (unsigned)slot >= INPUT_MAX_SOURCES) {
 			(void)close(fd);
 			continue;
 		}
+
 		context->sources[slot].fd = fd;
+
 		(void)strcpy(context->sources[slot].event_name, entry->d_name);
+
 		context->sources[slot].engine_slot = slot;
+
 		(void)zedbsd_input_resync_source(context, (unsigned)slot);
 	}
+
 	(void)closedir(directory);
 }
 
 /* Implements zedbsd_input_detach_source(). */
 static void
 zedbsd_input_detach_source(
-	struct beui_zedbsd_context *context,
+	struct backend_context *context,
 	unsigned source_index)
 {
 	/* Handles the next zedbsd_input_detach_source decision. */
 	if (context == NULL ||
-	    source_index >= NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES)
+	    source_index >= INPUT_MAX_SOURCES)
 		return;
 
 	/* Handles the next zedbsd_input_detach_source decision. */
 	if (context->sources[source_index].fd >= 0)
 		(void)close(context->sources[source_index].fd);
+
 	context->sources[source_index].fd = -1;
 	context->sources[source_index].event_name[0] = '\0';
 	context->sources[source_index].engine_slot = -1;
-	(void)noct_beui_zedbsd_input_detach(&context->input, source_index);
-	context->next_rescan =
-	    zedbsd_milliseconds(context) + BEUI_ZEDBSD_RESCAN_MS;
+
+	(void)input_detach(&context->input, source_index);
+
+	context->next_rescan = zedbsd_milliseconds(context) + RESCAN_MS;
 }
 
 /* Implements zedbsd_input_service_source(). */
 static void
 zedbsd_input_service_source(
-	struct beui_zedbsd_context *context,
+	struct backend_context *context,
 	unsigned source_index)
 {
-	unsigned char
-	    buffer[sizeof(struct input_event) * BEUI_ZEDBSD_READ_EVENTS];
+	unsigned char buffer[sizeof(struct input_event) * READ_EVENTS];
 	ssize_t count;
 	unsigned update;
 	unsigned iteration;
 
 	/* Processes each zedbsd_input_service_source item. */
-	for (iteration = 0; iteration < BEUI_ZEDBSD_READ_EVENTS; iteration++) {
-		count = read(
-			context->sources[source_index].fd,
-			buffer,
-			sizeof(buffer));
+	for (iteration = 0; iteration < READ_EVENTS; iteration++) {
+		count = read(context->sources[source_index].fd,
+			     buffer,
+			     sizeof(buffer));
 
 		/* Handles the next zedbsd_input_service_source decision. */
 		if (count > 0) {
-			update = noct_beui_zedbsd_input_feed(
-				&context->input,
-				source_index,
-				buffer,
-				(size_t)count);
+			update = input_feed(&context->input,
+					    source_index,
+					    buffer,
+					    (size_t)count);
 
 			/* Handles the next zedbsd_input_service_source decision. */
-			if ((update & NOCT_BEUI_ZEDBSD_INPUT_UPDATE_RESYNC) !=
-			    0) {
-				(void)zedbsd_input_resync_source(
-					context,
-					source_index);
+			if ((update & INPUT_UPDATE_RESYNC) != 0) {
+				(void)zedbsd_input_resync_source(context, source_index);
 			}
 			continue;
 		}
@@ -5720,7 +5325,7 @@ zedbsd_input_service_source(
 /* Implements zedbsd_input_service(). */
 static void
 zedbsd_input_service(
-	struct beui_zedbsd_context *context)
+	struct backend_context *context)
 {
 	unsigned index;
 
@@ -5729,18 +5334,19 @@ zedbsd_input_service(
 		return;
 
 	/* Processes each zedbsd_input_service item. */
-	for (index = 0; index < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; index++) {
+	for (index = 0; index < INPUT_MAX_SOURCES; index++) {
 		/* Handles the next zedbsd_input_service decision. */
 		if (context->sources[index].fd >= 0)
 			zedbsd_input_service_source(context, index);
 	}
+
 	zedbsd_input_discover(context, 0);
 }
 
 /* Implements zedbsd_input_close(). */
 static void
 zedbsd_input_close(
-	struct beui_zedbsd_context *context)
+	struct backend_context *context)
 {
 	unsigned index;
 
@@ -5749,12 +5355,14 @@ zedbsd_input_close(
 		return;
 
 	/* Processes each zedbsd_input_close item. */
-	for (index = 0; index < NOCT_BEUI_ZEDBSD_INPUT_MAX_SOURCES; index++) {
+	for (index = 0; index < INPUT_MAX_SOURCES; index++) {
 		/* Handles the next zedbsd_input_close decision. */
 		if (context->sources[index].fd >= 0)
 			zedbsd_input_detach_source(context, index);
 	}
-	noct_beui_zedbsd_input_reset(&context->input);
+
+	input_reset(&context->input);
+
 	context->input_initialized = 0;
 	context->next_rescan = 0;
 }
@@ -5762,70 +5370,63 @@ zedbsd_input_close(
 /* Implements zedbsd_display_leave(). */
 static void
 zedbsd_display_leave(
-	void *opaque)
+	struct backend_context *context)
 {
-	struct beui_zedbsd_context *context = opaque;
-
 	/* Handles the next zedbsd_display_leave decision. */
 	if (context == NULL)
 		return;
+
 	zedbsd_input_close(context);
 
 	/* Handles the next zedbsd_display_leave decision. */
 	if (context->graphics_fd >= 0)
 		(void)close(context->graphics_fd);
+
 	context->graphics_fd = -1;
 	context->graphics_capabilities = 0;
+
 	memset(&context->display, 0, sizeof(context->display));
 }
 
 /* Implements zedbsd_pointer_start(). */
 static int
 zedbsd_pointer_start(
-	void *opaque,
-	const struct noct_beui_display_info *display)
+	struct backend_context *context,
+	const struct display_info *display)
 {
-	struct beui_zedbsd_context *context = opaque;
-
 	/* Handles the next zedbsd_pointer_start decision. */
 	if (context == NULL ||
 	    display == NULL ||
 	    !context->input_initialized)
 		return 0;
-	noct_beui_zedbsd_input_set_display(
+
+	input_set_display(
 		&context->input,
 		display->width,
 		display->height);
+
 	zedbsd_input_discover(context, 1);
 
 	/* Reports the zedbsd_pointer_start result. */
 	return 1;
 }
 
-/* Implements zedbsd_pointer_stop(). */
-static void
-zedbsd_pointer_stop(
-	void *opaque)
-{
-	UNUSED_PARAMETER(opaque);
-}
-
 /* Implements zedbsd_pointer_poll(). */
 static int
 zedbsd_pointer_poll(
-	void *opaque,
-	struct noct_beui_pointer_event *event)
+	struct backend_context *context,
+	struct pointer_event *event)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
 
 	/* Handles the next zedbsd_pointer_poll decision. */
 	if (context == NULL || !context->input_initialized)
 		return -1;
+
 	zedbsd_input_service(context);
 
 	/* Reports the zedbsd_pointer_poll result. */
-	call_result = noct_beui_zedbsd_input_poll_pointer(&context->input, event);
+	call_result = input_poll_pointer(&context->input, event);
 
 	/* Reports the zedbsd_pointer_poll result. */
 	return call_result;
@@ -5834,19 +5435,19 @@ zedbsd_pointer_poll(
 /* Implements zedbsd_key_state(). */
 static int
 zedbsd_key_state(
-	void *opaque,
+	struct backend_context *context,
 	int key)
 {
 	int call_result;
-	struct beui_zedbsd_context *context = opaque;
 
 	/* Handles the next zedbsd_key_state decision. */
 	if (context == NULL || !context->input_initialized)
 		return -1;
+
 	zedbsd_input_service(context);
 
 	/* Reports the zedbsd_key_state result. */
-	call_result = noct_beui_zedbsd_input_is_key_down(&context->input, key);
+	call_result = input_is_key_down(&context->input, key);
 
 	/* Reports the zedbsd_key_state result. */
 	return call_result;
@@ -5855,9 +5456,7 @@ zedbsd_key_state(
 /* Implements zedbsd_input_drain(). */
 static void
 zedbsd_input_drain(
-	void *opaque)
+	struct backend_context *context)
 {
-	zedbsd_input_service(opaque);
+	zedbsd_input_service(context);
 }
-
-#endif /* NOCT_BEUI_ZEDBSD_INPUT_TEST */

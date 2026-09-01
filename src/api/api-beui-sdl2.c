@@ -22,71 +22,62 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NOCT_BEUI_IMAGE_SOURCE_MAX (2U * 1024U * 1024U)
+#define IMAGE_SOURCE_MAX	(2U * 1024U * 1024U)
+#define IMAGE_PIXELS_MAX	(2U * 1024U * 1024U)
 
-#define NOCT_BEUI_IMAGE_PIXELS_MAX (2U * 1024U * 1024U)
+#define DISPLAY_WIDTH		640U
+#define DISPLAY_HEIGHT		400U
 
-#define BEUI_SDL2_WIDTH 640U
-
-#define BEUI_SDL2_HEIGHT 400U
-
-
-enum noct_beui_image_format {
-	NOCT_BEUI_IMAGE_INDEX8 = 1,
-	NOCT_BEUI_IMAGE_RGB24 = 2,
+enum image_format {
+	IMAGE_INDEX8 = 1,
+	IMAGE_RGB24 = 2
 };
 
-enum noct_beui_pointer_button {
-	NOCT_BEUI_BUTTON_LEFT = 1U << 0,
-	NOCT_BEUI_BUTTON_RIGHT = 1U << 1,
-	NOCT_BEUI_BUTTON_MIDDLE = 1U << 2
+enum pointer_button {
+	BUTTON_LEFT = 1U << 0,
+	BUTTON_RIGHT = 1U << 1,
+	BUTTON_MIDDLE = 1U << 2
 };
 
 /*
- * Key codes shared with the Boots BeUI implementation; the same compiled
- * script must observe identical Key.* values on both hosts.
+ * Keeps the language-visible Key.* values identical on every platform.
  */
-enum noct_beui_key_code {
-	NOCT_BEUI_KEY_ESCAPE = 0x1b,
-	NOCT_BEUI_KEY_BACKSPACE = 0x08,
-	NOCT_BEUI_KEY_TAB = 0x09,
-	NOCT_BEUI_KEY_ENTER = 0x0d,
-	NOCT_BEUI_KEY_PAGE_UP = 0x136,
-	NOCT_BEUI_KEY_PAGE_DOWN = 0x137,
-	NOCT_BEUI_KEY_INSERT = 0x138,
-	NOCT_BEUI_KEY_DELETE = 0x139,
-	NOCT_BEUI_KEY_UP = 0x13a,
-	NOCT_BEUI_KEY_LEFT = 0x13b,
-	NOCT_BEUI_KEY_RIGHT = 0x13c,
-	NOCT_BEUI_KEY_DOWN = 0x13d,
-	NOCT_BEUI_KEY_HOME = 0x13e,
-	NOCT_BEUI_KEY_END = 0x13f,
-	NOCT_BEUI_KEY_F1 = 0x162,
-	NOCT_BEUI_KEY_F2 = 0x163,
-	NOCT_BEUI_KEY_F3 = 0x164,
-	NOCT_BEUI_KEY_F4 = 0x165,
-	NOCT_BEUI_KEY_F5 = 0x166,
-	NOCT_BEUI_KEY_F6 = 0x167,
-	NOCT_BEUI_KEY_F7 = 0x168,
-	NOCT_BEUI_KEY_F8 = 0x169,
-	NOCT_BEUI_KEY_F9 = 0x16a,
-	NOCT_BEUI_KEY_F10 = 0x16b,
-	/* State-only: modifiers never appear in buffered key streams. */
-	NOCT_BEUI_KEY_SHIFT = 0x170
+enum key_code {
+	KEY_ESCAPE = 0x1b,
+	KEY_BACKSPACE = 0x08,
+	KEY_TAB = 0x09,
+	KEY_ENTER = 0x0d,
+	KEY_PAGE_UP = 0x136,
+	KEY_PAGE_DOWN = 0x137,
+	KEY_INSERT = 0x138,
+	KEY_DELETE = 0x139,
+	KEY_UP = 0x13a,
+	KEY_LEFT = 0x13b,
+	KEY_RIGHT = 0x13c,
+	KEY_DOWN = 0x13d,
+	KEY_HOME = 0x13e,
+	KEY_END = 0x13f,
+	KEY_F1 = 0x162,
+	KEY_F2 = 0x163,
+	KEY_F3 = 0x164,
+	KEY_F4 = 0x165,
+	KEY_F5 = 0x166,
+	KEY_F6 = 0x167,
+	KEY_F7 = 0x168,
+	KEY_F8 = 0x169,
+	KEY_F9 = 0x16a,
+	KEY_F10 = 0x16b,
+	KEY_SHIFT = 0x170
 };
 
-/*
- * Complete platform-private BeUI contract.  SDL2 owns this copy rather than
- * depending on a shared backend or private implementation header.
- */
-struct noct_beui_rect {
+struct rect {
 	unsigned x;
 	unsigned y;
 	unsigned width;
 	unsigned height;
 };
 
-struct noct_beui_display_info {
+struct display_info {
 	/* Input hint to enter(); zero means the backend's default depth. */
 	unsigned preferred_bits_per_pixel;
 	unsigned width;
@@ -100,8 +91,8 @@ struct noct_beui_display_info {
  * contain one palette index per pixel; RGB24 pixels are tightly packed in
  * R, G, B order.  Palette entries and solid colors use 0x00RRGGBB.
  */
-struct noct_beui_image {
-	enum noct_beui_image_format format;
+struct image {
+	enum image_format format;
 	unsigned width;
 	unsigned height;
 	size_t stride;
@@ -116,123 +107,32 @@ struct noct_beui_image {
  * clamp inside their backend, so scripts see one coordinate space on
  * every host.
  */
-struct noct_beui_pointer_event {
+struct pointer_event {
 	unsigned x;
 	unsigned y;
 	unsigned buttons;
 };
 
-struct noct_beui_display_hal {
-	void *context;
-	int (*enter)(void *context, struct noct_beui_display_info *info);
-	void (*leave)(void *context);
-	/*
-	 * Optional.  Services the host window system and reports whether
-	 * the display is still alive: 1 to continue, 0 once the user has
-	 * asked to close it, negative on error.  Targets that own the
-	 * whole machine leave this NULL and never close.
-	 */
-	int (*poll_events)(void *context);
-	int (*fill)(void *context, const struct noct_beui_rect *rect,
-		    uint32_t color);
-	int (*line)(void *context, unsigned x0, unsigned y0, unsigned x1,
-		    unsigned y1, uint32_t color);
-	int (*pattern_fill)(void *context, const struct noct_beui_rect *rect,
-			    uint32_t color, uint64_t pattern);
-	int (*draw_image)(void *context, unsigned x, unsigned y,
-			  const struct noct_beui_image *image);
-	int (*draw_image_pattern)(void *context, unsigned x, unsigned y,
-				  const struct noct_beui_image *image,
-				  uint64_t pattern);
-	int (*flush)(void *context, const struct noct_beui_rect *rectangles,
-		     size_t rectangle_count);
-};
-
-struct noct_beui_glyph_hal {
-	void *context;
-	int (*measure)(void *context, uint32_t codepoint, unsigned *width,
-		       unsigned *height);
-	int (*draw)(void *context, unsigned x, unsigned y, uint32_t codepoint,
-		    uint32_t foreground, uint32_t background);
-};
-
-/*
- * poll() reports the current absolute pointer state: 1 when the event
- * was filled in, 0 when nothing has changed since the last call, and a
- * negative value on error.  start() receives the display geometry so
- * relative-motion hardware can clamp to the visible area.
- */
-struct noct_beui_pointer_hal {
-	void *context;
-	int (*start)(void *context,
-		     const struct noct_beui_display_info *display);
-	void (*stop)(void *context);
-	int (*poll)(void *context, struct noct_beui_pointer_event *event);
-};
-
-/*
- * The clock derives time from a polled counter on some targets; callers
- * must invoke milliseconds() (or the core sleep/poll helpers) at least
- * once per hardware counter period or elapsed time is lost.
- */
-struct noct_beui_clock_hal {
-	void *context;
-	uint64_t (*milliseconds)(void *context);
-};
-
-struct noct_beui_audio_hal {
-	void *context;
-	int (*start)(void *context, unsigned sample_rate, unsigned channels);
-	void (*stop)(void *context);
-	int (*poll)(void *context);
-	int (*write)(void *context, const int16_t *samples, size_t frame_count);
-};
-
-/*
- * Real-time key state for the NOCT_BEUI_KEY_* namespace plus lowercase
- * ASCII.  is_key_down() returns 1 while the key is held, 0 when it is
- * up, and -1 for keys the target cannot sense.  drain() empties the
- * platform type-ahead buffer so keys held during a game never leak to
- * the caller after BeUI closes; the core calls it from poll and sleep.
- */
-struct noct_beui_input_hal {
-	void *context;
-	int (*is_key_down)(void *context, int key);
-	void (*drain)(void *context);
-};
-
-struct noct_beui_hal {
-	struct noct_beui_display_hal display;
-	struct noct_beui_glyph_hal glyph;
-	struct noct_beui_pointer_hal pointer;
-	struct noct_beui_clock_hal clock;
-	struct noct_beui_audio_hal audio;
-	struct noct_beui_input_hal input;
-};
-
-/* Platform-private BeUI lifecycle, drawing state, and image registry. */
 /*
  * A decoded image lives until the script destroys it or the VM shuts
  * down.  Pixels are appended to the entry so one allocation covers both.
  */
-struct noct_beui_image_entry {
-	struct noct_beui_image_entry *next;
+struct image_entry {
+	struct image_entry *next;
 	int handle;
-	struct noct_beui_image image;
+	struct image image;
 	uint8_t pixels[1];
 };
 
-struct noct_beui_state {
-	const struct noct_beui_hal *hal;
-	struct noct_beui_display_info display;
+struct state {
+	struct display_info display;
 	int display_open;
 	int pointer_open;
-	int audio_open;
 	int close_requested;
 	unsigned pointer_x;
 	unsigned pointer_y;
 	unsigned pointer_buttons;
-	struct noct_beui_image_entry *images;
+	struct image_entry *images;
 	int next_image_handle;
 };
 
@@ -250,10 +150,10 @@ struct bmp_layout {
 	unsigned height;
 	unsigned bits_per_pixel;
 	int top_down;
-	enum noct_beui_image_format format;
+	enum image_format format;
 };
 
-struct beui_ffi_item {
+struct ffi_item {
 	const char *global_name;
 	const char *field_name;
 	size_t param_count;
@@ -261,95 +161,89 @@ struct beui_ffi_item {
 	bool (*cfunc)(NoctEnv *env);
 };
 
-struct beui_int_constant {
+struct int_constant {
 	const char *name;
 	int value;
 };
 
-struct beui_sdl2_context {
+struct sdl2_context {
 	SDL_Window *window;
 	SDL_Surface *framebuffer;
-	SDL_AudioDeviceID audio_device;
-	unsigned audio_channels;
 	int video_initialized;
 	int timer_initialized;
-	int audio_initialized;
 	int alive;
 };
 
-static struct noct_beui_state state;
+static struct state state;
 
-/* Key names shared with the Boots BeUI implementation. */
-static const struct beui_int_constant beui_keys[] = {
-	{"Escape", NOCT_BEUI_KEY_ESCAPE},
-	{"Tab", NOCT_BEUI_KEY_TAB},
-	{"Enter", NOCT_BEUI_KEY_ENTER},
-	{"Backspace", NOCT_BEUI_KEY_BACKSPACE},
-	{"Delete", NOCT_BEUI_KEY_DELETE},
-	{"Insert", NOCT_BEUI_KEY_INSERT},
-	{"Up", NOCT_BEUI_KEY_UP},
-	{"Down", NOCT_BEUI_KEY_DOWN},
-	{"Left", NOCT_BEUI_KEY_LEFT},
-	{"Right", NOCT_BEUI_KEY_RIGHT},
-	{"Home", NOCT_BEUI_KEY_HOME},
-	{"End", NOCT_BEUI_KEY_END},
-	{"PageUp", NOCT_BEUI_KEY_PAGE_UP},
-	{"PageDown", NOCT_BEUI_KEY_PAGE_DOWN},
-	{"F1", NOCT_BEUI_KEY_F1}, {"F2", NOCT_BEUI_KEY_F2},
-	{"F3", NOCT_BEUI_KEY_F3}, {"F4", NOCT_BEUI_KEY_F4},
-	{"F5", NOCT_BEUI_KEY_F5}, {"F6", NOCT_BEUI_KEY_F6},
-	{"F7", NOCT_BEUI_KEY_F7}, {"F8", NOCT_BEUI_KEY_F8},
-	{"F9", NOCT_BEUI_KEY_F9}, {"F10", NOCT_BEUI_KEY_F10},
+/* Key names exposed through the Key dictionary. */
+static const struct int_constant key_constants[] = {
+	{"Escape", KEY_ESCAPE},
+	{"Tab", KEY_TAB},
+	{"Enter", KEY_ENTER},
+	{"Backspace", KEY_BACKSPACE},
+	{"Delete", KEY_DELETE},
+	{"Insert", KEY_INSERT},
+	{"Up", KEY_UP},
+	{"Down", KEY_DOWN},
+	{"Left", KEY_LEFT},
+	{"Right", KEY_RIGHT},
+	{"Home", KEY_HOME},
+	{"End", KEY_END},
+	{"PageUp", KEY_PAGE_UP},
+	{"PageDown", KEY_PAGE_DOWN},
+	{"F1", KEY_F1}, {"F2", KEY_F2},
+	{"F3", KEY_F3}, {"F4", KEY_F4},
+	{"F5", KEY_F5}, {"F6", KEY_F6},
+	{"F7", KEY_F7}, {"F8", KEY_F8},
+	{"F9", KEY_F9}, {"F10", KEY_F10},
 	{"Space", ' '},
-	{"Shift", NOCT_BEUI_KEY_SHIFT},
+	{"Shift", KEY_SHIFT}
 };
 
 /* Bit values returned by BeUI.getPointerButtons. */
-static const struct beui_int_constant beui_buttons[] = {
-	{"Left", NOCT_BEUI_BUTTON_LEFT},
-	{"Right", NOCT_BEUI_BUTTON_RIGHT},
-	{"Middle", NOCT_BEUI_BUTTON_MIDDLE},
+static const struct int_constant button_constants[] = {
+	{"Left", BUTTON_LEFT},
+	{"Right", BUTTON_RIGHT},
+	{"Middle", BUTTON_MIDDLE}
 };
 
-static struct beui_sdl2_context sdl2_context;
+static struct sdl2_context sdl2_context;
 
-static struct noct_beui_hal sdl2_hal;
-
-static int noct_beui_bind(const struct noct_beui_hal *hal);
-static int noct_beui_init(void);
-static int noct_beui_init_with_hint(unsigned preferred_bits_per_pixel);
-static void noct_beui_close(void);
-static void noct_beui_cleanup(void);
-static int noct_beui_is_open(void);
-static int noct_beui_get_display_info(struct noct_beui_display_info *info);
-static int noct_beui_fill(const struct noct_beui_rect *rect, uint32_t color);
-static int noct_beui_line(unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
-static int noct_beui_pattern_fill(const struct noct_beui_rect *rect, uint32_t color, uint64_t pattern);
-static int image_valid(const struct noct_beui_image *image);
-static int noct_beui_draw_image(unsigned x, unsigned y, const struct noct_beui_image *image);
-static int noct_beui_draw_image_region(const struct noct_beui_image *image, unsigned source_x, unsigned source_y, unsigned width, unsigned height, unsigned destination_x, unsigned destination_y);
-static int noct_beui_draw_image_pattern(unsigned x, unsigned y, const struct noct_beui_image *image, uint64_t pattern);
+static int beui_init(void);
+static int beui_init_with_hint(unsigned preferred_bits_per_pixel);
+static void beui_close(void);
+static void beui_cleanup(void);
+static int beui_is_open(void);
+static int beui_get_display_info(struct display_info *info);
+static int beui_fill(const struct rect *rect, uint32_t color);
+static int beui_line(unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
+static int beui_pattern_fill(const struct rect *rect, uint32_t color, uint64_t pattern);
+static int image_valid(const struct image *image);
+static int beui_draw_image(unsigned x, unsigned y, const struct image *image);
+static int beui_draw_image_region(const struct image *image, unsigned source_x, unsigned source_y, unsigned width, unsigned height, unsigned destination_x, unsigned destination_y);
+static int beui_draw_image_pattern(unsigned x, unsigned y, const struct image *image, uint64_t pattern);
 static uint32_t decode_utf8(const char **cursor);
-static int noct_beui_measure_text(const char *text, unsigned *width, unsigned *height);
-static int noct_beui_draw_text(const char *text, unsigned x, unsigned y, uint32_t foreground, uint32_t background);
-static int noct_beui_poll(void);
-static int noct_beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
-static int noct_beui_flush(void);
-static int noct_beui_get_milliseconds(uint64_t *milliseconds);
-static int noct_beui_sleep(unsigned milliseconds);
-static int noct_beui_is_key_down(int key);
-static void noct_beui_drain_input(void);
-static int noct_beui_image_load_bmp(const void *data, size_t size);
-static const struct noct_beui_image *noct_beui_image_get(int handle);
-static int noct_beui_image_destroy(int handle);
+static int beui_measure_text(const char *text, unsigned *width, unsigned *height);
+static int beui_draw_text(const char *text, unsigned x, unsigned y, uint32_t foreground, uint32_t background);
+static int beui_poll(void);
+static int beui_get_pointer(unsigned *x, unsigned *y, unsigned *buttons);
+static int beui_flush(void);
+static int beui_get_milliseconds(uint64_t *milliseconds);
+static int beui_sleep(unsigned milliseconds);
+static int beui_is_key_down(int key);
+static void beui_drain_input(void);
+static int image_load_bmp(const void *data, size_t size);
+static const struct image *image_get(int handle);
+static int image_destroy(int handle);
 static uint16_t read_u16(const uint8_t *bytes);
 static uint32_t read_u32(const uint8_t *bytes);
 static int32_t read_s32(const uint8_t *bytes);
 static int add_overflows(size_t left, size_t right);
 static int multiply_overflows(size_t left, size_t right);
 static int parse_layout(const void *data, size_t size, struct bmp_layout *layout);
-static int noct_beui_bmp_measure(const void *data, size_t size, enum noct_beui_image_format *format, unsigned *width, unsigned *height, size_t *pixel_bytes);
-static int noct_beui_bmp_decode(const void *data, size_t size, void *pixel_storage, size_t pixel_capacity, struct noct_beui_image *image);
+static int bmp_measure(const void *data, size_t size, enum image_format *format, unsigned *width, unsigned *height, size_t *pixel_bytes);
+static int bmp_decode(const void *data, size_t size, void *pixel_storage, size_t pixel_capacity, struct image *image);
 static bool return_int(NoctEnv *env, int value);
 static bool get_int_arg(NoctEnv *env, uint32_t index, int *result);
 static bool cfunc_BeUI_init(NoctEnv *env);
@@ -381,38 +275,33 @@ static bool cfunc_BeUI_drawImage(NoctEnv *env);
 static bool cfunc_BeUI_drawImageRegion(NoctEnv *env);
 static bool cfunc_BeUI_drawImagePattern(NoctEnv *env);
 static bool cfunc_BeUI_destroyImage(NoctEnv *env);
-static bool register_int_dictionary(NoctEnv *env, const char *name, const struct beui_int_constant *entries, size_t count);
-static bool register_beui_api(NoctEnv *env, const struct noct_beui_hal *hal);
+static bool register_int_dictionary(NoctEnv *env, const char *name, const struct int_constant *entries, size_t count);
+static bool register_beui_api(NoctEnv *env);
 static uint32_t sdl2_color(uint32_t color);
 static int sdl2_pattern_bit(uint64_t pattern, unsigned x, unsigned y);
-static void sdl2_put_pixel(struct beui_sdl2_context *context, unsigned x, unsigned y, uint32_t color);
-static int sdl2_lock_framebuffer(struct beui_sdl2_context *context);
-static void sdl2_unlock_framebuffer(struct beui_sdl2_context *context);
-static int sdl2_enter(void *opaque, struct noct_beui_display_info *info);
-static void sdl2_audio_stop(void *opaque);
-static void sdl2_leave(void *opaque);
-static int sdl2_poll_events(void *opaque);
-static int sdl2_fill(void *opaque, const struct noct_beui_rect *rect, uint32_t color);
-static int sdl2_line(void *opaque, unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
-static int sdl2_pattern_fill(void *opaque, const struct noct_beui_rect *rect, uint32_t color, uint64_t pattern);
-static uint32_t sdl2_image_pixel(const struct noct_beui_image *image, unsigned x, unsigned y);
-static int sdl2_draw_image_common(struct beui_sdl2_context *context, unsigned x, unsigned y, const struct noct_beui_image *image, uint64_t pattern, int patterned);
-static int sdl2_draw_image(void *opaque, unsigned x, unsigned y, const struct noct_beui_image *image);
-static int sdl2_draw_image_pattern(void *opaque, unsigned x, unsigned y, const struct noct_beui_image *image, uint64_t pattern);
-static int sdl2_flush(void *opaque, const struct noct_beui_rect *rectangles, size_t rectangle_count);
+static void sdl2_put_pixel(struct sdl2_context *context, unsigned x, unsigned y, uint32_t color);
+static int sdl2_lock_framebuffer(struct sdl2_context *context);
+static void sdl2_unlock_framebuffer(struct sdl2_context *context);
+static int sdl2_enter(struct sdl2_context *context, struct display_info *info);
+static void sdl2_leave(struct sdl2_context *context);
+static int sdl2_poll_events(struct sdl2_context *context);
+static int sdl2_fill(struct sdl2_context *context, const struct rect *rect, uint32_t color);
+static int sdl2_line(struct sdl2_context *context, unsigned x0, unsigned y0, unsigned x1, unsigned y1, uint32_t color);
+static int sdl2_pattern_fill(struct sdl2_context *context, const struct rect *rect, uint32_t color, uint64_t pattern);
+static uint32_t sdl2_image_pixel(const struct image *image, unsigned x, unsigned y);
+static int sdl2_draw_image_common(struct sdl2_context *context, unsigned x, unsigned y, const struct image *image, uint64_t pattern, int patterned);
+static int sdl2_draw_image(struct sdl2_context *context, unsigned x, unsigned y, const struct image *image);
+static int sdl2_draw_image_pattern(struct sdl2_context *context, unsigned x, unsigned y, const struct image *image, uint64_t pattern);
+static int sdl2_flush(struct sdl2_context *context, const struct rect *rectangles, size_t rectangle_count);
 static void sdl2_ascii_glyph(uint32_t codepoint, uint8_t rows[7]);
-static int sdl2_glyph_measure(void *opaque, uint32_t codepoint, unsigned *width, unsigned *height);
-static int sdl2_glyph_draw(void *opaque, unsigned x, unsigned y, uint32_t codepoint, uint32_t foreground, uint32_t background);
-static int sdl2_pointer_start(void *opaque, const struct noct_beui_display_info *display);
-static void sdl2_pointer_stop(void *opaque);
-static int sdl2_pointer_poll(void *opaque, struct noct_beui_pointer_event *event);
-static uint64_t sdl2_milliseconds(void *opaque);
-static int sdl2_audio_start(void *opaque, unsigned sample_rate, unsigned channels);
-static int sdl2_audio_poll(void *opaque);
-static int sdl2_audio_write(void *opaque, const int16_t *samples, size_t frame_count);
+static int sdl2_glyph_measure(uint32_t codepoint, unsigned *width, unsigned *height);
+static int sdl2_glyph_draw(struct sdl2_context *context, unsigned x, unsigned y, uint32_t codepoint, uint32_t foreground, uint32_t background);
+static int sdl2_pointer_start(struct sdl2_context *context, const struct display_info *display);
+static int sdl2_pointer_poll(struct sdl2_context *context, struct pointer_event *event);
+static uint64_t sdl2_milliseconds(struct sdl2_context *context);
 static SDL_Scancode sdl2_key_scancode(int key);
-static int sdl2_is_key_down(void *opaque, int key);
-static void sdl2_drain_input(void *opaque);
+static int sdl2_is_key_down(struct sdl2_context *context, int key);
+static void sdl2_drain_input(struct sdl2_context *context);
 
 /*
  * Registers the SDL2 BeUI API.
@@ -425,87 +314,32 @@ noct_register_api_beui(
 	bool registered;
 
 	/* Releases resources and handles owned by a previous registration. */
-	noct_beui_cleanup();
+	beui_cleanup();
 
-	/* Initializes the SDL2 display, glyph, and drawing operations. */
-	memset(&sdl2_hal, 0, sizeof(sdl2_hal));
-	sdl2_hal.display.context = &sdl2_context;
-	sdl2_hal.display.enter = sdl2_enter;
-	sdl2_hal.display.leave = sdl2_leave;
-	sdl2_hal.display.poll_events = sdl2_poll_events;
-	sdl2_hal.display.fill = sdl2_fill;
-	sdl2_hal.display.line = sdl2_line;
-	sdl2_hal.display.pattern_fill = sdl2_pattern_fill;
-	sdl2_hal.display.draw_image = sdl2_draw_image;
-	sdl2_hal.display.draw_image_pattern = sdl2_draw_image_pattern;
-	sdl2_hal.display.flush = sdl2_flush;
-	sdl2_hal.glyph.context = &sdl2_context;
-	sdl2_hal.glyph.measure = sdl2_glyph_measure;
-	sdl2_hal.glyph.draw = sdl2_glyph_draw;
-
-	/* Initializes the SDL2 pointer and clock operations. */
-	sdl2_hal.pointer.context = &sdl2_context;
-	sdl2_hal.pointer.start = sdl2_pointer_start;
-	sdl2_hal.pointer.stop = sdl2_pointer_stop;
-	sdl2_hal.pointer.poll = sdl2_pointer_poll;
-	sdl2_hal.clock.context = &sdl2_context;
-	sdl2_hal.clock.milliseconds = sdl2_milliseconds;
-
-	/* Initializes the SDL2 audio operations. */
-	sdl2_hal.audio.context = &sdl2_context;
-	sdl2_hal.audio.start = sdl2_audio_start;
-	sdl2_hal.audio.stop = sdl2_audio_stop;
-	sdl2_hal.audio.poll = sdl2_audio_poll;
-	sdl2_hal.audio.write = sdl2_audio_write;
-
-	/* Initializes the SDL2 keyboard operations. */
-	sdl2_hal.input.context = &sdl2_context;
-	sdl2_hal.input.is_key_down = sdl2_is_key_down;
-	sdl2_hal.input.drain = sdl2_drain_input;
-
-	/* Registers the completed backend and language dictionaries. */
-	registered = register_beui_api(env, &sdl2_hal);
+	/* Registers the SDL2 implementation and language dictionaries. */
+	registered = register_beui_api(env);
 
 	/* Reports whether the SDL2 BeUI API was registered. */
 	return registered;
 }
 
-/* Binds the platform-independent BeUI state to one backend. */
+/* Opens BeUI with SDL2's default pixel depth. */
 static int
-noct_beui_bind(
-	const struct noct_beui_hal *hal)
-{
-	/* Rejects rebinding while any backend service owns resources. */
-	if (state.display_open ||
-	    state.pointer_open ||
-	    state.audio_open) {
-		return 0;
-	}
-
-	/* Publishes the backend contract for subsequent API calls. */
-	state.hal = hal;
-
-	/* Reports a successful backend binding. */
-	return 1;
-}
-
-/* Opens BeUI with the backend's default pixel depth. */
-static int
-noct_beui_init(
+beui_init(
 	void)
 {
 	int initialized;
 
-	/* Opens the backend without a preferred pixel-depth hint. */
-	initialized = noct_beui_init_with_hint(0);
+	/* Opens SDL2 without a preferred pixel-depth hint. */
+	initialized = beui_init_with_hint(0);
 
-	/* Reports whether the backend opened. */
+	/* Reports whether SDL2 opened. */
 	return initialized;
 }
 
-/* Opens BeUI with an optional preferred pixel depth. */
+/* Opens SDL2 with an optional preferred pixel depth. */
 static int
-noct_beui_init_with_hint(
+beui_init_with_hint(
 	unsigned preferred_bits_per_pixel)
 {
 	int entered;
@@ -515,21 +349,12 @@ noct_beui_init_with_hint(
 	if (state.display_open)
 		return 1;
 
-	/* Requires a bound backend with complete display lifecycle hooks. */
-	if (state.hal == NULL ||
-	    state.hal->display.enter == NULL ||
-	    state.hal->display.leave == NULL) {
-		return 0;
-	}
-
 	/* Initializes the display request and preferred pixel depth. */
 	memset(&state.display, 0, sizeof(state.display));
 	state.display.preferred_bits_per_pixel = preferred_bits_per_pixel;
 
-	/* Enters the backend display mode. */
-	entered = state.hal->display.enter(
-		state.hal->display.context,
-		&state.display);
+	/* Enters the SDL2 display mode. */
+	entered = sdl2_enter(&sdl2_context, &state.display);
 	if (!entered)
 		return 0;
 
@@ -539,11 +364,11 @@ noct_beui_init_with_hint(
 	state.pointer_buttons = 0;
 
 	/* Discards input typed before the graphics session began. */
-	noct_beui_drain_input();
+	beui_drain_input();
 
-	/* Closes a backend that returned unusable display dimensions. */
+	/* Closes SDL2 when it returned unusable display dimensions. */
 	if (state.display.width == 0 || state.display.height == 0) {
-		noct_beui_close();
+		beui_close();
 		return 0;
 	}
 
@@ -551,49 +376,33 @@ noct_beui_init_with_hint(
 	state.pointer_x = state.display.width / 2U;
 	state.pointer_y = state.display.height / 2U;
 
-	/* Starts an optional pointer backend after the display is valid. */
-	if (state.hal->pointer.start != NULL) {
-		pointer_started = state.hal->pointer.start(
-			state.hal->pointer.context,
-			&state.display);
-		if (!pointer_started) {
-			noct_beui_close();
-			return 0;
-		}
-
-		/* Records ownership of the started pointer backend. */
-		state.pointer_open = 1;
+	/* Centers the SDL2 pointer after the display is valid. */
+	pointer_started = sdl2_pointer_start(&sdl2_context, &state.display);
+	if (!pointer_started) {
+		beui_close();
+		return 0;
 	}
+	state.pointer_open = 1;
 
 	/* Reports a successfully opened BeUI session. */
 	return 1;
 }
 
-/* Closes every active BeUI backend service. */
+/* Closes the active SDL2 display and pointer. */
 static void
-noct_beui_close(
+beui_close(
 	void)
 {
-	/* Leaves an unbound backend unchanged. */
-	if (state.hal == NULL)
-		return;
-
 	/* Discards keys held or buffered during the graphics session. */
-	noct_beui_drain_input();
+	beui_drain_input();
 
-	/* Stops an active audio backend before other services. */
-	if (state.audio_open && state.hal->audio.stop != NULL)
-		state.hal->audio.stop(state.hal->audio.context);
-	state.audio_open = 0;
-
-	/* Stops an active pointer backend before leaving the display. */
-	if (state.pointer_open && state.hal->pointer.stop != NULL)
-		state.hal->pointer.stop(state.hal->pointer.context);
+	/* Releases the logical pointer before leaving the display. */
 	state.pointer_open = 0;
 
-	/* Leaves the active display after its dependent services stop. */
-	if (state.display_open && state.hal->display.leave != NULL)
-		state.hal->display.leave(state.hal->display.context);
+	/* Leaves the active SDL2 display. */
+	if (state.display_open)
+		sdl2_leave(&sdl2_context);
+
 	state.display_open = 0;
 
 	/* Clears display geometry that is no longer valid. */
@@ -602,17 +411,17 @@ noct_beui_close(
 
 /* Releases all BeUI services and registered images. */
 static void
-noct_beui_cleanup(
+beui_cleanup(
 	void)
 {
-	struct noct_beui_image_entry *entry;
-	struct noct_beui_image_entry *next;
+	struct image_entry *entry;
+	struct image_entry *next;
 
-	/* Captures the registry before backend callbacks run. */
+	/* Captures the registry before SDL2 resources are released. */
 	entry = state.images;
 
-	/* Releases active backend resources before image storage. */
-	noct_beui_close();
+	/* Releases active SDL2 resources before image storage. */
+	beui_close();
 
 	/* Releases every decoded image in registry order. */
 	while (entry != NULL) {
@@ -621,13 +430,13 @@ noct_beui_cleanup(
 		entry = next;
 	}
 
-	/* Clears the complete platform-independent state. */
+	/* Clears the complete BeUI state. */
 	memset(&state, 0, sizeof(state));
 }
 
 /* Reports whether the BeUI display is open. */
 static int
-noct_beui_is_open(
+beui_is_open(
 	void)
 {
 	/* Returns the current display ownership state. */
@@ -636,8 +445,8 @@ noct_beui_is_open(
 
 /* Copies the active BeUI display geometry. */
 static int
-noct_beui_get_display_info(
-	struct noct_beui_display_info *info)
+beui_get_display_info(
+	struct display_info *info)
 {
 	/* Requires an active display and a result destination. */
 	if (!state.display_open || info == NULL)
@@ -652,13 +461,13 @@ noct_beui_get_display_info(
 
 /* Fills one validated BeUI display rectangle. */
 static int
-noct_beui_fill(
-	const struct noct_beui_rect *rect,
+beui_fill(
+	const struct rect *rect,
 	uint32_t color)
 {
 	int filled;
 
-	/* Requires a visible rectangle supported by the active display. */
+	/* Requires a visible rectangle on the active display. */
 	if (!state.display_open ||
 	    rect == NULL ||
 	    rect->width == 0 ||
@@ -666,24 +475,20 @@ noct_beui_fill(
 	    rect->x >= state.display.width ||
 	    rect->y >= state.display.height ||
 	    rect->width > state.display.width - rect->x ||
-	    rect->height > state.display.height - rect->y ||
-	    state.hal->display.fill == NULL) {
+	    rect->height > state.display.height - rect->y) {
 		return 0;
 	}
 
-	/* Delegates the validated fill to the active backend. */
-	filled = state.hal->display.fill(
-		state.hal->display.context,
-		rect,
-		color);
+	/* Draws the validated fill into the SDL2 framebuffer. */
+	filled = sdl2_fill(&sdl2_context, rect, color);
 
-	/* Returns the backend fill status. */
+	/* Returns the SDL2 fill status. */
 	return filled;
 }
 
 /* Draws one validated BeUI display line. */
 static int
-noct_beui_line(
+beui_line(
 	unsigned x0,
 	unsigned y0,
 	unsigned x1,
@@ -692,39 +497,32 @@ noct_beui_line(
 {
 	int drawn;
 
-	/* Requires visible endpoints supported by the active display. */
+	/* Requires visible endpoints on the active display. */
 	if (!state.display_open ||
 	    x0 >= state.display.width ||
 	    x1 >= state.display.width ||
 	    y0 >= state.display.height ||
-	    y1 >= state.display.height ||
-	    state.hal->display.line == NULL) {
+	    y1 >= state.display.height) {
 		return 0;
 	}
 
-	/* Delegates the validated line to the active backend. */
-	drawn = state.hal->display.line(
-		state.hal->display.context,
-		x0,
-		y0,
-		x1,
-		y1,
-		color);
+	/* Draws the validated line into the SDL2 framebuffer. */
+	drawn = sdl2_line(&sdl2_context, x0, y0, x1, y1, color);
 
-	/* Returns the backend line status. */
+	/* Returns the SDL2 line status. */
 	return drawn;
 }
 
 /* Fills one validated BeUI rectangle through an 8-by-8 pattern. */
 static int
-noct_beui_pattern_fill(
-	const struct noct_beui_rect *rect,
+beui_pattern_fill(
+	const struct rect *rect,
 	uint32_t color,
 	uint64_t pattern)
 {
 	int filled;
 
-	/* Requires a visible rectangle supported by patterned fills. */
+	/* Requires a visible rectangle on the active display. */
 	if (!state.display_open ||
 	    rect == NULL ||
 	    rect->width == 0 ||
@@ -732,26 +530,21 @@ noct_beui_pattern_fill(
 	    rect->x >= state.display.width ||
 	    rect->y >= state.display.height ||
 	    rect->width > state.display.width - rect->x ||
-	    rect->height > state.display.height - rect->y ||
-	    state.hal->display.pattern_fill == NULL) {
+	    rect->height > state.display.height - rect->y) {
 		return 0;
 	}
 
-	/* Delegates the validated patterned fill to the backend. */
-	filled = state.hal->display.pattern_fill(
-		state.hal->display.context,
-		rect,
-		color,
-		pattern);
+	/* Draws the validated pattern into the SDL2 framebuffer. */
+	filled = sdl2_pattern_fill(&sdl2_context, rect, color, pattern);
 
-	/* Returns the backend patterned-fill status. */
+	/* Returns the SDL2 patterned-fill status. */
 	return filled;
 }
 
 /* Validates one target-independent BeUI image description. */
 static int
 image_valid(
-	const struct noct_beui_image *image)
+	const struct image *image)
 {
 	int valid;
 
@@ -763,19 +556,19 @@ image_valid(
 	if (image->pixels == NULL ||
 	    image->width == 0 ||
 	    image->height == 0 ||
-	    (image->format != NOCT_BEUI_IMAGE_INDEX8 &&
-	     image->format != NOCT_BEUI_IMAGE_RGB24)) {
+	    (image->format != IMAGE_INDEX8 &&
+	     image->format != IMAGE_RGB24)) {
 		return 0;
 	}
 
 	/* Rejects an indexed image without a valid palette. */
-	if (image->format == NOCT_BEUI_IMAGE_INDEX8 &&
+	if (image->format == IMAGE_INDEX8 &&
 	    (image->palette_size == 0 || image->palette_size > 256)) {
 		return 0;
 	}
 
 	/* Validates the stride for the selected image representation. */
-	if (image->format == NOCT_BEUI_IMAGE_RGB24)
+	if (image->format == IMAGE_RGB24)
 		valid = image->stride / 3U >= image->width;
 	else
 		valid = image->stride >= image->width;
@@ -786,10 +579,10 @@ image_valid(
 
 /* Draws one complete validated BeUI image. */
 static int
-noct_beui_draw_image(
+beui_draw_image(
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image)
+	const struct image *image)
 {
 	int drawn;
 	int valid;
@@ -803,30 +596,25 @@ noct_beui_draw_image(
 	if (!valid)
 		return 0;
 
-	/* Requires the complete image to fit the backend display. */
+	/* Requires the complete image to fit the SDL2 display. */
 	if (x >= state.display.width ||
 	    y >= state.display.height ||
 	    image->width > state.display.width - x ||
-	    image->height > state.display.height - y ||
-	    state.hal->display.draw_image == NULL) {
+	    image->height > state.display.height - y) {
 		return 0;
 	}
 
-	/* Delegates the validated image to the active backend. */
-	drawn = state.hal->display.draw_image(
-		state.hal->display.context,
-		x,
-		y,
-		image);
+	/* Draws the validated image into the SDL2 framebuffer. */
+	drawn = sdl2_draw_image(&sdl2_context, x, y, image);
 
-	/* Returns the backend image status. */
+	/* Returns the SDL2 image status. */
 	return drawn;
 }
 
 /* Draws one validated region of a BeUI image. */
 static int
-noct_beui_draw_image_region(
-	const struct noct_beui_image *image,
+beui_draw_image_region(
+	const struct image *image,
 	unsigned source_x,
 	unsigned source_y,
 	unsigned width,
@@ -834,7 +622,7 @@ noct_beui_draw_image_region(
 	unsigned destination_x,
 	unsigned destination_y)
 {
-	struct noct_beui_image region;
+	struct image region;
 	size_t pixel_size;
 	size_t offset;
 	int drawn;
@@ -857,7 +645,7 @@ noct_beui_draw_image_region(
 	}
 
 	/* Computes the source row offset without overflowing size_t. */
-	pixel_size = image->format == NOCT_BEUI_IMAGE_RGB24 ? 3U : 1U;
+	pixel_size = image->format == IMAGE_RGB24 ? 3U : 1U;
 	offset = (size_t)source_y * image->stride;
 
 	/* Rejects an overflowing horizontal pixel offset. */
@@ -872,10 +660,7 @@ noct_beui_draw_image_region(
 	region.pixels += offset;
 
 	/* Draws the borrowed image view at the requested destination. */
-	drawn = noct_beui_draw_image(
-		destination_x,
-		destination_y,
-		&region);
+	drawn = beui_draw_image(destination_x, destination_y, &region);
 
 	/* Returns the delegated image status. */
 	return drawn;
@@ -883,10 +668,10 @@ noct_beui_draw_image_region(
 
 /* Draws one complete BeUI image through an 8-by-8 pattern. */
 static int
-noct_beui_draw_image_pattern(
+beui_draw_image_pattern(
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image,
+	const struct image *image,
 	uint64_t pattern)
 {
 	int drawn;
@@ -901,24 +686,18 @@ noct_beui_draw_image_pattern(
 	if (!valid)
 		return 0;
 
-	/* Requires the complete image to fit a patterned-image backend. */
+	/* Requires the complete image to fit the SDL2 display. */
 	if (x >= state.display.width ||
 	    y >= state.display.height ||
 	    image->width > state.display.width - x ||
-	    image->height > state.display.height - y ||
-	    state.hal->display.draw_image_pattern == NULL) {
+	    image->height > state.display.height - y) {
 		return 0;
 	}
 
-	/* Delegates the patterned image to the active backend. */
-	drawn = state.hal->display.draw_image_pattern(
-		state.hal->display.context,
-		x,
-		y,
-		image,
-		pattern);
+	/* Draws the patterned image into the SDL2 framebuffer. */
+	drawn = sdl2_draw_image_pattern(&sdl2_context, x, y, image, pattern);
 
-	/* Returns the backend patterned-image status. */
+	/* Returns the SDL2 patterned-image status. */
 	return drawn;
 }
 
@@ -984,9 +763,9 @@ decode_utf8(
 	return codepoint;
 }
 
-/* Measures one UTF-8 text block through the active glyph backend. */
+/* Measures one UTF-8 text block with the SDL2 glyph implementation. */
 static int
-noct_beui_measure_text(
+beui_measure_text(
 	const char *text,
 	unsigned *width,
 	unsigned *height)
@@ -1006,12 +785,11 @@ noct_beui_measure_text(
 	maximum_width = 0;
 	total_height = 16;
 
-	/* Requires text, result destinations, and an active glyph backend. */
+	/* Requires text, result destinations, and an active display. */
 	if (!state.display_open ||
 	    text == NULL ||
 	    width == NULL ||
-	    height == NULL ||
-	    state.hal->glyph.measure == NULL) {
+	    height == NULL) {
 		return 0;
 	}
 
@@ -1039,8 +817,7 @@ noct_beui_measure_text(
 		}
 
 		/* Measures the next printable glyph. */
-		measured = state.hal->glyph.measure(
-			state.hal->glyph.context,
+		measured = sdl2_glyph_measure(
 			codepoint,
 			&glyph_width,
 			&glyph_height);
@@ -1070,7 +847,7 @@ noct_beui_measure_text(
 
 /* Draws one measured UTF-8 text block. */
 static int
-noct_beui_draw_text(
+beui_draw_text(
 	const char *text,
 	unsigned x,
 	unsigned y,
@@ -1092,16 +869,15 @@ noct_beui_draw_text(
 	origin_x = x;
 
 	/* Measures the complete text before validating its destination. */
-	measured = noct_beui_measure_text(text, &width, &height);
+	measured = beui_measure_text(text, &width, &height);
 	if (!measured)
 		return 0;
 
-	/* Requires the text block to fit an active glyph drawing backend. */
+	/* Requires the text block to fit the active display. */
 	if (x > state.display.width ||
 	    y > state.display.height ||
 	    width > state.display.width - x ||
-	    height > state.display.height - y ||
-	    state.hal->glyph.draw == NULL) {
+	    height > state.display.height - y) {
 		return 0;
 	}
 
@@ -1121,22 +897,12 @@ noct_beui_draw_text(
 		}
 
 		/* Measures the next printable glyph before drawing it. */
-		measured = state.hal->glyph.measure(
-			state.hal->glyph.context,
-			codepoint,
-			&glyph_width,
-			&glyph_height);
+		measured = sdl2_glyph_measure(codepoint, &glyph_width, &glyph_height);
 		if (!measured)
 			return 0;
 
 		/* Draws the measured glyph at the current pen position. */
-		drawn = state.hal->glyph.draw(
-			state.hal->glyph.context,
-			x,
-			y,
-			codepoint,
-			foreground,
-			background);
+		drawn = sdl2_glyph_draw(&sdl2_context, x, y, codepoint, foreground, background);
 		if (!drawn)
 			return 0;
 
@@ -1147,41 +913,35 @@ noct_beui_draw_text(
 	return 1;
 }
 
-/* Services active backends and reports whether the display remains alive. */
+/* Services SDL2 and reports whether the display remains alive. */
 static int
-noct_beui_poll(
+beui_poll(
 	void)
 {
-	struct noct_beui_pointer_event event;
+	struct pointer_event event;
 	int updated;
-	int audio_ready;
 
 	/* Reports a closed or previously failed display immediately. */
 	if (!state.display_open || state.close_requested)
 		return 0;
 
-	/* Services an optional host display event source. */
-	if (state.hal->display.poll_events != NULL) {
-		updated = state.hal->display.poll_events(
-			state.hal->display.context);
-		if (updated != 1) {
-			/* Makes a closed window sticky for every later poll. */
-			state.close_requested = 1;
-			return 0;
-		}
+	/* Services the SDL2 display event source. */
+	updated = sdl2_poll_events(&sdl2_context);
+	if (updated != 1) {
+		/* Makes a closed window sticky for every later poll. */
+		state.close_requested = 1;
+		return 0;
 	}
 
 	/* Discards platform type-ahead after servicing display events. */
-	noct_beui_drain_input();
+	beui_drain_input();
 
-	/* Captures an optional absolute pointer update. */
-	if (state.pointer_open && state.hal->pointer.poll != NULL) {
+	/* Captures the current absolute pointer state. */
+	if (state.pointer_open) {
 		memset(&event, 0, sizeof(event));
-		updated = state.hal->pointer.poll(
-			state.hal->pointer.context,
-			&event);
+		updated = sdl2_pointer_poll(&sdl2_context, &event);
 
-		/* Makes a pointer backend failure close the BeUI session. */
+		/* Makes an SDL2 pointer failure close the BeUI session. */
 		if (updated < 0) {
 			state.close_requested = 1;
 			return 0;
@@ -1205,27 +965,18 @@ noct_beui_poll(
 		}
 	}
 
-	/* Services an optional active audio backend. */
-	if (state.audio_open && state.hal->audio.poll != NULL) {
-		audio_ready = state.hal->audio.poll(state.hal->audio.context);
-		if (!audio_ready) {
-			state.close_requested = 1;
-			return 0;
-		}
-	}
-
-	/* Reports a live display after all backend services succeeded. */
+	/* Reports a live display after SDL2 services succeeded. */
 	return 1;
 }
 
 /* Copies the last known absolute pointer state. */
 static int
-noct_beui_get_pointer(
+beui_get_pointer(
 	unsigned *x,
 	unsigned *y,
 	unsigned *buttons)
 {
-	/* Requires active display and pointer backend ownership. */
+	/* Requires an active display and pointer session. */
 	if (!state.display_open || !state.pointer_open)
 		return 0;
 
@@ -1245,9 +996,9 @@ noct_beui_get_pointer(
 	return 1;
 }
 
-/* Flushes pending drawing through the active display backend. */
+/* Flushes pending drawing to the SDL2 window. */
 static int
-noct_beui_flush(
+beui_flush(
 	void)
 {
 	int flushed;
@@ -1256,45 +1007,36 @@ noct_beui_flush(
 	if (!state.display_open)
 		return 0;
 
-	/* Treats a backend without an explicit flush hook as immediate. */
-	if (state.hal->display.flush == NULL)
-		return 1;
+	/* Flushes the complete SDL2 surface. */
+	flushed = sdl2_flush(&sdl2_context, NULL, 0);
 
-	/* Flushes the complete backend surface. */
-	flushed = state.hal->display.flush(
-		state.hal->display.context,
-		NULL,
-		0);
-
-	/* Returns the backend flush status. */
+	/* Returns the SDL2 flush status. */
 	return flushed;
 }
 
-/* Reads the current BeUI backend clock. */
+/* Reads the current SDL2 clock. */
 static int
-noct_beui_get_milliseconds(
+beui_get_milliseconds(
 	uint64_t *milliseconds)
 {
 	uint64_t current;
 
-	/* Requires a destination and an available backend clock. */
-	if (milliseconds == NULL ||
-	    state.hal == NULL ||
-	    state.hal->clock.milliseconds == NULL) {
+	/* Requires a clock destination. */
+	if (milliseconds == NULL) {
 		return 0;
 	}
 
-	/* Reads and publishes the current backend time. */
-	current = state.hal->clock.milliseconds(state.hal->clock.context);
+	/* Reads and publishes the current SDL2 time. */
+	current = sdl2_milliseconds(&sdl2_context);
 	*milliseconds = current;
 
-	/* Reports an available backend clock. */
+	/* Reports an available SDL2 clock. */
 	return 1;
 }
 
-/* Busy-waits while servicing every active BeUI backend. */
+/* Busy-waits while servicing SDL2. */
 static int
-noct_beui_sleep(
+beui_sleep(
 	unsigned milliseconds)
 {
 	uint64_t start;
@@ -1302,24 +1044,24 @@ noct_beui_sleep(
 	int available;
 	int alive;
 
-	/* Captures the starting backend time. */
-	available = noct_beui_get_milliseconds(&start);
+	/* Captures the starting SDL2 time. */
+	available = beui_get_milliseconds(&start);
 	if (!available)
 		return 0;
 
-	/* Services backends until the requested clock interval expires. */
+	/* Services SDL2 until the requested clock interval expires. */
 	do {
-		noct_beui_drain_input();
+		beui_drain_input();
 
 		/* Stops early when an open display closes during the wait. */
 		if (state.display_open) {
-			alive = noct_beui_poll();
+			alive = beui_poll();
 			if (!alive)
 				break;
 		}
 
 		/* Reads the time for the next interval decision. */
-		available = noct_beui_get_milliseconds(&now);
+		available = beui_get_milliseconds(&now);
 		if (!available)
 			return 0;
 	} while (now - start < milliseconds);
@@ -1328,44 +1070,37 @@ noct_beui_sleep(
 	return 1;
 }
 
-/* Reads one real-time key state from the bound backend. */
+/* Reads one real-time SDL2 key state. */
 static int
-noct_beui_is_key_down(
+beui_is_key_down(
 	int key)
 {
 	int down;
 
-	/* Reports an unavailable input backend. */
-	if (state.hal == NULL || state.hal->input.is_key_down == NULL)
-		return -1;
+	/* Reads the requested key state from SDL2. */
+	down = sdl2_is_key_down(&sdl2_context, key);
 
-	/* Reads the requested key state from the input backend. */
-	down = state.hal->input.is_key_down(
-		state.hal->input.context,
-		key);
-
-	/* Returns the backend key-state convention unchanged. */
+	/* Returns the SDL2 key-state convention unchanged. */
 	return down;
 }
 
-/* Drains type-ahead from an available BeUI input backend. */
+/* Drains pending SDL2 input events. */
 static void
-noct_beui_drain_input(
+beui_drain_input(
 	void)
 {
-	/* Invokes the optional input-drain operation when available. */
-	if (state.hal != NULL && state.hal->input.drain != NULL)
-		state.hal->input.drain(state.hal->input.context);
+	/* Drains events through the SDL2 input implementation. */
+	sdl2_drain_input(&sdl2_context);
 }
 
 /* Decodes and registers one BMP image. */
 static int
-noct_beui_image_load_bmp(
+image_load_bmp(
 	const void *data,
 	size_t size)
 {
-	struct noct_beui_image_entry *entry;
-	enum noct_beui_image_format format;
+	struct image_entry *entry;
+	enum image_format format;
 	unsigned width;
 	unsigned height;
 	size_t pixel_size;
@@ -1376,12 +1111,12 @@ noct_beui_image_load_bmp(
 	/* Rejects an absent, empty, or oversized encoded image. */
 	if (data == NULL ||
 	    size == 0 ||
-	    size > NOCT_BEUI_IMAGE_SOURCE_MAX) {
+	    size > IMAGE_SOURCE_MAX) {
 		return 0;
 	}
 
 	/* Measures the BMP before allocating its decoded storage. */
-	measured = noct_beui_bmp_measure(
+	measured = bmp_measure(
 		data,
 		size,
 		&format,
@@ -1392,23 +1127,17 @@ noct_beui_image_load_bmp(
 		return 0;
 
 	/* Rejects an empty or oversized decoded image. */
-	if (pixel_size == 0 || pixel_size > NOCT_BEUI_IMAGE_PIXELS_MAX)
+	if (pixel_size == 0 || pixel_size > IMAGE_PIXELS_MAX)
 		return 0;
 
 	/* Allocates one registry entry with trailing pixel storage. */
-	allocation_size = offsetof(struct noct_beui_image_entry, pixels) +
-		pixel_size;
+	allocation_size = offsetof(struct image_entry, pixels) + pixel_size;
 	entry = malloc(allocation_size);
 	if (entry == NULL)
 		return 0;
 
 	/* Decodes the BMP directly into the owned trailing storage. */
-	decoded = noct_beui_bmp_decode(
-		data,
-		size,
-		entry->pixels,
-		pixel_size,
-		&entry->image);
+	decoded = bmp_decode(data, size, entry->pixels, pixel_size, &entry->image);
 	if (!decoded) {
 		free(entry);
 		return 0;
@@ -1428,11 +1157,11 @@ noct_beui_image_load_bmp(
 }
 
 /* Resolves one positive image handle. */
-static const struct noct_beui_image *
-noct_beui_image_get(
+static const struct image *
+image_get(
 	int handle)
 {
-	struct noct_beui_image_entry *entry;
+	struct image_entry *entry;
 
 	/* Rejects values outside the positive handle namespace. */
 	if (handle <= 0)
@@ -1453,11 +1182,11 @@ noct_beui_image_get(
 
 /* Destroys one registered image handle. */
 static int
-noct_beui_image_destroy(
+image_destroy(
 	int handle)
 {
-	struct noct_beui_image_entry **link;
-	struct noct_beui_image_entry *entry;
+	struct image_entry **link;
+	struct image_entry *entry;
 
 	/* Rejects values outside the positive handle namespace. */
 	if (handle <= 0)
@@ -1656,7 +1385,7 @@ parse_layout(
 		/* Shares the indexed-image setup with byte-sized indices. */
 	case 8:
 		/* Configures an indexed image and reads its palette size. */
-		layout->format = NOCT_BEUI_IMAGE_INDEX8;
+		layout->format = IMAGE_INDEX8;
 		bytes_per_pixel = 1;
 		colors_used = read_u32(bytes + 46);
 
@@ -1694,7 +1423,7 @@ parse_layout(
 		break;
 	case 24:
 		/* Configures a tightly represented RGB image. */
-		layout->format = NOCT_BEUI_IMAGE_RGB24;
+		layout->format = IMAGE_RGB24;
 		bytes_per_pixel = 3;
 
 		/* Completes RGB-image layout selection. */
@@ -1705,9 +1434,7 @@ parse_layout(
 	}
 
 	/* Computes the padded source-row stride without overflow. */
-	overflows = multiply_overflows(
-		layout->width,
-		layout->bits_per_pixel);
+	overflows = multiply_overflows(layout->width, layout->bits_per_pixel);
 	if (overflows)
 		return 0;
 
@@ -1726,16 +1453,12 @@ parse_layout(
 	layout->output_stride = (size_t)layout->width * bytes_per_pixel;
 
 	/* Validates the complete source pixel-array size. */
-	overflows = multiply_overflows(
-		layout->source_stride,
-		layout->height);
+	overflows = multiply_overflows(layout->source_stride, layout->height);
 	if (overflows)
 		return 0;
 
 	/* Validates the complete decoded pixel-array size. */
-	overflows = multiply_overflows(
-		layout->output_stride,
-		layout->height);
+	overflows = multiply_overflows(layout->output_stride, layout->height);
 	if (overflows)
 		return 0;
 
@@ -1758,10 +1481,10 @@ parse_layout(
 
 /* Measures the decoded representation of one supported BMP image. */
 static int
-noct_beui_bmp_measure(
+bmp_measure(
 	const void *data,
 	size_t size,
-	enum noct_beui_image_format *format,
+	enum image_format *format,
 	unsigned *width,
 	unsigned *height,
 	size_t *pixel_bytes)
@@ -1794,12 +1517,12 @@ noct_beui_bmp_measure(
 
 /* Decodes one supported BMP into caller-owned pixel storage. */
 static int
-noct_beui_bmp_decode(
+bmp_decode(
 	const void *data,
 	size_t size,
 	void *pixel_storage,
 	size_t pixel_capacity,
-	struct noct_beui_image *image)
+	struct image *image)
 {
 	struct bmp_layout layout;
 	uint8_t *output;
@@ -1943,19 +1666,11 @@ get_int_arg(
 		return false;
 
 	/* Tries the long representation first. */
-	converted = noct_get_arg_check_long(
-		env,
-		index,
-		&value,
-		&long_value);
+	converted = noct_get_arg_check_long(env, index, &value, &long_value);
 
 	/* Falls back to the common integer representation. */
 	if (!converted) {
-		converted = noct_get_arg_check_int(
-			env,
-			index,
-			&value,
-			&int_value);
+		converted = noct_get_arg_check_int(env, index, &value, &int_value);
 
 		/* Promotes a converted integer to the shared representation. */
 		if (converted)
@@ -1982,7 +1697,7 @@ cfunc_BeUI_init(
 	bool returned;
 
 	/* Opens BeUI and normalizes its status. */
-	initialized = noct_beui_init() ? 1 : 0;
+	initialized = beui_init() ? 1 : 0;
 
 	/* Returns the normalized open status. */
 	returned = return_int(env, initialized);
@@ -2005,14 +1720,12 @@ cfunc_BeUI_initWithHint(
 	converted = get_int_arg(env, 0, &bits_per_pixel);
 	if (!converted ||
 	    (bits_per_pixel != 8 && bits_per_pixel != 24)) {
-		noct_error(
-			env,
-			"BeUI.initWithHint expects 8 or 24 bits per pixel.");
+		noct_error(env, "BeUI.initWithHint expects 8 or 24 bits per pixel.");
 		return false;
 	}
 
 	/* Opens BeUI with the validated pixel-depth hint. */
-	initialized = noct_beui_init_with_hint((unsigned)bits_per_pixel) ? 1 : 0;
+	initialized = beui_init_with_hint((unsigned)bits_per_pixel) ? 1 : 0;
 
 	/* Returns the normalized open status. */
 	returned = return_int(env, initialized);
@@ -2028,8 +1741,8 @@ cfunc_BeUI_close(
 {
 	bool returned;
 
-	/* Releases every active BeUI backend service. */
-	noct_beui_close();
+	/* Releases the active SDL2 BeUI services. */
+	beui_close();
 
 	/* Returns a successful close status. */
 	returned = return_int(env, 1);
@@ -2047,7 +1760,7 @@ cfunc_BeUI_isOpen(
 	bool returned;
 
 	/* Reads and normalizes the display ownership state. */
-	open = noct_beui_is_open() ? 1 : 0;
+	open = beui_is_open() ? 1 : 0;
 
 	/* Returns the normalized display state. */
 	returned = return_int(env, open);
@@ -2061,12 +1774,12 @@ static bool
 cfunc_BeUI_getWidth(
 	NoctEnv *env)
 {
-	struct noct_beui_display_info info;
+	struct display_info info;
 	int available;
 	bool returned;
 
 	/* Reads the active display description. */
-	available = noct_beui_get_display_info(&info);
+	available = beui_get_display_info(&info);
 	if (!available) {
 		noct_error(env, "BeUI is not open.");
 		return false;
@@ -2084,12 +1797,12 @@ static bool
 cfunc_BeUI_getHeight(
 	NoctEnv *env)
 {
-	struct noct_beui_display_info info;
+	struct display_info info;
 	int available;
 	bool returned;
 
 	/* Reads the active display description. */
-	available = noct_beui_get_display_info(&info);
+	available = beui_get_display_info(&info);
 	if (!available) {
 		noct_error(env, "BeUI is not open.");
 		return false;
@@ -2110,8 +1823,8 @@ cfunc_BeUI_poll(
 	int alive;
 	bool returned;
 
-	/* Services the backends and normalizes the display state. */
-	alive = noct_beui_poll() ? 1 : 0;
+	/* Services SDL2 and normalizes the display state. */
+	alive = beui_poll() ? 1 : 0;
 
 	/* Returns the normalized display state. */
 	returned = return_int(env, alive);
@@ -2129,7 +1842,7 @@ cfunc_BeUI_flush(
 	bool returned;
 
 	/* Flushes pending display output. */
-	flushed = noct_beui_flush();
+	flushed = beui_flush();
 	if (!flushed) {
 		noct_error(env, "BeUI.flush failed.");
 		return false;
@@ -2147,7 +1860,7 @@ static bool
 cfunc_BeUI_fill(
 	NoctEnv *env)
 {
-	struct noct_beui_rect rectangle;
+	struct rect rectangle;
 	int x;
 	int y;
 	int width;
@@ -2203,14 +1916,14 @@ cfunc_BeUI_fill(
 		return false;
 	}
 
-	/* Constructs the validated unsigned backend rectangle. */
+	/* Constructs the validated unsigned drawing rectangle. */
 	rectangle.x = (unsigned)x;
 	rectangle.y = (unsigned)y;
 	rectangle.width = (unsigned)width;
 	rectangle.height = (unsigned)height;
 
 	/* Fills the requested display rectangle. */
-	filled = noct_beui_fill(&rectangle, (uint32_t)color);
+	filled = beui_fill(&rectangle, (uint32_t)color);
 	if (!filled) {
 		noct_error(env, "BeUI.fill failed.");
 		return false;
@@ -2283,8 +1996,8 @@ cfunc_BeUI_line(
 		return false;
 	}
 
-	/* Draws the validated line through the backend-independent core. */
-	drawn = noct_beui_line(
+	/* Draws the validated line. */
+	drawn = beui_line(
 		(unsigned)x0,
 		(unsigned)y0,
 		(unsigned)x1,
@@ -2307,7 +2020,7 @@ static bool
 cfunc_BeUI_patternFill(
 	NoctEnv *env)
 {
-	struct noct_beui_rect rectangle;
+	struct rect rectangle;
 	NoctValue value;
 	int x;
 	int y;
@@ -2325,45 +2038,35 @@ cfunc_BeUI_patternFill(
 	/* Reads the horizontal rectangle coordinate. */
 	valid = get_int_arg(env, 0, &x);
 	if (!valid) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 		return false;
 	}
 
 	/* Reads the vertical rectangle coordinate. */
 	valid = get_int_arg(env, 1, &y);
 	if (!valid) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 		return false;
 	}
 
 	/* Reads the rectangle width. */
 	valid = get_int_arg(env, 2, &width);
 	if (!valid) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 		return false;
 	}
 
 	/* Reads the rectangle height. */
 	valid = get_int_arg(env, 3, &height);
 	if (!valid) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 		return false;
 	}
 
 	/* Reads the patterned-fill color. */
 	valid = get_int_arg(env, 4, &color);
 	if (!valid) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 		return false;
 	}
 
@@ -2374,9 +2077,7 @@ cfunc_BeUI_patternFill(
 	    height <= 0 ||
 	    color < 0 ||
 	    color > 0xffffff) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 		return false;
 	}
 
@@ -2391,11 +2092,7 @@ cfunc_BeUI_patternFill(
 	/* Reads the pattern as long and then as int. */
 	converted = noct_get_arg_check_long(env, 5, &value, &pattern);
 	if (!converted) {
-		converted = noct_get_arg_check_int(
-			env,
-			5,
-			&value,
-			&int_pattern);
+		converted = noct_get_arg_check_int(env, 5, &value, &int_pattern);
 
 		/* Promotes a converted integer pattern without sign extension. */
 		if (converted)
@@ -2407,23 +2104,18 @@ cfunc_BeUI_patternFill(
 
 	/* Reports an invalid pattern through the existing API error. */
 	if (!converted) {
-		noct_error(
-			env,
-			"BeUI.patternFill received an invalid argument.");
+		noct_error(env, "BeUI.patternFill received an invalid argument.");
 		return false;
 	}
 
-	/* Constructs the validated unsigned backend rectangle. */
+	/* Constructs the validated unsigned drawing rectangle. */
 	rectangle.x = (unsigned)x;
 	rectangle.y = (unsigned)y;
 	rectangle.width = (unsigned)width;
 	rectangle.height = (unsigned)height;
 
 	/* Fills the requested rectangle through the supplied pattern. */
-	filled = noct_beui_pattern_fill(
-		&rectangle,
-		(uint32_t)color,
-		(uint64_t)pattern);
+	filled = beui_pattern_fill(&rectangle, (uint32_t)color, (uint64_t)pattern);
 	if (!filled) {
 		noct_error(env, "BeUI.patternFill failed.");
 		return false;
@@ -2467,7 +2159,7 @@ measure_text_arg(
 	}
 
 	/* Measures the string while its owner remains pinned. */
-	measured = noct_beui_measure_text(text, width, height);
+	measured = beui_measure_text(text, width, height);
 	if (!measured) {
 		noct_error(env, "%s failed.", api);
 		(void)noct_unpin_local(env, 1, &value);
@@ -2518,11 +2210,7 @@ cfunc_BeUI_textHeight(
 	bool returned;
 
 	/* Measures the first string argument. */
-	measured = measure_text_arg(
-		env,
-		"BeUI.textHeight",
-		&width,
-		&height);
+	measured = measure_text_arg(env, "BeUI.textHeight", &width, &height);
 	if (!measured)
 		return false;
 
@@ -2592,7 +2280,7 @@ cfunc_BeUI_drawText(
 	/* Initializes the text before it becomes a GC root. */
 	memset(&value, 0, sizeof(value));
 
-	/* Pins the string while the backend consumes its borrowed bytes. */
+	/* Pins the string while the drawing code consumes its borrowed bytes. */
 	pinned = noct_pin_local(env, 1, &value);
 	if (!pinned)
 		return false;
@@ -2606,12 +2294,7 @@ cfunc_BeUI_drawText(
 	}
 
 	/* Draws the text while its owner remains pinned. */
-	drawn = noct_beui_draw_text(
-		text,
-		(unsigned)x,
-		(unsigned)y,
-		(uint32_t)foreground,
-		(uint32_t)background);
+	drawn = beui_draw_text(text, (unsigned)x, (unsigned)y, (uint32_t)foreground, (uint32_t)background);
 	if (!drawn) {
 		noct_error(env, "BeUI.drawText failed.");
 		(void)noct_unpin_local(env, 1, &value);
@@ -2637,8 +2320,8 @@ cfunc_BeUI_getMilliseconds(
 	int available;
 	bool returned;
 
-	/* Reads the backend clock. */
-	available = noct_beui_get_milliseconds(&milliseconds);
+	/* Reads the SDL2 clock. */
+	available = beui_get_milliseconds(&milliseconds);
 	if (!available) {
 		noct_error(env, "BeUI.getMilliseconds is unavailable.");
 		return false;
@@ -2668,8 +2351,8 @@ cfunc_BeUI_sleep(
 		return false;
 	}
 
-	/* Sleeps through the active backend clock. */
-	slept = noct_beui_sleep((unsigned)milliseconds);
+	/* Sleeps through the SDL2 clock. */
+	slept = beui_sleep((unsigned)milliseconds);
 	if (!slept) {
 		noct_error(env, "BeUI.sleep is unavailable.");
 		return false;
@@ -2700,7 +2383,7 @@ cfunc_BeUI_isKeyDown(
 	}
 
 	/* Treats keys that the target cannot sense as released. */
-	down = noct_beui_is_key_down(key) == 1;
+	down = beui_is_key_down(key) == 1;
 
 	/* Returns the normalized real-time key state. */
 	returned = return_int(env, down);
@@ -2721,7 +2404,7 @@ pointer_field(
 	int available;
 
 	/* Copies the requested pointer state field. */
-	available = noct_beui_get_pointer(x, y, buttons);
+	available = beui_get_pointer(x, y, buttons);
 	if (!available) {
 		noct_error(env, "%s is unavailable.", api);
 		return false;
@@ -2741,12 +2424,11 @@ cfunc_BeUI_getPointerX(
 	bool returned;
 
 	/* Reads the horizontal pointer coordinate. */
-	available = pointer_field(
-		env,
-		"BeUI.getPointerX",
-		&x,
-		NULL,
-		NULL);
+	available = pointer_field(env,
+				  "BeUI.getPointerX",
+				  &x,
+				  NULL,
+				  NULL);
 	if (!available)
 		return false;
 
@@ -2767,12 +2449,11 @@ cfunc_BeUI_getPointerY(
 	bool returned;
 
 	/* Reads the vertical pointer coordinate. */
-	available = pointer_field(
-		env,
-		"BeUI.getPointerY",
-		NULL,
-		&y,
-		NULL);
+	available = pointer_field(env,
+				  "BeUI.getPointerY",
+				  NULL,
+				  &y,
+				  NULL);
 	if (!available)
 		return false;
 
@@ -2793,12 +2474,11 @@ cfunc_BeUI_getPointerButtons(
 	bool returned;
 
 	/* Reads the pointer button bitmask. */
-	available = pointer_field(
-		env,
-		"BeUI.getPointerButtons",
-		NULL,
-		NULL,
-		&buttons);
+	available = pointer_field(env,
+				  "BeUI.getPointerButtons",
+				  NULL,
+				  NULL,
+				  &buttons);
 	if (!available)
 		return false;
 
@@ -2832,11 +2512,10 @@ cfunc_BeUI_loadImage(
 		return false;
 
 	/* Reads a packed byte-array argument. */
-	valid = noct_get_arg_check_packed(
-		env,
-		0,
-		&value,
-		NOCT_PACKED_UINT8);
+	valid = noct_get_arg_check_packed(env,
+					  0,
+					  &value,
+					  NOCT_PACKED_UINT8);
 	if (!valid) {
 		noct_error(env, "BeUI.loadImage expects a byte array.");
 		(void)noct_unpin_local(env, 1, &value);
@@ -2860,7 +2539,7 @@ cfunc_BeUI_loadImage(
 	}
 
 	/* Decodes and retains the BMP image. */
-	handle = noct_beui_image_load_bmp(data, size);
+	handle = image_load_bmp(data, size);
 	if (handle == 0) {
 		noct_error(env, "BeUI.loadImage received an unsupported image.");
 		(void)noct_unpin_local(env, 1, &value);
@@ -2882,7 +2561,7 @@ static bool
 cfunc_BeUI_getImageWidth(
 	NoctEnv *env)
 {
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle;
 	bool valid;
 	bool returned;
@@ -2897,7 +2576,7 @@ cfunc_BeUI_getImageWidth(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env,
 			   "BeUI.getImageWidth received an invalid handle.");
@@ -2916,7 +2595,7 @@ static bool
 cfunc_BeUI_getImageHeight(
 	NoctEnv *env)
 {
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle;
 	bool valid;
 	bool returned;
@@ -2931,7 +2610,7 @@ cfunc_BeUI_getImageHeight(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env,
 			   "BeUI.getImageHeight received an invalid handle.");
@@ -2950,7 +2629,7 @@ static bool
 cfunc_BeUI_drawImage(
 	NoctEnv *env)
 {
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle;
 	int x;
 	int y;
@@ -2986,14 +2665,14 @@ cfunc_BeUI_drawImage(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env, "BeUI.drawImage failed.");
 		return false;
 	}
 
 	/* Draws the image at the requested destination. */
-	drawn = noct_beui_draw_image((unsigned)x, (unsigned)y, image);
+	drawn = beui_draw_image((unsigned)x, (unsigned)y, image);
 	if (!drawn) {
 		noct_error(env, "BeUI.drawImage failed.");
 		return false;
@@ -3011,7 +2690,7 @@ static bool
 cfunc_BeUI_drawImageRegion(
 	NoctEnv *env)
 {
-	const struct noct_beui_image *image;
+	const struct image *image;
 	int handle;
 	int source_x;
 	int source_y;
@@ -3084,21 +2763,20 @@ cfunc_BeUI_drawImageRegion(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env, "BeUI.drawImageRegion failed.");
 		return false;
 	}
 
 	/* Draws the selected source region. */
-	drawn = noct_beui_draw_image_region(
-		image,
-		(unsigned)source_x,
-		(unsigned)source_y,
-		(unsigned)width,
-		(unsigned)height,
-		(unsigned)x,
-		(unsigned)y);
+	drawn = beui_draw_image_region(image,
+				       (unsigned)source_x,
+				       (unsigned)source_y,
+				       (unsigned)width,
+				       (unsigned)height,
+				       (unsigned)x,
+				       (unsigned)y);
 	if (!drawn) {
 		noct_error(env, "BeUI.drawImageRegion failed.");
 		return false;
@@ -3116,7 +2794,7 @@ static bool
 cfunc_BeUI_drawImagePattern(
 	NoctEnv *env)
 {
-	const struct noct_beui_image *image;
+	const struct image *image;
 	NoctValue value;
 	int handle;
 	int x;
@@ -3184,18 +2862,17 @@ cfunc_BeUI_drawImagePattern(
 	}
 
 	/* Resolves the image handle. */
-	image = noct_beui_image_get(handle);
+	image = image_get(handle);
 	if (image == NULL) {
 		noct_error(env, "BeUI.drawImagePattern failed.");
 		return false;
 	}
 
 	/* Draws the image through the requested pattern. */
-	drawn = noct_beui_draw_image_pattern(
-		(unsigned)x,
-		(unsigned)y,
-		image,
-		(uint64_t)pattern);
+	drawn = beui_draw_image_pattern((unsigned)x,
+					(unsigned)y,
+					image,
+					(uint64_t)pattern);
 	if (!drawn) {
 		noct_error(env, "BeUI.drawImagePattern failed.");
 		return false;
@@ -3226,7 +2903,7 @@ cfunc_BeUI_destroyImage(
 	}
 
 	/* Destroys the selected image. */
-	destroyed = noct_beui_image_destroy(handle);
+	destroyed = image_destroy(handle);
 	if (!destroyed) {
 		noct_error(env, "BeUI.destroyImage received an invalid handle.");
 		return false;
@@ -3244,7 +2921,7 @@ static bool
 register_int_dictionary(
 	NoctEnv *env,
 	const char *name,
-	const struct beui_int_constant *entries,
+	const struct int_constant *entries,
 	size_t count)
 {
 	NoctValue dictionary;
@@ -3268,12 +2945,11 @@ register_int_dictionary(
 
 	/* Adds every integer constant in declaration order. */
 	for (index = 0; index < count; index++) {
-		registered = noct_set_dict_elem_make_int(
-			env,
-			&dictionary,
-			entries[index].name,
-			&scratch,
-			entries[index].value);
+		registered = noct_set_dict_elem_make_int(env,
+							 &dictionary,
+							 entries[index].name,
+							 &scratch,
+							 entries[index].value);
 		if (!registered) {
 			(void)noct_unpin_local(
 				env,
@@ -3301,75 +2977,46 @@ register_int_dictionary(
 /* Registers the BeUI functions and public constants. */
 static bool
 register_beui_api(
-	NoctEnv *env,
-	const struct noct_beui_hal *hal)
+	NoctEnv *env)
 {
-	static const struct beui_ffi_item beui_ffi_items[] = {
+	static const struct ffi_item ffi_items[] = {
 		{"BeUI.init", "init", 0, {NULL}, cfunc_BeUI_init},
-		{"BeUI.initWithHint", "initWithHint", 1, {"bitsPerPixel"},
-		 cfunc_BeUI_initWithHint},
+		{"BeUI.initWithHint", "initWithHint", 1, {"bitsPerPixel"}, cfunc_BeUI_initWithHint},
 		{"BeUI.close", "close", 0, {NULL}, cfunc_BeUI_close},
 		{"BeUI.isOpen", "isOpen", 0, {NULL}, cfunc_BeUI_isOpen},
 		{"BeUI.getWidth", "getWidth", 0, {NULL}, cfunc_BeUI_getWidth},
-		{"BeUI.getHeight", "getHeight", 0, {NULL},
-		 cfunc_BeUI_getHeight},
+		{"BeUI.getHeight", "getHeight", 0, {NULL}, cfunc_BeUI_getHeight},
 		{"BeUI.poll", "poll", 0, {NULL}, cfunc_BeUI_poll},
 		{"BeUI.flush", "flush", 0, {NULL}, cfunc_BeUI_flush},
-		{"BeUI.fill", "fill", 5,
-		 {"x", "y", "width", "height", "color"}, cfunc_BeUI_fill},
-		{"BeUI.line", "line", 5,
-		 {"x0", "y0", "x1", "y1", "color"}, cfunc_BeUI_line},
-		{"BeUI.patternFill", "patternFill", 6,
-		 {"x", "y", "width", "height", "color", "pattern"},
-		 cfunc_BeUI_patternFill},
-		{"BeUI.textWidth", "textWidth", 1, {"text"},
-		 cfunc_BeUI_textWidth},
-		{"BeUI.textHeight", "textHeight", 1, {"text"},
-		 cfunc_BeUI_textHeight},
-		{"BeUI.drawText", "drawText", 5,
-		 {"text", "x", "y", "foreground", "background"},
-		 cfunc_BeUI_drawText},
-		{"BeUI.getMilliseconds", "getMilliseconds", 0, {NULL},
-		 cfunc_BeUI_getMilliseconds},
-		{"BeUI.sleep", "sleep", 1, {"milliseconds"},
-		 cfunc_BeUI_sleep},
-		{"BeUI.isKeyDown", "isKeyDown", 1, {"key"},
-		 cfunc_BeUI_isKeyDown},
-		{"BeUI.getPointerX", "getPointerX", 0, {NULL},
-		 cfunc_BeUI_getPointerX},
-		{"BeUI.getPointerY", "getPointerY", 0, {NULL},
-		 cfunc_BeUI_getPointerY},
-		{"BeUI.getPointerButtons", "getPointerButtons", 0, {NULL},
-		 cfunc_BeUI_getPointerButtons},
-		{"BeUI.loadImage", "loadImage", 1, {"bytes"},
-		 cfunc_BeUI_loadImage},
-		{"BeUI.getImageWidth", "getImageWidth", 1, {"image"},
-		 cfunc_BeUI_getImageWidth},
-		{"BeUI.getImageHeight", "getImageHeight", 1, {"image"},
-		 cfunc_BeUI_getImageHeight},
-		{"BeUI.drawImage", "drawImage", 3, {"image", "x", "y"},
-		 cfunc_BeUI_drawImage},
-		{"BeUI.drawImageRegion", "drawImageRegion", 7,
-		 {"image", "sourceX", "sourceY", "width", "height", "x", "y"},
-		 cfunc_BeUI_drawImageRegion},
-		{"BeUI.drawImagePattern", "drawImagePattern", 4,
-		 {"image", "x", "y", "pattern"}, cfunc_BeUI_drawImagePattern},
-		{"BeUI.destroyImage", "destroyImage", 1, {"image"},
-		 cfunc_BeUI_destroyImage},
+		{"BeUI.fill", "fill", 5, {"x", "y", "width", "height", "color"}, cfunc_BeUI_fill},
+		{"BeUI.line", "line", 5, {"x0", "y0", "x1", "y1", "color"}, cfunc_BeUI_line},
+		{"BeUI.patternFill", "patternFill", 6, {"x", "y", "width", "height", "color", "pattern"}, cfunc_BeUI_patternFill},
+		{"BeUI.textWidth", "textWidth", 1, {"text"}, cfunc_BeUI_textWidth},
+		{"BeUI.textHeight", "textHeight", 1, {"text"}, cfunc_BeUI_textHeight},
+		{"BeUI.drawText", "drawText", 5, {"text", "x", "y", "foreground", "background"}, cfunc_BeUI_drawText},
+		{"BeUI.getMilliseconds", "getMilliseconds", 0, {NULL}, cfunc_BeUI_getMilliseconds},
+		{"BeUI.sleep", "sleep", 1, {"milliseconds"}, cfunc_BeUI_sleep},
+		{"BeUI.isKeyDown", "isKeyDown", 1, {"key"}, cfunc_BeUI_isKeyDown},
+		{"BeUI.getPointerX", "getPointerX", 0, {NULL}, cfunc_BeUI_getPointerX},
+		{"BeUI.getPointerY", "getPointerY", 0, {NULL}, cfunc_BeUI_getPointerY},
+		{"BeUI.getPointerButtons", "getPointerButtons", 0, {NULL}, cfunc_BeUI_getPointerButtons},
+		{"BeUI.loadImage", "loadImage", 1, {"bytes"}, cfunc_BeUI_loadImage},
+		{"BeUI.getImageWidth", "getImageWidth", 1, {"image"}, cfunc_BeUI_getImageWidth},
+		{"BeUI.getImageHeight", "getImageHeight", 1, {"image"}, cfunc_BeUI_getImageHeight},
+		{"BeUI.drawImage", "drawImage", 3, {"image", "x", "y"}, cfunc_BeUI_drawImage},
+		{"BeUI.drawImageRegion", "drawImageRegion", 7, {"image", "sourceX", "sourceY", "width", "height", "x", "y"}, cfunc_BeUI_drawImageRegion},
+		{"BeUI.drawImagePattern", "drawImagePattern", 4, {"image", "x", "y", "pattern"}, cfunc_BeUI_drawImagePattern},
+		{"BeUI.destroyImage", "destroyImage", 1, {"image"}, cfunc_BeUI_destroyImage},
 	};
+
 	NoctValue beui_dict;
 	NoctValue function;
-	const struct beui_ffi_item *item;
+	const struct ffi_item *item;
 	size_t index;
 	size_t item_count;
 	size_t key_count;
 	size_t button_count;
 	bool registered;
-
-	/* Binds the process-wide BeUI implementation. */
-	registered = noct_beui_bind(hal) != 0;
-	if (!registered)
-		return false;
 
 	/* Roots the BeUI dictionary and one function during publication. */
 	memset(&beui_dict, 0, sizeof(beui_dict));
@@ -3393,37 +3040,34 @@ register_beui_api(
 	}
 
 	/* Registers and publishes every BeUI function in API order. */
-	item_count = sizeof(beui_ffi_items) / sizeof(beui_ffi_items[0]);
+	item_count = sizeof(ffi_items) / sizeof(ffi_items[0]);
 	for (index = 0; index < item_count; index++) {
-		item = &beui_ffi_items[index];
-		registered = noct_register_cfunc(
-			env,
-			item->global_name,
-			item->param_count,
-			(const char **)item->param,
-			item->cfunc,
-			NULL);
+		item = &ffi_items[index];
+		registered = noct_register_cfunc(env,
+						 item->global_name,
+						 item->param_count,
+						 (const char **)item->param,
+						 item->cfunc,
+						 NULL);
 		if (!registered) {
 			(void)noct_unpin_local(env, 2, &beui_dict, &function);
 			return false;
 		}
 
 		/* Reads the registered function value. */
-		registered = noct_get_global(
-			env,
-			item->global_name,
-			&function);
+		registered = noct_get_global(env,
+					     item->global_name,
+					     &function);
 		if (!registered) {
 			(void)noct_unpin_local(env, 2, &beui_dict, &function);
 			return false;
 		}
 
 		/* Adds the registered function to the public dictionary. */
-		registered = noct_set_dict_elem_cstr(
-			env,
-			&beui_dict,
-			item->field_name,
-			&function);
+		registered = noct_set_dict_elem_cstr(env,
+						     &beui_dict,
+						     item->field_name,
+						     &function);
 		if (!registered) {
 			(void)noct_unpin_local(env, 2, &beui_dict, &function);
 			return false;
@@ -3431,24 +3075,22 @@ register_beui_api(
 	}
 
 	/* Publishes the key-code dictionary. */
-	key_count = sizeof(beui_keys) / sizeof(beui_keys[0]);
-	registered = register_int_dictionary(
-		env,
-		"Key",
-		beui_keys,
-		key_count);
+	key_count = sizeof(key_constants) / sizeof(key_constants[0]);
+	registered = register_int_dictionary(env,
+					     "Key",
+					     key_constants,
+					     key_count);
 	if (!registered) {
 		(void)noct_unpin_local(env, 2, &beui_dict, &function);
 		return false;
 	}
 
 	/* Publishes the pointer-button dictionary. */
-	button_count = sizeof(beui_buttons) / sizeof(beui_buttons[0]);
-	registered = register_int_dictionary(
-		env,
-		"Button",
-		beui_buttons,
-		button_count);
+	button_count = sizeof(button_constants) / sizeof(button_constants[0]);
+	registered = register_int_dictionary(env,
+					     "Button",
+					     button_constants,
+					     button_count);
 	if (!registered) {
 		(void)noct_unpin_local(env, 2, &beui_dict, &function);
 		return false;
@@ -3496,7 +3138,7 @@ sdl2_pattern_bit(
 /* Writes one converted color to the software framebuffer. */
 static void
 sdl2_put_pixel(
-	struct beui_sdl2_context *context,
+	struct sdl2_context *context,
 	unsigned x,
 	unsigned y,
 	uint32_t color)
@@ -3516,7 +3158,7 @@ sdl2_put_pixel(
 /* Locks the software framebuffer when SDL requires locking. */
 static int
 sdl2_lock_framebuffer(
-	struct beui_sdl2_context *context)
+	struct sdl2_context *context)
 {
 	int status;
 
@@ -3540,7 +3182,7 @@ sdl2_lock_framebuffer(
 /* Unlocks the software framebuffer when SDL requires locking. */
 static void
 sdl2_unlock_framebuffer(
-	struct beui_sdl2_context *context)
+	struct sdl2_context *context)
 {
 	/* Releases an SDL-managed framebuffer lock. */
 	if (SDL_MUSTLOCK(context->framebuffer))
@@ -3550,15 +3192,13 @@ sdl2_unlock_framebuffer(
 /* Opens the SDL2 display and its software framebuffer. */
 static int
 sdl2_enter(
-	void *opaque,
-	struct noct_beui_display_info *info)
+	struct sdl2_context *context,
+	struct display_info *info)
 {
-	struct beui_sdl2_context *context;
 	int status;
 	uint32_t black;
 
-	/* Resolves and validates the SDL2 display state. */
-	context = opaque;
+	/* Validates the SDL2 display state. */
 	if (context == NULL || info == NULL)
 		return 0;
 
@@ -3574,23 +3214,21 @@ sdl2_enter(
 	}
 
 	/* Creates the host window. */
-	context->window = SDL_CreateWindow(
-		"Noct BeUI",
-		SDL_WINDOWPOS_CENTERED,
-		SDL_WINDOWPOS_CENTERED,
-		(int)BEUI_SDL2_WIDTH,
-		(int)BEUI_SDL2_HEIGHT,
-		SDL_WINDOW_SHOWN);
+	context->window = SDL_CreateWindow("Noct BeUI",
+					   SDL_WINDOWPOS_CENTERED,
+					   SDL_WINDOWPOS_CENTERED,
+					   (int)DISPLAY_WIDTH,
+					   (int)DISPLAY_HEIGHT,
+					   SDL_WINDOW_SHOWN);
 	if (context->window == NULL)
 		return 0;
 
 	/* Creates the fixed-format software framebuffer. */
-	context->framebuffer = SDL_CreateRGBSurfaceWithFormat(
-		0,
-		(int)BEUI_SDL2_WIDTH,
-		(int)BEUI_SDL2_HEIGHT,
-		32,
-		SDL_PIXELFORMAT_ARGB8888);
+	context->framebuffer = SDL_CreateRGBSurfaceWithFormat(0,
+							      (int)DISPLAY_WIDTH,
+							      (int)DISPLAY_HEIGHT,
+							      32,
+							      SDL_PIXELFORMAT_ARGB8888);
 	if (context->framebuffer == NULL) {
 		SDL_DestroyWindow(context->window);
 		context->window = NULL;
@@ -3603,8 +3241,8 @@ sdl2_enter(
 
 	/* Publishes the active fixed display geometry. */
 	context->alive = 1;
-	info->width = BEUI_SDL2_WIDTH;
-	info->height = BEUI_SDL2_HEIGHT;
+	info->width = DISPLAY_WIDTH;
+	info->height = DISPLAY_HEIGHT;
 	info->bits_per_pixel = 32;
 	info->stride = (unsigned)context->framebuffer->pitch;
 
@@ -3612,47 +3250,14 @@ sdl2_enter(
 	return 1;
 }
 
-/* Stops the active SDL2 audio device. */
-static void
-sdl2_audio_stop(
-	void *opaque)
-{
-	struct beui_sdl2_context *context;
-
-	/* Resolves the SDL2 audio state. */
-	context = opaque;
-
-	/* Ignores a missing context. */
-	if (context == NULL)
-		return;
-
-	/* Ignores an already stopped audio device. */
-	if (context->audio_device == 0)
-		return;
-
-	/* Drains and closes the active audio device. */
-	SDL_ClearQueuedAudio(context->audio_device);
-	SDL_CloseAudioDevice(context->audio_device);
-	context->audio_device = 0;
-	context->audio_channels = 0;
-}
-
 /* Closes every SDL2 display resource. */
 static void
 sdl2_leave(
-	void *opaque)
+	struct sdl2_context *context)
 {
-	struct beui_sdl2_context *context;
-
-	/* Resolves the SDL2 display state. */
-	context = opaque;
-
 	/* Ignores a missing display context. */
 	if (context == NULL)
 		return;
-
-	/* Stops audio owned by this display context. */
-	sdl2_audio_stop(context);
 
 	/* Releases the software framebuffer. */
 	if (context->framebuffer != NULL) {
@@ -3673,15 +3278,13 @@ sdl2_leave(
 /* Services pending SDL2 window events. */
 static int
 sdl2_poll_events(
-	void *opaque)
+	struct sdl2_context *context)
 {
-	struct beui_sdl2_context *context;
 	SDL_Event event;
 	uint32_t window_id;
 	int available;
 
-	/* Resolves and validates the active window. */
-	context = opaque;
+	/* Validates the active window. */
 	if (context == NULL || context->window == NULL)
 		return 0;
 
@@ -3708,17 +3311,15 @@ sdl2_poll_events(
 /* Fills one framebuffer rectangle with a solid color. */
 static int
 sdl2_fill(
-	void *opaque,
-	const struct noct_beui_rect *rect,
+	struct sdl2_context *context,
+	const struct rect *rect,
 	uint32_t color)
 {
-	struct beui_sdl2_context *context;
 	SDL_Rect destination;
 	uint32_t pixel;
 	int status;
 
-	/* Resolves and validates the fill destination. */
-	context = opaque;
+	/* Validates the fill destination. */
 	if (context == NULL || context->framebuffer == NULL || rect == NULL)
 		return 0;
 
@@ -3741,14 +3342,13 @@ sdl2_fill(
 /* Draws one Bresenham line into the software framebuffer. */
 static int
 sdl2_line(
-	void *opaque,
+	struct sdl2_context *context,
 	unsigned x0,
 	unsigned y0,
 	unsigned x1,
 	unsigned y1,
 	uint32_t color)
 {
-	struct beui_sdl2_context *context;
 	int x;
 	int y;
 	int target_x;
@@ -3761,8 +3361,7 @@ sdl2_line(
 	int twice_error;
 	int locked;
 
-	/* Resolves and locks the destination framebuffer. */
-	context = opaque;
+	/* Locks the destination framebuffer. */
 	locked = sdl2_lock_framebuffer(context);
 	if (!locked)
 		return 0;
@@ -3810,19 +3409,15 @@ sdl2_line(
 /* Fills one framebuffer rectangle through an eight-row pattern. */
 static int
 sdl2_pattern_fill(
-	void *opaque,
-	const struct noct_beui_rect *rect,
+	struct sdl2_context *context,
+	const struct rect *rect,
 	uint32_t color,
 	uint64_t pattern)
 {
-	struct beui_sdl2_context *context;
 	unsigned x;
 	unsigned y;
 	int selected;
 	int locked;
-
-	/* Resolves the SDL2 display state. */
-	context = opaque;
 
 	/* Rejects a missing destination rectangle. */
 	if (rect == NULL)
@@ -3854,7 +3449,7 @@ sdl2_pattern_fill(
 /* Reads one target-independent image pixel. */
 static uint32_t
 sdl2_image_pixel(
-	const struct noct_beui_image *image,
+	const struct image *image,
 	unsigned x,
 	unsigned y)
 {
@@ -3865,7 +3460,7 @@ sdl2_image_pixel(
 	pixel = image->pixels + y * image->stride;
 
 	/* Resolves an indexed source pixel through its palette. */
-	if (image->format == NOCT_BEUI_IMAGE_INDEX8) {
+	if (image->format == IMAGE_INDEX8) {
 		color = image->palette[pixel[x]];
 
 		/* Returns the palette-resolved BeUI color. */
@@ -3885,10 +3480,10 @@ sdl2_image_pixel(
 /* Draws an image with an optional destination-space pattern. */
 static int
 sdl2_draw_image_common(
-	struct beui_sdl2_context *context,
+	struct sdl2_context *context,
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image,
+	const struct image *image,
 	uint64_t pattern,
 	int patterned)
 {
@@ -3923,11 +3518,10 @@ sdl2_draw_image_common(
 			/* Copies a pixel selected by the optional pattern. */
 			if (selected) {
 				color = sdl2_image_pixel(image, source_x, source_y);
-				sdl2_put_pixel(
-					context,
-					x + source_x,
-					y + source_y,
-					color);
+				sdl2_put_pixel(context,
+					       x + source_x,
+					       y + source_y,
+					       color);
 			}
 		}
 	}
@@ -3942,16 +3536,14 @@ sdl2_draw_image_common(
 /* Draws an unpatterned image. */
 static int
 sdl2_draw_image(
-	void *opaque,
+	struct sdl2_context *context,
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image)
+	const struct image *image)
 {
-	struct beui_sdl2_context *context;
 	int drawn;
 
 	/* Draws the complete source image. */
-	context = opaque;
 	drawn = sdl2_draw_image_common(context, x, y, image, 0, 0);
 
 	/* Reports whether the image was drawn. */
@@ -3961,17 +3553,15 @@ sdl2_draw_image(
 /* Draws an image through a destination-space pattern. */
 static int
 sdl2_draw_image_pattern(
-	void *opaque,
+	struct sdl2_context *context,
 	unsigned x,
 	unsigned y,
-	const struct noct_beui_image *image,
+	const struct image *image,
 	uint64_t pattern)
 {
-	struct beui_sdl2_context *context;
 	int drawn;
 
 	/* Draws the source image through the requested pattern. */
-	context = opaque;
 	drawn = sdl2_draw_image_common(context, x, y, image, pattern, 1);
 
 	/* Reports whether the image was drawn. */
@@ -3981,19 +3571,17 @@ sdl2_draw_image_pattern(
 /* Copies the software framebuffer to the host window. */
 static int
 sdl2_flush(
-	void *opaque,
-	const struct noct_beui_rect *rectangles,
+	struct sdl2_context *context,
+	const struct rect *rectangles,
 	size_t rectangle_count)
 {
-	struct beui_sdl2_context *context;
 	SDL_Surface *window_surface;
 	int status;
 
 	UNUSED_PARAMETER(rectangles);
 	UNUSED_PARAMETER(rectangle_count);
 
-	/* Resolves and validates the active display surfaces. */
-	context = opaque;
+	/* Validates the active display surfaces. */
 	if (context == NULL || context->window == NULL ||
 	    context->framebuffer == NULL)
 		return 0;
@@ -4004,11 +3592,10 @@ sdl2_flush(
 		return 0;
 
 	/* Copies the software framebuffer into the presentation surface. */
-	status = SDL_BlitSurface(
-		context->framebuffer,
-		NULL,
-		window_surface,
-		NULL);
+	status = SDL_BlitSurface(context->framebuffer,
+				 NULL,
+				 window_surface,
+				 NULL);
 	if (status != 0)
 		return 0;
 
@@ -4210,13 +3797,10 @@ sdl2_ascii_glyph(
 /* Measures one built-in glyph cell. */
 static int
 sdl2_glyph_measure(
-	void *opaque,
 	uint32_t codepoint,
 	unsigned *width,
 	unsigned *height)
 {
-	UNUSED_PARAMETER(opaque);
-
 	/* Rejects missing dimension outputs. */
 	if (width == NULL || height == NULL)
 		return 0;
@@ -4232,15 +3816,14 @@ sdl2_glyph_measure(
 /* Draws one built-in glyph into the software framebuffer. */
 static int
 sdl2_glyph_draw(
-	void *opaque,
+	struct sdl2_context *context,
 	unsigned x,
 	unsigned y,
 	uint32_t codepoint,
 	uint32_t foreground,
 	uint32_t background)
 {
-	struct beui_sdl2_context *context;
-	struct noct_beui_rect rect;
+	struct rect rect;
 	uint8_t rows[7];
 	unsigned width;
 	unsigned row;
@@ -4248,8 +3831,7 @@ sdl2_glyph_draw(
 	int filled;
 	int locked;
 
-	/* Resolves and validates the destination framebuffer. */
-	context = opaque;
+	/* Validates the destination framebuffer. */
 	if (context == NULL || context->framebuffer == NULL)
 		return 0;
 
@@ -4324,15 +3906,13 @@ sdl2_glyph_draw(
 /* Starts pointer input and centers the host cursor. */
 static int
 sdl2_pointer_start(
-	void *opaque,
-	const struct noct_beui_display_info *display)
+	struct sdl2_context *context,
+	const struct display_info *display)
 {
-	struct beui_sdl2_context *context;
 	int x;
 	int y;
 
-	/* Resolves and validates the active display. */
-	context = opaque;
+	/* Validates the active display. */
 	if (context == NULL || context->window == NULL || display == NULL)
 		return 0;
 
@@ -4345,27 +3925,17 @@ sdl2_pointer_start(
 	return 1;
 }
 
-/* Stops pointer input without owning any SDL resource. */
-static void
-sdl2_pointer_stop(
-	void *opaque)
-{
-	UNUSED_PARAMETER(opaque);
-}
-
 /* Reads the current absolute host pointer state. */
 static int
 sdl2_pointer_poll(
-	void *opaque,
-	struct noct_beui_pointer_event *event)
+	struct sdl2_context *context,
+	struct pointer_event *event)
 {
-	struct beui_sdl2_context *context;
 	int x;
 	int y;
 	uint32_t buttons;
 
-	/* Resolves and validates the pointer destination. */
-	context = opaque;
+	/* Validates the pointer destination. */
 	if (context == NULL || context->window == NULL || event == NULL)
 		return -1;
 
@@ -4377,15 +3947,15 @@ sdl2_pointer_poll(
 
 	/* Publishes the primary-button state. */
 	if ((buttons & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0)
-		event->buttons |= NOCT_BEUI_BUTTON_LEFT;
+		event->buttons |= BUTTON_LEFT;
 
 	/* Publishes the secondary-button state. */
 	if ((buttons & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0)
-		event->buttons |= NOCT_BEUI_BUTTON_RIGHT;
+		event->buttons |= BUTTON_RIGHT;
 
 	/* Publishes the middle-button state. */
 	if ((buttons & SDL_BUTTON(SDL_BUTTON_MIDDLE)) != 0)
-		event->buttons |= NOCT_BEUI_BUTTON_MIDDLE;
+		event->buttons |= BUTTON_MIDDLE;
 
 	/* Reports an available pointer state. */
 	return 1;
@@ -4394,16 +3964,12 @@ sdl2_pointer_poll(
 /* Reads the SDL2 monotonic clock in milliseconds. */
 static uint64_t
 sdl2_milliseconds(
-	void *opaque)
+	struct sdl2_context *context)
 {
-	struct beui_sdl2_context *context;
 	uint64_t counter;
 	uint64_t frequency;
 	uint64_t milliseconds;
 	int status;
-
-	/* Resolves the SDL2 timer state. */
-	context = opaque;
 
 	/* Initializes the SDL timer subsystem once when context is available. */
 	if (context != NULL && !context->timer_initialized) {
@@ -4431,126 +3997,6 @@ sdl2_milliseconds(
 	return milliseconds;
 }
 
-/* Starts one SDL2 signed-16-bit audio device. */
-static int
-sdl2_audio_start(
-	void *opaque,
-	unsigned sample_rate,
-	unsigned channels)
-{
-	struct beui_sdl2_context *context;
-	SDL_AudioSpec desired;
-	SDL_AudioSpec obtained;
-	int status;
-
-	/* Resolves and validates the requested audio format. */
-	context = opaque;
-	if (context == NULL || sample_rate == 0 ||
-	    (channels != 1 && channels != 2))
-		return 0;
-
-	/* Initializes the SDL audio subsystem once. */
-	if (!context->audio_initialized) {
-		SDL_SetMainReady();
-
-		/* Starts the SDL audio subsystem. */
-		status = SDL_InitSubSystem(SDL_INIT_AUDIO);
-		if (status != 0)
-			return 0;
-		context->audio_initialized = 1;
-	}
-
-	/* Builds the requested signed-16-bit audio specification. */
-	memset(&desired, 0, sizeof(desired));
-	desired.freq = (int)sample_rate;
-	desired.format = AUDIO_S16SYS;
-	desired.channels = (uint8_t)channels;
-	desired.samples = 1024;
-
-	/* Opens an SDL playback device with frequency adjustment allowed. */
-	context->audio_device = SDL_OpenAudioDevice(
-		NULL,
-		0,
-		&desired,
-		&obtained,
-		SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
-	if (context->audio_device == 0) {
-		sdl2_audio_stop(context);
-		return 0;
-	}
-
-	/* Rejects a device that changed the sample shape. */
-	if (obtained.format != AUDIO_S16SYS || obtained.channels != channels) {
-		sdl2_audio_stop(context);
-		return 0;
-	}
-
-	/* Publishes and starts the accepted audio device. */
-	context->audio_channels = channels;
-	SDL_PauseAudioDevice(context->audio_device, 0);
-
-	/* Reports an active audio device. */
-	return 1;
-}
-
-/* Reports whether the SDL2 audio device remains active. */
-static int
-sdl2_audio_poll(
-	void *opaque)
-{
-	struct beui_sdl2_context *context;
-	SDL_AudioStatus status;
-	int active;
-
-	/* Resolves and validates the active audio device. */
-	context = opaque;
-	if (context == NULL || context->audio_device == 0)
-		return 0;
-
-	/* Reads the current SDL audio-device state. */
-	status = SDL_GetAudioDeviceStatus(context->audio_device);
-	active = status != SDL_AUDIO_STOPPED;
-
-	/* Reports whether playback remains active. */
-	return active;
-}
-
-/* Queues signed-16-bit frames to the active SDL2 audio device. */
-static int
-sdl2_audio_write(
-	void *opaque,
-	const int16_t *samples,
-	size_t frame_count)
-{
-	struct beui_sdl2_context *context;
-	size_t bytes;
-	int status;
-
-	/* Resolves and validates the audio-device inputs. */
-	context = opaque;
-	if (context == NULL || context->audio_device == 0 || samples == NULL)
-		return 0;
-
-	/* Rejects a queue length that SDL cannot represent. */
-	if (frame_count >
-	    UINT_MAX / context->audio_channels / sizeof(*samples))
-		return 0;
-
-	/* Converts the requested frame count to an SDL byte count. */
-	bytes = frame_count * context->audio_channels * sizeof(*samples);
-
-	/* Queues the complete audio buffer. */
-	status = SDL_QueueAudio(
-		context->audio_device,
-		samples,
-		(uint32_t)bytes);
-	if (status != 0)
-		return 0;
-
-	/* Reports a queued audio buffer. */
-	return 1;
-}
-
 /* Maps one BeUI key code to an SDL scancode. */
 static SDL_Scancode
 sdl2_key_scancode(
@@ -4560,76 +4006,76 @@ sdl2_key_scancode(
 
 	/* Maps every named BeUI key to its SDL counterpart. */
 	switch (key) {
-	case NOCT_BEUI_KEY_ESCAPE:
+	case KEY_ESCAPE:
 		/* Maps Escape. */
 		return SDL_SCANCODE_ESCAPE;
-	case NOCT_BEUI_KEY_BACKSPACE:
+	case KEY_BACKSPACE:
 		/* Maps Backspace. */
 		return SDL_SCANCODE_BACKSPACE;
-	case NOCT_BEUI_KEY_TAB:
+	case KEY_TAB:
 		/* Maps Tab. */
 		return SDL_SCANCODE_TAB;
-	case NOCT_BEUI_KEY_ENTER:
+	case KEY_ENTER:
 		/* Maps Enter. */
 		return SDL_SCANCODE_RETURN;
-	case NOCT_BEUI_KEY_PAGE_UP:
+	case KEY_PAGE_UP:
 		/* Maps Page Up. */
 		return SDL_SCANCODE_PAGEUP;
-	case NOCT_BEUI_KEY_PAGE_DOWN:
+	case KEY_PAGE_DOWN:
 		/* Maps Page Down. */
 		return SDL_SCANCODE_PAGEDOWN;
-	case NOCT_BEUI_KEY_INSERT:
+	case KEY_INSERT:
 		/* Maps Insert. */
 		return SDL_SCANCODE_INSERT;
-	case NOCT_BEUI_KEY_DELETE:
+	case KEY_DELETE:
 		/* Maps Delete. */
 		return SDL_SCANCODE_DELETE;
-	case NOCT_BEUI_KEY_UP:
+	case KEY_UP:
 		/* Maps Up. */
 		return SDL_SCANCODE_UP;
-	case NOCT_BEUI_KEY_LEFT:
+	case KEY_LEFT:
 		/* Maps Left. */
 		return SDL_SCANCODE_LEFT;
-	case NOCT_BEUI_KEY_RIGHT:
+	case KEY_RIGHT:
 		/* Maps Right. */
 		return SDL_SCANCODE_RIGHT;
-	case NOCT_BEUI_KEY_DOWN:
+	case KEY_DOWN:
 		/* Maps Down. */
 		return SDL_SCANCODE_DOWN;
-	case NOCT_BEUI_KEY_HOME:
+	case KEY_HOME:
 		/* Maps Home. */
 		return SDL_SCANCODE_HOME;
-	case NOCT_BEUI_KEY_END:
+	case KEY_END:
 		/* Maps End. */
 		return SDL_SCANCODE_END;
-	case NOCT_BEUI_KEY_F1:
+	case KEY_F1:
 		/* Maps F1. */
 		return SDL_SCANCODE_F1;
-	case NOCT_BEUI_KEY_F2:
+	case KEY_F2:
 		/* Maps F2. */
 		return SDL_SCANCODE_F2;
-	case NOCT_BEUI_KEY_F3:
+	case KEY_F3:
 		/* Maps F3. */
 		return SDL_SCANCODE_F3;
-	case NOCT_BEUI_KEY_F4:
+	case KEY_F4:
 		/* Maps F4. */
 		return SDL_SCANCODE_F4;
-	case NOCT_BEUI_KEY_F5:
+	case KEY_F5:
 		/* Maps F5. */
 		return SDL_SCANCODE_F5;
-	case NOCT_BEUI_KEY_F6:
+	case KEY_F6:
 		/* Maps F6. */
 		return SDL_SCANCODE_F6;
-	case NOCT_BEUI_KEY_F7:
+	case KEY_F7:
 		/* Maps F7. */
 		return SDL_SCANCODE_F7;
-	case NOCT_BEUI_KEY_F8:
+	case KEY_F8:
 		/* Maps F8. */
 		return SDL_SCANCODE_F8;
-	case NOCT_BEUI_KEY_F9:
+	case KEY_F9:
 		/* Maps F9. */
 		return SDL_SCANCODE_F9;
-	case NOCT_BEUI_KEY_F10:
+	case KEY_F10:
 		/* Maps F10. */
 		return SDL_SCANCODE_F10;
 	default:
@@ -4649,16 +4095,14 @@ sdl2_key_scancode(
 /* Reports whether one BeUI key is currently held. */
 static int
 sdl2_is_key_down(
-	void *opaque,
+	struct sdl2_context *context,
 	int key)
 {
-	struct beui_sdl2_context *context;
 	const uint8_t *keyboard;
 	SDL_Scancode scancode;
 	int down;
 
-	/* Resolves and validates the active host window. */
-	context = opaque;
+	/* Validates the active host window. */
 	if (context == NULL || context->window == NULL)
 		return -1;
 
@@ -4667,7 +4111,7 @@ sdl2_is_key_down(
 	keyboard = SDL_GetKeyboardState(NULL);
 
 	/* Combines the two host Shift keys into one BeUI modifier. */
-	if (key == NOCT_BEUI_KEY_SHIFT) {
+	if (key == KEY_SHIFT) {
 		down = keyboard[SDL_SCANCODE_LSHIFT] ||
 			keyboard[SDL_SCANCODE_RSHIFT];
 
@@ -4692,9 +4136,11 @@ sdl2_is_key_down(
 /* Drains queued SDL2 keyboard events. */
 static void
 sdl2_drain_input(
-	void *opaque)
+	struct sdl2_context *context)
 {
-	UNUSED_PARAMETER(opaque);
+	/* Ignores input before the SDL video subsystem starts. */
+	if (context == NULL || !context->video_initialized)
+		return;
 
 	/* Refreshes and discards buffered key transitions. */
 	SDL_PumpEvents();
