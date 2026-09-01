@@ -45,10 +45,10 @@ jobs:
           mkdir build/native/lib/arm64
           cp include/noct/noct.h build/native/include/noct/
           cp include/noct/c89compat.h build/native/include/noct/
-          cp out/build/windows-vs2026-x86/Release/noct.lib  build/native/lib/x86/
-          cp out/build/windows-vs2026-x86/Release/noctapi.lib  build/native/lib/x86/
-          cp out/build/windows-vs2026-x64/Release/noct.lib  build/native/lib/x64/
-          cp out/build/windows-vs2026-x64/Release/noctapi.lib  build/native/lib/x64/
+          cp out/build/windows-vs2026-x86/Release/noct.lib build/native/lib/x86/
+          cp out/build/windows-vs2026-x86/Release/noctapi.lib build/native/lib/x86/
+          cp out/build/windows-vs2026-x64/Release/noct.lib build/native/lib/x64/
+          cp out/build/windows-vs2026-x64/Release/noctapi.lib build/native/lib/x64/
           cp out/build/windows-vs2026-arm64/Release/noct.lib build/native/lib/arm64/
           cp out/build/windows-vs2026-arm64/Release/noctapi.lib build/native/lib/arm64/
           cp resources/windows/Noct.nuspec ./
@@ -60,7 +60,7 @@ jobs:
           name: windows
           path: |
             noct-win64.exe
-            Noct.1.0.0.nupkg
+            Noct.2.0.0.nupkg
           if-no-files-found: error
           retention-days: 7
 
@@ -585,9 +585,9 @@ jobs:
             
             Noct is a tiny yet mighty programming language for sandboxed scripting.
             
-            The runtime is a hardened by sandboxing for game and application-embedded scripting,
-            and it includes the JIT compiler for many architectures including
-            x86, x86_64, ARMv5-7, Arm64, RISC-V 32/64, MIPS 32/64, and PowerPC 32/64.
+            - The runtime is a hardened by sandboxing for game and application-embedded scripting.
+            - It supports the JIT compilation for many architectures including x86, x86_64, ARMv5-7, Arm64, RISC-V 32/64, MIPS 32/64, and PowerPC 32/64.
+            - It even supports automatic GPU acceleration for Direct3D 12, OpenGL ES 3.0, and Metal GPUs.
             
             The AOT compiler translates a Noct program to an ANSI C or an Emacs Lisp source code for JIT-restricted platforms such as iOS.
             
@@ -595,7 +595,7 @@ jobs:
             |-------------|--------------------------------|------------------|----------------------------------------------|
             | Windows     | noct-win64.exe                 | Executable       | Windows 7+ x64                               |
             | Windows     | noct-win32.exe                 | Executable       | Windows XP+ x86                              |
-            | Windows     | Noct.1.0.0.nupkg               | NuGet Package    | Visual Studio 2022+                          |
+            | Windows     | Noct.2.0.0.nupkg               | NuGet Package    | Visual Studio 2022+                          |
             | Windows     | noct-mingw-w64.tar.gz          | Tarball          | MinGW-w64 (extract to /)                     |
             | macOS/iOS   | Noct.xcframework.zip           | Xcode Framework  | macOS and iOS, Xcode                         |
             | macOS       | noct-macos-universal.tar.gz    | Tarball          | macOS (extract to /usr/local)                |
@@ -607,7 +607,7 @@ jobs:
 
           files: |
             windows/noct-win64.exe
-            windows/Noct.1.0.0.nupkg
+            windows/Noct.2.0.0.nupkg
             mingw/noct-mingw-w64.tar.gz
             mingw/noct-win32.exe
             macos/Noct.xcframework.zip

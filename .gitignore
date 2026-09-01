@@ -8,3 +8,4 @@ tests/testcases/out
 tests/testcases/webapp/build/
 __pycache__/
 *.pyc
+plan/
