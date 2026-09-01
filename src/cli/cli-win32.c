@@ -9,6 +9,11 @@
  * CLI: Windows Argument Conversion
  */
 
+#if defined(_WIN32) && !defined(_WIN32_WINNT)
+/* WC_ERR_INVALID_CHARS is available starting with Windows Vista. */
+#define _WIN32_WINNT	0x0600
+#endif
+
 #include "cli-win32.h"
 
 #include <windows.h>
