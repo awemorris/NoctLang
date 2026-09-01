@@ -504,77 +504,517 @@ noct_ex_condition_helper(
 	NoctEnv *rt,
 	int slot);
 
-/* XXX: マクロを使わないで、上のコードのスタイルをキープして、展開してください。 */
-#define NOCT_DECL_TYPED_HELPER(name)		\
-NOCT_DLL					\
-bool						\
-CDECL						\
-name(						\
-	NoctEnv *rt,				\
-	int dst,				\
-	int src1,				\
+NOCT_DLL
+bool
+CDECL
+noct_ex_iadd_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
 	int src2);
 
-/* XXX: マクロを使わないで、上のコードのスタイルをキープして、展開してください。 */
-NOCT_DECL_TYPED_HELPER(noct_ex_iadd_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_isub_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_imul_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_idiv_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_imod_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_iand_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_ior_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_ixor_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_ishl_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_ishr_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_ilt_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_ilte_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_igt_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_igte_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_fadd_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_fsub_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_fmul_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_fdiv_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_flt_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_flte_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_fgt_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_fgte_helper)
+NOCT_DLL
+bool
+CDECL
+noct_ex_isub_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
 
-NOCT_DECL_TYPED_HELPER(noct_ex_vloadi32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vstorei32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vsplati32_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vgetlanei32_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vmov128_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vaddi32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vsubi32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vmuli32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vand128_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vor128_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vxor128_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vshli32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vshri32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vloadf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vstoref32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vsplatf32_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vgetlanef32_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vaddf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vsubf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vmulf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vdivf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vcvti32f32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vcvtf32i32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vori32x4i_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vfmaf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vcmpi32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vcmpf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vselect128_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vmaskstorei32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vinductf32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vgatheri32x4_checked_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vmins32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_vmaxs32x4_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_ploadf32_helper)
-NOCT_DECL_TYPED_HELPER(noct_ex_pstoref32_helper)
+NOCT_DLL
+bool
+CDECL
+noct_ex_imul_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
 
-#undef NOCT_DECL_TYPED_HELPER
+NOCT_DLL
+bool
+CDECL
+noct_ex_idiv_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_imod_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_iand_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ior_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ixor_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ishl_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ishr_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ilt_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ilte_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_igt_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_igte_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_fadd_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_fsub_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_fmul_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_fdiv_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_flt_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_flte_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_fgt_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_fgte_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vloadi32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vstorei32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vsplati32_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vgetlanei32_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmov128_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vaddi32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vsubi32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmuli32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vand128_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vor128_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vxor128_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vshli32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vshri32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vloadf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vstoref32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vsplatf32_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vgetlanef32_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vaddf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vsubf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmulf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vdivf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcvti32f32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcvtf32i32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vori32x4i_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vfmaf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcmpi32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vcmpf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vselect128_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmaskstorei32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vinductf32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vgatheri32x4_checked_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmins32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_vmaxs32x4_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_ploadf32_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
+
+NOCT_DLL
+bool
+CDECL
+noct_ex_pstoref32_helper(
+	NoctEnv *rt,
+	int dst,
+	int src1,
+	int src2);
 
 #endif

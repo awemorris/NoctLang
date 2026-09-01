@@ -52,12 +52,12 @@ fi
 # Wiring/source audit: the target owns one complete backend, the CLI uses the
 # sole public registration function, and the implementation uses evdev rather
 # than the legacy console event/key-state interface.
-grep -q 'option(NOCT_ENABLE_API_BEUI_ZEDBSD' "$root/CMakeLists.txt"
+grep -q 'option(NOCT_ENABLE_API_BEUI ' "$root/CMakeLists.txt"
 grep -q 'src/api/api-beui-zedbsd.c' "$root/CMakeLists.txt"
-grep -q '"NOCT_ENABLE_API_BEUI_ZEDBSD": "ON"' "$root/CMakePresets.json"
+grep -q '"NOCT_ENABLE_API_BEUI": "ON"' "$root/CMakePresets.json"
 grep -q 'noct_register_api_beui(env)' "$root/src/cli/cli-run.c"
 grep -q 'noct_register_api_beui(env)' "$root/src/cli/cli-repl.c"
-test "$(grep -c '^bool noct_register_api_beui(NoctEnv \*env);' \
+test "$(grep -c '^noct_register_api_beui($' \
 	"$root/include/noct/noct.h")" -eq 1
 if grep -E 'noct_beui_(bind|init|image_|bmp_)|struct noct_beui_|enum noct_beui_' \
 	"$root/include/noct/noct.h" >/dev/null
@@ -73,10 +73,11 @@ for source in cli-run.c cli-repl.c; do
 	fi
 done
 for source in api-beui-pc98.c api-beui-sdl2.c api-beui-zedbsd.c; do
-	test "$(grep -c '^noct_register_api_beui(NoctEnv \*env)' \
+	test "$(grep -c '^noct_register_api_beui($' \
 		"$root/src/api/$source")" -eq 1
 done
-grep -q 'NOCT_BEUI_PLATFORM_COUNT EQUAL 1' "$root/CMakeLists.txt"
+grep -q '^  if(NOCT_TARGET_ZEDBSD)$' "$root/CMakeLists.txt"
+grep -q '^  elseif(NOCT_TARGET_PC98DOS)$' "$root/CMakeLists.txt"
 test ! -e "$root/src/api/api-beui.c"
 test ! -e "$root/src/api/api-beui-backend.c"
 test ! -e "$root/src/api/beui-internal.h"

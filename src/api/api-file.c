@@ -1,11 +1,15 @@
 /* -*- coding: utf-8; tab-width: 8; indent-tabs-mode: t; -*- */
 
 /*
- * Noct Programming Language
- * Copyright (c) 2025, 2026, Awe Morris
+ * zedBSD
+ * Copyright (C) 2026 Awe Morris
+ *
+ * SPDX-License-Identifier: Zlib
  */
 
-/* API: File.* */
+/*
+ * The File and FileUtil APIs.
+ */
 
 #include <noct/noct.h>
 #include "runtime.h"
@@ -40,36 +44,42 @@
 #include <direct.h>
 #endif
 
-static bool cfunc_File_open(NoctEnv *env);
-static bool cfunc_File_close(NoctEnv *env);
-static bool cfunc_File_tell(NoctEnv *env);
-static bool cfunc_File_seek(NoctEnv *env);
-static bool cfunc_File_read(NoctEnv *env);
-static bool cfunc_File_write(NoctEnv *env);
-static bool cfunc_File_readExact(NoctEnv *env);
-static bool cfunc_File_writeAll(NoctEnv *env);
-static void file_finalizer(void *native_pointer);
-static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
-static bool cfunc_FileUtil_listDirectory(NoctEnv *env);
-static bool cfunc_FileUtil_readTextEucJp(NoctEnv *env);
-static bool cfunc_FileUtil_getCurrentDirectory(NoctEnv *env);
-static bool cfunc_FileUtil_setCurrentDirectory(NoctEnv *env);
-static bool cfunc_FileUtil_getHomeDirectory(NoctEnv *env);
-static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
-static bool cfunc_FileUtil_readText(NoctEnv *env);
-static bool cfunc_FileUtil_writeText(NoctEnv *env);
-static bool cfunc_FileUtil_tryWriteText(NoctEnv *env);
-static bool cfunc_FileUtil_tryReadText(NoctEnv *env);
-static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
-static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
-static bool cfunc_FileUtil_makeDirectoryExclusive(NoctEnv *env);
-
-#if defined(NOCT_USE_MODEL_WEIGHTS)
-bool noct_register_api_weights(NoctEnv *env);
-#endif
-
 #define FILE_HANDLE_MAGIC 0x4e46494cU
+#define FILE_MAPPING_MAGIC 0x4e4d4150U
 
+/* Native functions published by this module. */
+enum file_cfunc_id {
+	FILE_CFUNC_OPEN,
+	FILE_CFUNC_CLOSE,
+	FILE_CFUNC_TELL,
+	FILE_CFUNC_SEEK,
+	FILE_CFUNC_READ,
+	FILE_CFUNC_WRITE,
+	FILE_CFUNC_READ_EXACT,
+	FILE_CFUNC_WRITE_ALL,
+	FILE_CFUNC_CHECK_FILE_EXISTS,
+	FILE_CFUNC_LIST_DIRECTORY,
+	FILE_CFUNC_READ_TEXT_EUC_JP,
+	FILE_CFUNC_GET_CURRENT_DIRECTORY,
+	FILE_CFUNC_SET_CURRENT_DIRECTORY,
+	FILE_CFUNC_GET_HOME_DIRECTORY,
+	FILE_CFUNC_GET_FILE_SIZE,
+	FILE_CFUNC_READ_TEXT,
+	FILE_CFUNC_WRITE_TEXT,
+	FILE_CFUNC_TRY_WRITE_TEXT,
+	FILE_CFUNC_TRY_READ_TEXT,
+	FILE_CFUNC_READ_FOR_EACH_LINE,
+	FILE_CFUNC_WRITE_FOR_EACH_LINE,
+	FILE_CFUNC_MAKE_DIRECTORY_EXCLUSIVE,
+	FILE_CFUNC_MMAP8,
+	FILE_CFUNC_MMAP16,
+	FILE_CFUNC_MMAP32,
+	FILE_CFUNC_MMAP64,
+	FILE_CFUNC_MFLUSH,
+	FILE_CFUNC_MUNMAP
+};
+
+/* A native file handle owned by one VM. */
 struct file_handle {
 	uint32_t magic;
 	struct rt_vm *owner;
@@ -77,15 +87,23 @@ struct file_handle {
 	bool closed;
 };
 
-static bool cfunc_FileUtil_mmap8(NoctEnv *env);
-static bool cfunc_FileUtil_mmap16(NoctEnv *env);
-static bool cfunc_FileUtil_mmap32(NoctEnv *env);
-static bool cfunc_FileUtil_mmap64(NoctEnv *env);
-static bool cfunc_FileUtil_mflush(NoctEnv *env);
-static bool cfunc_FileUtil_munmap(NoctEnv *env);
+/* Native ownership held while a File object is constructed. */
+struct file_open_state {
+	struct file_handle *handle;
+	FILE *file;
+	bool installed;
+};
 
-#define FILE_MAPPING_MAGIC 0x4e4d4150U /* "NMAP" */
+/* Native directory entries collected for one FileUtil result. */
+struct file_name_list {
+	char **name;
+	size_t count;
+#if defined(NOCT_TARGET_POSIX)
+	DIR *dir;
+#endif
+};
 
+/* A platform file mapping owned by one Packed value. */
 struct file_mapping {
 	uint32_t magic;
 	void *mapped_base;
@@ -101,1109 +119,57 @@ struct file_mapping {
 };
 
 #if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
-static void file_mapping_finalizer(void *native_pointer);
+/* Native ownership held while a file mapping is constructed. */
+struct file_mapping_work {
+	struct file_mapping *mapping;
+	bool transferred;
+#if defined(NOCT_TARGET_POSIX)
+	int fd;
 #endif
-static bool cfunc_FileUtil_mmap_impl(NoctEnv *env, int packed_type,
-				     size_t element_width);
+};
+#endif
 
-/*
- * FileUtil.tryReadText(path)
- *
- * Like readText, but returns the integer 0 instead of raising an
- * error when the path cannot be read as a regular file (missing,
- * unreadable, or a directory).
- */
-static bool
-cfunc_FileUtil_tryReadText(NoctEnv *env)
-{
-	NoctValue path, ret;
-	const char *path_s;
-	FILE *file = NULL;
-	char *buf = NULL;
-	long size;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 2, &path, &ret))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
-
-	file = fopen(path_s, "rb");
-	if (file == NULL)
-		goto fail_soft;
-	if (fseek(file, 0, SEEK_END) != 0)
-		goto fail_soft;
-	size = ftell(file);
-	if (size < 0)
-		goto fail_soft;
-	if (fseek(file, 0, SEEK_SET) != 0)
-		goto fail_soft;
-	buf = noct_malloc((size_t)size + 1);
-	if (buf == NULL)
-		goto fail_soft;
-	if (size > 0 && fread(buf, 1, (size_t)size, file) != (size_t)size)
-		goto fail_soft;
-	buf[size] = '\0';
-	if (!noct_set_return_make_string(env, &ret, buf))
-		goto cleanup;
-	ok = true;
-	goto cleanup;
-
-fail_soft:
-	if (!noct_set_return_make_int(env, &ret, 0))
-		goto cleanup;
-	ok = true;
-
-cleanup:
-	if (buf != NULL)
-		noct_free(buf);
-	if (file != NULL)
-		fclose(file);
-	(void)noct_unpin_local(env, 2, &path, &ret);
-	return ok;
-}
-
-/*
- * FileUtil.tryWriteText(path, text)
- *
- * Like writeText, but returns 0 instead of raising an error when the
- * file cannot be created or written (e.g. a filesystem that rejects
- * the name, like a leading dot on FAT16).  Returns 1 on success.
- */
-static bool
-cfunc_FileUtil_tryWriteText(NoctEnv *env)
-{
-	NoctValue path, text, ret;
-	const char *path_s, *text_s;
-	FILE *file = NULL;
-	size_t length;
-	int result = 0;
-
-	if (!noct_pin_local(env, 3, &path, &text, &ret))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !noct_get_arg_check_string(env, 1, &text, &text_s)) {
-		(void)noct_unpin_local(env, 3, &path, &text, &ret);
-		return false;
-	}
-	file = fopen(path_s, "wb");
-	if (file != NULL) {
-		length = strlen(text_s);
-		if (fwrite(text_s, 1, length, file) == length &&
-		    fflush(file) == 0)
-			result = 1;
-		if (fclose(file) != 0)
-			result = 0;
-	}
-	if (!noct_set_return_make_int(env, &ret, result)) {
-		(void)noct_unpin_local(env, 3, &path, &text, &ret);
-		return false;
-	}
-	(void)noct_unpin_local(env, 3, &path, &text, &ret);
-	return true;
-}
-
+/* Metadata for one function published in a package dictionary. */
 struct ffi_item {
 	const char *global_name;
 	const char *package_name;
 	const char *field_name;
 	size_t param_count;
 	const char *param[NOCT_ARG_MAX];
-	bool (*cfunc)(NoctEnv *env);
+	enum file_cfunc_id cfunc_id;
 };
 
+/* Functions published by the File and FileUtil package dictionaries. */
 static struct ffi_item ffi_items[] = {
-	{"File.open",	"File",	"open",		2, {"path", "mode"},	cfunc_File_open},
-	{"File.close",	"File",	"close",	1, {"file"},		cfunc_File_close},
-	{"File.tell",	"File", "tell",		1, {"file"},		cfunc_File_tell},
-	{"File.seek",	"File", "seek",		2, {"file", "offset"},	cfunc_File_seek},
-	{"File.read",	"File", "read",		2, {"file", "len"},	cfunc_File_read},
-	{"File.write",	"File", "write",	4, {"file", "data", "offset", "size"},	cfunc_File_write},
-	{"File.readExact", "File", "readExact", 2, {"file", "byteCount"}, cfunc_File_readExact},
-	{"File.writeAll", "File", "writeAll", 4, {"file", "bytes", "byteOffset", "byteCount"}, cfunc_File_writeAll},
-
-	{"FileUtil.checkFileExists",	"FileUtil", "checkFileExists",	1, {"path"},		cfunc_FileUtil_checkFileExists},
-	{"FileUtil.listDirectory",	"FileUtil", "listDirectory",	1, {"path"},		cfunc_FileUtil_listDirectory},
-	{"FileUtil.readTextEucJp",	"FileUtil", "readTextEucJp",	1, {"path"},		cfunc_FileUtil_readTextEucJp},
-	{"FileUtil.getCurrentDirectory", "FileUtil", "getCurrentDirectory", 0, {NULL},	cfunc_FileUtil_getCurrentDirectory},
-	{"FileUtil.setCurrentDirectory", "FileUtil", "setCurrentDirectory", 1, {"path"},	cfunc_FileUtil_setCurrentDirectory},
-	{"FileUtil.getHomeDirectory",	"FileUtil", "getHomeDirectory",	0, {NULL},	cfunc_FileUtil_getHomeDirectory},
-	{"FileUtil.getFileSize",	"FileUtil", "getFileSize",	1, {"path"},		cfunc_FileUtil_getFileSize},
-	{"FileUtil.readText",		"FileUtil", "readText",		1, {"path"},		cfunc_FileUtil_readText},
-	{"FileUtil.writeText",		"FileUtil", "writeText",	2, {"path", "text"},	cfunc_FileUtil_writeText},
-	{"FileUtil.tryWriteText",	"FileUtil", "tryWriteText",	2, {"path", "text"},	cfunc_FileUtil_tryWriteText},
-	{"FileUtil.tryReadText",	"FileUtil", "tryReadText",	1, {"path"},		cfunc_FileUtil_tryReadText},
-	{"FileUtil.readForEachLine",	"FileUtil", "readForEachLine",	2, {"path", "func"},	cfunc_FileUtil_readForEachLine},
-	{"FileUtil.writeForEachLine",	"FileUtil", "writeForEachLine",	2, {"path", "lines"},	cfunc_FileUtil_writeForEachLine},
-	{"FileUtil.makeDirectoryExclusive", "FileUtil", "makeDirectoryExclusive", 1, {"path"}, cfunc_FileUtil_makeDirectoryExclusive},
-	{"FileUtil.mmap8",		"FileUtil", "mmap8",		5, {"path", "offset", "size", "allow_read", "allow_write"}, cfunc_FileUtil_mmap8},
-	{"FileUtil.mmap16",		"FileUtil", "mmap16",		5, {"path", "offset", "size", "allow_read", "allow_write"}, cfunc_FileUtil_mmap16},
-	{"FileUtil.mmap32",		"FileUtil", "mmap32",		5, {"path", "offset", "size", "allow_read", "allow_write"}, cfunc_FileUtil_mmap32},
-	{"FileUtil.mmap64",		"FileUtil", "mmap64",		5, {"path", "offset", "size", "allow_read", "allow_write"}, cfunc_FileUtil_mmap64},
-	{"FileUtil.mflush",		"FileUtil", "mflush",		1, {"mapped"},	cfunc_FileUtil_mflush},
-	{"FileUtil.munmap",		"FileUtil", "munmap",		1, {"mapped"},	cfunc_FileUtil_munmap},
+	{"File.open", "File", "open", 2, {"path", "mode"}, FILE_CFUNC_OPEN},
+	{"File.close", "File", "close", 1, {"file"}, FILE_CFUNC_CLOSE},
+	{"File.tell", "File", "tell", 1, {"file"}, FILE_CFUNC_TELL},
+	{"File.seek", "File", "seek", 2, {"file", "offset"}, FILE_CFUNC_SEEK},
+	{"File.read", "File", "read", 2, {"file", "len"}, FILE_CFUNC_READ},
+	{"File.write", "File", "write", 4, {"file", "data", "offset", "size"}, FILE_CFUNC_WRITE},
+	{"File.readExact", "File", "readExact", 2, {"file", "byteCount"}, FILE_CFUNC_READ_EXACT},
+	{"File.writeAll", "File", "writeAll", 4, {"file", "bytes", "byteOffset", "byteCount"}, FILE_CFUNC_WRITE_ALL},
+	{"FileUtil.checkFileExists", "FileUtil", "checkFileExists", 1, {"path"}, FILE_CFUNC_CHECK_FILE_EXISTS},
+	{"FileUtil.listDirectory", "FileUtil", "listDirectory", 1, {"path"}, FILE_CFUNC_LIST_DIRECTORY},
+	{"FileUtil.readTextEucJp", "FileUtil", "readTextEucJp", 1, {"path"}, FILE_CFUNC_READ_TEXT_EUC_JP},
+	{"FileUtil.getCurrentDirectory", "FileUtil", "getCurrentDirectory", 0, {NULL}, FILE_CFUNC_GET_CURRENT_DIRECTORY},
+	{"FileUtil.setCurrentDirectory", "FileUtil", "setCurrentDirectory", 1, {"path"}, FILE_CFUNC_SET_CURRENT_DIRECTORY},
+	{"FileUtil.getHomeDirectory", "FileUtil", "getHomeDirectory", 0, {NULL}, FILE_CFUNC_GET_HOME_DIRECTORY},
+	{"FileUtil.getFileSize", "FileUtil", "getFileSize", 1, {"path"}, FILE_CFUNC_GET_FILE_SIZE},
+	{"FileUtil.readText", "FileUtil", "readText", 1, {"path"}, FILE_CFUNC_READ_TEXT},
+	{"FileUtil.writeText", "FileUtil", "writeText", 2, {"path", "text"}, FILE_CFUNC_WRITE_TEXT},
+	{"FileUtil.tryWriteText", "FileUtil", "tryWriteText", 2, {"path", "text"}, FILE_CFUNC_TRY_WRITE_TEXT},
+	{"FileUtil.tryReadText", "FileUtil", "tryReadText", 1, {"path"}, FILE_CFUNC_TRY_READ_TEXT},
+	{"FileUtil.readForEachLine", "FileUtil", "readForEachLine", 2, {"path", "func"}, FILE_CFUNC_READ_FOR_EACH_LINE},
+	{"FileUtil.writeForEachLine", "FileUtil", "writeForEachLine", 2, {"path", "lines"}, FILE_CFUNC_WRITE_FOR_EACH_LINE},
+	{"FileUtil.makeDirectoryExclusive", "FileUtil", "makeDirectoryExclusive", 1, {"path"}, FILE_CFUNC_MAKE_DIRECTORY_EXCLUSIVE},
+	{"FileUtil.mmap8", "FileUtil", "mmap8", 5, {"path", "offset", "size", "allow_read", "allow_write"}, FILE_CFUNC_MMAP8},
+	{"FileUtil.mmap16", "FileUtil", "mmap16", 5, {"path", "offset", "size", "allow_read", "allow_write"}, FILE_CFUNC_MMAP16},
+	{"FileUtil.mmap32", "FileUtil", "mmap32", 5, {"path", "offset", "size", "allow_read", "allow_write"}, FILE_CFUNC_MMAP32},
+	{"FileUtil.mmap64", "FileUtil", "mmap64", 5, {"path", "offset", "size", "allow_read", "allow_write"}, FILE_CFUNC_MMAP64},
+	{"FileUtil.mflush", "FileUtil", "mflush", 1, {"mapped"}, FILE_CFUNC_MFLUSH},
+	{"FileUtil.munmap", "FileUtil", "munmap", 1, {"mapped"}, FILE_CFUNC_MUNMAP}
 };
-
-NOCT_DLL bool
-noct_register_api_file(NoctEnv *env)
-{
-	NoctValue file_dict;
-	NoctValue fileutil_dict;
-	size_t i;
-
-	if (!noct_make_empty_dict(env, &file_dict) ||
-	    !noct_make_empty_dict(env, &fileutil_dict) ||
-	    !noct_set_global(env, "File", &file_dict) ||
-	    !noct_set_global(env, "FileUtil", &fileutil_dict))
-		return false;
-	for (i = 0; i < sizeof(ffi_items) / sizeof(ffi_items[0]); i++) {
-		NoctValue funcval;
-		NoctValue *package = !strcmp(ffi_items[i].package_name, "File") ?
-			&file_dict : &fileutil_dict;
-
-		if (!noct_register_cfunc(env, ffi_items[i].global_name,
-					 ffi_items[i].param_count,
-					 ffi_items[i].param,
-					 ffi_items[i].cfunc, NULL) ||
-		    !noct_get_global(env, ffi_items[i].global_name, &funcval) ||
-		    !noct_set_dict_elem_cstr(env, package,
-					     ffi_items[i].field_name, &funcval))
-			return false;
-	}
-#if defined(NOCT_USE_MODEL_WEIGHTS)
-	if (!noct_register_api_weights(env))
-		return false;
-#endif
-	return true;
-}
-
-#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
-static bool
-fileutil_get_nonnegative_u64(NoctEnv *env, uint32_t index, NoctValue *value,
-			     uint64_t *result)
-{
-	if (!noct_get_arg(env, index, value))
-		return false;
-	if (value->type == NOCT_VALUE_INT) {
-		if (value->val.i < 0) {
-			noct_error(env, N_TR("File mapping offset and size must not be negative."));
-			return false;
-		}
-		*result = (uint64_t)(uint32_t)value->val.i;
-		return true;
-	}
-	if (value->type == NOCT_VALUE_LONG) {
-		if (value->val.l < 0) {
-			noct_error(env, N_TR("File mapping offset and size must not be negative."));
-			return false;
-		}
-		*result = (uint64_t)value->val.l;
-		return true;
-	}
-	noct_error(env, N_TR("File mapping offset and size must be integers."));
-	return false;
-}
-
-static bool
-fileutil_get_mapping(NoctEnv *env, NoctValue *value,
-			 struct file_mapping **mapping)
-{
-	void *native_pointer;
-	void *packed_pointer;
-	void (*native_finalizer)(void *native_pointer);
-
-	if (!noct_get_arg_check_packed(env, 0, value, NOCT_PACKED_ANY))
-		return false;
-	if (!noct_get_packed_native_pointer(env, value, &native_pointer,
-					    &native_finalizer))
-		return false;
-	if (native_pointer == NULL || native_finalizer == NULL) {
-		if (!noct_get_packed_pointer(env, value, &packed_pointer))
-			return false;
-		UNUSED_PARAMETER(packed_pointer);
-		noct_error(env, N_TR("Packed is not a file mapping."));
-		return false;
-	}
-	if (native_finalizer != file_mapping_finalizer ||
-	    ((struct file_mapping *)native_pointer)->magic != FILE_MAPPING_MAGIC) {
-		noct_error(env, N_TR("Packed is not a file mapping."));
-		return false;
-	}
-	*mapping = (struct file_mapping *)native_pointer;
-	return true;
-}
-
-static void
-file_mapping_finalizer(void *native_pointer)
-{
-	struct file_mapping *mapping = (struct file_mapping *)native_pointer;
-
-	if (mapping == NULL || mapping->magic != FILE_MAPPING_MAGIC)
-		return;
-#if defined(NOCT_TARGET_POSIX)
-	if (mapping->mapped_base != NULL)
-		(void)munmap(mapping->mapped_base, mapping->mapped_length);
-#elif defined(NOCT_TARGET_WINDOWS)
-	if (mapping->mapped_base != NULL)
-		(void)UnmapViewOfFile(mapping->mapped_base);
-	if (mapping->mapping_handle != NULL)
-		(void)CloseHandle(mapping->mapping_handle);
-	if (mapping->file_handle != NULL &&
-	    mapping->file_handle != INVALID_HANDLE_VALUE)
-		(void)CloseHandle(mapping->file_handle);
-#endif
-	mapping->magic = 0;
-	noct_free(mapping);
-}
-#endif
-
-static bool
-cfunc_FileUtil_mmap_impl(NoctEnv *env, int packed_type, size_t element_width)
-{
-#if !defined(NOCT_TARGET_POSIX) && !defined(NOCT_TARGET_WINDOWS)
-	UNUSED_PARAMETER(packed_type);
-	UNUSED_PARAMETER(element_width);
-	noct_error(env, N_TR("File mapping is not supported on this platform."));
-	return false;
-#else
-	NoctValue path, offset_value, size_value, read_value, write_value, ret;
-	const char *path_s;
-	uint64_t offset, requested_size, end, map_offset, delta;
-	size_t map_length, elem_count;
-	int allow_read, allow_write;
-	struct file_mapping *mapping = NULL;
-	bool transferred = false;
-	bool ok = false;
-#if defined(NOCT_TARGET_POSIX)
-	int fd = -1;
-	long page_size;
-	struct stat st;
-	int prot;
-	off_t os_offset;
-#elif defined(NOCT_TARGET_WINDOWS)
-	SYSTEM_INFO system_info;
-	LARGE_INTEGER file_size;
-	DWORD file_access, protect, view_access;
-	ULARGE_INTEGER os_offset;
-#endif
-
-	if (!noct_pin_local(env, 6, &path, &offset_value, &size_value,
-			    &read_value, &write_value, &ret))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !fileutil_get_nonnegative_u64(env, 1, &offset_value, &offset) ||
-	    !fileutil_get_nonnegative_u64(env, 2, &size_value, &requested_size) ||
-	    !noct_get_arg_check_int(env, 3, &read_value, &allow_read) ||
-	    !noct_get_arg_check_int(env, 4, &write_value, &allow_write))
-		goto cleanup;
-	if ((allow_read != 0 && allow_read != 1) ||
-	    (allow_write != 0 && allow_write != 1)) {
-		noct_error(env, N_TR("File mapping permissions must be 0 or 1."));
-		goto cleanup;
-	}
-	if (!allow_read && !allow_write) {
-		noct_error(env, N_TR("File mapping must allow reading or writing."));
-		goto cleanup;
-	}
-	if (!allow_read && allow_write) {
-		noct_error(env, N_TR("Write-only file mappings are not supported."));
-		goto cleanup;
-	}
-	if (requested_size == 0) {
-		noct_error(env, N_TR("File mapping size must be greater than zero."));
-		goto cleanup;
-	}
-	if (offset > UINT64_MAX - requested_size) {
-		noct_error(env, N_TR("File mapping range is too large."));
-		goto cleanup;
-	}
-	end = offset + requested_size;
-	if ((offset % element_width) != 0 ||
-	    (requested_size % element_width) != 0) {
-		noct_error(env, N_TR("File mapping range is not aligned to the element size."));
-		goto cleanup;
-	}
-	if (requested_size > (uint64_t)SIZE_MAX) {
-		noct_error(env, N_TR("File mapping size is too large."));
-		goto cleanup;
-	}
-	elem_count = (size_t)(requested_size / element_width);
-
-#if defined(NOCT_TARGET_POSIX)
-	page_size = sysconf(_SC_PAGE_SIZE);
-	if (page_size <= 0) {
-		noct_error(env, N_TR("Cannot determine the file mapping page size."));
-		goto cleanup;
-	}
-	map_offset = offset - offset % (uint64_t)page_size;
-	delta = offset - map_offset;
-	if (requested_size > (uint64_t)SIZE_MAX - delta) {
-		noct_error(env, N_TR("File mapping size is too large."));
-		goto cleanup;
-	}
-	map_length = (size_t)(requested_size + delta);
-	os_offset = (off_t)map_offset;
-	if (os_offset < 0 || (uint64_t)os_offset != map_offset) {
-		noct_error(env, N_TR("File mapping offset is too large."));
-		goto cleanup;
-	}
-	fd = open(path_s, allow_write ? O_RDWR : O_RDONLY);
-	if (fd < 0) {
-		noct_error(env, N_TR("Cannot open file %s for mapping: %s"),
-			   path_s, strerror(errno));
-		goto cleanup;
-	}
-	if (fstat(fd, &st) != 0) {
-		noct_error(env, N_TR("Cannot determine mapped file size: %s"),
-			   strerror(errno));
-		goto cleanup;
-	}
-	if (S_ISREG(st.st_mode) &&
-	    (st.st_size < 0 || end > (uint64_t)st.st_size)) {
-		noct_error(env, N_TR("File mapping range exceeds the file size."));
-		goto cleanup;
-	}
-	mapping = noct_calloc(1, sizeof(*mapping));
-	if (mapping == NULL) {
-		noct_out_of_memory(env);
-		goto cleanup;
-	}
-	prot = PROT_READ | (allow_write ? PROT_WRITE : 0);
-	mapping->mapped_base = mmap(NULL, map_length, prot, MAP_SHARED,
-				    fd, os_offset);
-	if (mapping->mapped_base == MAP_FAILED) {
-		mapping->mapped_base = NULL;
-		noct_error(env, N_TR("Cannot map file %s: %s"),
-			   path_s, strerror(errno));
-		goto cleanup;
-	}
-#elif defined(NOCT_TARGET_WINDOWS)
-	GetSystemInfo(&system_info);
-	if (system_info.dwAllocationGranularity == 0) {
-		noct_error(env, N_TR("Cannot determine the file mapping allocation granularity."));
-		goto cleanup;
-	}
-	map_offset = offset - offset %
-		(uint64_t)system_info.dwAllocationGranularity;
-	delta = offset - map_offset;
-	if (requested_size > (uint64_t)SIZE_MAX - delta) {
-		noct_error(env, N_TR("File mapping size is too large."));
-		goto cleanup;
-	}
-	map_length = (size_t)(requested_size + delta);
-	mapping = noct_calloc(1, sizeof(*mapping));
-	if (mapping == NULL) {
-		noct_out_of_memory(env);
-		goto cleanup;
-	}
-	mapping->file_handle = INVALID_HANDLE_VALUE;
-	file_access = GENERIC_READ | (allow_write ? GENERIC_WRITE : 0);
-	mapping->file_handle = CreateFileA(path_s, file_access,
-					   FILE_SHARE_READ | FILE_SHARE_WRITE,
-					   NULL, OPEN_EXISTING,
-					   FILE_ATTRIBUTE_NORMAL, NULL);
-	if (mapping->file_handle == INVALID_HANDLE_VALUE) {
-		noct_error(env, N_TR("Cannot open file for mapping (Windows error %lu)."),
-			   (unsigned long)GetLastError());
-		goto cleanup;
-	}
-	if (!GetFileSizeEx(mapping->file_handle, &file_size)) {
-		noct_error(env, N_TR("Cannot determine mapped file size (Windows error %lu)."),
-			   (unsigned long)GetLastError());
-		goto cleanup;
-	}
-	if (file_size.QuadPart < 0 || end > (uint64_t)file_size.QuadPart) {
-		noct_error(env, N_TR("File mapping range exceeds the file size."));
-		goto cleanup;
-	}
-	protect = allow_write ? PAGE_READWRITE : PAGE_READONLY;
-	mapping->mapping_handle = CreateFileMappingA(mapping->file_handle, NULL,
-						      protect, 0, 0, NULL);
-	if (mapping->mapping_handle == NULL) {
-		noct_error(env, N_TR("Cannot create file mapping (Windows error %lu)."),
-			   (unsigned long)GetLastError());
-		goto cleanup;
-	}
-	os_offset.QuadPart = map_offset;
-	view_access = allow_write ? FILE_MAP_WRITE : FILE_MAP_READ;
-	mapping->mapped_base = MapViewOfFile(mapping->mapping_handle,
-					     view_access,
-					     os_offset.HighPart,
-					     os_offset.LowPart,
-					     map_length);
-	if (mapping->mapped_base == NULL) {
-		noct_error(env, N_TR("Cannot map file view (Windows error %lu)."),
-			   (unsigned long)GetLastError());
-		goto cleanup;
-	}
-#endif
-
-	mapping->magic = FILE_MAPPING_MAGIC;
-	mapping->mapped_length = map_length;
-	mapping->logical_length = (size_t)requested_size;
-	mapping->delta = (size_t)delta;
-	mapping->allow_read = allow_read;
-	mapping->allow_write = allow_write;
-	if (!noct_make_packed(env, &ret, packed_type,
-			      (size_t)requested_size, elem_count,
-			      (char *)mapping->mapped_base + mapping->delta,
-			      mapping, file_mapping_finalizer))
-		goto cleanup;
-	transferred = true;
-	if (!noct_set_return(env, &ret))
-		goto cleanup;
-	ok = true;
-
-cleanup:
-#if defined(NOCT_TARGET_POSIX)
-	if (fd >= 0)
-		(void)close(fd);
-#endif
-	if (!transferred && mapping != NULL) {
-		if (mapping->magic == 0)
-			mapping->magic = FILE_MAPPING_MAGIC;
-		file_mapping_finalizer(mapping);
-	}
-	(void)noct_unpin_local(env, 6, &path, &offset_value, &size_value,
-			      &read_value, &write_value, &ret);
-	return ok;
-#endif
-}
-
-static bool cfunc_FileUtil_mmap8(NoctEnv *env)
-{
-	return cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT8, 1);
-}
-
-static bool cfunc_FileUtil_mmap16(NoctEnv *env)
-{
-	return cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT16, 2);
-}
-
-static bool cfunc_FileUtil_mmap32(NoctEnv *env)
-{
-	return cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT32, 4);
-}
-
-static bool cfunc_FileUtil_mmap64(NoctEnv *env)
-{
-	return cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT64, 8);
-}
-
-static bool
-cfunc_FileUtil_mflush(NoctEnv *env)
-{
-#if !defined(NOCT_TARGET_POSIX) && !defined(NOCT_TARGET_WINDOWS)
-	noct_error(env, N_TR("File mapping is not supported on this platform."));
-	return false;
-#else
-	NoctValue value, ret;
-	struct file_mapping *mapping;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 2, &value, &ret))
-		return false;
-	if (!fileutil_get_mapping(env, &value, &mapping))
-		goto cleanup;
-#if defined(NOCT_TARGET_POSIX)
-	if (msync(mapping->mapped_base, mapping->mapped_length, MS_SYNC) != 0) {
-		noct_error(env, N_TR("Cannot flush file mapping: %s"),
-			   strerror(errno));
-		goto cleanup;
-	}
-#elif defined(NOCT_TARGET_WINDOWS)
-	if (!FlushViewOfFile(mapping->mapped_base, mapping->mapped_length)) {
-		noct_error(env, N_TR("Cannot flush file mapping (Windows error %lu)."),
-			   (unsigned long)GetLastError());
-		goto cleanup;
-	}
-	if (mapping->allow_write && !FlushFileBuffers(mapping->file_handle)) {
-		noct_error(env, N_TR("Cannot flush mapped file (Windows error %lu)."),
-			   (unsigned long)GetLastError());
-		goto cleanup;
-	}
-#endif
-	if (!noct_set_return_make_int(env, &ret, 0))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 2, &value, &ret);
-	return ok;
-#endif
-}
-
-static bool
-cfunc_FileUtil_munmap(NoctEnv *env)
-{
-#if !defined(NOCT_TARGET_POSIX) && !defined(NOCT_TARGET_WINDOWS)
-	noct_error(env, N_TR("File mapping is not supported on this platform."));
-	return false;
-#else
-	NoctValue value, ret;
-	struct file_mapping *mapping;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 2, &value, &ret))
-		return false;
-	if (!fileutil_get_mapping(env, &value, &mapping))
-		goto cleanup;
-#if defined(NOCT_TARGET_POSIX)
-	if (munmap(mapping->mapped_base, mapping->mapped_length) != 0) {
-		noct_error(env, N_TR("Cannot unmap file mapping: %s"),
-			   strerror(errno));
-		goto cleanup;
-	}
-	mapping->mapped_base = NULL;
-#elif defined(NOCT_TARGET_WINDOWS)
-	if (!UnmapViewOfFile(mapping->mapped_base)) {
-		noct_error(env, N_TR("Cannot unmap file view (Windows error %lu)."),
-			   (unsigned long)GetLastError());
-		goto cleanup;
-	}
-	mapping->mapped_base = NULL;
-	if (mapping->mapping_handle != NULL) {
-		(void)CloseHandle(mapping->mapping_handle);
-		mapping->mapping_handle = NULL;
-	}
-	if (mapping->file_handle != NULL &&
-	    mapping->file_handle != INVALID_HANDLE_VALUE) {
-		(void)CloseHandle(mapping->file_handle);
-		mapping->file_handle = INVALID_HANDLE_VALUE;
-	}
-#endif
-	if (!noct_finalize_packed(env, &value))
-		goto cleanup;
-	if (!noct_set_return_make_int(env, &ret, 0))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 2, &value, &ret);
-	return ok;
-#endif
-}
-
-static bool
-get_file(NoctEnv *env, NoctValue *value, FILE **file)
-{
-	struct file_handle *handle;
-	void *native_pointer;
-	void (*finalizer)(void *);
-
-	if (!noct_get_dict_native_pointer(env, value, &native_pointer,
-					  &finalizer))
-		return false;
-	if (finalizer != file_finalizer || native_pointer == NULL) {
-		noct_error(env, N_TR("File handle kind mismatch."));
-		return false;
-	}
-	handle = (struct file_handle *)native_pointer;
-	if (handle->magic != FILE_HANDLE_MAGIC) {
-		noct_error(env, N_TR("File handle is invalid."));
-		return false;
-	}
-	if (handle->owner != env->vm) {
-		noct_error(env, N_TR("File handle belongs to a different VM."));
-		return false;
-	}
-	if (handle->closed || handle->file == NULL) {
-		noct_error(env, N_TR("File is closed."));
-		return false;
-	}
-	*file = handle->file;
-	return true;
-}
-
-static void
-file_finalizer(void *native_pointer)
-{
-	struct file_handle *handle;
-	handle = (struct file_handle *)native_pointer;
-	if (handle == NULL) return;
-	if (handle->magic == FILE_HANDLE_MAGIC) {
-		if (!handle->closed && handle->file != NULL)
-			(void)fclose(handle->file);
-		handle->file = NULL;
-		handle->closed = true;
-		handle->magic = 0;
-	}
-	noct_free(handle);
-}
-
-static bool
-cfunc_File_open(NoctEnv *env)
-{
-	NoctValue path, mode, ret;
-	const char *path_s, *mode_s;
-	struct file_handle *handle = NULL;
-	FILE *file = NULL;
-	bool installed = false;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 3, &path, &mode, &ret))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !noct_get_arg_check_string(env, 1, &mode, &mode_s))
-		goto cleanup;
-	if (strcmp(mode_s, "r") && strcmp(mode_s, "rb") &&
-	    strcmp(mode_s, "w") && strcmp(mode_s, "wb")) {
-		noct_error(env, N_TR("Unsupported file mode."));
-		goto cleanup;
-	}
-	file = fopen(path_s, mode_s);
-	if (file == NULL) {
-		noct_error(env, N_TR("Cannot open file %s."), path_s);
-		goto cleanup;
-	}
-	handle = noct_malloc(sizeof(*handle));
-	if (handle == NULL) {
-		noct_error(env, N_TR("Out of memory."));
-		goto cleanup;
-	}
-	handle->magic = FILE_HANDLE_MAGIC;
-	handle->owner = env->vm;
-	handle->file = file;
-	handle->closed = false;
-	if (!noct_make_empty_dict(env, &ret) ||
-	    !noct_set_dict_native_pointer(env, &ret, handle, file_finalizer))
-		goto cleanup;
-	installed = true;
-	if (!noct_set_return(env, &ret))
-		goto cleanup;
-	ok = true;
-cleanup:
-	if (!ok && file != NULL) {
-		/*
-		 * Once installed, the dictionary finalizer owns the stream.  Clear
-		 * that ownership before closing it ourselves.  If clearing fails,
-		 * leave the stream to the finalizer instead of risking a double
-		 * fclose on a native pointer that is still reachable by the VM.
-		 */
-		if (!installed ||
-		    noct_set_dict_native_pointer(env, &ret, NULL, NULL)) {
-			(void)fclose(file);
-			if (handle != NULL) noct_free(handle);
-		}
-	}
-	(void)noct_unpin_local(env, 3, &path, &mode, &ret);
-	return ok;
-}
-
-static bool
-cfunc_File_close(NoctEnv *env)
-{
-	NoctValue file_value, ret;
-	struct file_handle *handle;
-	void *native_pointer;
-	void (*finalizer)(void *);
-	FILE *file;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 2, &file_value, &ret))
-		return false;
-	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
-	    !get_file(env, &file_value, &file))
-		goto cleanup;
-	if (!noct_get_dict_native_pointer(env, &file_value, &native_pointer,
-					  &finalizer))
-		goto cleanup;
-	handle = (struct file_handle *)native_pointer;
-	if (finalizer != file_finalizer || handle == NULL ||
-	    handle->magic != FILE_HANDLE_MAGIC) {
-		noct_error(env, N_TR("File handle kind mismatch."));
-		goto cleanup;
-	}
-	if (fclose(file) != 0) {
-		handle->file = NULL;
-		handle->closed = true;
-		noct_error(env, N_TR("File close error."));
-		goto cleanup;
-	}
-	handle->file = NULL;
-	handle->closed = true;
-	if (!noct_set_return_make_int(env, &ret, 0))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 2, &file_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_File_readExact(NoctEnv *env)
-{
-	NoctValue file_value, count_value, ret;
-	FILE *file;
-	size_t count, actual;
-	void *buffer;
-	bool ok;
-	buffer = NULL; ok = false;
-	if (!noct_pin_local(env, 3, &file_value, &count_value, &ret)) return false;
-	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
-	    !noct_get_arg_check_int_long(env, 1, &count_value, &count) ||
-	    !get_file(env, &file_value, &file)) goto cleanup;
-	if ((count_value.type == NOCT_VALUE_INT && count_value.val.i < 0) ||
-	    (count_value.type == NOCT_VALUE_LONG && count_value.val.l < 0) ||
-	    count == 0) {
-		noct_error(env, N_TR("Exact read byte count must be positive."));
-		goto cleanup;
-	}
-	if (!noct_make_packed(env, &ret, NOCT_PACKED_UINT8,
-			      count, count, NULL, NULL, NULL) ||
-	    !noct_get_packed_pointer(env, &ret, &buffer)) goto cleanup;
-	actual = fread(buffer, 1, count, file);
-	if (actual != count) {
-		if (ferror(file)) noct_error(env, N_TR("File read error."));
-		else noct_error(env, N_TR("Unexpected end of file."));
-		goto cleanup;
-	}
-	if (!noct_set_return(env, &ret)) goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_File_writeAll(NoctEnv *env)
-{
-	NoctValue file_value, bytes_value, offset_value, count_value, ret;
-	FILE *file;
-	void *pointer;
-	size_t size, offset, count, written, actual;
-	bool ok;
-	ok = false;
-	if (!noct_pin_local(env, 5, &file_value, &bytes_value, &offset_value,
-			    &count_value, &ret)) return false;
-	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
-	    !noct_get_arg_check_packed(env, 1, &bytes_value, NOCT_PACKED_UINT8) ||
-	    !noct_get_arg_check_int_long(env, 2, &offset_value, &offset) ||
-	    !noct_get_arg_check_int_long(env, 3, &count_value, &count) ||
-	    !get_file(env, &file_value, &file) ||
-	    !noct_get_packed_size(env, &bytes_value, &size) ||
-	    !noct_get_packed_pointer(env, &bytes_value, &pointer)) goto cleanup;
-	if ((offset_value.type == NOCT_VALUE_INT && offset_value.val.i < 0) ||
-	    (offset_value.type == NOCT_VALUE_LONG && offset_value.val.l < 0) ||
-	    (count_value.type == NOCT_VALUE_INT && count_value.val.i < 0) ||
-	    (count_value.type == NOCT_VALUE_LONG && count_value.val.l < 0) ||
-	    offset > size || count > size - offset) {
-		noct_error(env, N_TR("File.writeAll range is out-of-bounds."));
-		goto cleanup;
-	}
-	written = 0;
-	while (written < count) {
-		actual = fwrite((const uint8_t *)pointer + offset + written,
-				1, count - written, file);
-		if (actual == 0) {
-			noct_error(env, N_TR("File write error."));
-			goto cleanup;
-		}
-		written += actual;
-	}
-	if (!noct_set_return_make_int(env, &ret, 0)) goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 5, &file_value, &bytes_value, &offset_value,
-			       &count_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_FileUtil_makeDirectoryExclusive(NoctEnv *env)
-{
-	NoctValue path_value, ret;
-	const char *path;
-	int result;
-	bool ok;
-	ok = false;
-	if (!noct_pin_local(env, 2, &path_value, &ret)) return false;
-	if (!noct_get_arg_check_string(env, 0, &path_value, &path)) goto cleanup;
-	if (path[0] == '\0') {
-		noct_error(env, N_TR("Directory path must not be empty."));
-		goto cleanup;
-	}
-#if defined(NOCT_TARGET_WINDOWS) || defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98DOS)
-	result = _mkdir(path);
-#elif defined(NOCT_TARGET_POSIX)
-	result = mkdir(path, 0777);
-#else
-	result = -1;
-	errno = ENOSYS;
-#endif
-	if (result != 0) {
-		if (errno == EEXIST)
-			noct_error(env, N_TR("Output directory already exists."));
-		else
-			noct_error(env, N_TR("Cannot create output directory %s."), path);
-		goto cleanup;
-	}
-	if (!noct_set_return_make_int(env, &ret, 0)) goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 2, &path_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_File_tell(NoctEnv *env)
-{
-	NoctValue file_value, ret;
-	FILE *file;
-	long offset;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 2, &file_value, &ret))
-		return false;
-	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
-	    !get_file(env, &file_value, &file))
-		goto cleanup;
-	offset = ftell(file);
-	if (offset < 0) {
-		noct_error(env, N_TR("File tell error."));
-		goto cleanup;
-	}
-	if (!noct_set_return_make_int_long(env, &ret, (size_t)offset))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 2, &file_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_File_seek(NoctEnv *env)
-{
-	NoctValue file_value, offset_value, ret;
-	FILE *file;
-	size_t offset;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 3, &file_value, &offset_value, &ret))
-		return false;
-	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
-	    !noct_get_arg_check_int_long(env, 1, &offset_value, &offset) ||
-	    !get_file(env, &file_value, &file))
-		goto cleanup;
-	if (offset > 0x7fffffffU || fseek(file, (long)offset, SEEK_SET) != 0) {
-		noct_error(env, N_TR("File seek error."));
-		goto cleanup;
-	}
-	if (!noct_set_return_make_int(env, &ret, 1))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_File_read(NoctEnv *env)
-{
-	NoctValue file_value, length_value, ret;
-	FILE *file;
-	size_t length, actual;
-	void *buffer = NULL;
-	bool transferred = false;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 3, &file_value, &length_value, &ret))
-		return false;
-	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
-	    !noct_get_arg_check_int_long(env, 1, &length_value, &length) ||
-	    !get_file(env, &file_value, &file))
-		goto cleanup;
-	/* Noct's packed representation currently requires at least one byte. */
-	if (length == 0) {
-		noct_error(env, N_TR("Read length must be greater than zero."));
-		goto cleanup;
-	}
-	buffer = noct_malloc(length);
-	if (buffer == NULL) {
-		noct_error(env, N_TR("Out of memory."));
-		goto cleanup;
-	}
-	actual = fread(buffer, 1, length, file);
-	if (actual == 0 || (actual < length && ferror(file))) {
-		noct_error(env, N_TR("File read error."));
-		goto cleanup;
-	}
-	if (!noct_make_packed(env, &ret, NOCT_PACKED_UINT8, actual, actual,
-			      buffer, buffer, noct_free))
-		goto cleanup;
-	transferred = true;
-	if (!noct_set_return(env, &ret))
-		goto cleanup;
-	ok = true;
-cleanup:
-	if (!transferred && buffer != NULL)
-		noct_free(buffer);
-	(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_File_write(NoctEnv *env)
-{
-	NoctValue file_value, data, offset_value, length_value, ret;
-	FILE *file;
-	size_t offset, length, packed_size;
-	void *buffer;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 5, &file_value, &data, &offset_value,
-			    &length_value, &ret))
-		return false;
-	if (!noct_get_arg_check_dict(env, 0, &file_value) ||
-	    !noct_get_arg_check_packed(env, 1, &data, NOCT_PACKED_UINT8) ||
-	    !noct_get_arg_check_int_long(env, 2, &offset_value, &offset) ||
-	    !noct_get_arg_check_int_long(env, 3, &length_value, &length) ||
-	    !get_file(env, &file_value, &file) ||
-	    !noct_get_packed_size(env, &data, &packed_size))
-		goto cleanup;
-	if (offset > packed_size || length > packed_size - offset) {
-		noct_error(env, N_TR("Offset is out-of-range."));
-		goto cleanup;
-	}
-	if (!noct_get_packed_pointer(env, &data, &buffer))
-		goto cleanup;
-	if (length != 0 && fwrite((char *)buffer + offset, 1, length, file) !=
-			   length) {
-		noct_error(env, N_TR("File write error."));
-		goto cleanup;
-	}
-	if (!noct_set_return_make_int(env, &ret, 1))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 5, &file_value, &data, &offset_value,
-			     &length_value, &ret);
-	return ok;
-}
-
-static bool
-cfunc_FileUtil_checkFileExists(NoctEnv *env)
-{
-	NoctValue path, ret;
-	const char *path_s;
-	FILE *fp;
-	int exists;
-	bool ok = false;
-
-	if (!noct_pin_local(env, 2, &path, &ret))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
-	fp = fopen(path_s, "rb");
-	exists = fp != NULL;
-	if (fp != NULL)
-		(void)fclose(fp);
-	if (!noct_set_return_make_int(env, &ret, exists))
-		goto cleanup;
-	ok = true;
-cleanup:
-	(void)noct_unpin_local(env, 2, &path, &ret);
-	return ok;
-}
-
-/*
- * FileUtil.listDirectory(path)
- *
- * Returns an array of entry names, sorted; directories carry a
- * trailing "/". "." and ".." are omitted. A missing or unreadable
- * directory yields an empty array.
- */
-static bool
-cfunc_FileUtil_listDirectory(NoctEnv *env)
-{
-	NoctValue path, ret, elem;
-	const char *path_s;
-	char **names = NULL;
-	size_t nnames = 0, i, j;
-	bool ok = false;
-#if defined(NOCT_TARGET_POSIX)
-	DIR *dir = NULL;
-	size_t alloc = 0;
-#endif
-
-	if (!noct_pin_local(env, 3, &path, &ret, &elem))
-		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
-	if (!noct_make_empty_array(env, &ret))
-		goto cleanup;
-#if defined(NOCT_TARGET_POSIX)
-	{
-		struct dirent *ent;
-
-		dir = opendir(path_s);
-		if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			char full[2048];
-			struct stat st;
-			size_t len;
-			char *name;
-
-			if (strcmp(ent->d_name, ".") == 0 ||
-			    strcmp(ent->d_name, "..") == 0)
-				continue;
-
-			snprintf(full, sizeof(full), "%s/%s", path_s, ent->d_name);
-			len = strlen(ent->d_name);
-			name = noct_malloc(len + 2);
-			if (name == NULL)
-				continue;
-			strcpy(name, ent->d_name);
-			if (stat(full, &st) == 0 && S_ISDIR(st.st_mode))
-				strcat(name, "/");
-
-			if (nnames >= alloc) {
-				char **nn;
-				alloc = alloc == 0 ? 64 : alloc * 2;
-				nn = noct_realloc(names, sizeof(char *) * alloc);
-				if (nn == NULL) {
-					noct_free(name);
-					continue;
-				}
-				names = nn;
-			}
-			names[nnames++] = name;
-		}
-		closedir(dir);
-		dir = NULL;
-		}
-	}
-#endif
-
-	/* Sort for deterministic completion. */
-	for (i = 0; i + 1 < nnames; i++) {
-		for (j = i + 1; j < nnames; j++) {
-			if (strcmp(names[j], names[i]) < 0) {
-				char *t = names[i];
-				names[i] = names[j];
-				names[j] = t;
-			}
-		}
-	}
-
-	for (i = 0; i < nnames; i++) {
-		if (!noct_make_string(env, &elem, names[i]))
-			goto cleanup;
-		if (!noct_set_array_elem(env, &ret, i, &elem))
-			goto cleanup;
-	}
-	if (!noct_set_return(env, &ret))
-		goto cleanup;
-	ok = true;
-cleanup:
-#if defined(NOCT_TARGET_POSIX)
-	if (dir != NULL)
-		closedir(dir);
-#endif
-	for (i = 0; i < nnames; i++)
-		noct_free(names[i]);
-	noct_free(names);
-	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
-	return ok;
-}
 
 /*
  * JIS X 0208 (EUC-JP code set 1) to Unicode BMP mapping.
@@ -1872,134 +838,2661 @@ static const uint16_t fileutil_jisx0208_to_ucs[7896] = {
 	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
 };
 
-/* Encode a codepoint as UTF-8; returns the byte count. */
-static int
-fileutil_utf8_encode(uint32_t cp, char *out)
+static bool cfunc_File_open(NoctEnv *env);
+static bool cfunc_File_close(NoctEnv *env);
+static bool cfunc_File_tell(NoctEnv *env);
+static bool cfunc_File_seek(NoctEnv *env);
+static bool cfunc_File_read(NoctEnv *env);
+static bool cfunc_File_write(NoctEnv *env);
+static bool cfunc_File_readExact(NoctEnv *env);
+static bool cfunc_File_writeAll(NoctEnv *env);
+static void file_finalizer(void *native_pointer);
+static bool cfunc_FileUtil_checkFileExists(NoctEnv *env);
+static bool cfunc_FileUtil_listDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_readTextEucJp(NoctEnv *env);
+static bool cfunc_FileUtil_getCurrentDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_setCurrentDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_getHomeDirectory(NoctEnv *env);
+static bool cfunc_FileUtil_getFileSize(NoctEnv *env);
+static bool cfunc_FileUtil_readText(NoctEnv *env);
+static bool cfunc_FileUtil_writeText(NoctEnv *env);
+static bool cfunc_FileUtil_tryWriteText(NoctEnv *env);
+static bool cfunc_FileUtil_tryReadText(NoctEnv *env);
+static bool cfunc_FileUtil_readForEachLine(NoctEnv *env);
+static bool cfunc_FileUtil_writeForEachLine(NoctEnv *env);
+static bool cfunc_FileUtil_makeDirectoryExclusive(NoctEnv *env);
+static bool cfunc_FileUtil_mmap8(NoctEnv *env);
+static bool cfunc_FileUtil_mmap16(NoctEnv *env);
+static bool cfunc_FileUtil_mmap32(NoctEnv *env);
+static bool cfunc_FileUtil_mmap64(NoctEnv *env);
+static bool cfunc_FileUtil_mflush(NoctEnv *env);
+static bool cfunc_FileUtil_munmap(NoctEnv *env);
+static bool (*file_cfunc_for_id(enum file_cfunc_id id))(NoctEnv *env);
+static void file_open_failure(NoctEnv *env, NoctValue *ret, struct file_open_state *state);
+static void file_name_list_cleanup(struct file_name_list *list);
+static bool fileutil_try_read_pinned(NoctEnv *env, NoctValue *path, NoctValue *ret);
+static bool fileutil_try_read_finish(NoctEnv *env, NoctValue *ret, FILE *file, char *buf, bool has_text);
+static bool fileutil_try_write_pinned(NoctEnv *env, NoctValue *path, NoctValue *text, NoctValue *ret);
+
+#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
+static void file_mapping_finalizer(void *native_pointer);
+#endif
+static bool cfunc_FileUtil_mmap_impl(NoctEnv *env, int packed_type, size_t element_width);
+#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
+static void file_mapping_work_cleanup(struct file_mapping_work *work);
+static bool fileutil_mmap_pinned(NoctEnv *env, int packed_type, size_t element_width, NoctValue *path, NoctValue *offset_value, NoctValue *size_value, NoctValue *read_value, NoctValue *write_value, NoctValue *ret);
+#endif
+static bool fileutil_get_nonnegative_u64(NoctEnv *env, uint32_t index, NoctValue *value, uint64_t *result);
+static bool fileutil_get_mapping(NoctEnv *env, NoctValue *value, struct file_mapping **mapping);
+static bool get_file(NoctEnv *env, NoctValue *value, FILE **file);
+static int fileutil_utf8_encode(uint32_t cp, char *out);
+
+#if defined(NOCT_USE_MODEL_WEIGHTS)
+bool noct_register_api_weights(NoctEnv *env);
+#endif
+
+/*
+ * Registers the File and FileUtil API functions.
+ */
+NOCT_DLL
+bool
+noct_register_api_file(
+	NoctEnv *env)
 {
+	NoctValue file_dict;
+	NoctValue fileutil_dict;
+	NoctValue funcval;
+	NoctValue *package;
+	bool (*cfunc)(NoctEnv *env);
+	size_t i;
+
+	/* Creates the File package dictionary. */
+	if (!noct_make_empty_dict(env, &file_dict))
+		return false;
+
+	/* Creates the FileUtil package dictionary. */
+	if (!noct_make_empty_dict(env, &fileutil_dict))
+		return false;
+
+	/* Publishes the File package dictionary. */
+	if (!noct_set_global(env, "File", &file_dict))
+		return false;
+
+	/* Publishes the FileUtil package dictionary. */
+	if (!noct_set_global(env, "FileUtil", &fileutil_dict))
+		return false;
+
+	/* Registers every File and FileUtil function in table order. */
+	for (i = 0; i < sizeof(ffi_items) / sizeof(ffi_items[0]); i++) {
+		/* Resolves the function and destination package. */
+		cfunc = file_cfunc_for_id(ffi_items[i].cfunc_id);
+		if (strcmp(ffi_items[i].package_name, "File") == 0) {
+			package = &file_dict;
+		} else {
+			package = &fileutil_dict;
+		}
+
+		/* Registers the native function as a global value. */
+		if (!noct_register_cfunc(
+			env,
+			ffi_items[i].global_name,
+			ffi_items[i].param_count,
+			ffi_items[i].param,
+			cfunc,
+			NULL)) {
+			return false;
+		}
+
+		/* Reads the registered function value. */
+		if (!noct_get_global(env, ffi_items[i].global_name, &funcval))
+			return false;
+
+		/* Publishes the function in its package dictionary. */
+		if (!noct_set_dict_elem_cstr(
+			env,
+			package,
+			ffi_items[i].field_name,
+			&funcval)) {
+			return false;
+		}
+	}
+
+#if defined(NOCT_USE_MODEL_WEIGHTS)
+	/* Registers the optional model-weight API. */
+	if (!noct_register_api_weights(env))
+		return false;
+#endif
+
+	/* Reports successful API registration. */
+	return true;
+}
+
+/* Resolves one registration-table function identifier. */
+static bool
+(*file_cfunc_for_id(
+	enum file_cfunc_id id))(NoctEnv *env)
+{
+	bool (*cfunc)(NoctEnv *env);
+
+	/* Selects the native function associated with the identifier. */
+	cfunc = NULL;
+	switch (id) {
+	case FILE_CFUNC_OPEN:
+		cfunc = cfunc_File_open;
+		break;
+	case FILE_CFUNC_CLOSE:
+		cfunc = cfunc_File_close;
+		break;
+	case FILE_CFUNC_TELL:
+		cfunc = cfunc_File_tell;
+		break;
+	case FILE_CFUNC_SEEK:
+		cfunc = cfunc_File_seek;
+		break;
+	case FILE_CFUNC_READ:
+		cfunc = cfunc_File_read;
+		break;
+	case FILE_CFUNC_WRITE:
+		cfunc = cfunc_File_write;
+		break;
+	case FILE_CFUNC_READ_EXACT:
+		cfunc = cfunc_File_readExact;
+		break;
+	case FILE_CFUNC_WRITE_ALL:
+		cfunc = cfunc_File_writeAll;
+		break;
+	case FILE_CFUNC_CHECK_FILE_EXISTS:
+		cfunc = cfunc_FileUtil_checkFileExists;
+		break;
+	case FILE_CFUNC_LIST_DIRECTORY:
+		cfunc = cfunc_FileUtil_listDirectory;
+		break;
+	case FILE_CFUNC_READ_TEXT_EUC_JP:
+		cfunc = cfunc_FileUtil_readTextEucJp;
+		break;
+	case FILE_CFUNC_GET_CURRENT_DIRECTORY:
+		cfunc = cfunc_FileUtil_getCurrentDirectory;
+		break;
+	case FILE_CFUNC_SET_CURRENT_DIRECTORY:
+		cfunc = cfunc_FileUtil_setCurrentDirectory;
+		break;
+	case FILE_CFUNC_GET_HOME_DIRECTORY:
+		cfunc = cfunc_FileUtil_getHomeDirectory;
+		break;
+	case FILE_CFUNC_GET_FILE_SIZE:
+		cfunc = cfunc_FileUtil_getFileSize;
+		break;
+	case FILE_CFUNC_READ_TEXT:
+		cfunc = cfunc_FileUtil_readText;
+		break;
+	case FILE_CFUNC_WRITE_TEXT:
+		cfunc = cfunc_FileUtil_writeText;
+		break;
+	case FILE_CFUNC_TRY_WRITE_TEXT:
+		cfunc = cfunc_FileUtil_tryWriteText;
+		break;
+	case FILE_CFUNC_TRY_READ_TEXT:
+		cfunc = cfunc_FileUtil_tryReadText;
+		break;
+	case FILE_CFUNC_READ_FOR_EACH_LINE:
+		cfunc = cfunc_FileUtil_readForEachLine;
+		break;
+	case FILE_CFUNC_WRITE_FOR_EACH_LINE:
+		cfunc = cfunc_FileUtil_writeForEachLine;
+		break;
+	case FILE_CFUNC_MAKE_DIRECTORY_EXCLUSIVE:
+		cfunc = cfunc_FileUtil_makeDirectoryExclusive;
+		break;
+	case FILE_CFUNC_MMAP8:
+		cfunc = cfunc_FileUtil_mmap8;
+		break;
+	case FILE_CFUNC_MMAP16:
+		cfunc = cfunc_FileUtil_mmap16;
+		break;
+	case FILE_CFUNC_MMAP32:
+		cfunc = cfunc_FileUtil_mmap32;
+		break;
+	case FILE_CFUNC_MMAP64:
+		cfunc = cfunc_FileUtil_mmap64;
+		break;
+	case FILE_CFUNC_MFLUSH:
+		cfunc = cfunc_FileUtil_mflush;
+		break;
+	case FILE_CFUNC_MUNMAP:
+		cfunc = cfunc_FileUtil_munmap;
+		break;
+	default:
+		break;
+	}
+
+	/* Returns the selected function or NULL for an unknown identifier. */
+	return cfunc;
+}
+
+/*
+ * FileUtil.tryReadText(path)
+ *
+ * Like readText, but returns the integer 0 instead of raising an
+ * error when the path cannot be read as a regular file (missing,
+ * unreadable, or a directory).
+ */
+static bool
+cfunc_FileUtil_tryReadText(
+	NoctEnv *env)
+{
+	NoctValue path;
+	NoctValue ret;
+	bool result;
+
+	/* Roots the argument and return value during the file operation. */
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
+
+	/* Reads the text while both Noct values remain rooted. */
+	result = fileutil_try_read_pinned(env, &path, &ret);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 2, &path, &ret);
+
+	/* Reports the best-effort read result. */
+	return result;
+}
+
+/* Reads a text file without reporting ordinary file-system failures. */
+static bool
+fileutil_try_read_pinned(
+	NoctEnv *env,
+	NoctValue *path,
+	NoctValue *ret)
+{
+	const char *path_s;
+	FILE *file;
+	char *buf;
+	long size;
+	size_t actual;
+	bool result;
+
+	/* Reads the path argument. */
+	if (!noct_get_arg_check_string(env, 0, path, &path_s))
+		return false;
+
+	/* Opens the requested path. */
+	file = fopen(path_s, "rb");
+	if (file == NULL) {
+		result = fileutil_try_read_finish(
+			env,
+			ret,
+			file,
+			NULL,
+			false);
+		return result;
+	}
+
+	/* Seeks to the end of the file. */
+	if (fseek(file, 0, SEEK_END) != 0) {
+		result = fileutil_try_read_finish(
+			env,
+			ret,
+			file,
+			NULL,
+			false);
+		return result;
+	}
+
+	/* Reads the file extent. */
+	size = ftell(file);
+	if (size < 0) {
+		result = fileutil_try_read_finish(
+			env,
+			ret,
+			file,
+			NULL,
+			false);
+		return result;
+	}
+
+	/* Returns to the start of the file. */
+	if (fseek(file, 0, SEEK_SET) != 0) {
+		result = fileutil_try_read_finish(
+			env,
+			ret,
+			file,
+			NULL,
+			false);
+		return result;
+	}
+
+	/* Allocates the text buffer. */
+	buf = noct_malloc((size_t)size + 1);
+	if (buf == NULL) {
+		result = fileutil_try_read_finish(
+			env,
+			ret,
+			file,
+			buf,
+			false);
+		return result;
+	}
+
+	/* Reads a nonempty file in one operation. */
+	if (size > 0) {
+		actual = fread(buf, 1, (size_t)size, file);
+		if (actual != (size_t)size) {
+			result = fileutil_try_read_finish(
+				env,
+				ret,
+				file,
+				buf,
+				false);
+			return result;
+		}
+	}
+
+	/* Terminates the successfully read text. */
+	buf[size] = '\0';
+
+	/* Publishes and releases the successfully read text. */
+	result = fileutil_try_read_finish(
+		env,
+		ret,
+		file,
+		buf,
+		true);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Publishes and releases one best-effort text-read result. */
+static bool
+fileutil_try_read_finish(
+	NoctEnv *env,
+	NoctValue *ret,
+	FILE *file,
+	char *buf,
+	bool has_text)
+{
+	bool result;
+
+	/* Publishes either the text or the soft-failure sentinel. */
+	if (has_text) {
+		result = noct_set_return_make_string(env, ret, buf);
+	} else {
+		result = noct_set_return_make_int(env, ret, 0);
+	}
+
+	/* Releases the temporary text buffer. */
+	if (buf != NULL)
+		noct_free(buf);
+
+	/* Closes the temporary stream. */
+	if (file != NULL)
+		(void)fclose(file);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/*
+ * FileUtil.tryWriteText(path, text)
+ *
+ * Like writeText, but returns 0 instead of raising an error when the
+ * file cannot be created or written (e.g. a filesystem that rejects
+ * the name, like a leading dot on FAT16).  Returns 1 on success.
+ */
+static bool
+cfunc_FileUtil_tryWriteText(
+	NoctEnv *env)
+{
+	NoctValue path;
+	NoctValue text;
+	NoctValue ret;
+	bool result;
+
+	/* Roots the arguments and return value during the file operation. */
+	if (!noct_pin_local(env, 3, &path, &text, &ret))
+		return false;
+
+	/* Writes the text while all Noct values remain rooted. */
+	result = fileutil_try_write_pinned(env, &path, &text, &ret);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 3, &path, &text, &ret);
+
+	/* Reports the best-effort write result. */
+	return result;
+}
+
+/* Writes a text file without reporting ordinary file-system failures. */
+static bool
+fileutil_try_write_pinned(
+	NoctEnv *env,
+	NoctValue *path,
+	NoctValue *text,
+	NoctValue *ret)
+{
+	const char *path_s;
+	const char *text_s;
+	FILE *file;
+	size_t length;
+	size_t actual;
+	int return_value;
+	bool result;
+
+	/* Reads the path argument. */
+	if (!noct_get_arg_check_string(env, 0, path, &path_s))
+		return false;
+
+	/* Reads the text argument. */
+	if (!noct_get_arg_check_string(env, 1, text, &text_s))
+		return false;
+
+	/* Writes and closes the file when it can be opened. */
+	return_value = 0;
+	file = fopen(path_s, "wb");
+	if (file != NULL) {
+		/* Writes the complete text before flushing it. */
+		length = strlen(text_s);
+		actual = fwrite(text_s, 1, length, file);
+		if (actual == length) {
+			/* Flushes a complete write before reporting success. */
+			if (fflush(file) == 0)
+				return_value = 1;
+		}
+
+		/* Treats a close failure as a soft write failure. */
+		if (fclose(file) != 0)
+			return_value = 0;
+	}
+
+	/* Publishes the best-effort Boolean integer result. */
+	result = noct_set_return_make_int(env, ret, return_value);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
+/* Reads one nonnegative mapping integer argument. */
+static bool
+fileutil_get_nonnegative_u64(
+	NoctEnv *env,
+	uint32_t index,
+	NoctValue *value,
+	uint64_t *result)
+{
+	/* Reads the untyped argument value. */
+	if (!noct_get_arg(env, index, value))
+		return false;
+
+	/* Converts a nonnegative Int argument. */
+	if (value->type == NOCT_VALUE_INT) {
+		/* Rejects a negative Int value. */
+		if (value->val.i < 0) {
+			noct_error(env, N_TR("File mapping offset and size must not be negative."));
+			return false;
+		}
+
+		/* Publishes the converted Int value. */
+		*result = (uint64_t)(uint32_t)value->val.i;
+
+		/* Reports successful conversion. */
+		return true;
+	}
+
+	/* Converts a nonnegative Long argument. */
+	if (value->type == NOCT_VALUE_LONG) {
+		/* Rejects a negative Long value. */
+		if (value->val.l < 0) {
+			noct_error(env, N_TR("File mapping offset and size must not be negative."));
+			return false;
+		}
+
+		/* Publishes the converted Long value. */
+		*result = (uint64_t)value->val.l;
+
+		/* Reports successful conversion. */
+		return true;
+	}
+
+	/* Reports an unsupported mapping-number type. */
+	noct_error(env, N_TR("File mapping offset and size must be integers."));
+
+	/* Rejects the unsupported argument type. */
+	return false;
+}
+
+/* Resolves and validates one file-mapping Packed value. */
+static bool
+fileutil_get_mapping(
+	NoctEnv *env,
+	NoctValue *value,
+	struct file_mapping **mapping)
+{
+	void *native_pointer;
+	void *packed_pointer;
+	void (*native_finalizer)(void *native_pointer);
+
+	/* Reads the Packed argument. */
+	if (!noct_get_arg_check_packed(env, 0, value, NOCT_PACKED_ANY))
+		return false;
+
+	/* Reads its native ownership metadata. */
+	if (!noct_get_packed_native_pointer(
+		env,
+		value,
+		&native_pointer,
+		&native_finalizer)) {
+		return false;
+	}
+
+	/* Distinguishes an ordinary Packed value from a mapping. */
+	if (native_pointer == NULL || native_finalizer == NULL) {
+		/* Preserves the historical ordinary-Packed validation. */
+		if (!noct_get_packed_pointer(env, value, &packed_pointer))
+			return false;
+
+		/* Reports the mapping-kind mismatch. */
+		noct_error(env, N_TR("Packed is not a file mapping."));
+		return false;
+	}
+
+	/* Validates the mapping finalizer and ownership record. */
+	if (native_finalizer != file_mapping_finalizer ||
+	    ((struct file_mapping *)native_pointer)->magic != FILE_MAPPING_MAGIC) {
+		noct_error(env, N_TR("Packed is not a file mapping."));
+		return false;
+	}
+
+	/* Returns the validated mapping record. */
+	*mapping = (struct file_mapping *)native_pointer;
+	return true;
+}
+
+/* Releases one native file-mapping ownership record. */
+static void
+file_mapping_finalizer(
+	void *native_pointer)
+{
+	struct file_mapping *mapping;
+
+	/* Resolves the mapping record. */
+	mapping = (struct file_mapping *)native_pointer;
+
+	/* Ignores a missing or already invalidated mapping. */
+	if (mapping == NULL || mapping->magic != FILE_MAPPING_MAGIC)
+		return;
+
+#if defined(NOCT_TARGET_POSIX)
+	/* Releases the remaining POSIX mapping view. */
+	if (mapping->mapped_base != NULL)
+		(void)munmap(mapping->mapped_base, mapping->mapped_length);
+#elif defined(NOCT_TARGET_WINDOWS)
+	/* Releases the remaining Windows mapping view. */
+	if (mapping->mapped_base != NULL)
+		(void)UnmapViewOfFile(mapping->mapped_base);
+
+	/* Releases the remaining Windows mapping object. */
+	if (mapping->mapping_handle != NULL)
+		(void)CloseHandle(mapping->mapping_handle);
+
+	/* Releases the remaining Windows source handle. */
+	if (mapping->file_handle != NULL &&
+	    mapping->file_handle != INVALID_HANDLE_VALUE)
+		(void)CloseHandle(mapping->file_handle);
+#endif
+
+	/* Invalidates and releases the ownership record. */
+	mapping->magic = 0;
+	noct_free(mapping);
+}
+#endif
+
+/* Creates a file mapping with the requested Packed element type. */
+static bool
+cfunc_FileUtil_mmap_impl(
+	NoctEnv *env,
+	int packed_type,
+	size_t element_width)
+{
+#if !defined(NOCT_TARGET_POSIX) && !defined(NOCT_TARGET_WINDOWS)
+	UNUSED_PARAMETER(packed_type);
+	UNUSED_PARAMETER(element_width);
+
+	/* Reports that this platform cannot create file mappings. */
+	noct_error(env, N_TR("File mapping is not supported on this platform."));
+
+	/* Rejects the unsupported mapping operation. */
+	return false;
+#else
+	NoctValue path;
+	NoctValue offset_value;
+	NoctValue size_value;
+	NoctValue read_value;
+	NoctValue write_value;
+	NoctValue ret;
+	bool result;
+
+	/* Roots all arguments and the return value during mapping. */
+	if (!noct_pin_local(
+		env,
+		6,
+		&path,
+		&offset_value,
+		&size_value,
+		&read_value,
+		&write_value,
+		&ret)) {
+		return false;
+	}
+
+	/* Creates the mapping while all Noct values remain rooted. */
+	result = fileutil_mmap_pinned(
+		env,
+		packed_type,
+		element_width,
+		&path,
+		&offset_value,
+		&size_value,
+		&read_value,
+		&write_value,
+		&ret);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(
+		env,
+		6,
+		&path,
+		&offset_value,
+		&size_value,
+		&read_value,
+		&write_value,
+		&ret);
+
+	/* Reports the mapping result. */
+	return result;
+#endif
+}
+
+#if defined(NOCT_TARGET_POSIX) || defined(NOCT_TARGET_WINDOWS)
+/* Releases resources retained while a mapping is constructed. */
+static void
+file_mapping_work_cleanup(
+	struct file_mapping_work *work)
+{
+#if defined(NOCT_TARGET_POSIX)
+	/* Closes the source descriptor after mapping or failure. */
+	if (work->fd >= 0)
+		(void)close(work->fd);
+#endif
+
+	/* Releases a mapping whose ownership was not transferred. */
+	if (!work->transferred && work->mapping != NULL) {
+		/* Restores the marker required by the common finalizer. */
+		if (work->mapping->magic == 0)
+			work->mapping->magic = FILE_MAPPING_MAGIC;
+
+		/* Releases the untransferred mapping ownership. */
+		file_mapping_finalizer(work->mapping);
+	}
+}
+
+/* Creates one platform file mapping with rooted Noct values. */
+static bool
+fileutil_mmap_pinned(
+	NoctEnv *env,
+	int packed_type,
+	size_t element_width,
+	NoctValue *path,
+	NoctValue *offset_value,
+	NoctValue *size_value,
+	NoctValue *read_value,
+	NoctValue *write_value,
+	NoctValue *ret)
+{
+	const char *path_s;
+	uint64_t offset;
+	uint64_t requested_size;
+	uint64_t end;
+	uint64_t map_offset;
+	uint64_t delta;
+	size_t map_length;
+	size_t elem_count;
+	int allow_read;
+	int allow_write;
+	struct file_mapping_work work;
+	bool result;
+#if defined(NOCT_TARGET_POSIX)
+	long page_size;
+	struct stat st;
+	int prot;
+	off_t os_offset;
+#elif defined(NOCT_TARGET_WINDOWS)
+	SYSTEM_INFO system_info;
+	LARGE_INTEGER file_size;
+	DWORD file_access;
+	DWORD protect;
+	DWORD view_access;
+	ULARGE_INTEGER os_offset;
+#endif
+
+	/* Initializes the native mapping ownership state. */
+	memset(&work, 0, sizeof(work));
+#if defined(NOCT_TARGET_POSIX)
+	work.fd = -1;
+#endif
+
+	/* Reads the mapping path. */
+	if (!noct_get_arg_check_string(env, 0, path, &path_s))
+		return false;
+
+	/* Reads the mapping offset. */
+	if (!fileutil_get_nonnegative_u64(env, 1, offset_value, &offset))
+		return false;
+
+	/* Reads the requested mapping size. */
+	if (!fileutil_get_nonnegative_u64(
+		env,
+		2,
+		size_value,
+		&requested_size)) {
+		return false;
+	}
+
+	/* Reads the read permission flag. */
+	if (!noct_get_arg_check_int(env, 3, read_value, &allow_read))
+		return false;
+
+	/* Reads the write permission flag. */
+	if (!noct_get_arg_check_int(env, 4, write_value, &allow_write))
+		return false;
+
+	/* Validates both permission flags. */
+	if ((allow_read != 0 && allow_read != 1) ||
+	    (allow_write != 0 && allow_write != 1)) {
+		noct_error(env, N_TR("File mapping permissions must be 0 or 1."));
+		return false;
+	}
+
+	/* Requires at least one permitted access direction. */
+	if (!allow_read && !allow_write) {
+		noct_error(env, N_TR("File mapping must allow reading or writing."));
+		return false;
+	}
+
+	/* Rejects the unsupported write-only access mode. */
+	if (!allow_read && allow_write) {
+		noct_error(env, N_TR("Write-only file mappings are not supported."));
+		return false;
+	}
+
+	/* Requires a nonempty mapping. */
+	if (requested_size == 0) {
+		noct_error(env, N_TR("File mapping size must be greater than zero."));
+		return false;
+	}
+
+	/* Rejects an overflowing logical range. */
+	if (offset > UINT64_MAX - requested_size) {
+		noct_error(env, N_TR("File mapping range is too large."));
+		return false;
+	}
+	end = offset + requested_size;
+
+	/* Requires element-aligned mapping bounds. */
+	if ((offset % element_width) != 0 ||
+	    (requested_size % element_width) != 0) {
+		noct_error(env, N_TR("File mapping range is not aligned to the element size."));
+		return false;
+	}
+
+	/* Requires a mapping representable by the host size type. */
+	if (requested_size > (uint64_t)SIZE_MAX) {
+		noct_error(env, N_TR("File mapping size is too large."));
+		return false;
+	}
+	elem_count = (size_t)(requested_size / element_width);
+
+#if defined(NOCT_TARGET_POSIX)
+	/* Reads the platform mapping-page size. */
+	page_size = sysconf(_SC_PAGE_SIZE);
+	if (page_size <= 0) {
+		noct_error(env, N_TR("Cannot determine the file mapping page size."));
+		return false;
+	}
+
+	/* Computes the page-aligned native mapping range. */
+	map_offset = offset - offset % (uint64_t)page_size;
+	delta = offset - map_offset;
+	if (requested_size > (uint64_t)SIZE_MAX - delta) {
+		noct_error(env, N_TR("File mapping size is too large."));
+		return false;
+	}
+	map_length = (size_t)(requested_size + delta);
+
+	/* Converts the mapping offset to the platform file type. */
+	os_offset = (off_t)map_offset;
+	if (os_offset < 0 || (uint64_t)os_offset != map_offset) {
+		noct_error(env, N_TR("File mapping offset is too large."));
+		return false;
+	}
+
+	/* Opens the source file with the requested access. */
+	work.fd = open(path_s, allow_write ? O_RDWR : O_RDONLY);
+	if (work.fd < 0) {
+		noct_error(
+			env,
+			N_TR("Cannot open file %s for mapping: %s"),
+			path_s,
+			strerror(errno));
+		return false;
+	}
+
+	/* Reads the source file metadata. */
+	if (fstat(work.fd, &st) != 0) {
+		noct_error(
+			env,
+			N_TR("Cannot determine mapped file size: %s"),
+			strerror(errno));
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+
+	/* Keeps regular-file mappings within the source extent. */
+	if (S_ISREG(st.st_mode) &&
+	    (st.st_size < 0 || end > (uint64_t)st.st_size)) {
+		noct_error(env, N_TR("File mapping range exceeds the file size."));
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+
+	/* Allocates the mapping ownership record. */
+	work.mapping = noct_calloc(1, sizeof(*work.mapping));
+	if (work.mapping == NULL) {
+		noct_out_of_memory(env);
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+
+	/* Maps the requested file range. */
+	prot = PROT_READ | (allow_write ? PROT_WRITE : 0);
+	work.mapping->mapped_base = mmap(
+		NULL,
+		map_length,
+		prot,
+		MAP_SHARED,
+		work.fd,
+		os_offset);
+	if (work.mapping->mapped_base == MAP_FAILED) {
+		work.mapping->mapped_base = NULL;
+		noct_error(
+			env,
+			N_TR("Cannot map file %s: %s"),
+			path_s,
+			strerror(errno));
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+#elif defined(NOCT_TARGET_WINDOWS)
+	/* Reads the platform mapping granularity. */
+	GetSystemInfo(&system_info);
+	if (system_info.dwAllocationGranularity == 0) {
+		noct_error(env, N_TR("Cannot determine the file mapping allocation granularity."));
+		return false;
+	}
+
+	/* Computes the granularity-aligned native mapping range. */
+	map_offset = offset -
+		offset % (uint64_t)system_info.dwAllocationGranularity;
+	delta = offset - map_offset;
+	if (requested_size > (uint64_t)SIZE_MAX - delta) {
+		noct_error(env, N_TR("File mapping size is too large."));
+		return false;
+	}
+	map_length = (size_t)(requested_size + delta);
+
+	/* Allocates the mapping ownership record. */
+	work.mapping = noct_calloc(1, sizeof(*work.mapping));
+	if (work.mapping == NULL) {
+		noct_out_of_memory(env);
+		return false;
+	}
+	work.mapping->file_handle = INVALID_HANDLE_VALUE;
+
+	/* Opens the source file with the requested access. */
+	file_access = GENERIC_READ | (allow_write ? GENERIC_WRITE : 0);
+	work.mapping->file_handle = CreateFileA(
+		path_s,
+		file_access,
+		FILE_SHARE_READ | FILE_SHARE_WRITE,
+		NULL,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL);
+	if (work.mapping->file_handle == INVALID_HANDLE_VALUE) {
+		noct_error(
+			env,
+			N_TR("Cannot open file for mapping (Windows error %lu)."),
+			(unsigned long)GetLastError());
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+
+	/* Reads the source file extent. */
+	if (!GetFileSizeEx(work.mapping->file_handle, &file_size)) {
+		noct_error(
+			env,
+			N_TR("Cannot determine mapped file size (Windows error %lu)."),
+			(unsigned long)GetLastError());
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+
+	/* Keeps the mapping within the source extent. */
+	if (file_size.QuadPart < 0 ||
+	    end > (uint64_t)file_size.QuadPart) {
+		noct_error(env, N_TR("File mapping range exceeds the file size."));
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+
+	/* Creates the Windows mapping object. */
+	protect = allow_write ? PAGE_READWRITE : PAGE_READONLY;
+	work.mapping->mapping_handle = CreateFileMappingA(
+		work.mapping->file_handle,
+		NULL,
+		protect,
+		0,
+		0,
+		NULL);
+	if (work.mapping->mapping_handle == NULL) {
+		noct_error(
+			env,
+			N_TR("Cannot create file mapping (Windows error %lu)."),
+			(unsigned long)GetLastError());
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+
+	/* Maps the requested Windows file view. */
+	os_offset.QuadPart = map_offset;
+	view_access = allow_write ? FILE_MAP_WRITE : FILE_MAP_READ;
+	work.mapping->mapped_base = MapViewOfFile(
+		work.mapping->mapping_handle,
+		view_access,
+		os_offset.HighPart,
+		os_offset.LowPart,
+		map_length);
+	if (work.mapping->mapped_base == NULL) {
+		noct_error(
+			env,
+			N_TR("Cannot map file view (Windows error %lu)."),
+			(unsigned long)GetLastError());
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+#endif
+
+	/* Completes the mapping ownership record. */
+	work.mapping->magic = FILE_MAPPING_MAGIC;
+	work.mapping->mapped_length = map_length;
+	work.mapping->logical_length = (size_t)requested_size;
+	work.mapping->delta = (size_t)delta;
+	work.mapping->allow_read = allow_read;
+	work.mapping->allow_write = allow_write;
+
+	/* Wraps the native mapping in the requested Packed type. */
+	if (!noct_make_packed(
+		env,
+		ret,
+		packed_type,
+		(size_t)requested_size,
+		elem_count,
+		(char *)work.mapping->mapped_base + work.mapping->delta,
+		work.mapping,
+		file_mapping_finalizer)) {
+		file_mapping_work_cleanup(&work);
+		return false;
+	}
+	work.transferred = true;
+
+	/* Publishes the completed Packed value. */
+	result = noct_set_return(env, ret);
+
+	/* Releases only construction resources after ownership transfer. */
+	file_mapping_work_cleanup(&work);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+#endif
+
+/* Implements FileUtil.mmap8(). */
+static bool
+cfunc_FileUtil_mmap8(
+	NoctEnv *env)
+{
+	bool result;
+
+	/* Creates the byte mapping. */
+	result = cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT8, 1);
+
+	/* Reports the mapping result. */
+	return result;
+}
+
+/* Implements FileUtil.mmap16(). */
+static bool
+cfunc_FileUtil_mmap16(
+	NoctEnv *env)
+{
+	bool result;
+
+	/* Creates the 16-bit mapping. */
+	result = cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT16, 2);
+
+	/* Reports the mapping result. */
+	return result;
+}
+
+/* Implements FileUtil.mmap32(). */
+static bool
+cfunc_FileUtil_mmap32(
+	NoctEnv *env)
+{
+	bool result;
+
+	/* Creates the 32-bit mapping. */
+	result = cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT32, 4);
+
+	/* Reports the mapping result. */
+	return result;
+}
+
+/* Implements FileUtil.mmap64(). */
+static bool
+cfunc_FileUtil_mmap64(
+	NoctEnv *env)
+{
+	bool result;
+
+	/* Creates the 64-bit mapping. */
+	result = cfunc_FileUtil_mmap_impl(env, NOCT_PACKED_UINT64, 8);
+
+	/* Reports the mapping result. */
+	return result;
+}
+
+/* Implements FileUtil.mflush(). */
+static bool
+cfunc_FileUtil_mflush(
+	NoctEnv *env)
+{
+#if !defined(NOCT_TARGET_POSIX) && !defined(NOCT_TARGET_WINDOWS)
+	/* Reports that this platform cannot flush file mappings. */
+	noct_error(env, N_TR("File mapping is not supported on this platform."));
+
+	/* Rejects the unsupported flush operation. */
+	return false;
+#else
+	NoctValue value;
+	NoctValue ret;
+	struct file_mapping *mapping;
+	bool result;
+
+	/* Roots the mapping and return value during the flush. */
+	if (!noct_pin_local(env, 2, &value, &ret))
+		return false;
+
+	/* Reads and validates the mapping argument. */
+	if (!fileutil_get_mapping(env, &value, &mapping)) {
+		(void)noct_unpin_local(env, 2, &value, &ret);
+		return false;
+	}
+
+#if defined(NOCT_TARGET_POSIX)
+	/* Flushes the complete POSIX mapping. */
+	if (msync(mapping->mapped_base, mapping->mapped_length, MS_SYNC) != 0) {
+		noct_error(
+			env,
+			N_TR("Cannot flush file mapping: %s"),
+			strerror(errno));
+		(void)noct_unpin_local(env, 2, &value, &ret);
+		return false;
+	}
+#elif defined(NOCT_TARGET_WINDOWS)
+	/* Flushes the complete Windows mapping view. */
+	if (!FlushViewOfFile(mapping->mapped_base, mapping->mapped_length)) {
+		noct_error(
+			env,
+			N_TR("Cannot flush file mapping (Windows error %lu)."),
+			(unsigned long)GetLastError());
+		(void)noct_unpin_local(env, 2, &value, &ret);
+		return false;
+	}
+
+	/* Flushes writable data through the backing file handle. */
+	if (mapping->allow_write) {
+		/* Flushes the backing handle after flushing the view. */
+		if (!FlushFileBuffers(mapping->file_handle)) {
+			noct_error(
+				env,
+				N_TR("Cannot flush mapped file (Windows error %lu)."),
+				(unsigned long)GetLastError());
+			(void)noct_unpin_local(env, 2, &value, &ret);
+			return false;
+		}
+	}
+#endif
+
+	/* Publishes the successful flush sentinel. */
+	result = noct_set_return_make_int(env, &ret, 0);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 2, &value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+#endif
+}
+
+/* Implements FileUtil.munmap(). */
+static bool
+cfunc_FileUtil_munmap(
+	NoctEnv *env)
+{
+#if !defined(NOCT_TARGET_POSIX) && !defined(NOCT_TARGET_WINDOWS)
+	/* Reports that this platform cannot unmap file mappings. */
+	noct_error(env, N_TR("File mapping is not supported on this platform."));
+
+	/* Rejects the unsupported unmap operation. */
+	return false;
+#else
+	NoctValue value;
+	NoctValue ret;
+	struct file_mapping *mapping;
+	bool result;
+
+	/* Roots the mapping and return value during unmapping. */
+	if (!noct_pin_local(env, 2, &value, &ret))
+		return false;
+
+	/* Reads and validates the mapping argument. */
+	if (!fileutil_get_mapping(env, &value, &mapping)) {
+		(void)noct_unpin_local(env, 2, &value, &ret);
+		return false;
+	}
+
+#if defined(NOCT_TARGET_POSIX)
+	/* Releases the POSIX mapping view. */
+	if (munmap(mapping->mapped_base, mapping->mapped_length) != 0) {
+		noct_error(
+			env,
+			N_TR("Cannot unmap file mapping: %s"),
+			strerror(errno));
+		(void)noct_unpin_local(env, 2, &value, &ret);
+		return false;
+	}
+	mapping->mapped_base = NULL;
+#elif defined(NOCT_TARGET_WINDOWS)
+	/* Releases the Windows mapping view. */
+	if (!UnmapViewOfFile(mapping->mapped_base)) {
+		noct_error(
+			env,
+			N_TR("Cannot unmap file view (Windows error %lu)."),
+			(unsigned long)GetLastError());
+		(void)noct_unpin_local(env, 2, &value, &ret);
+		return false;
+	}
+	mapping->mapped_base = NULL;
+
+	/* Releases the Windows mapping object. */
+	if (mapping->mapping_handle != NULL) {
+		(void)CloseHandle(mapping->mapping_handle);
+		mapping->mapping_handle = NULL;
+	}
+
+	/* Releases the Windows source file handle. */
+	if (mapping->file_handle != NULL &&
+	    mapping->file_handle != INVALID_HANDLE_VALUE) {
+		(void)CloseHandle(mapping->file_handle);
+		mapping->file_handle = INVALID_HANDLE_VALUE;
+	}
+#endif
+
+	/* Finalizes the Packed native ownership record. */
+	if (!noct_finalize_packed(env, &value)) {
+		(void)noct_unpin_local(env, 2, &value, &ret);
+		return false;
+	}
+
+	/* Publishes the successful unmap sentinel. */
+	result = noct_set_return_make_int(env, &ret, 0);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 2, &value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+#endif
+}
+
+/* Resolves and validates one File dictionary. */
+static bool
+get_file(
+	NoctEnv *env,
+	NoctValue *value,
+	FILE **file)
+{
+	struct file_handle *handle;
+	void *native_pointer;
+	void (*finalizer)(void *);
+
+	/* Reads the dictionary native ownership record. */
+	if (!noct_get_dict_native_pointer(
+		env,
+		value,
+		&native_pointer,
+		&finalizer)) {
+		return false;
+	}
+
+	/* Validates the native handle kind. */
+	if (finalizer != file_finalizer || native_pointer == NULL) {
+		noct_error(env, N_TR("File handle kind mismatch."));
+		return false;
+	}
+
+	/* Resolves the file-handle record. */
+	handle = (struct file_handle *)native_pointer;
+
+	/* Validates the file-handle marker. */
+	if (handle->magic != FILE_HANDLE_MAGIC) {
+		noct_error(env, N_TR("File handle is invalid."));
+		return false;
+	}
+
+	/* Keeps handles within their owning VM. */
+	if (handle->owner != env->vm) {
+		noct_error(env, N_TR("File handle belongs to a different VM."));
+		return false;
+	}
+
+	/* Rejects a closed stream. */
+	if (handle->closed || handle->file == NULL) {
+		noct_error(env, N_TR("File is closed."));
+		return false;
+	}
+
+	/* Returns the validated native stream. */
+	*file = handle->file;
+	return true;
+}
+
+/* Releases one native File ownership record. */
+static void
+file_finalizer(
+	void *native_pointer)
+{
+	struct file_handle *handle;
+
+	/* Resolves the file-handle record. */
+	handle = (struct file_handle *)native_pointer;
+
+	/* Ignores an absent ownership record. */
+	if (handle == NULL)
+		return;
+
+	/* Closes and invalidates a live file handle. */
+	if (handle->magic == FILE_HANDLE_MAGIC) {
+		/* Closes a stream that was not closed explicitly. */
+		if (!handle->closed && handle->file != NULL)
+			(void)fclose(handle->file);
+
+		/* Invalidates the native handle state. */
+		handle->file = NULL;
+		handle->closed = true;
+		handle->magic = 0;
+	}
+
+	/* Releases the ownership record. */
+	noct_free(handle);
+}
+
+/* Releases native ownership after a failed File construction. */
+static void
+file_open_failure(
+	NoctEnv *env,
+	NoctValue *ret,
+	struct file_open_state *state)
+{
+	bool may_close;
+
+	/* Preserves finalizer ownership when clearing the native pointer fails. */
+	may_close = !state->installed;
+	if (state->installed) {
+		may_close = noct_set_dict_native_pointer(
+			env,
+			ret,
+			NULL,
+			NULL);
+	}
+
+	/* Releases ownership only when the dictionary no longer retains it. */
+	if (state->file != NULL && may_close) {
+		(void)fclose(state->file);
+		if (state->handle != NULL)
+			noct_free(state->handle);
+	}
+}
+
+/* Implements File.open(). */
+static bool
+cfunc_File_open(
+	NoctEnv *env)
+{
+	NoctValue path;
+	NoctValue mode;
+	NoctValue ret;
+	const char *path_s;
+	const char *mode_s;
+	struct file_open_state state;
+	bool result;
+
+	/* Initializes the native ownership state. */
+	memset(&state, 0, sizeof(state));
+
+	/* Roots the arguments and return value during construction. */
+	if (!noct_pin_local(env, 3, &path, &mode, &ret))
+		return false;
+
+	/* Reads the path argument. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+
+	/* Reads the mode argument. */
+	if (!noct_get_arg_check_string(env, 1, &mode, &mode_s)) {
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+
+	/* Accepts only the historical read and write modes. */
+	if (strcmp(mode_s, "r") != 0 &&
+	    strcmp(mode_s, "rb") != 0 &&
+	    strcmp(mode_s, "w") != 0 &&
+	    strcmp(mode_s, "wb") != 0) {
+		noct_error(env, N_TR("Unsupported file mode."));
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+
+	/* Opens the requested file stream. */
+	state.file = fopen(path_s, mode_s);
+	if (state.file == NULL) {
+		noct_error(env, N_TR("Cannot open file %s."), path_s);
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+
+	/* Allocates and initializes the native file handle. */
+	state.handle = noct_malloc(sizeof(*state.handle));
+	if (state.handle == NULL) {
+		noct_error(env, N_TR("Out of memory."));
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+	state.handle->magic = FILE_HANDLE_MAGIC;
+	state.handle->owner = env->vm;
+	state.handle->file = state.file;
+	state.handle->closed = false;
+
+	/* Creates the File dictionary. */
+	if (!noct_make_empty_dict(env, &ret)) {
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+
+	/* Transfers native ownership to the File dictionary. */
+	if (!noct_set_dict_native_pointer(
+		env,
+		&ret,
+		state.handle,
+		file_finalizer)) {
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+	state.installed = true;
+
+	/* Publishes the completed File dictionary. */
+	result = noct_set_return(env, &ret);
+	if (!result) {
+		file_open_failure(env, &ret, &state);
+		(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+		return false;
+	}
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 3, &path, &mode, &ret);
+
+	/* Reports successful File construction. */
+	return true;
+}
+
+/* Implements File.close(). */
+static bool
+cfunc_File_close(
+	NoctEnv *env)
+{
+	NoctValue file_value;
+	NoctValue ret;
+	struct file_handle *handle;
+	void *native_pointer;
+	void (*finalizer)(void *);
+	FILE *file;
+	bool result;
+
+	/* Roots the File object and return value during closure. */
+	if (!noct_pin_local(env, 2, &file_value, &ret))
+		return false;
+
+	/* Reads the File dictionary argument. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value)) {
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+
+	/* Resolves the validated native stream. */
+	if (!get_file(env, &file_value, &file)) {
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+
+	/* Reads the native ownership record. */
+	if (!noct_get_dict_native_pointer(
+		env,
+		&file_value,
+		&native_pointer,
+		&finalizer)) {
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+	handle = (struct file_handle *)native_pointer;
+
+	/* Revalidates the native handle kind. */
+	if (finalizer != file_finalizer ||
+	    handle == NULL ||
+	    handle->magic != FILE_HANDLE_MAGIC) {
+		noct_error(env, N_TR("File handle kind mismatch."));
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+
+	/* Closes the stream and records even a close failure. */
+	if (fclose(file) != 0) {
+		handle->file = NULL;
+		handle->closed = true;
+		noct_error(env, N_TR("File close error."));
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+	handle->file = NULL;
+	handle->closed = true;
+
+	/* Publishes the successful close sentinel. */
+	result = noct_set_return_make_int(env, &ret, 0);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 2, &file_value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements File.readExact(). */
+static bool
+cfunc_File_readExact(
+	NoctEnv *env)
+{
+	NoctValue file_value;
+	NoctValue count_value;
+	NoctValue ret;
+	FILE *file;
+	size_t count;
+	size_t actual;
+	void *buffer;
+	bool result;
+
+	/* Roots the arguments and return value during the read. */
+	if (!noct_pin_local(env, 3, &file_value, &count_value, &ret))
+		return false;
+
+	/* Reads the File dictionary argument. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value)) {
+		(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+		return false;
+	}
+
+	/* Reads the requested byte count. */
+	if (!noct_get_arg_check_int_long(env, 1, &count_value, &count)) {
+		(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+		return false;
+	}
+
+	/* Resolves the validated native stream. */
+	if (!get_file(env, &file_value, &file)) {
+		(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+		return false;
+	}
+
+	/* Requires a positive byte count in its original value type. */
+	if ((count_value.type == NOCT_VALUE_INT &&
+	     count_value.val.i < 0) ||
+	    (count_value.type == NOCT_VALUE_LONG &&
+	     count_value.val.l < 0) ||
+	    count == 0) {
+		noct_error(env, N_TR("Exact read byte count must be positive."));
+		(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+		return false;
+	}
+
+	/* Allocates the exact-size Packed return value. */
+	if (!noct_make_packed(
+		env,
+		&ret,
+		NOCT_PACKED_UINT8,
+		count,
+		count,
+		NULL,
+		NULL,
+		NULL)) {
+		(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+		return false;
+	}
+
+	/* Resolves its writable payload. */
+	if (!noct_get_packed_pointer(env, &ret, &buffer)) {
+		(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+		return false;
+	}
+
+	/* Reads exactly the requested number of bytes. */
+	actual = fread(buffer, 1, count, file);
+	if (actual != count) {
+		/* Reports an I/O error or an early end of file. */
+		if (ferror(file)) {
+			noct_error(env, N_TR("File read error."));
+		} else {
+			noct_error(env, N_TR("Unexpected end of file."));
+		}
+		(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+		return false;
+	}
+
+	/* Publishes the filled Packed value. */
+	result = noct_set_return(env, &ret);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 3, &file_value, &count_value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements File.writeAll(). */
+static bool
+cfunc_File_writeAll(
+	NoctEnv *env)
+{
+	NoctValue file_value;
+	NoctValue bytes_value;
+	NoctValue offset_value;
+	NoctValue count_value;
+	NoctValue ret;
+	FILE *file;
+	void *pointer;
+	size_t size;
+	size_t offset;
+	size_t count;
+	size_t written;
+	size_t actual;
+	bool result;
+
+	/* Roots the arguments and return value during the write. */
+	if (!noct_pin_local(
+		env,
+		5,
+		&file_value,
+		&bytes_value,
+		&offset_value,
+		&count_value,
+		&ret)) {
+		return false;
+	}
+
+	/* Reads the File dictionary argument. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the byte-buffer argument. */
+	if (!noct_get_arg_check_packed(
+		env,
+		1,
+		&bytes_value,
+		NOCT_PACKED_UINT8)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the byte offset. */
+	if (!noct_get_arg_check_int_long(env, 2, &offset_value, &offset)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the byte count. */
+	if (!noct_get_arg_check_int_long(env, 3, &count_value, &count)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Resolves the validated native stream. */
+	if (!get_file(env, &file_value, &file)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the Packed byte extent. */
+	if (!noct_get_packed_size(env, &bytes_value, &size)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Resolves the Packed byte payload. */
+	if (!noct_get_packed_pointer(env, &bytes_value, &pointer)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Validates the requested byte range. */
+	if ((offset_value.type == NOCT_VALUE_INT &&
+	     offset_value.val.i < 0) ||
+	    (offset_value.type == NOCT_VALUE_LONG &&
+	     offset_value.val.l < 0) ||
+	    (count_value.type == NOCT_VALUE_INT &&
+	     count_value.val.i < 0) ||
+	    (count_value.type == NOCT_VALUE_LONG &&
+	     count_value.val.l < 0) ||
+	    offset > size ||
+	    count > size - offset) {
+		noct_error(env, N_TR("File.writeAll range is out-of-bounds."));
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&bytes_value,
+			&offset_value,
+			&count_value,
+			&ret);
+		return false;
+	}
+
+	/* Writes the complete range across partial writes. */
+	written = 0;
+	while (written < count) {
+		actual = fwrite(
+			(const uint8_t *)pointer + offset + written,
+			1,
+			count - written,
+			file);
+
+		/* Rejects a write that made no progress. */
+		if (actual == 0) {
+			noct_error(env, N_TR("File write error."));
+			(void)noct_unpin_local(
+				env,
+				5,
+				&file_value,
+				&bytes_value,
+				&offset_value,
+				&count_value,
+				&ret);
+			return false;
+		}
+		written += actual;
+	}
+
+	/* Publishes the successful write sentinel. */
+	result = noct_set_return_make_int(env, &ret, 0);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(
+		env,
+		5,
+		&file_value,
+		&bytes_value,
+		&offset_value,
+		&count_value,
+		&ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements FileUtil.makeDirectoryExclusive(). */
+static bool
+cfunc_FileUtil_makeDirectoryExclusive(
+	NoctEnv *env)
+{
+	NoctValue path_value;
+	NoctValue ret;
+	const char *path;
+	int make_result;
+	bool result;
+
+	/* Roots the path and return value during directory creation. */
+	if (!noct_pin_local(env, 2, &path_value, &ret))
+		return false;
+
+	/* Reads the directory path. */
+	if (!noct_get_arg_check_string(env, 0, &path_value, &path)) {
+		(void)noct_unpin_local(env, 2, &path_value, &ret);
+		return false;
+	}
+
+	/* Rejects an empty directory path. */
+	if (path[0] == '\0') {
+		noct_error(env, N_TR("Directory path must not be empty."));
+		(void)noct_unpin_local(env, 2, &path_value, &ret);
+		return false;
+	}
+
+	/* Creates the directory without replacing an existing entry. */
+#if defined(NOCT_TARGET_WINDOWS) || defined(NOCT_TARGET_DOS4G) || defined(NOCT_TARGET_PC98DOS)
+	make_result = _mkdir(path);
+#elif defined(NOCT_TARGET_POSIX)
+	make_result = mkdir(path, 0777);
+#else
+	make_result = -1;
+	errno = ENOSYS;
+#endif
+
+	/* Reports the original platform-specific creation error. */
+	if (make_result != 0) {
+		if (errno == EEXIST) {
+			noct_error(env, N_TR("Output directory already exists."));
+		} else {
+			noct_error(env, N_TR("Cannot create output directory %s."), path);
+		}
+		(void)noct_unpin_local(env, 2, &path_value, &ret);
+		return false;
+	}
+
+	/* Publishes the successful creation sentinel. */
+	result = noct_set_return_make_int(env, &ret, 0);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 2, &path_value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements File.tell(). */
+static bool
+cfunc_File_tell(
+	NoctEnv *env)
+{
+	NoctValue file_value;
+	NoctValue ret;
+	FILE *file;
+	long offset;
+	bool result;
+
+	/* Roots the File object and return value during the query. */
+	if (!noct_pin_local(env, 2, &file_value, &ret))
+		return false;
+
+	/* Reads the File dictionary argument. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value)) {
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+
+	/* Resolves the validated native stream. */
+	if (!get_file(env, &file_value, &file)) {
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+
+	/* Reads the current stream offset. */
+	offset = ftell(file);
+	if (offset < 0) {
+		noct_error(env, N_TR("File tell error."));
+		(void)noct_unpin_local(env, 2, &file_value, &ret);
+		return false;
+	}
+
+	/* Publishes the current stream offset. */
+	result = noct_set_return_make_int_long(env, &ret, (size_t)offset);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 2, &file_value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements File.seek(). */
+static bool
+cfunc_File_seek(
+	NoctEnv *env)
+{
+	NoctValue file_value;
+	NoctValue offset_value;
+	NoctValue ret;
+	FILE *file;
+	size_t offset;
+	bool result;
+
+	/* Roots the arguments and return value during the seek. */
+	if (!noct_pin_local(env, 3, &file_value, &offset_value, &ret))
+		return false;
+
+	/* Reads the File dictionary argument. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value)) {
+		(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
+		return false;
+	}
+
+	/* Reads the absolute byte offset. */
+	if (!noct_get_arg_check_int_long(env, 1, &offset_value, &offset)) {
+		(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
+		return false;
+	}
+
+	/* Resolves the validated native stream. */
+	if (!get_file(env, &file_value, &file)) {
+		(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
+		return false;
+	}
+
+	/* Rejects offsets outside the historical 32-bit range. */
+	if (offset > 0x7fffffffU) {
+		noct_error(env, N_TR("File seek error."));
+		(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
+		return false;
+	}
+
+	/* Seeks to the requested absolute byte offset. */
+	if (fseek(file, (long)offset, SEEK_SET) != 0) {
+		noct_error(env, N_TR("File seek error."));
+		(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
+		return false;
+	}
+
+	/* Publishes the successful seek sentinel. */
+	result = noct_set_return_make_int(env, &ret, 1);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements File.read(). */
+static bool
+cfunc_File_read(
+	NoctEnv *env)
+{
+	NoctValue file_value;
+	NoctValue length_value;
+	NoctValue ret;
+	FILE *file;
+	size_t length;
+	size_t actual;
+	void *buffer;
+	bool transferred;
+	bool read_error;
+	bool result;
+
+	/* Initializes the native buffer ownership state. */
+	buffer = NULL;
+	transferred = false;
+
+	/* Roots the arguments and return value during the read. */
+	if (!noct_pin_local(env, 3, &file_value, &length_value, &ret))
+		return false;
+
+	/* Reads the File dictionary argument. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value)) {
+		(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+		return false;
+	}
+
+	/* Reads the maximum byte count. */
+	if (!noct_get_arg_check_int_long(env, 1, &length_value, &length)) {
+		(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+		return false;
+	}
+
+	/* Resolves the validated native stream. */
+	if (!get_file(env, &file_value, &file)) {
+		(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+		return false;
+	}
+
+	/* Requires storage for at least one Packed byte. */
+	if (length == 0) {
+		noct_error(env, N_TR("Read length must be greater than zero."));
+		(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+		return false;
+	}
+
+	/* Allocates the native read buffer. */
+	buffer = noct_malloc(length);
+	if (buffer == NULL) {
+		noct_error(env, N_TR("Out of memory."));
+		(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+		return false;
+	}
+
+	/* Reads up to the requested byte count. */
+	actual = fread(buffer, 1, length, file);
+	read_error = actual == 0;
+	if (!read_error && actual < length)
+		read_error = ferror(file) != 0;
+
+	/* Rejects an empty or failed read. */
+	if (read_error) {
+		noct_error(env, N_TR("File read error."));
+		noct_free(buffer);
+		(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+		return false;
+	}
+
+	/* Transfers the native buffer to a Packed value. */
+	if (!noct_make_packed(
+		env,
+		&ret,
+		NOCT_PACKED_UINT8,
+		actual,
+		actual,
+		buffer,
+		buffer,
+		noct_free)) {
+		noct_free(buffer);
+		(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+		return false;
+	}
+	transferred = true;
+
+	/* Publishes the completed Packed value. */
+	result = noct_set_return(env, &ret);
+
+	/* Keeps the historical ownership distinction explicit. */
+	if (!transferred)
+		noct_free(buffer);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 3, &file_value, &length_value, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements File.write(). */
+static bool
+cfunc_File_write(
+	NoctEnv *env)
+{
+	NoctValue file_value;
+	NoctValue data;
+	NoctValue offset_value;
+	NoctValue length_value;
+	NoctValue ret;
+	FILE *file;
+	size_t offset;
+	size_t length;
+	size_t packed_size;
+	size_t actual;
+	void *buffer;
+	bool result;
+
+	/* Roots the arguments and return value during the write. */
+	if (!noct_pin_local(
+		env,
+		5,
+		&file_value,
+		&data,
+		&offset_value,
+		&length_value,
+		&ret)) {
+		return false;
+	}
+
+	/* Reads the File dictionary argument. */
+	if (!noct_get_arg_check_dict(env, 0, &file_value)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the Packed byte-buffer argument. */
+	if (!noct_get_arg_check_packed(
+		env,
+		1,
+		&data,
+		NOCT_PACKED_UINT8)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the Packed byte offset. */
+	if (!noct_get_arg_check_int_long(env, 2, &offset_value, &offset)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the requested byte count. */
+	if (!noct_get_arg_check_int_long(env, 3, &length_value, &length)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Resolves the validated native stream. */
+	if (!get_file(env, &file_value, &file)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Reads the Packed byte extent. */
+	if (!noct_get_packed_size(env, &data, &packed_size)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Keeps the requested range within the Packed payload. */
+	if (offset > packed_size || length > packed_size - offset) {
+		noct_error(env, N_TR("Offset is out-of-range."));
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Resolves the Packed byte payload. */
+	if (!noct_get_packed_pointer(env, &data, &buffer)) {
+		(void)noct_unpin_local(
+			env,
+			5,
+			&file_value,
+			&data,
+			&offset_value,
+			&length_value,
+			&ret);
+		return false;
+	}
+
+	/* Writes a nonempty requested range. */
+	if (length != 0) {
+		actual = fwrite((char *)buffer + offset, 1, length, file);
+		if (actual != length) {
+			noct_error(env, N_TR("File write error."));
+			(void)noct_unpin_local(
+				env,
+				5,
+				&file_value,
+				&data,
+				&offset_value,
+				&length_value,
+				&ret);
+			return false;
+		}
+	}
+
+	/* Publishes the successful write sentinel. */
+	result = noct_set_return_make_int(env, &ret, 1);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(
+		env,
+		5,
+		&file_value,
+		&data,
+		&offset_value,
+		&length_value,
+		&ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Implements FileUtil.checkFileExists(). */
+static bool
+cfunc_FileUtil_checkFileExists(
+	NoctEnv *env)
+{
+	NoctValue path;
+	NoctValue ret;
+	const char *path_s;
+	FILE *file;
+	int exists;
+	bool result;
+
+	/* Roots the path and return value during the existence check. */
+	if (!noct_pin_local(env, 2, &path, &ret))
+		return false;
+
+	/* Reads the file path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Tests readability using the historical stream-open probe. */
+	file = fopen(path_s, "rb");
+	exists = file != NULL;
+	if (file != NULL)
+		(void)fclose(file);
+
+	/* Publishes the Boolean integer result. */
+	result = noct_set_return_make_int(env, &ret, exists);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 2, &path, &ret);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Releases names and an open directory retained during enumeration. */
+static void
+file_name_list_cleanup(
+	struct file_name_list *list)
+{
+	size_t i;
+
+#if defined(NOCT_TARGET_POSIX)
+	/* Closes an interrupted directory enumeration. */
+	if (list->dir != NULL)
+		(void)closedir(list->dir);
+#endif
+
+	/* Releases every retained entry name. */
+	for (i = 0; i < list->count; i++)
+		noct_free(list->name[i]);
+
+	/* Releases the entry-pointer array. */
+	noct_free(list->name);
+}
+
+/* Implements FileUtil.listDirectory(). */
+static bool
+cfunc_FileUtil_listDirectory(
+	NoctEnv *env)
+{
+	NoctValue path;
+	NoctValue ret;
+	NoctValue elem;
+	const char *path_s;
+	struct file_name_list list;
+	char *swap_name;
+	size_t i;
+	size_t j;
+	bool result;
+#if defined(NOCT_TARGET_POSIX)
+	struct dirent *entry;
+	struct stat status;
+	char full_path[2048];
+	char *temporary_name;
+	char **resized_name;
+	size_t allocation;
+	size_t name_length;
+	int stat_result;
+	bool omit_entry;
+#endif
+
+	/* Initializes directory-entry ownership. */
+	memset(&list, 0, sizeof(list));
+
+	/* Roots the path and result values during enumeration. */
+	if (!noct_pin_local(env, 3, &path, &ret, &elem))
+		return false;
+
+	/* Reads the directory path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		file_name_list_cleanup(&list);
+		(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+		return false;
+	}
+
+	/* Creates the result array before platform enumeration. */
+	if (!noct_make_empty_array(env, &ret)) {
+		file_name_list_cleanup(&list);
+		(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+		return false;
+	}
+
+#if defined(NOCT_TARGET_POSIX)
+	/* Enumerates an accessible POSIX directory. */
+	allocation = 0;
+	list.dir = opendir(path_s);
+	if (list.dir != NULL) {
+		/* Reads entries until the directory is exhausted. */
+		for (;;) {
+			entry = readdir(list.dir);
+			if (entry == NULL)
+				break;
+
+			/* Identifies the current-directory entry first. */
+			omit_entry = strcmp(entry->d_name, ".") == 0;
+
+			/* Identifies the parent entry only when still needed. */
+			if (!omit_entry)
+				omit_entry = strcmp(entry->d_name, "..") == 0;
+
+			/* Omits the current and parent directory entries. */
+			if (omit_entry) {
+				continue;
+			}
+
+			/* Allocates the entry name with room for a directory suffix. */
+			(void)snprintf(
+				full_path,
+				sizeof(full_path),
+				"%s/%s",
+				path_s,
+				entry->d_name);
+			name_length = strlen(entry->d_name);
+			temporary_name = noct_malloc(name_length + 2);
+			if (temporary_name == NULL)
+				continue;
+			(void)strcpy(temporary_name, entry->d_name);
+
+			/* Marks a successfully identified directory with a slash. */
+			stat_result = stat(full_path, &status);
+			if (stat_result == 0) {
+				/* Appends a suffix for an identified directory. */
+				if (S_ISDIR(status.st_mode))
+					(void)strcat(temporary_name, "/");
+			}
+
+			/* Grows the pointer array using the historical best-effort rule. */
+			if (list.count >= allocation) {
+				allocation = allocation == 0 ? 64 : allocation * 2;
+				resized_name = noct_realloc(
+					list.name,
+					sizeof(char *) * allocation);
+				if (resized_name == NULL) {
+					noct_free(temporary_name);
+					continue;
+				}
+				list.name = resized_name;
+			}
+
+			/* Retains the completed entry name. */
+			list.name[list.count++] = temporary_name;
+		}
+
+		/* Closes a completed directory enumeration. */
+		(void)closedir(list.dir);
+		list.dir = NULL;
+	}
+#endif
+
+	/* Sorts entry names for deterministic completion. */
+	for (i = 0; i + 1 < list.count; i++) {
+		/* Moves the smallest remaining name into this position. */
+		for (j = i + 1; j < list.count; j++) {
+			/* Exchanges names that are out of lexical order. */
+			if (strcmp(list.name[j], list.name[i]) < 0) {
+				swap_name = list.name[i];
+				list.name[i] = list.name[j];
+				list.name[j] = swap_name;
+			}
+		}
+	}
+
+	/* Publishes every retained name in sorted order. */
+	for (i = 0; i < list.count; i++) {
+		/* Creates the next Noct string. */
+		if (!noct_make_string(env, &elem, list.name[i])) {
+			file_name_list_cleanup(&list);
+			(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+			return false;
+		}
+
+		/* Appends the string to the result array. */
+		if (!noct_set_array_elem(env, &ret, i, &elem)) {
+			file_name_list_cleanup(&list);
+			(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+			return false;
+		}
+	}
+
+	/* Publishes the completed directory array. */
+	result = noct_set_return(env, &ret);
+
+	/* Releases native enumeration storage. */
+	file_name_list_cleanup(&list);
+
+	/* Releases the temporary roots. */
+	(void)noct_unpin_local(env, 3, &path, &ret, &elem);
+
+	/* Reports the return-value publication result. */
+	return result;
+}
+
+/* Encodes one BMP codepoint as UTF-8. */
+static int
+fileutil_utf8_encode(
+	uint32_t cp,
+	char *out)
+{
+	/* Emits one-byte UTF-8. */
 	if (cp < 0x80) {
 		out[0] = (char)cp;
+
+		/* Reports the one-byte encoding extent. */
 		return 1;
 	}
+
+	/* Emits two-byte UTF-8. */
 	if (cp < 0x800) {
 		out[0] = (char)(0xC0 | (cp >> 6));
 		out[1] = (char)(0x80 | (cp & 0x3F));
+
+		/* Reports the two-byte encoding extent. */
 		return 2;
 	}
+
+	/* Emits three-byte UTF-8. */
 	out[0] = (char)(0xE0 | (cp >> 12));
 	out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
 	out[2] = (char)(0x80 | (cp & 0x3F));
+
+	/* Returns the encoded byte count. */
 	return 3;
 }
 
-/*
- * FileUtil.readTextEucJp(path)
- *
- * Reads an EUC-JP encoded file and returns its content as a (UTF-8)
- * string. Undecodable bytes become U+FFFD. Returns an empty string
- * for a missing file.
- */
+/* Implements FileUtil.readTextEucJp(). */
 static bool
-cfunc_FileUtil_readTextEucJp(NoctEnv *env)
+cfunc_FileUtil_readTextEucJp(
+	NoctEnv *env)
 {
-	NoctValue path, ret;
+	NoctValue path;
+	NoctValue ret;
 	const char *path_s;
-	FILE *fp = NULL;
-	unsigned char *raw = NULL;
-	char *out = NULL;
+	FILE *file;
+	unsigned char *raw;
+	char *out;
+	unsigned char first;
+	unsigned char second;
+	uint32_t codepoint;
 	long size;
-	size_t i, o;
-	bool ok = false;
+	size_t input_index;
+	size_t output_index;
+	size_t table_index;
+	int encoded_length;
+	bool result;
 
+	/* Initializes native ownership. */
+	file = NULL;
+	raw = NULL;
+	out = NULL;
+
+	/* Roots the path and return value during conversion. */
 	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
 
-	fp = fopen(path_s, "rb");
-	if (fp == NULL) {
-		ok = noct_set_return_make_string(env, &ret, "");
-		goto cleanup;
+	/* Reads the source path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
 	}
-	fseek(fp, 0, SEEK_END);
-	size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
+
+	/* Opens the source file or returns the historical empty string. */
+	file = fopen(path_s, "rb");
+	if (file == NULL) {
+		result = noct_set_return_make_string(env, &ret, "");
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return result;
+	}
+
+	/* Reads the file extent with the historical unchecked seeks. */
+	(void)fseek(file, 0, SEEK_END);
+	size = ftell(file);
+	(void)fseek(file, 0, SEEK_SET);
+
+	/* Allocates the EUC-JP input buffer. */
 	raw = malloc((size_t)size + 1);
-	if (raw == NULL)
-		goto cleanup;
-	if (fread(raw, 1, (size_t)size, fp) != (size_t)size)
-		goto cleanup;
-	fclose(fp);
-	fp = NULL;
-
-	/* Worst case each EUC byte pair becomes 3 UTF-8 bytes. */
-	out = malloc((size_t)size * 3 + 4);
-	if (out == NULL)
-		goto cleanup;
-
-	o = 0;
-	i = 0;
-	while (i < (size_t)size) {
-		unsigned char c = raw[i];
-		uint32_t cp;
-
-		if (c < 0x80) {
-			out[o++] = (char)c;
-			i++;
-			continue;
-		}
-		if (c == 0x8E && i + 1 < (size_t)size) {
-			/* Half-width katakana: 0x8E 0xA1-0xDF. */
-			unsigned char c2 = raw[i + 1];
-			if (c2 >= 0xA1 && c2 <= 0xDF) {
-				cp = 0xFF61 + (uint32_t)(c2 - 0xA1);
-				o += (size_t)fileutil_utf8_encode(cp, out + o);
-				i += 2;
-				continue;
-			}
-			i++;
-			continue;
-		}
-		if (c >= 0xA1 && c <= 0xF4 && i + 1 < (size_t)size) {
-			unsigned char c2 = raw[i + 1];
-			if (c2 >= 0xA1 && c2 <= 0xFE) {
-				size_t idx = (size_t)(c - 0xA1) * 94 + (size_t)(c2 - 0xA1);
-				cp = fileutil_jisx0208_to_ucs[idx];
-				if (cp == 0)
-					cp = 0xFFFD;
-				o += (size_t)fileutil_utf8_encode(cp, out + o);
-				i += 2;
-				continue;
-			}
-		}
-		/* Undecodable byte. */
-		o += (size_t)fileutil_utf8_encode(0xFFFD, out + o);
-		i++;
+	if (raw == NULL) {
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
 	}
-	out[o] = '\0';
 
-	ok = noct_set_return_make_string(env, &ret, out);
+	/* Reads the complete EUC-JP input. */
+	if (fread(raw, 1, (size_t)size, file) != (size_t)size) {
+		(void)fclose(file);
+		free(raw);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
 
-cleanup:
-	if (fp != NULL)
-		fclose(fp);
+	/* Closes the source after reading it completely. */
+	(void)fclose(file);
+	file = NULL;
+
+	/* Allocates the worst-case UTF-8 output buffer. */
+	out = malloc((size_t)size * 3 + 4);
+	if (out == NULL) {
+		free(raw);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Converts every EUC-JP sequence in source order. */
+	output_index = 0;
+	input_index = 0;
+	while (input_index < (size_t)size) {
+		first = raw[input_index];
+
+		/* Copies an ASCII byte directly. */
+		if (first < 0x80) {
+			out[output_index++] = (char)first;
+			input_index++;
+			continue;
+		}
+
+		/* Converts a valid half-width katakana sequence. */
+		if (first == 0x8E && input_index + 1 < (size_t)size) {
+			second = raw[input_index + 1];
+
+			/* Emits a valid half-width katakana codepoint. */
+			if (second >= 0xA1 && second <= 0xDF) {
+				codepoint = 0xFF61 + (uint32_t)(second - 0xA1);
+				encoded_length = fileutil_utf8_encode(
+					codepoint,
+					out + output_index);
+				output_index += (size_t)encoded_length;
+				input_index += 2;
+				continue;
+			}
+			input_index++;
+			continue;
+		}
+
+		/* Converts a valid JIS X 0208 code-set-one sequence. */
+		if (first >= 0xA1 &&
+		    first <= 0xF4 &&
+		    input_index + 1 < (size_t)size) {
+			second = raw[input_index + 1];
+
+			/* Emits a valid JIS X 0208 codepoint. */
+			if (second >= 0xA1 && second <= 0xFE) {
+				table_index = (size_t)(first - 0xA1) * 94 +
+					(size_t)(second - 0xA1);
+				codepoint = fileutil_jisx0208_to_ucs[table_index];
+
+				/* Substitutes the replacement character for an empty cell. */
+				if (codepoint == 0)
+					codepoint = 0xFFFD;
+				encoded_length = fileutil_utf8_encode(
+					codepoint,
+					out + output_index);
+				output_index += (size_t)encoded_length;
+				input_index += 2;
+				continue;
+			}
+		}
+
+		/* Replaces one undecodable byte. */
+		encoded_length = fileutil_utf8_encode(
+			0xFFFD,
+			out + output_index);
+		output_index += (size_t)encoded_length;
+		input_index++;
+	}
+
+	/* Terminates the converted UTF-8 text. */
+	out[output_index] = '\0';
+
+	/* Publishes the converted UTF-8 string. */
+	result = noct_set_return_make_string(env, &ret, out);
+
+	/* Releases conversion buffers. */
 	free(raw);
 	free(out);
+
+	/* Releases the temporary roots. */
 	(void)noct_unpin_local(env, 2, &path, &ret);
-	return ok;
+
+	/* Reports the return-value publication result. */
+	return result;
 }
 
-/*
- * FileUtil.getCurrentDirectory()
- */
+/* Implements FileUtil.getCurrentDirectory(). */
 static bool
-cfunc_FileUtil_getCurrentDirectory(NoctEnv *env)
+cfunc_FileUtil_getCurrentDirectory(
+	NoctEnv *env)
 {
 	NoctValue ret;
 	char buf[2048];
-	bool ok = false;
+	bool result;
 
+	/* Roots the return value during the query. */
 	if (!noct_pin_local(env, 1, &ret))
 		return false;
+
+	/* Reads the process working directory or substitutes an empty string. */
 #if defined(NOCT_TARGET_WINDOWS)
 	if (GetCurrentDirectoryA((DWORD)sizeof(buf), buf) == 0)
 		buf[0] = '\0';
@@ -2007,258 +3500,514 @@ cfunc_FileUtil_getCurrentDirectory(NoctEnv *env)
 	if (getcwd(buf, sizeof(buf)) == NULL)
 		buf[0] = '\0';
 #endif
-	ok = noct_set_return_make_string(env, &ret, buf);
+
+	/* Publishes the current directory string. */
+	result = noct_set_return_make_string(env, &ret, buf);
+
+	/* Releases the temporary root. */
 	(void)noct_unpin_local(env, 1, &ret);
-	return ok;
+
+	/* Reports the return-value publication result. */
+	return result;
 }
 
-/*
- * FileUtil.setCurrentDirectory(path)
- */
+/* Implements FileUtil.setCurrentDirectory(). */
 static bool
-cfunc_FileUtil_setCurrentDirectory(NoctEnv *env)
+cfunc_FileUtil_setCurrentDirectory(
+	NoctEnv *env)
 {
-	NoctValue path, ret;
+	NoctValue path;
+	NoctValue ret;
 	const char *path_s;
-	int r;
-	bool ok = false;
+	int change_result;
+	int return_value;
+	bool result;
 
+	/* Roots the path and return value during the directory change. */
 	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
+
+	/* Reads the target directory path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Changes the process working directory. */
 #if defined(NOCT_TARGET_WINDOWS)
-	r = SetCurrentDirectoryA(path_s) ? 0 : -1;
+	change_result = SetCurrentDirectoryA(path_s) ? 0 : -1;
 #else
-	r = chdir(path_s);
+	change_result = chdir(path_s);
 #endif
-	ok = noct_set_return_make_int(env, &ret, r == 0 ? 1 : 0);
-cleanup:
+
+	/* Publishes the Boolean integer result. */
+	return_value = change_result == 0 ? 1 : 0;
+	result = noct_set_return_make_int(env, &ret, return_value);
+
+	/* Releases the temporary roots. */
 	(void)noct_unpin_local(env, 2, &path, &ret);
-	return ok;
+
+	/* Reports the return-value publication result. */
+	return result;
 }
 
-/*
- * FileUtil.getHomeDirectory()
- *
- * HOME on POSIX; USERPROFILE on Windows.
- */
+/* Implements FileUtil.getHomeDirectory(). */
 static bool
-cfunc_FileUtil_getHomeDirectory(NoctEnv *env)
+cfunc_FileUtil_getHomeDirectory(
+	NoctEnv *env)
 {
 	NoctValue ret;
 	const char *home;
-	bool ok = false;
+	bool result;
 
+	/* Roots the return value during the environment query. */
 	if (!noct_pin_local(env, 1, &ret))
 		return false;
+
+	/* Reads the primary home-directory environment variable. */
 	home = getenv("HOME");
 #if defined(NOCT_TARGET_WINDOWS)
+	/* Falls back to the conventional Windows profile directory. */
 	if (home == NULL || home[0] == '\0')
 		home = getenv("USERPROFILE");
 #endif
+
+	/* Substitutes an empty string when neither variable exists. */
 	if (home == NULL)
 		home = "";
-	ok = noct_set_return_make_string(env, &ret, home);
+
+	/* Publishes the selected home directory. */
+	result = noct_set_return_make_string(env, &ret, home);
+
+	/* Releases the temporary root. */
 	(void)noct_unpin_local(env, 1, &ret);
-	return ok;
+
+	/* Reports the return-value publication result. */
+	return result;
 }
 
+/* Implements FileUtil.getFileSize(). */
 static bool
-cfunc_FileUtil_getFileSize(NoctEnv *env)
+cfunc_FileUtil_getFileSize(
+	NoctEnv *env)
 {
-	NoctValue path, ret;
+	NoctValue path;
+	NoctValue ret;
 	const char *path_s;
-	FILE *file = NULL;
+	FILE *file;
 	long size;
-	bool ok = false;
+	bool result;
 
+	/* Roots the path and return value during the size query. */
 	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
+
+	/* Reads the file path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Opens the file or returns the historical zero sentinel. */
 	file = fopen(path_s, "rb");
 	if (file == NULL) {
-		ok = noct_set_return_make_int(env, &ret, 0);
-		goto cleanup;
+		result = noct_set_return_make_int(env, &ret, 0);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return result;
 	}
-	if (fseek(file, 0, SEEK_END) != 0 || (size = ftell(file)) < 0) {
+
+	/* Seeks to the end before measuring the stream. */
+	if (fseek(file, 0, SEEK_END) != 0) {
 		noct_error(env, N_TR("Cannot determine file size."));
-		goto cleanup;
-	}
-	if (!noct_set_return_make_int_long(env, &ret, (size_t)size))
-		goto cleanup;
-	ok = true;
-cleanup:
-	if (file != NULL)
 		(void)fclose(file);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Reads the file extent. */
+	size = ftell(file);
+	if (size < 0) {
+		noct_error(env, N_TR("Cannot determine file size."));
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Publishes the measured extent. */
+	result = noct_set_return_make_int_long(env, &ret, (size_t)size);
+
+	/* Closes the measured file. */
+	(void)fclose(file);
+
+	/* Releases the temporary roots. */
 	(void)noct_unpin_local(env, 2, &path, &ret);
-	return ok;
+
+	/* Reports the return-value publication result. */
+	return result;
 }
 
+/* Implements FileUtil.readText(). */
 static bool
-cfunc_FileUtil_readText(NoctEnv *env)
+cfunc_FileUtil_readText(
+	NoctEnv *env)
 {
-	NoctValue path, ret;
+	NoctValue path;
+	NoctValue ret;
 	const char *path_s;
-	FILE *file = NULL;
-	char *data = NULL;
+	FILE *file;
+	char *data;
 	long length;
-	bool ok = false;
+	bool result;
 
+	/* Initializes native ownership. */
+	file = NULL;
+	data = NULL;
+
+	/* Roots the path and return value during the read. */
 	if (!noct_pin_local(env, 2, &path, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s))
-		goto cleanup;
+
+	/* Reads the source path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Opens the source file. */
 	file = fopen(path_s, "rb");
 	if (file == NULL) {
 		noct_error(env, N_TR("Cannot open file %s."), path_s);
-		goto cleanup;
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
 	}
-	if (fseek(file, 0, SEEK_END) != 0 || (length = ftell(file)) < 0 ||
-	    fseek(file, 0, SEEK_SET) != 0) {
+
+	/* Seeks to the end before measuring the stream. */
+	if (fseek(file, 0, SEEK_END) != 0) {
 		noct_error(env, N_TR("Cannot determine file size."));
-		goto cleanup;
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
 	}
+
+	/* Reads the file extent. */
+	length = ftell(file);
+	if (length < 0) {
+		noct_error(env, N_TR("Cannot determine file size."));
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Returns to the start of the file. */
+	if (fseek(file, 0, SEEK_SET) != 0) {
+		noct_error(env, N_TR("Cannot determine file size."));
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
+	}
+
+	/* Allocates the text buffer. */
 	data = noct_malloc((size_t)length + 1U);
 	if (data == NULL) {
 		noct_error(env, N_TR("Out of memory."));
-		goto cleanup;
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
 	}
+
+	/* Reads the complete file. */
 	if (fread(data, 1, (size_t)length, file) != (size_t)length) {
 		noct_error(env, N_TR("Cannot read file %s."), path_s);
-		goto cleanup;
+		(void)fclose(file);
+		noct_free(data);
+		(void)noct_unpin_local(env, 2, &path, &ret);
+		return false;
 	}
 	data[length] = '\0';
-	if (!noct_set_return_make_string(env, &ret, data))
-		goto cleanup;
-	ok = true;
-cleanup:
-	if (file != NULL)
-		(void)fclose(file);
-	if (data != NULL)
-		noct_free(data);
+
+	/* Publishes the complete text. */
+	result = noct_set_return_make_string(env, &ret, data);
+
+	/* Releases native read resources. */
+	(void)fclose(file);
+	noct_free(data);
+
+	/* Releases the temporary roots. */
 	(void)noct_unpin_local(env, 2, &path, &ret);
-	return ok;
+
+	/* Reports the return-value publication result. */
+	return result;
 }
 
+/* Implements FileUtil.writeText(). */
 static bool
-cfunc_FileUtil_writeText(NoctEnv *env)
+cfunc_FileUtil_writeText(
+	NoctEnv *env)
 {
-	NoctValue path, text, ret;
-	const char *path_s, *text_s;
-	FILE *file = NULL;
+	NoctValue path;
+	NoctValue text;
+	NoctValue ret;
+	const char *path_s;
+	const char *text_s;
+	FILE *file;
 	size_t length;
-	bool ok = false;
+	size_t actual;
+	int close_result;
+	bool result;
 
+	/* Roots the arguments and return value during the write. */
 	if (!noct_pin_local(env, 3, &path, &text, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !noct_get_arg_check_string(env, 1, &text, &text_s))
-		goto cleanup;
+
+	/* Reads the destination path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 3, &path, &text, &ret);
+		return false;
+	}
+
+	/* Reads the text payload. */
+	if (!noct_get_arg_check_string(env, 1, &text, &text_s)) {
+		(void)noct_unpin_local(env, 3, &path, &text, &ret);
+		return false;
+	}
+
+	/* Opens the destination file. */
 	file = fopen(path_s, "wb");
 	if (file == NULL) {
 		noct_error(env, N_TR("Cannot open file %s."), path_s);
-		goto cleanup;
+		(void)noct_unpin_local(env, 3, &path, &text, &ret);
+		return false;
 	}
+
+	/* Writes the complete text payload. */
 	length = strlen(text_s);
-	if (fwrite(text_s, 1, length, file) != length || fflush(file) != 0) {
+	actual = fwrite(text_s, 1, length, file);
+	if (actual != length) {
 		noct_error(env, N_TR("Cannot write file %s."), path_s);
-		goto cleanup;
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 3, &path, &text, &ret);
+		return false;
 	}
-	if (!noct_set_return_make_int(env, &ret, 1))
-		goto cleanup;
-	ok = true;
-cleanup:
-	if (file != NULL && fclose(file) != 0 && ok) {
+
+	/* Flushes the written payload. */
+	if (fflush(file) != 0) {
+		noct_error(env, N_TR("Cannot write file %s."), path_s);
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 3, &path, &text, &ret);
+		return false;
+	}
+
+	/* Publishes the successful write sentinel before closing. */
+	result = noct_set_return_make_int(env, &ret, 1);
+
+	/* Closes the destination and reports a close error only after success. */
+	close_result = fclose(file);
+	if (close_result != 0 && result) {
 		noct_error(env, N_TR("Cannot close file %s."), path_s);
-		ok = false;
+		result = false;
 	}
+
+	/* Releases the temporary roots. */
 	(void)noct_unpin_local(env, 3, &path, &text, &ret);
-	return ok;
+
+	/* Reports the complete write result. */
+	return result;
 }
 
+/* Implements FileUtil.readForEachLine(). */
 static bool
-cfunc_FileUtil_readForEachLine(NoctEnv *env)
+cfunc_FileUtil_readForEachLine(
+	NoctEnv *env)
 {
 	char buffer[8192];
-	NoctValue path, function_value, line, ret;
+	NoctValue path;
+	NoctValue function_value;
+	NoctValue line;
+	NoctValue ret;
 	NoctFunc *function;
 	const char *path_s;
-	FILE *file = NULL;
-	bool ok = false;
+	FILE *file;
+	char *read_result;
+	size_t length;
+	bool result;
 
+	/* Roots the callback values during every nested call. */
 	if (!noct_pin_local(env, 4, &path, &function_value, &line, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !noct_get_arg_check_func(env, 1, &function_value, &function))
-		goto cleanup;
+
+	/* Reads the source path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 4, &path, &function_value, &line, &ret);
+		return false;
+	}
+
+	/* Reads the line callback. */
+	if (!noct_get_arg_check_func(env, 1, &function_value, &function)) {
+		(void)noct_unpin_local(env, 4, &path, &function_value, &line, &ret);
+		return false;
+	}
+
+	/* Opens the source file. */
 	file = fopen(path_s, "rb");
 	if (file == NULL) {
 		noct_error(env, N_TR("Cannot open file %s."), path_s);
-		goto cleanup;
+		(void)noct_unpin_local(env, 4, &path, &function_value, &line, &ret);
+		return false;
 	}
-	while (fgets(buffer, sizeof(buffer), file) != NULL) {
-		size_t length = strlen(buffer);
 
+	/* Reads and dispatches every buffered source line. */
+	for (;;) {
+		read_result = fgets(buffer, sizeof(buffer), file);
+		if (read_result == NULL)
+			break;
+
+		/* Removes one trailing newline from the buffered line. */
+		length = strlen(buffer);
 		if (length != 0 && buffer[length - 1] == '\n')
 			buffer[length - 1] = '\0';
-		if (!noct_make_string(env, &line, buffer) ||
-		    !noct_call(env, function, 1, &line, &ret))
-			goto cleanup;
+
+		/* Creates the callback argument string. */
+		if (!noct_make_string(env, &line, buffer)) {
+			(void)fclose(file);
+			(void)noct_unpin_local(
+				env,
+				4,
+				&path,
+				&function_value,
+				&line,
+				&ret);
+			return false;
+		}
+
+		/* Invokes the callback with the line value. */
+		if (!noct_call(env, function, 1, &line, &ret)) {
+			(void)fclose(file);
+			(void)noct_unpin_local(
+				env,
+				4,
+				&path,
+				&function_value,
+				&line,
+				&ret);
+			return false;
+		}
 	}
+
+	/* Reports a stream error after exhausting buffered lines. */
 	if (ferror(file)) {
 		noct_error(env, N_TR("Cannot read file %s."), path_s);
-		goto cleanup;
-	}
-	if (!noct_set_return_make_int(env, &ret, 1))
-		goto cleanup;
-	ok = true;
-cleanup:
-	if (file != NULL)
 		(void)fclose(file);
+		(void)noct_unpin_local(env, 4, &path, &function_value, &line, &ret);
+		return false;
+	}
+
+	/* Publishes the successful traversal sentinel. */
+	result = noct_set_return_make_int(env, &ret, 1);
+
+	/* Closes the source stream. */
+	(void)fclose(file);
+
+	/* Releases the temporary roots. */
 	(void)noct_unpin_local(env, 4, &path, &function_value, &line, &ret);
-	return ok;
+
+	/* Reports the traversal result. */
+	return result;
 }
 
+/* Implements FileUtil.writeForEachLine(). */
 static bool
-cfunc_FileUtil_writeForEachLine(NoctEnv *env)
+cfunc_FileUtil_writeForEachLine(
+	NoctEnv *env)
 {
-	NoctValue path, lines, line, ret;
-	const char *path_s, *text;
-	FILE *file = NULL;
-	size_t count, index;
-	bool ok = false;
+	NoctValue path;
+	NoctValue lines;
+	NoctValue line;
+	NoctValue ret;
+	const char *path_s;
+	const char *text;
+	FILE *file;
+	size_t count;
+	size_t index;
+	int print_result;
+	int close_result;
+	bool result;
 
+	/* Roots the array values during traversal. */
 	if (!noct_pin_local(env, 4, &path, &lines, &line, &ret))
 		return false;
-	if (!noct_get_arg_check_string(env, 0, &path, &path_s) ||
-	    !noct_get_arg_check_array(env, 1, &lines) ||
-	    !noct_get_array_size(env, &lines, &count))
-		goto cleanup;
+
+	/* Reads the destination path. */
+	if (!noct_get_arg_check_string(env, 0, &path, &path_s)) {
+		(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+		return false;
+	}
+
+	/* Reads the line array. */
+	if (!noct_get_arg_check_array(env, 1, &lines)) {
+		(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+		return false;
+	}
+
+	/* Reads the line count. */
+	if (!noct_get_array_size(env, &lines, &count)) {
+		(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+		return false;
+	}
+
+	/* Opens the destination file. */
 	file = fopen(path_s, "wb");
 	if (file == NULL) {
 		noct_error(env, N_TR("Cannot open file %s."), path_s);
-		goto cleanup;
+		(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+		return false;
 	}
+
+	/* Writes every array element as one line. */
 	for (index = 0; index < count; index++) {
-		if (!noct_get_array_elem(env, &lines, index, &line) ||
-		    !noct_get_string(env, &line, &text) ||
-		    fprintf(file, "%s\n", text) < 0)
-			goto cleanup;
+		/* Reads the next array element. */
+		if (!noct_get_array_elem(env, &lines, index, &line)) {
+			(void)fclose(file);
+			(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+			return false;
+		}
+
+		/* Reads the element string. */
+		if (!noct_get_string(env, &line, &text)) {
+			(void)fclose(file);
+			(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+			return false;
+		}
+
+		/* Writes the string and its trailing newline. */
+		print_result = fprintf(file, "%s\n", text);
+		if (print_result < 0) {
+			(void)fclose(file);
+			(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+			return false;
+		}
 	}
+
+	/* Flushes the completed line sequence. */
 	if (fflush(file) != 0) {
 		noct_error(env, N_TR("Cannot write file %s."), path_s);
-		goto cleanup;
+		(void)fclose(file);
+		(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
+		return false;
 	}
-	if (!noct_set_return_make_int(env, &ret, 1))
-		goto cleanup;
-	ok = true;
-cleanup:
-	if (file != NULL && fclose(file) != 0 && ok) {
+
+	/* Publishes the successful traversal sentinel before closing. */
+	result = noct_set_return_make_int(env, &ret, 1);
+
+	/* Closes the destination and reports a close error only after success. */
+	close_result = fclose(file);
+	if (close_result != 0 && result) {
 		noct_error(env, N_TR("Cannot close file %s."), path_s);
-		ok = false;
+		result = false;
 	}
+
+	/* Releases the temporary roots. */
 	(void)noct_unpin_local(env, 4, &path, &lines, &line, &ret);
-	return ok;
+
+	/* Reports the complete write result. */
+	return result;
 }

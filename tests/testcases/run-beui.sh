@@ -27,7 +27,9 @@ test -f "$build_dir/libnoctapi.a" || {
 "$build_dir/noct-beui-test"
 
 if test -x "$build_dir/noct" &&
-	grep -q '^NOCT_ENABLE_API_BEUI_SDL2:BOOL=ON$' "$build_dir/CMakeCache.txt"
+	grep -q '^NOCT_ENABLE_API_BEUI:BOOL=ON$' "$build_dir/CMakeCache.txt" &&
+	! grep -q '^NOCT_TARGET_PC98DOS:BOOL=ON$' "$build_dir/CMakeCache.txt" &&
+	! grep -q '^NOCT_TARGET_ZEDBSD:BOOL=ON$' "$build_dir/CMakeCache.txt"
 then
 	SDL_VIDEODRIVER=${SDL_VIDEODRIVER:-dummy}
 	SDL_AUDIODRIVER=${SDL_AUDIODRIVER:-dummy}
