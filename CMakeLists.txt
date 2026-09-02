@@ -1320,9 +1320,7 @@ if(NOCT_ENABLE_INSTALL)
     FILES
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/noct.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/c89compat.h"
-      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/aot.h"
-      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/backend.h"
-      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/repl.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/noct/executor.h"
     DESTINATION
       "${CMAKE_INSTALL_INCLUDEDIR}/noct"
   )
