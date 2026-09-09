@@ -2776,12 +2776,14 @@ cfunc_File_seek(
 		return false;
 	}
 
+#if LONG_MAX == 0x7fffffff
 	/* Rejects offsets outside the historical 32-bit range. */
 	if (offset > 0x7fffffffU) {
 		noct_error(env, N_TR("File seek error."));
 		(void)noct_unpin_local(env, 3, &file_value, &offset_value, &ret);
 		return false;
 	}
+#endif
 
 	/* Seeks to the requested absolute byte offset. */
 	if (fseek(file, (long)offset, SEEK_SET) != 0) {
