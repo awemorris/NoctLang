@@ -252,6 +252,8 @@ static bool cfunc_BeUI_close(NoctEnv *env);
 static bool cfunc_BeUI_isOpen(NoctEnv *env);
 static bool cfunc_BeUI_getWidth(NoctEnv *env);
 static bool cfunc_BeUI_getHeight(NoctEnv *env);
+static bool cfunc_BeUI_getBitsPerPixel(NoctEnv *env);
+static bool cfunc_BeUI_hasInput(NoctEnv *env);
 static bool cfunc_BeUI_poll(NoctEnv *env);
 static bool cfunc_BeUI_flush(NoctEnv *env);
 static bool cfunc_BeUI_fill(NoctEnv *env);
@@ -1815,6 +1817,45 @@ cfunc_BeUI_getHeight(
 	return returned;
 }
 
+/* Returns actual framebuffer storage depth rather than the initialization hint. */
+static bool
+cfunc_BeUI_getBitsPerPixel(
+	NoctEnv *env)
+{
+	struct display_info info;
+	int available;
+	bool returned;
+
+	/* Reads the active display description. */
+	available = beui_get_display_info(&info);
+	if (!available) {
+		noct_error(env, N_TR("BeUI is not open."));
+		return false;
+	}
+
+	/* Returns the active display depth. */
+	returned = return_int(env, (int)info.bits_per_pixel);
+
+	/* Reports whether the depth was returned. */
+	return returned;
+}
+
+/* Reports whether at least one usable input source remains attached. */
+static bool
+cfunc_BeUI_hasInput(
+	NoctEnv *env)
+{
+	int present;
+	bool returned;
+
+	/* These hosts expose input for the lifetime of their display session. */
+	present = beui_is_open();
+
+	/* Succeeded: returns a current attachment observation, not a key state. */
+	returned = return_int(env, present);
+	return returned;
+}
+
 /* Implements BeUI.poll(). */
 static bool
 cfunc_BeUI_poll(
@@ -2271,7 +2312,7 @@ cfunc_BeUI_drawText(
 	    y < 0 ||
 	    foreground < 0 ||
 	    foreground > 0xffffff ||
-	    background < 0 ||
+	    background < -1 ||
 	    background > 0xffffff) {
 		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 		return false;
@@ -2986,6 +3027,8 @@ register_beui_api(
 		{"BeUI.isOpen", "isOpen", 0, {NULL}, cfunc_BeUI_isOpen},
 		{"BeUI.getWidth", "getWidth", 0, {NULL}, cfunc_BeUI_getWidth},
 		{"BeUI.getHeight", "getHeight", 0, {NULL}, cfunc_BeUI_getHeight},
+		{"BeUI.getBitsPerPixel", "getBitsPerPixel", 0, {NULL}, cfunc_BeUI_getBitsPerPixel},
+		{"BeUI.hasInput", "hasInput", 0, {NULL}, cfunc_BeUI_hasInput},
 		{"BeUI.poll", "poll", 0, {NULL}, cfunc_BeUI_poll},
 		{"BeUI.flush", "flush", 0, {NULL}, cfunc_BeUI_flush},
 		{"BeUI.fill", "fill", 5, {"x", "y", "width", "height", "color"}, cfunc_BeUI_fill},
@@ -3842,10 +3885,12 @@ sdl2_glyph_draw(
 	rect.width = width;
 	rect.height = 16;
 
-	/* Clears the complete glyph cell. */
-	filled = sdl2_fill(context, &rect, background);
-	if (!filled)
-		return 0;
+	/* Opaque text clears its cell; transparent text preserves the image. */
+	if (background != UINT32_MAX) {
+		filled = sdl2_fill(context, &rect, background);
+		if (!filled)
+			return 0;
+	}
 
 	/* Locks the destination framebuffer. */
 	locked = sdl2_lock_framebuffer(context);

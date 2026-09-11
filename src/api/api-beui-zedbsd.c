@@ -381,6 +381,8 @@ static bool cfunc_BeUI_close(NoctEnv *env);
 static bool cfunc_BeUI_isOpen(NoctEnv *env);
 static bool cfunc_BeUI_getWidth(NoctEnv *env);
 static bool cfunc_BeUI_getHeight(NoctEnv *env);
+static bool cfunc_BeUI_getBitsPerPixel(NoctEnv *env);
+static bool cfunc_BeUI_hasInput(NoctEnv *env);
 static bool cfunc_BeUI_poll(NoctEnv *env);
 static bool cfunc_BeUI_flush(NoctEnv *env);
 static bool cfunc_BeUI_fill(NoctEnv *env);
@@ -3177,6 +3179,55 @@ cfunc_BeUI_getHeight(
 	return call_result;
 }
 
+/* Returns actual framebuffer storage depth rather than the initialization hint. */
+static bool
+cfunc_BeUI_getBitsPerPixel(
+	NoctEnv *env)
+{
+	bool call_result;
+	struct display_info info;
+
+	/* Handles the next cfunc_BeUI_getBitsPerPixel decision. */
+	if (!get_display_info(&info)) {
+		noct_error(env, N_TR("BeUI is not open."));
+
+		/* Reports the cfunc_BeUI_getBitsPerPixel result. */
+		return false;
+	}
+
+	/* Reports the cfunc_BeUI_getBitsPerPixel result. */
+	call_result = return_int(env, (int)info.bits_per_pixel);
+
+	/* Reports the cfunc_BeUI_getBitsPerPixel result. */
+	return call_result;
+}
+
+/* Reports whether at least one usable input source remains attached. */
+static bool
+cfunc_BeUI_hasInput(
+	NoctEnv *env)
+{
+	int present;
+	bool returned;
+	unsigned index;
+
+	/* Rescans and detaches failed evdev descriptors before counting inputs. */
+	present = 0;
+	if (state.display_open && backend.input_initialized) {
+		zedbsd_input_service(&backend);
+		for (index = 0; index < INPUT_MAX_SOURCES; index++) {
+			if (backend.sources[index].fd >= 0) {
+				present = 1;
+				break;
+			}
+		}
+	}
+
+	/* Succeeded: returns a current attachment observation, not a key state. */
+	returned = return_int(env, present);
+	return returned;
+}
+
 /*
  * Returns 1 while the display is alive and 0 once it has closed, so the
  * canonical loop is "while (BeUI.poll()) { ... }".
@@ -3618,7 +3669,7 @@ cfunc_BeUI_drawText(
 	    y < 0 ||
 	    foreground < 0 ||
 	    foreground > 0xffffff ||
-	    background < 0 ||
+	    background < -1 ||
 	    background > 0xffffff) {
 		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 
@@ -4332,6 +4383,8 @@ register_api(
 		{"BeUI.isOpen", "isOpen", 0, {NULL}, cfunc_BeUI_isOpen},
 		{"BeUI.getWidth", "getWidth", 0, {NULL}, cfunc_BeUI_getWidth},
 		{"BeUI.getHeight", "getHeight", 0, {NULL}, cfunc_BeUI_getHeight},
+		{"BeUI.getBitsPerPixel", "getBitsPerPixel", 0, {NULL}, cfunc_BeUI_getBitsPerPixel},
+		{"BeUI.hasInput", "hasInput", 0, {NULL}, cfunc_BeUI_hasInput},
 		{"BeUI.poll", "poll", 0, {NULL}, cfunc_BeUI_poll},
 		{"BeUI.flush", "flush", 0, {NULL}, cfunc_BeUI_flush},
 		{"BeUI.fill", "fill", 5, {"x", "y", "width", "height", "color"}, cfunc_BeUI_fill},
@@ -4510,7 +4563,7 @@ zedbsd_display_enter(
 
 	/* Enters the requested graphics mode. */
 	ioctl_result = ioctl(context->graphics_fd,
-			     ZEDBSD_GRAPHICS_ENTER,
+			     KERN_GRAPHICS_ENTER,
 			     &request);
 	if (ioctl_result != 0) {
 		(void)close(context->graphics_fd);
@@ -4575,7 +4628,7 @@ zedbsd_display_fill(
 		return 0;
 
 	/* Requires driver support for solid fills. */
-	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_FILL))
+	if (!graphics_has(context, KERN_GRAPHICS_CAP_FILL))
 		return 0;
 
 	memset(&request, 0, sizeof(request));
@@ -4587,7 +4640,7 @@ zedbsd_display_fill(
 	/* Reports the zedbsd_display_fill result. */
 	call_result = ioctl(
 		context->graphics_fd,
-		ZEDBSD_GRAPHICS_FILL_RECT,
+		KERN_GRAPHICS_FILL_RECT,
 		&request) == 0;
 
 	/* Reports the zedbsd_display_fill result. */
@@ -4608,7 +4661,7 @@ zedbsd_display_line(
 	struct graphics_line request;
 
 	/* Handles the next zedbsd_display_line decision. */
-	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_LINE))
+	if (!graphics_has(context, KERN_GRAPHICS_CAP_LINE))
 		return 0;
 
 	memset(&request, 0, sizeof(request));
@@ -4620,7 +4673,7 @@ zedbsd_display_line(
 
 	/* Reports the zedbsd_display_line result. */
 	call_result = ioctl(context->graphics_fd,
-			    ZEDBSD_GRAPHICS_DRAW_LINE,
+			    KERN_GRAPHICS_DRAW_LINE,
 			    &request) == 0;
 
 	/* Reports the zedbsd_display_line result. */
@@ -4643,7 +4696,7 @@ zedbsd_display_pattern(
 		return 0;
 
 	/* Requires driver support for patterned fills. */
-	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_PATTERN))
+	if (!graphics_has(context, KERN_GRAPHICS_CAP_PATTERN))
 		return 0;
 
 	memset(&request, 0, sizeof(request));
@@ -4653,7 +4706,7 @@ zedbsd_display_pattern(
 
 	/* Reports the zedbsd_display_pattern result. */
 	call_result = ioctl(context->graphics_fd,
-			    ZEDBSD_GRAPHICS_PATTERN_FILL,
+			    KERN_GRAPHICS_PATTERN_FILL,
 			    &request) == 0;
 
 	/* Reports the zedbsd_display_pattern result. */
@@ -4690,14 +4743,14 @@ zedbsd_display_image_common(
 
 	/* Handles the next zedbsd_display_image_common decision. */
 	if (image->format == IMAGE_RGB24) {
-		request.format = ZEDBSD_GRAPHICS_FORMAT_RGB24;
-		capability = ZEDBSD_GRAPHICS_CAP_BLIT_RGB24;
+		request.format = KERN_GRAPHICS_FORMAT_RGB24;
+		capability = KERN_GRAPHICS_CAP_BLIT_RGB24;
 	} else if (image->format == IMAGE_INDEX8 &&
 		   image->palette_size <= 256U) {
-		request.format = ZEDBSD_GRAPHICS_FORMAT_INDEX8;
+		request.format = KERN_GRAPHICS_FORMAT_INDEX8;
 		request.palette = (uapi_ptr_t)(uintptr_t)image->palette;
 		request.palette_count = image->palette_size;
-		capability = ZEDBSD_GRAPHICS_CAP_BLIT_INDEX8;
+		capability = KERN_GRAPHICS_CAP_BLIT_INDEX8;
 	} else {
 		/* Reports the zedbsd_display_image_common result. */
 		return 0;
@@ -4711,7 +4764,7 @@ zedbsd_display_image_common(
 
 	/* Reports the zedbsd_display_image_common result. */
 	call_result = ioctl(context->graphics_fd,
-			    patterned ? ZEDBSD_GRAPHICS_BLIT_PATTERN : ZEDBSD_GRAPHICS_BLIT,
+			    patterned ? KERN_GRAPHICS_BLIT_PATTERN : KERN_GRAPHICS_BLIT,
 			    &request) == 0;
 
 	/* Reports the zedbsd_display_image_common result. */
@@ -4778,7 +4831,7 @@ zedbsd_display_flush(
 		return 0;
 
 	/* A non-buffered driver has nothing to flush. */
-	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_FLUSH))
+	if (!graphics_has(context, KERN_GRAPHICS_CAP_FLUSH))
 		return 1;
 
 	/* Converts every dirty rectangle to the graphics ABI. */
@@ -4792,7 +4845,7 @@ zedbsd_display_flush(
 	request.rectangle_count = (uint32_t)rectangle_count;
 
 	/* Reports the zedbsd_display_flush result. */
-	call_result = ioctl(context->graphics_fd, ZEDBSD_GRAPHICS_FLUSH, &request) == 0;
+	call_result = ioctl(context->graphics_fd, KERN_GRAPHICS_FLUSH, &request) == 0;
 
 	/* Reports the zedbsd_display_flush result. */
 	return call_result;
@@ -4814,7 +4867,7 @@ zedbsd_glyph_get(
 		return 0;
 
 	/* Requires driver support for glyph retrieval. */
-	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_GLYPH))
+	if (!graphics_has(context, KERN_GRAPHICS_CAP_GLYPH))
 		return 0;
 
 	/* Requires a bitmap capacity representable by the graphics ABI. */
@@ -4828,7 +4881,7 @@ zedbsd_glyph_get(
 
 	/* Retrieves the requested glyph. */
 	call_result = ioctl(context->graphics_fd,
-			    ZEDBSD_GRAPHICS_GET_GLYPH,
+			    KERN_GRAPHICS_GET_GLYPH,
 			    glyph) == 0;
 	if (!call_result)
 		return 0;
@@ -4884,9 +4937,15 @@ zedbsd_glyph_draw(
 	struct graphics_glyph glyph;
 	struct graphics_blit blit;
 	uint8_t bitmap[GLYPH_BYTES];
+	struct rect span;
+	unsigned row;
+	unsigned column;
+	unsigned first;
+	unsigned minimum_stride;
+	int filled;
 
 	/* Requires driver support for monochrome glyph blits. */
-	if (!graphics_has(context, ZEDBSD_GRAPHICS_CAP_BLIT_MONO1))
+	if (!graphics_has(context, KERN_GRAPHICS_CAP_BLIT_MONO1))
 		return 0;
 
 	/* Retrieves the glyph bitmap. */
@@ -4897,19 +4956,64 @@ zedbsd_glyph_draw(
 			      sizeof(bitmap)))
 		return 0;
 
+	/* Transparent text paints only foreground runs over the existing image. */
+	if (background == UINT32_MAX) {
+		/* Bounds bitmap indexing independently of the driver's output. */
+		if (glyph.width == 0 || glyph.height == 0 || glyph.width > GLYPH_BYTES * 8U)
+			return 0;
+
+		minimum_stride = (glyph.width + 7U) / 8U;
+		if (glyph.stride < minimum_stride || glyph.stride > GLYPH_BYTES)
+			return 0;
+
+		if (glyph.height > glyph.bitmap_size / glyph.stride)
+			return 0;
+
+		/* Coalesces adjacent ink pixels without overwriting transparent gaps. */
+		span.height = 1;
+		for (row = 0; row < glyph.height; row++) {
+			column = 0;
+			while (column < glyph.width) {
+				/* Finds the next set bit in the MSB-first glyph row. */
+				while (column < glyph.width &&
+				    (bitmap[row * glyph.stride + column / 8U] & (0x80U >> (column % 8U))) == 0)
+					column++;
+
+				first = column;
+				while (column < glyph.width &&
+				    (bitmap[row * glyph.stride + column / 8U] & (0x80U >> (column % 8U))) != 0)
+					column++;
+
+				/* Empty trailing space has no pixels to submit. */
+				if (column == first)
+					continue;
+
+				span.x = x + first;
+				span.y = y + row;
+				span.width = column - first;
+				filled = zedbsd_display_fill(context, &span, foreground);
+				if (!filled)
+					return 0;
+			}
+		}
+
+		/* Succeeded: untouched pixels retain their original background. */
+		return 1;
+	}
+
 	memset(&blit, 0, sizeof(blit));
 	blit.x = x;
 	blit.y = y;
 	blit.width = glyph.width;
 	blit.height = glyph.height;
-	blit.format = ZEDBSD_GRAPHICS_FORMAT_MONO1;
+	blit.format = KERN_GRAPHICS_FORMAT_MONO1;
 	blit.stride = glyph.stride;
 	blit.pixels = (uapi_ptr_t)(uintptr_t)bitmap;
 	blit.foreground = foreground;
 	blit.background = background;
 
 	/* Reports the zedbsd_glyph_draw result. */
-	call_result = ioctl(context->graphics_fd, ZEDBSD_GRAPHICS_BLIT, &blit) == 0;
+	call_result = ioctl(context->graphics_fd, KERN_GRAPHICS_BLIT, &blit) == 0;
 
 	/* Reports the zedbsd_glyph_draw result. */
 	return call_result;

@@ -367,6 +367,8 @@ static bool cfunc_BeUI_close(NoctEnv *env);
 static bool cfunc_BeUI_isOpen(NoctEnv *env);
 static bool cfunc_BeUI_getWidth(NoctEnv *env);
 static bool cfunc_BeUI_getHeight(NoctEnv *env);
+static bool cfunc_BeUI_getBitsPerPixel(NoctEnv *env);
+static bool cfunc_BeUI_hasInput(NoctEnv *env);
 static bool cfunc_BeUI_poll(NoctEnv *env);
 static bool cfunc_BeUI_flush(NoctEnv *env);
 static bool cfunc_BeUI_fill(NoctEnv *env);
@@ -1748,9 +1750,11 @@ glyph_draw(
 	rectangle.width = width;
 	rectangle.height = 16;
 
-	/* Fills the complete glyph background. */
-	if (!display_fill(&rectangle, background))
-		return 0;
+	/* Opaque text clears its cell; transparent text preserves the image. */
+	if (background != UINT32_MAX) {
+		if (!display_fill(&rectangle, background))
+			return 0;
+	}
 
 	/* Processes each glyph_draw item. */
 	for (band = 0; band < 2U; band++) {
@@ -3284,6 +3288,45 @@ cfunc_BeUI_getHeight(
 	return call_result;
 }
 
+/* Returns actual framebuffer storage depth rather than the initialization hint. */
+static bool
+cfunc_BeUI_getBitsPerPixel(
+	NoctEnv *env)
+{
+	bool call_result;
+	struct display_info info;
+
+	/* Handles the next cfunc_BeUI_getBitsPerPixel decision. */
+	if (!beui_get_display_info(&info)) {
+		noct_error(env, N_TR("BeUI is not open."));
+
+		/* Reports the cfunc_BeUI_getBitsPerPixel result. */
+		return false;
+	}
+
+	/* Reports the cfunc_BeUI_getBitsPerPixel result. */
+	call_result = return_int(env, (int)info.bits_per_pixel);
+
+	/* Reports the cfunc_BeUI_getBitsPerPixel result. */
+	return call_result;
+}
+
+/* Reports whether at least one usable input source remains attached. */
+static bool
+cfunc_BeUI_hasInput(
+	NoctEnv *env)
+{
+	int present;
+	bool returned;
+
+	/* These hosts expose input for the lifetime of their display session. */
+	present = beui_is_open();
+
+	/* Succeeded: returns a current attachment observation, not a key state. */
+	returned = return_int(env, present);
+	return returned;
+}
+
 /*
  * Returns 1 while the display is alive and 0 once it has closed, so the
  * canonical loop is "while (BeUI.poll()) { ... }".  Targets that own the
@@ -3741,7 +3784,7 @@ cfunc_BeUI_drawText(
 	    y < 0 ||
 	    foreground < 0 ||
 	    foreground > 0xffffff ||
-	    background < 0 ||
+	    background < -1 ||
 	    background > 0xffffff) {
 		noct_error(env, N_TR("BeUI.drawText received an invalid argument."));
 
@@ -4473,6 +4516,8 @@ register_beui_api(
 		{"BeUI.isOpen", "isOpen", 0, {NULL}, cfunc_BeUI_isOpen},
 		{"BeUI.getWidth", "getWidth", 0, {NULL}, cfunc_BeUI_getWidth},
 		{"BeUI.getHeight", "getHeight", 0, {NULL}, cfunc_BeUI_getHeight},
+		{"BeUI.getBitsPerPixel", "getBitsPerPixel", 0, {NULL}, cfunc_BeUI_getBitsPerPixel},
+		{"BeUI.hasInput", "hasInput", 0, {NULL}, cfunc_BeUI_hasInput},
 		{"BeUI.poll", "poll", 0, {NULL}, cfunc_BeUI_poll},
 		{"BeUI.flush", "flush", 0, {NULL}, cfunc_BeUI_flush},
 		{"BeUI.fill", "fill", 5, {"x", "y", "width", "height", "color"}, cfunc_BeUI_fill},

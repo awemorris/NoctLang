@@ -39,6 +39,18 @@ Returns 1 while the display is open.
 
 The display size in pixels. Only valid while open.
 
+### BeUI.getBitsPerPixel()
+
+Returns the actual framebuffer storage depth while open. An RGB24 image may
+be drawn into a 32-bit framebuffer; the initialization hint is not this value.
+
+### BeUI.hasInput()
+
+Returns 1 if a usable input source is currently attached, otherwise 0. The
+zedBSD backend services evdev detach/rescan before reporting. SDL2 and PC-98
+provide input for the lifetime of their open display session. This is an
+observation, not a promise that hardware cannot disconnect on the next call.
+
 ### BeUI.poll()
 
 Services the host and returns 1 while the display is alive, 0 once the
@@ -84,6 +96,8 @@ integer, one bit per pixel, row major.
 ### BeUI.drawText(text, x, y, foreground, background)
 
 Draws UTF-8 text. `\n` starts a new line 16 pixels down.
+Use `background = -1` to preserve existing background pixels and draw only
+the glyph foreground. Other backgrounds remain opaque RGB colors.
 
 ### BeUI.textWidth(text) / BeUI.textHeight(text)
 
