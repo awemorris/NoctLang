@@ -2292,7 +2292,10 @@ rt_visit_vselect128_op(struct rt_env *env, struct rt_func *func, uint32_t *pc)
 {
 	int vd, vm, vt, vf;
 
-	GET_U8(&vd); GET_U8(&vm); GET_U8(&vt); GET_U8(&vf);
+	GET_U8(&vd);
+        GET_U8(&vm);
+        GET_U8(&vt);
+        GET_U8(&vf);
 
 	if (vd >= 16 || vm >= 16 || vt >= 16 || vf >= 16) {
 		rt_error(env, BROKEN_BYTECODE);
@@ -2383,7 +2386,9 @@ rt_visit_vinductf32x4_op(struct rt_env *env, struct rt_func *func,
 {
 	int vd, state, step;
 
-	GET_U8(&vd); GET_TMPVAR(&state); GET_TMPVAR(&step);
+	GET_U8(&vd);
+        GET_TMPVAR(&state);
+        GET_TMPVAR(&step);
 
 	if (vd >= 16) {
 		rt_error(env, BROKEN_BYTECODE);
@@ -2392,6 +2397,8 @@ rt_visit_vinductf32x4_op(struct rt_env *env, struct rt_func *func,
 
 	if (!noct_ex_vinductf32x4_helper(env, vd, state, step))
                 return false;
+
+        return true;
 }
 
 static INLINE bool
