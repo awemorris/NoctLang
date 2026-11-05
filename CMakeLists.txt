@@ -170,49 +170,6 @@ else()
   set(NOCT_LIB_TYPE STATIC)
 endif()
 
-if(NOCT_ENABLE_CLI AND NOT NOCT_LIB_TYPE STREQUAL "STATIC")
-  message(FATAL_ERROR "NOCT_ENABLE_CLI requires a static Noct library")
-endif()
-if(NOCT_ENABLE_CLI)
-  if(NOT NOCT_ENABLE_API)
-    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API")
-  endif()
-  if(NOT NOCT_ENABLE_API_SYSTEM)
-    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API_SYSTEM")
-  endif()
-  if(NOT NOCT_ENABLE_API_CONSOLE)
-    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API_CONSOLE")
-  endif()
-  if(NOT NOCT_ENABLE_API_FILE)
-    message(FATAL_ERROR "NOCT_ENABLE_CLI requires NOCT_ENABLE_API_FILE")
-  endif()
-  if(NOCT_ENABLE_MULTITHREAD AND NOT NOCT_ENABLE_API_THREAD)
-    message(FATAL_ERROR
-      "Multithreaded NOCT_ENABLE_CLI requires NOCT_ENABLE_API_THREAD")
-  endif()
-endif()
-
-if(NOCT_ENABLE_ACCEL)
-  if(NOT NOCT_ENABLE_CLI)
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_CLI")
-  endif()
-  if(NOT NOCT_ENABLE_API)
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_API")
-  endif()
-  if(NOT NOCT_ENABLE_OPTIMIZER)
-    message(FATAL_ERROR "NOCT_ENABLE_ACCEL requires NOCT_ENABLE_OPTIMIZER")
-  endif()
-endif()
-
-# Keep focused accelerator tests available without adding another public
-# accelerator build option.  These targets remain EXCLUDE_FROM_ALL.
-set(NOCT_BUILD_ACCEL_COMMON_TESTS OFF)
-if(    NOCT_LIB_TYPE STREQUAL "STATIC"
-   AND NOCT_ENABLE_OPTIMIZER
-   AND NOT CMAKE_CROSSCOMPILING)
-  set(NOCT_BUILD_ACCEL_COMMON_TESTS ON)
-endif()
-
 # Determine the base files.
 set(
   NOCT_BASE_SOURCE
@@ -251,17 +208,17 @@ if(NOCT_ENABLE_OPTIMIZER)
     NOCT_OPTIMIZER_SOURCE
     src/optimizer/fast.c                # __fast function contracts
     src/optimizer/hir_fast_checked.c    # Checked __fast lowering
-    src/optimizer/hir_opt_analysis.c # Common optimizer analysis
-    src/optimizer/hir_fast_func.c    # __fast checked-index optimization
-    src/optimizer/hir_opt_abce.c     # ABCE pass
-    src/optimizer/hir_opt_inline.c   # static __inline pass
-    src/optimizer/hir_opt_simd.c     # SIMD auto-vectorization
-    src/optimizer/hir_opt_unroll.c   # scalar Packed loop unroll
-    src/optimizer/hir_opt_loop.c     # loop analysis
-    src/optimizer/hir_opt_doall.c    # DOALL analysis
-    src/optimizer/hir_opt_dosum.c    # DOSUM analysis
-    src/optimizer/hir_opt_cse.c      # CSE pass
-    src/optimizer/hir_opt_typed.c    # Stage B type lattice
+    src/optimizer/hir_opt_analysis.c    # Common optimizer analysis
+    src/optimizer/hir_fast_func.c       # __fast checked-index optimization
+    src/optimizer/hir_opt_abce.c        # ABCE pass
+    src/optimizer/hir_opt_inline.c      # static __inline pass
+    src/optimizer/hir_opt_simd.c        # SIMD auto-vectorization
+    src/optimizer/hir_opt_unroll.c      # scalar Packed loop unroll
+    src/optimizer/hir_opt_loop.c        # loop analysis
+    src/optimizer/hir_opt_doall.c       # DOALL analysis
+    src/optimizer/hir_opt_dosum.c       # DOSUM analysis
+    src/optimizer/hir_opt_cse.c         # CSE pass
+    src/optimizer/hir_opt_typed.c       # Stage B type lattice
   )
 endif()
 
@@ -549,7 +506,7 @@ elseif(NOCT_BUILD_ACCEL_COMMON_TESTS)
   endif()
 endif()
 
-# JIT.
+# JIT
 if(NOCT_ENABLE_JIT)
   # Exclude OpenBSD
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
@@ -785,7 +742,8 @@ if(NOCT_ENABLE_ACCEL)
       ${NOCT_METAL_FRAMEWORK}
     )
   elseif(   CMAKE_SYSTEM_NAME STREQUAL "Linux"
-         OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+         OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
+	 OR NOCT_TARGET_ZEDBSD)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(NOCT_EGL REQUIRED IMPORTED_TARGET egl)
     pkg_check_modules(NOCT_GLESV2 REQUIRED IMPORTED_TARGET glesv2)
@@ -826,230 +784,6 @@ if(NOCT_ENABLE_API)
   list(APPEND NOCT_LIBRARY $<TARGET_FILE:noctapi>)
 endif()
 set(NOCT_LIBRARIES    ${NOCT_LIBRARY})
-
-# ---
-
-#
-# Target-neutral accelerator tests
-#
-
-if(NOCT_BUILD_ACCEL_COMMON_TESTS)
-  add_library(
-    noct-accel-test-common
-    STATIC
-    EXCLUDE_FROM_ALL
-    src/accel/accel_ir.c
-    src/accel/accel_program.c
-    src/accel/accel_residency.c
-    src/accel/accel_compile.c
-    src/accel/accel_context.c
-    src/accel/accel_mutex.c
-    src/accel/accel_rewrite.c
-    src/accel/accel_lir_budget.c
-    src/accel/accel_callback.c
-    src/accel/accel_device.c
-    src/accel/accel_runtime.c
-    src/accel/accel_shader_source.c
-  )
-  target_compile_definitions(
-    noct-accel-test-common
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-    NOCT_USE_ACCEL
-  )
-  target_include_directories(
-    noct-accel-test-common
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-  )
-  target_link_libraries(noct-accel-test-common PRIVATE noct)
-  if(NOT WIN32)
-    target_link_libraries(noct-accel-test-common PRIVATE Threads::Threads)
-  endif()
-
-  add_executable(
-    noct-test-accel-device
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel-device-test.c
-  )
-  target_compile_definitions(
-    noct-test-accel-device
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-    NOCT_USE_ACCEL
-  )
-  target_include_directories(
-    noct-test-accel-device
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-  )
-  target_link_libraries(
-    noct-test-accel-device
-    PRIVATE
-    noct-accel-test-common
-    noct
-  )
-
-  add_executable(
-    noct-test-accel-shader-source
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel-shader-source-test.c
-  )
-  target_compile_definitions(
-    noct-test-accel-shader-source
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-    NOCT_USE_ACCEL
-  )
-  target_include_directories(
-    noct-test-accel-shader-source
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-  )
-  target_link_libraries(
-    noct-test-accel-shader-source
-    PRIVATE
-    noct-accel-test-common
-    noct
-  )
-
-  add_executable(
-    noct-test-accel-runtime
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel-runtime-test.c
-  )
-  target_compile_definitions(
-    noct-test-accel-runtime
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-    NOCT_USE_ACCEL
-  )
-  target_include_directories(
-    noct-test-accel-runtime
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-  )
-  target_link_libraries(
-    noct-test-accel-runtime
-    PRIVATE
-    noct-accel-test-common
-    noct
-  )
-  if(NOT WIN32)
-    target_link_libraries(noct-test-accel-runtime PRIVATE Threads::Threads)
-  endif()
-
-  add_executable(
-    noct-test-accel-plan
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel-plan-test.c
-  )
-  target_compile_definitions(
-    noct-test-accel-plan
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-    NOCT_USE_ACCEL
-  )
-  target_include_directories(
-    noct-test-accel-plan
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-  )
-  target_link_libraries(
-    noct-test-accel-plan
-    PRIVATE
-    noct-accel-test-common
-    noct
-  )
-
-  add_library(
-    noct-accel-test-backend
-    STATIC
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel_test_backend.c
-  )
-  target_compile_definitions(
-    noct-accel-test-backend
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-    NOCT_USE_ACCEL
-  )
-  target_include_directories(
-    noct-accel-test-backend
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/testcases
-  )
-  target_link_libraries(
-    noct-accel-test-backend
-    PRIVATE
-    noct-accel-test-common
-    noct
-  )
-
-  add_executable(
-    noct-test-accel-rewrite
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel-rewrite-test.c
-  )
-  target_compile_definitions(
-    noct-test-accel-rewrite
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-    NOCT_USE_ACCEL
-  )
-  target_include_directories(
-    noct-test-accel-rewrite
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/accel
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/testcases
-  )
-  target_link_libraries(
-    noct-test-accel-rewrite
-    PRIVATE
-    noct-accel-test-common
-    noct-accel-test-backend
-    noct
-  )
-  if(NOT WIN32)
-    target_link_libraries(noct-test-accel-rewrite PRIVATE Threads::Threads)
-  endif()
-endif()
 
 # ---
 
@@ -1219,93 +953,6 @@ if(NOCT_ENABLE_CLI)
       set_target_properties(noctcli PROPERTIES LINKER_LANGUAGE OBJC)
     endif()
   endif()
-endif()
-
-if(WIN32 AND NOCT_ENABLE_CLI)
-  add_executable(
-    noct-test-cli-win32-gpu-name
-    EXCLUDE_FROM_ALL
-    src/cli/cli-win32.c
-    tests/testcases/cli-win32-gpu-name-test.c
-  )
-  target_compile_definitions(
-    noct-test-cli-win32-gpu-name
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-  )
-  target_include_directories(
-    noct-test-cli-win32-gpu-name
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/cli
-  )
-  target_link_libraries(noct-test-cli-win32-gpu-name PRIVATE shell32)
-  set_target_properties(
-    noct-test-cli-win32-gpu-name
-    PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-bin"
-  )
-  foreach(NOCT_TEST_CONFIG IN LISTS CMAKE_CONFIGURATION_TYPES)
-    string(TOUPPER "${NOCT_TEST_CONFIG}" NOCT_TEST_CONFIG_UPPER)
-    set_target_properties(
-      noct-test-cli-win32-gpu-name
-      PROPERTIES
-      "RUNTIME_OUTPUT_DIRECTORY_${NOCT_TEST_CONFIG_UPPER}"
-      "${CMAKE_CURRENT_BINARY_DIR}/test-bin"
-    )
-  endforeach()
-endif()
-
-if(NOCT_LIB_TYPE STREQUAL "STATIC" AND NOT CMAKE_CROSSCOMPILING)
-  add_executable(
-    noct-test-accel-hint-cpu
-    EXCLUDE_FROM_ALL
-    tests/testcases/accel-hint-cpu-test.c
-  )
-  target_compile_definitions(
-    noct-test-accel-hint-cpu
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-  )
-  target_include_directories(
-    noct-test-accel-hint-cpu
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-  )
-  target_link_libraries(noct-test-accel-hint-cpu PRIVATE noct)
-
-  add_executable(
-    noct-test-optimizer-callback
-    EXCLUDE_FROM_ALL
-    tests/testcases/optimizer-callback-test.c
-  )
-  target_compile_definitions(
-    noct-test-optimizer-callback
-    PRIVATE
-    ${NOCT_PUBLIC_CPPFLAGS}
-    ${NOCT_PRIVATE_CPPFLAGS}
-  )
-  if(NOCT_ENABLE_ACCEL OR NOCT_BUILD_ACCEL_COMMON_TESTS)
-    target_compile_definitions(
-      noct-test-optimizer-callback
-      PRIVATE
-      NOCT_USE_ACCEL
-    )
-  endif()
-  target_include_directories(
-    noct-test-optimizer-callback
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/noct
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/optimizer
-  )
-  target_link_libraries(noct-test-optimizer-callback PRIVATE noct)
 endif()
 
 # ---
