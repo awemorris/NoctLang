@@ -914,8 +914,6 @@ if(NOCT_ENABLE_CLI)
 
   if(NOCT_TARGET_ZEDBSD)
     enable_language(ASM)
-    include("${ZEDBSD_SOURCE_DIR}/userland/base/noct/zedbsd.cmake")
-    noct_configure_zedbsd_target(noctcli)
   endif()
 
   # Win32
