@@ -22,7 +22,7 @@ option(NOCT_ENABLE_OBJECT         "Build objects only"                    OFF)
 option(NOCT_ENABLE_JIT            "Enable JIT compilation"                OFF)
 option(NOCT_ENABLE_OPTIMIZER      "Enable optimizer"                      OFF)
 option(NOCT_ENABLE_MULTITHREAD    "Enable multithread support"            OFF)
-option(NOCT_ENABLE_ACCEL          "Enable accelerator support"           OFF)
+option(NOCT_ENABLE_ACCEL          "Enable accelerator support"            OFF)
 
 # Program config options.
 option(NOCT_ENABLE_CLI            "Enable CLI"                            OFF)
@@ -823,6 +823,9 @@ if(NOCT_ENABLE_CLI)
     src/cli/cli-cfunc.c
     src/cli/module.c
     src/cli/bytecode_file.c
+    src/core/ast.c           # For module.c
+    src/core/lexer.yy.c
+    src/core/parser.tab.c
     ${CLI_BCBACK_SOURCES}
     ${CLI_CBACK_SOURCES}
     ${CLI_ELBACK_SOURCES}

@@ -120,6 +120,7 @@ command_run(
 
 	if (!prepare_program_input(argc, argv))
 		goto cleanup;
+
 	if (!cli_module_build_input_graph(
 		program_input.file_name,
 		program_input.payload,
@@ -128,10 +129,12 @@ command_run(
 		wide_printf(N_TR("%s\n"), cli_module_get_error());
 		goto cleanup;
 	}
+
 	if (gpu_requested && program_input.kind != CLI_PROGRAM_SOURCE) {
 		wide_printf(N_TR("GPU acceleration is available only when running Noct source.\n"));
 		goto cleanup;
 	}
+
 #if !defined(NOCT_USE_ACCEL)
 	if (gpu_requested) {
 		wide_printf(N_TR("GPU acceleration is not available in this build.\n"));
@@ -143,57 +146,75 @@ command_run(
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
+
+	if (!register_cli_cfunc(env)) {
+		wide_printf(N_TR("Out of memory.\n"));
+		goto cleanup;
+	}
+
+
+#if defined(NOCT_USE_SYSTEM)
 	if (!noct_register_api_system(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
+#endif
+
+#if defined(NOCT_USE_CONSOLE)
 	if (!noct_register_api_console(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
+#endif
+
+#if defined(NOCT_USE_FILE)
 	if (!noct_register_api_file(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
+#endif
+
+#if defined(NOCT_USE_TERM)
 	if (!noct_register_api_regex(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
+#endif
+
 #if defined(NOCT_USE_MULTITHREAD)
 	if (!noct_register_api_thread(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
 #endif
+
 #if defined(NOCT_USE_HTTPSERVER)
 	if (!noct_register_api_httpserver(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
 #endif
+
 #if defined(NOCT_USE_TERM)
 	if (!noct_register_api_term(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
 #endif
+
 #if defined(NOCT_USE_BEUI)
 	if (!noct_register_api_beui(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
 #endif
+
 #if defined(NOCT_USE_PROCESS)
 	if (!noct_register_api_process(env)) {
 		wide_printf(N_TR("Out of memory.\n"));
 		goto cleanup;
 	}
 #endif
-
-	if (!register_cli_cfunc(env)) {
-		wide_printf(N_TR("Out of memory.\n"));
-		goto cleanup;
-	}
 
 #if defined(NOCT_USE_ACCEL)
 	if (gpu_requested && !accel_initialize(vm, env, gpu_name))
@@ -202,19 +223,15 @@ command_run(
 
 	if (!load_program())
 		goto runtime_error;
+
 	if (!load_args(argc, argv))
 		goto runtime_error;
+
 	if (!check_params("main"))
 		goto cleanup;
 
-	if (!noct_enter_vm(
-		env,
-		"main",
-		param_count == 0 ? 0 : 1,
-		&arg,
-		&ret)) {
+	if (!noct_enter_vm(env, "main", param_count == 0 ? 0 : 1, &arg, &ret))
 		goto runtime_error;
-	}
 
 	result = 0;
 	goto cleanup;
@@ -235,8 +252,10 @@ cleanup:
 		vm = NULL;
 		env = NULL;
 	}
+
 	free(gpu_name);
 	gpu_name = NULL;
+
 	cleanup_program_input();
 	cli_module_reset();
 
@@ -255,6 +274,7 @@ parse_options(int argc, char *argv[])
 	is_oneliner = false;
 	gpu_requested = false;
 	gpu_list_requested = false;
+
 	for (i = 1; i < argc; i++) {
 		if (argv[i][0] != '-')
 			break;
@@ -264,34 +284,40 @@ parse_options(int argc, char *argv[])
 			file_arg++;
 			continue;
 		}
+
 		if (strcmp(argv[i], "-j") == 0) {
 			config.jit_enable = true;
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--jit-code-size=", 16) == 0) {
 			config.jit_code_size = (size_t)atoi(argv[i] + 16);
 			file_arg++;
 			continue;
 		}
-		optimize_result = parse_optimize_level_option(
-		    argv[i], &optimize_level, &lineinfo);
+
+		optimize_result = parse_optimize_level_option(argv[i], &optimize_level, &lineinfo);
+
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_VALID) {
 			config.optimize_level = optimize_level;
 			config.line_info = lineinfo;
 			file_arg++;
 			continue;
 		}
+
 		if (optimize_result == CLI_OPTIMIZE_LEVEL_INVALID) {
 			wide_printf(N_TR("Invalid optimize-level option %s.\n"),
 				    argv[i]);
 			return false;
 		}
+
 		if (strcmp(argv[i], "--simd-info") == 0) {
 			config.simd_info = true;
 			file_arg++;
 			continue;
 		}
+
 		if (strcmp(argv[i], "--gpu") == 0 ||
 		    strncmp(argv[i], "--gpu=", 6) == 0) {
 			if (!parse_gpu_option(argc, argv, i))
@@ -299,6 +325,7 @@ parse_options(int argc, char *argv[])
 			file_arg++;
 			continue;
 		}
+
 		if (strcmp(argv[i], "--gpu-list") == 0) {
 			if (gpu_list_requested) {
 				wide_printf(N_TR("--gpu-list may be specified only once.\n"));
@@ -308,6 +335,7 @@ parse_options(int argc, char *argv[])
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--path=", 7) == 0) {
 			if (!cli_module_add_path(argv[i] + 7)) {
 				wide_printf(N_TR("Invalid --path option.\n"));
@@ -316,32 +344,38 @@ parse_options(int argc, char *argv[])
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--gc-nursery-size=", 18) == 0) {
 			config.gc_nursery_size = (size_t)atoi(argv[i] + 18);
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--gc-graduate-size=", 21) == 0) {
 			config.gc_graduate_size = (size_t)atoi(argv[i] + 21);
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--gc-tenure-size=", 17) == 0) {
 			config.gc_tenure_size = (size_t)atoi(argv[i] + 17);
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--gc-lop-threshold=", 18) == 0) {
 			config.gc_lop_threshold = (size_t)atoi(argv[i] + 18);
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--gc-promotion-threshold=", 25) == 0) {
 			config.gc_promotion_threshold =
 			    (size_t)atoi(argv[i] + 25);
 			file_arg++;
 			continue;
 		}
+
 		if (strncmp(argv[i], "--one-line", 10) == 0 ||
 		    strcmp(argv[i], "-e") == 0) {
 			if (argc <= (int)i + 1) {
@@ -577,14 +611,8 @@ prepare_oneliner_input(
 		return false;
 	}
 	memcpy(program_input.storage, prefix, prefix_size);
-	memcpy(
-		program_input.storage + prefix_size,
-		command,
-		command_size);
-	memcpy(
-		program_input.storage + prefix_size + command_size,
-		suffix,
-		suffix_size + 1);
+	memcpy(program_input.storage + prefix_size, command,command_size);
+	memcpy(program_input.storage + prefix_size + command_size, suffix, suffix_size + 1);
 	program_input.storage_size = source_size;
 	program_input.payload = program_input.storage;
 	program_input.payload_size = source_size;
@@ -616,9 +644,7 @@ classify_program_input(
 		program_input.has_shebang = true;
 	}
 
-	program_input.bytecode_kind = bytecode_file_detect(
-		program_input.payload,
-		program_input.payload_size);
+	program_input.bytecode_kind = bytecode_file_detect(program_input.payload, program_input.payload_size);
 	if (program_input.bytecode_kind == BYTECODE_FILE_MODULE_UNKNOWN) {
 		wide_printf(N_TR("Unsupported or malformed bytecode version.\n"));
 		return false;
@@ -629,10 +655,7 @@ classify_program_input(
 	}
 
 	if (program_input.bytecode_kind == BYTECODE_FILE_UNKNOWN) {
-		if (memchr(
-			program_input.payload,
-			'\0',
-			program_input.payload_size) != NULL) {
+		if (memchr(program_input.payload, '\0', program_input.payload_size) != NULL) {
 			wide_printf(N_TR("NUL byte in source program.\n"));
 			return false;
 		}
@@ -641,9 +664,7 @@ classify_program_input(
 		return true;
 	}
 
-	if (!bytecode_file_check_registration_size(
-		program_input.payload_size,
-		&registration_size)) {
+	if (!bytecode_file_check_registration_size(program_input.payload_size, &registration_size)) {
 		wide_printf(N_TR("Bytecode program is too large.\n"));
 		return false;
 	}
@@ -684,14 +705,8 @@ load_args(int argc, char *argv[])
 
 	/* Preserve the CRT narrow argv byte contract on every platform. */
 	for (i = file_arg + 1; i < argc; i++) {
-		if (!noct_set_array_elem_make_string(
-			env,
-			&arg,
-			index,
-			&val,
-			argv[i])) {
+		if (!noct_set_array_elem_make_string(env, &arg, index, &val, argv[i]))
 			return false;
-		}
 		index++;
 	}
 
