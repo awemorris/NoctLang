@@ -13,8 +13,8 @@
 
 #include <noct/noct.h>
 
-#include <zedbsd/graphics.h>
-#include <zedbsd/input.h>
+#include <uapi/graphics.h>
+#include <uapi/input.h>
 
 #include <limits.h>
 #include <stddef.h>

@@ -757,11 +757,7 @@ cfunc_Term_open(
 
 	/* Installs the deferred resize handler. */
 	memset(&sa, 0, sizeof(sa));
-#if defined(NOCT_TARGET_ZEDBSD)
-	sa.sa_handler = (uint64_t)(uintptr_t)on_sigwinch;
-#else
 	sa.sa_handler = on_sigwinch;
-#endif
 	(void)sigaction(SIGWINCH, &sa, NULL);
 
 	/* Enters the alternate screen and extended key mode. */

@@ -359,7 +359,8 @@ if(NOCT_ENABLE_ACCEL)
   endif()
 
   if(   CMAKE_SYSTEM_NAME STREQUAL "Linux"
-     OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+     OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
+     OR NOCT_TARGET_ZEDBSD)
     list(
       APPEND
       NOCT_ACCEL_BACKEND_SOURCE
@@ -587,7 +588,8 @@ if(NOCT_ENABLE_ACCEL)
   endif()
 
   if(   CMAKE_SYSTEM_NAME STREQUAL "Linux"
-     OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+     OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"
+     OR NOCT_TARGET_ZEDBSD)
     list(
       APPEND
       NOCT_PUBLIC_CPPFLAGS 
@@ -1172,6 +1174,12 @@ if(NOCT_ENABLE_CLI)
 
   # Link libnoct and libnoctapi.
   target_link_libraries(noctcli PRIVATE noct noctapi)
+
+  if(NOCT_TARGET_ZEDBSD)
+    enable_language(ASM)
+    include("${ZEDBSD_SOURCE_DIR}/userland/base/noct/zedbsd.cmake")
+    noct_configure_zedbsd_target(noctcli)
+  endif()
 
   # Win32
   if(WIN32)

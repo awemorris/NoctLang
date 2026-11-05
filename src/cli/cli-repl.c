@@ -251,11 +251,7 @@ install_repl_interrupt_handler(void)
 		struct sigaction action;
 
 		memset(&action, 0, sizeof(action));
-#if defined(NOCT_TARGET_ZEDBSD)
-		action.sa_handler = (uint64_t)(uintptr_t)repl_interrupt_handler;
-#else
 		action.sa_handler = repl_interrupt_handler;
-#endif
 		sigemptyset(&action.sa_mask);
 		if (sigaction(SIGINT, &action, &repl_old_action) != 0)
 			return false;
