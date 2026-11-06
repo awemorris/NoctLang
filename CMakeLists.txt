@@ -922,7 +922,7 @@ if(NOCT_ENABLE_CLI)
   endif()
 
   # Add -lm on UNIX.
-  if(UNIX AND NOT NOCT_TARGET_ZEDBSD)
+  if(UNIX)
     target_link_libraries(noctcli PRIVATE m)
   endif()
 
